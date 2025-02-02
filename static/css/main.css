@@ -1,0 +1,31 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap');
+
+body {
+  font-family: 'Space Grotesk', system-ui, sans-serif;
+}
+
+/* Table styles */
+.table-header {
+  padding: 0.75rem 1rem;
+  text-align: left;
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  color: #6b7280;
+}
+
+.table-cell {
+  padding: 0.75rem 1rem;
+  font-size: 0.875rem;
+  color: #111827;
+}
+
+/* Icon button styles */
+.action-icon-btn {
+  color: #9ca3af;
+  transition: color 0.2s;
+}
+
+.action-icon-btn:hover {
+  color: #8b5cf6;
+} 
