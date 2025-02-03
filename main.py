@@ -1,6 +1,8 @@
 from fastapi import FastAPI, HTTPException, Depends
 from db.database import get_db, Database
 from models.contact import ContactCreate
+from models.agent import AgentCreate
+from pydantic import EmailStr
 import logging
 from fastapi.middleware.cors import CORSMiddleware
 import json
@@ -40,26 +42,31 @@ def get_contacts(db: Database = Depends(get_db)):
         )
         logger.info(f"Successfully fetched {len(contacts)} contacts")
         
-        # Convert rows to dictionaries
-        return [
-            {
+            
+        # Convert rows to dictionaries and log each conversion
+        result = []
+        for contact in contacts:
+            contact_dict = {
                 'id': contact[0],
                 'first_name': contact[1],
                 'last_name': contact[2],
-                'current_carrier': contact[3],
-                'plan_type': contact[4],
-                'effective_date': contact[5],
-                'birth_date': contact[6],
-                'tobacco_user': bool(contact[7]),  # Convert integer to boolean
-                'gender': contact[8],
-                'state': contact[9],
-                'zip_code': contact[10],
-                'last_emailed': contact[11],
-                'created_at': contact[12],
-                'updated_at': contact[13]
+                'email': contact[3],
+                'current_carrier': contact[4],
+                'plan_type': contact[5],
+                'effective_date': contact[6],
+                'birth_date': contact[7],
+                'tobacco_user': bool(contact[8]),  # Convert integer to boolean
+                'gender': contact[9],
+                'state': contact[10],
+                'zip_code': contact[11],
+                'last_emailed': contact[12],
+                'created_at': contact[13],
+                'updated_at': contact[14]
             }
-            for contact in contacts
-        ]
+            result.append(contact_dict)
+        
+        return result
+        
     except Exception as e:
         logger.error(f"Error in get_contacts: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -70,15 +77,16 @@ def create_contact(contact: ContactCreate, db: Database = Depends(get_db)):
         logger.info(f"Attempting to create contact: {contact.first_name} {contact.last_name}")
         query = """
             INSERT INTO contacts (
-                first_name, last_name, current_carrier, plan_type,
+                first_name, last_name, email, current_carrier, plan_type,
                 effective_date, birth_date, tobacco_user, gender,
-                state, zip_code
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                state, zip_code, agent_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             RETURNING *
         """
         params = (
             contact.first_name,
             contact.last_name,
+            contact.email,
             contact.current_carrier,
             contact.plan_type,
             contact.effective_date.isoformat(),
@@ -87,6 +95,7 @@ def create_contact(contact: ContactCreate, db: Database = Depends(get_db)):
             contact.gender,
             contact.state,
             contact.zip_code,
+            contact.agent_id
         )
         
         logger.info("Executing insert query")
@@ -98,17 +107,19 @@ def create_contact(contact: ContactCreate, db: Database = Depends(get_db)):
             'id': row[0],
             'first_name': row[1],
             'last_name': row[2],
-            'current_carrier': row[3],
-            'plan_type': row[4],
-            'effective_date': row[5],
-            'birth_date': row[6],
-            'tobacco_user': bool(row[7]),
-            'gender': row[8],
-            'state': row[9],
-            'zip_code': row[10],
-            'last_emailed': row[11],
-            'created_at': row[12],
-            'updated_at': row[13]
+            'email': row[3],
+            'current_carrier': row[4],
+            'plan_type': row[5],
+            'effective_date': row[6],
+            'birth_date': row[7],
+            'tobacco_user': bool(row[8]),
+            'gender': row[9],
+            'state': row[10],
+            'zip_code': row[11],
+            'agent_id': row[12],
+            'last_emailed_date': row[13],
+            'created_at': row[14],
+            'updated_at': row[15]
         }
     except Exception as e:
         logger.error(f"Error creating contact: {e}", exc_info=True)
@@ -118,36 +129,76 @@ def create_contact(contact: ContactCreate, db: Database = Depends(get_db)):
 def update_contact(contact_id: int, contact: ContactCreate, db: Database = Depends(get_db)):
     try:
         logger.info(f"Updating contact with ID: {contact_id}")
-        query = """
-            UPDATE contacts SET 
-                first_name = ?,
-                last_name = ?,
-                current_carrier = ?,
-                plan_type = ?,
-                effective_date = ?,
-                birth_date = ?,
-                tobacco_user = ?,
-                gender = ?,
-                state = ?,
-                zip_code = ?,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-            RETURNING *
-        """
-        params = (
-            contact.first_name,
-            contact.last_name,
-            contact.current_carrier,
-            contact.plan_type,
-            contact.effective_date.isoformat(),
-            contact.birth_date.isoformat(),
-            1 if contact.tobacco_user else 0,
-            contact.gender,
-            contact.state,
-            contact.zip_code,
-            contact_id
-        )
         
+        # If agent_id is None, we'll exclude it from the update
+        if contact.agent_id is None:
+            query = """
+                UPDATE contacts SET 
+                    first_name = ?,
+                    last_name = ?,
+                    email = ?,
+                    current_carrier = ?,
+                    plan_type = ?,
+                    effective_date = ?,
+                    birth_date = ?,
+                    tobacco_user = ?,
+                    gender = ?,
+                    state = ?,
+                    zip_code = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                RETURNING *
+            """
+            params = (
+                str(contact.first_name),
+                str(contact.last_name),
+                str(contact.email),
+                str(contact.current_carrier),
+                str(contact.plan_type),
+                contact.effective_date.isoformat(),
+                contact.birth_date.isoformat(),
+                1 if contact.tobacco_user else 0,
+                str(contact.gender),
+                str(contact.state),
+                str(contact.zip_code),
+                contact_id
+            )
+        else:
+            query = """
+                UPDATE contacts SET 
+                    first_name = ?,
+                    last_name = ?,
+                    email = ?,
+                    current_carrier = ?,
+                    plan_type = ?,
+                    effective_date = ?,
+                    birth_date = ?,
+                    tobacco_user = ?,
+                    gender = ?,
+                    state = ?,
+                    zip_code = ?,
+                    agent_id = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                RETURNING *
+            """
+            params = (
+                str(contact.first_name),
+                str(contact.last_name),
+                str(contact.email),
+                str(contact.current_carrier),
+                str(contact.plan_type),
+                contact.effective_date.isoformat(),
+                contact.birth_date.isoformat(),
+                1 if contact.tobacco_user else 0,
+                str(contact.gender),
+                str(contact.state),
+                str(contact.zip_code),
+                contact.agent_id,
+                contact_id
+            )
+        
+        logger.info(f"Query params: {params}")
         result = db.execute(query, params)
         row = result.fetchone()
         if not row:
@@ -157,17 +208,19 @@ def update_contact(contact_id: int, contact: ContactCreate, db: Database = Depen
             'id': row[0],
             'first_name': row[1],
             'last_name': row[2],
-            'current_carrier': row[3],
-            'plan_type': row[4],
-            'effective_date': row[5],
-            'birth_date': row[6],
-            'tobacco_user': bool(row[7]),
-            'gender': row[8],
-            'state': row[9],
-            'zip_code': row[10],
-            'last_emailed': row[11],
-            'created_at': row[12],
-            'updated_at': row[13]
+            'email': row[3],
+            'current_carrier': row[4],
+            'plan_type': row[5],
+            'effective_date': row[6],
+            'birth_date': row[7],
+            'tobacco_user': bool(row[8]),
+            'gender': row[9],
+            'state': row[10],
+            'zip_code': row[11],
+            'agent_id': row[12],
+            'last_emailed_date': row[13],
+            'created_at': row[14],
+            'updated_at': row[15]
         }
     except HTTPException:
         raise
@@ -194,6 +247,53 @@ def lookup_zip(zip_code: str):
         raise
     except Exception as e:
         logger.error(f"Error looking up ZIP code: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Add new endpoints for agents
+@app.post("/api/agents")
+def create_agent(agent: AgentCreate, db: Database = Depends(get_db)):
+    try:
+        query = """
+            INSERT INTO agents (first_name, last_name, email, phone)
+            VALUES (?, ?, ?, ?)
+            RETURNING *
+        """
+        params = (agent.first_name, agent.last_name, agent.email, agent.phone)
+        
+        result = db.execute(query, params)
+        row = result.fetchone()
+        
+        return {
+            'id': row[0],
+            'first_name': row[1],
+            'last_name': row[2],
+            'email': row[3],
+            'phone': row[4],
+            'created_at': row[5],
+            'updated_at': row[6]
+        }
+    except Exception as e:
+        logger.error(f"Error creating agent: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/agents")
+def get_agents(db: Database = Depends(get_db)):
+    try:
+        agents = db.fetch_all("SELECT * FROM agents ORDER BY created_at DESC")
+        return [
+            {
+                'id': row[0],
+                'first_name': row[1],
+                'last_name': row[2],
+                'email': row[3],
+                'phone': row[4],
+                'created_at': row[5],
+                'updated_at': row[6]
+            }
+            for row in agents
+        ]
+    except Exception as e:
+        logger.error(f"Error fetching agents: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.on_event("startup")

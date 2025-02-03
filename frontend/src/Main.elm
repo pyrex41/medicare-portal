@@ -4,7 +4,7 @@ import Browser
 import Browser.Events
 import Html exposing (Html, button, div, h1, h2, h3, input, label, nav, option, select, span, table, tbody, td, text, th, thead, tr)
 import Html.Attributes exposing (attribute, checked, class, placeholder, required, title, type_, value)
-import Html.Events exposing (onClick, onInput, onSubmit)
+import Html.Events exposing (onClick, onInput, onSubmit, stopPropagationOn)
 import Http
 import Json.Decode as Decode
 import Json.Decode.Pipeline as Pipeline
@@ -39,6 +39,7 @@ type alias Contact =
     { id : Int
     , firstName : String
     , lastName : String
+    , email : String
     , currentCarrier : String
     , planType : String
     , effectiveDate : String
@@ -47,6 +48,7 @@ type alias Contact =
     , gender : String
     , state : String
     , zipCode : String
+    , agentId : Maybe Int
     , lastEmailed : Maybe String
     }
 
@@ -59,6 +61,7 @@ type Modal
 
 type alias Model =
     { contacts : List Contact
+    , selectedContacts : List Int
     , showModal : Modal
     , searchQuery : String
     , addForm : ContactForm
@@ -66,6 +69,8 @@ type alias Model =
     , sortColumn : Maybe SortColumn
     , sortDirection : SortDirection
     , activeFilters : Filters
+    , openFilter : Maybe FilterType
+    , currentTime : Time.Posix
     }
 
 
@@ -73,6 +78,7 @@ type alias ContactForm =
     { id : Maybe Int
     , firstName : String
     , lastName : String
+    , email : String
     , currentCarrier : String
     , planType : String
     , effectiveDate : String
@@ -81,12 +87,14 @@ type alias ContactForm =
     , gender : String
     , state : String
     , zipCode : String
+    , agentId : Maybe Int
     }
 
 
 type SortColumn
     = FirstNameCol
     | LastNameCol
+    | EmailCol
     | CarrierCol
     | PlanTypeCol
     | EffectiveDateCol
@@ -103,11 +111,9 @@ type SortDirection
 
 
 type alias Filters =
-    { birthDateRange : Maybe ( String, String ) -- (start, end)
-    , effectiveDateRange : Maybe ( String, String )
-    , carriers : List String
+    { carriers : List String
     , states : List String
-    , ageRange : Maybe ( Int, Int ) -- (min, max)
+    , ageRange : Maybe ( Int, Int )
     }
 
 
@@ -121,6 +127,7 @@ type alias ZipInfo =
 init : () -> ( Model, Cmd Msg )
 init _ =
     ( { contacts = []
+      , selectedContacts = []
       , showModal = NoModal
       , searchQuery = ""
       , addForm = emptyForm
@@ -128,8 +135,13 @@ init _ =
       , sortColumn = Nothing
       , sortDirection = Ascending
       , activeFilters = emptyFilters
+      , openFilter = Nothing
+      , currentTime = Time.millisToPosix 0
       }
-    , fetchContacts
+    , Cmd.batch
+        [ fetchContacts
+        , Task.perform GotCurrentTime Time.now
+        ]
     )
 
 
@@ -138,6 +150,7 @@ emptyForm =
     { id = Nothing
     , firstName = ""
     , lastName = ""
+    , email = ""
     , currentCarrier = ""
     , planType = ""
     , effectiveDate = ""
@@ -146,14 +159,13 @@ emptyForm =
     , gender = "M"
     , state = ""
     , zipCode = ""
+    , agentId = Nothing
     }
 
 
 emptyFilters : Filters
 emptyFilters =
-    { birthDateRange = Nothing
-    , effectiveDateRange = Nothing
-    , carriers = []
+    { carriers = []
     , states = []
     , ageRange = Nothing
     }
@@ -179,17 +191,26 @@ type Msg
     | HandleKeyDown String
     | SetSort SortColumn
     | ToggleFilter FilterType String
-    | SetDateFilter FilterType String String -- (filterType, start, end)
     | SetAgeFilter Int Int -- (min, max)
     | ClearFilters
     | LookupZipCode String
     | GotZipLookup (Result Http.Error ZipInfo)
     | Batch (List Msg)
+    | ToggleFilterDropdown FilterType
+    | SelectAllFilter FilterType Bool
+    | CloseFilterDropdown
+    | GotCurrentTime Time.Posix
+    | ToggleSelectContact Int
+    | SelectAllContacts
+    | DeselectAllContacts
+    | EmailSelectedCarriers
+    | EmailSelectedContacts
 
 
 type ContactFormField
     = FirstName
     | LastName
+    | Email
     | CurrentCarrier
     | PlanType
     | EffectiveDate
@@ -201,9 +222,7 @@ type ContactFormField
 
 
 type FilterType
-    = BirthDateFilter
-    | EffectiveDateFilter
-    | CarrierFilter
+    = CarrierFilter
     | StateFilter
     | AgeFilter
 
@@ -224,6 +243,7 @@ update msg model =
                     { id = Just contact.id
                     , firstName = contact.firstName
                     , lastName = contact.lastName
+                    , email = contact.email
                     , currentCarrier = contact.currentCarrier
                     , planType = contact.planType
                     , effectiveDate = contact.effectiveDate
@@ -232,6 +252,7 @@ update msg model =
                     , gender = contact.gender
                     , state = contact.state
                     , zipCode = contact.zipCode
+                    , agentId = contact.agentId
                     }
               }
             , Cmd.none
@@ -255,6 +276,9 @@ update msg model =
 
                         LastName ->
                             { form | lastName = value }
+
+                        Email ->
+                            { form | email = value }
 
                         CurrentCarrier ->
                             { form | currentCarrier = value }
@@ -294,6 +318,9 @@ update msg model =
 
                         LastName ->
                             { form | lastName = value }
+
+                        Email ->
+                            { form | email = value }
 
                         CurrentCarrier ->
                             { form | currentCarrier = value }
@@ -403,11 +430,8 @@ update msg model =
         ToggleFilter filterType value ->
             ( { model | activeFilters = toggleFilter model.activeFilters filterType value }, Cmd.none )
 
-        SetDateFilter filterType start end ->
-            ( { model | activeFilters = setDateFilter model.activeFilters filterType ( start, end ) }, Cmd.none )
-
         SetAgeFilter min max ->
-            ( { model | activeFilters = setAgeFilter model.activeFilters min max }, Cmd.none )
+            ( { model | activeFilters = setAgeFilter min max model.activeFilters }, Cmd.none )
 
         ClearFilters ->
             ( { model | activeFilters = emptyFilters }, Cmd.none )
@@ -450,6 +474,103 @@ update msg model =
                 ( model, [] )
                 messages
                 |> (\( m, cs ) -> ( m, Cmd.batch cs ))
+
+        ToggleFilterDropdown filterType ->
+            ( { model
+                | openFilter =
+                    if model.openFilter == Just filterType then
+                        Nothing
+
+                    else
+                        Just filterType
+              }
+            , Cmd.none
+            )
+
+        SelectAllFilter filterType select ->
+            let
+                options =
+                    case filterType of
+                        CarrierFilter ->
+                            getUniqueValues .currentCarrier model.contacts
+
+                        StateFilter ->
+                            getUniqueValues .state model.contacts
+
+                        _ ->
+                            []
+
+                updatedFilters =
+                    case filterType of
+                        CarrierFilter ->
+                            { activeFilters
+                                | carriers =
+                                    if select then
+                                        options
+
+                                    else
+                                        []
+                            }
+
+                        StateFilter ->
+                            { activeFilters
+                                | states =
+                                    if select then
+                                        options
+
+                                    else
+                                        []
+                            }
+
+                        _ ->
+                            model.activeFilters
+
+                activeFilters =
+                    model.activeFilters
+            in
+            ( { model | activeFilters = updatedFilters }, Cmd.none )
+
+        CloseFilterDropdown ->
+            ( { model | openFilter = Nothing }, Cmd.none )
+
+        GotCurrentTime time ->
+            ( { model | currentTime = time }, Cmd.none )
+
+        ToggleSelectContact id ->
+            ( { model
+                | selectedContacts =
+                    if List.member id model.selectedContacts then
+                        List.filter (\x -> x /= id) model.selectedContacts
+
+                    else
+                        id :: model.selectedContacts
+              }
+            , Cmd.none
+            )
+
+        SelectAllContacts ->
+            let
+                visibleContacts =
+                    model.contacts
+                        |> filterContacts model.activeFilters model.searchQuery model.currentTime
+                        |> List.map .id
+            in
+            ( { model | selectedContacts = visibleContacts }
+            , Cmd.none
+            )
+
+        DeselectAllContacts ->
+            ( { model | selectedContacts = [] }
+            , Cmd.none
+            )
+
+        EmailSelectedCarriers ->
+            -- For now, just a placeholder that does nothing
+            ( model, Cmd.none )
+
+        EmailSelectedContacts ->
+            -- For now, just a placeholder that does nothing
+            ( model, Cmd.none )
 
 
 
@@ -542,77 +663,184 @@ viewActionBar model =
                     []
                 ]
             ]
-        , viewFilterPanel model
+        , viewFilters model
         ]
 
 
-viewFilterPanel : Model -> Html Msg
-viewFilterPanel model =
-    div [ class "bg-white p-4 rounded-lg border border-gray-200 space-y-4" ]
-        [ div [ class "flex justify-between items-center" ]
-            [ h3 [ class "text-sm font-medium text-gray-700" ]
-                [ text "Filters" ]
-            , button
-                [ class "text-sm text-purple-600 hover:text-purple-700"
-                , onClick ClearFilters
+viewFilters : Model -> Html Msg
+viewFilters model =
+    div [ class "space-y-4" ]
+        [ h3 [ class "text-lg font-medium text-gray-700" ] [ text "Filters" ]
+        , div [ class "flex space-x-4" ]
+            [ viewFilterDropdown model
+                "Carriers"
+                CarrierFilter
+                (getUniqueValues .currentCarrier model.contacts)
+                model.activeFilters.carriers
+            , viewFilterDropdown model
+                "States"
+                StateFilter
+                (getUniqueValues .state model.contacts)
+                model.activeFilters.states
+            , viewAgeFilter model.activeFilters.ageRange
+            ]
+        ]
+
+
+viewFilterDropdown : Model -> String -> FilterType -> List String -> List String -> Html Msg
+viewFilterDropdown model label_ filterType options selectedValues =
+    let
+        isOpen =
+            model.openFilter == Just filterType
+
+        allSelected =
+            List.length selectedValues == List.length options
+
+        chevronIcon =
+            if isOpen then
+                "M19 9l-7 7-7-7"
+
+            else
+                "M9 5l7 7-7 7"
+
+        selectionDisplay =
+            if List.isEmpty selectedValues then
+                [ span [ class "text-sm text-gray-600" ] [ text "Select..." ] ]
+
+            else if List.length selectedValues == 1 then
+                [ span [ class "text-sm text-gray-600" ] [ text (List.head selectedValues |> Maybe.withDefault "") ] ]
+
+            else
+                [ span [ class "text-sm text-gray-600" ]
+                    [ text (String.fromInt (List.length selectedValues) ++ " selected") ]
+                , if filterType == CarrierFilter && not (List.isEmpty selectedValues) then
+                    button
+                        [ class "ml-2 px-2 py-1 text-xs text-purple-600 hover:text-purple-800 hover:underline"
+                        , onClick EmailSelectedCarriers
+                        ]
+                        [ text "Email" ]
+
+                  else
+                    text ""
                 ]
-                [ text "Clear all" ]
-            ]
-        , div [ class "grid grid-cols-4 gap-4" ]
-            [ viewDateRangeFilter "Birth Date" BirthDateFilter model.activeFilters.birthDateRange
-            , viewDateRangeFilter "Effective Date" EffectiveDateFilter model.activeFilters.effectiveDateRange
-            , viewCheckboxFilter "Carriers" CarrierFilter (getUniqueValues .currentCarrier model.contacts) model.activeFilters.carriers
-            , viewCheckboxFilter "States" StateFilter (getUniqueValues .state model.contacts) model.activeFilters.states
-            ]
-        ]
-
-
-viewDateRangeFilter : String -> FilterType -> Maybe ( String, String ) -> Html Msg
-viewDateRangeFilter label_ filterType maybeRange =
-    div [ class "space-y-2" ]
-        [ label [ class "block text-sm font-medium text-gray-700" ]
+    in
+    div [ class "relative w-48" ]
+        [ label [ class "block text-sm font-medium text-gray-700 mb-2" ]
             [ text label_ ]
-        , div [ class "flex space-x-2" ]
-            [ input
-                [ type_ "date"
-                , class "flex-1 px-2 py-1 border border-gray-200 rounded-md text-sm"
-                , value (Maybe.map Tuple.first maybeRange |> Maybe.withDefault "")
-                , onInput (\val -> SetDateFilter filterType val (Maybe.map Tuple.second maybeRange |> Maybe.withDefault ""))
-                ]
-                []
-            , input
-                [ type_ "date"
-                , class "flex-1 px-2 py-1 border border-gray-200 rounded-md text-sm"
-                , value (Maybe.map Tuple.second maybeRange |> Maybe.withDefault "")
-                , onInput (\val -> SetDateFilter filterType (Maybe.map Tuple.first maybeRange |> Maybe.withDefault "") val)
-                ]
-                []
+        , div
+            [ class "flex items-center justify-between w-full px-4 py-2 bg-white border border-gray-200 rounded-md cursor-pointer hover:bg-gray-50"
+            , onClick (ToggleFilterDropdown filterType)
             ]
-        ]
-
-
-viewCheckboxFilter : String -> FilterType -> List String -> List String -> Html Msg
-viewCheckboxFilter label_ filterType options selectedValues =
-    div [ class "space-y-2" ]
-        [ label [ class "block text-sm font-medium text-gray-700" ]
-            [ text label_ ]
-        , div [ class "space-y-1 max-h-32 overflow-y-auto" ]
-            (List.map
-                (\option ->
-                    label [ class "flex items-center space-x-2" ]
+            [ div [ class "flex items-center space-x-2" ] selectionDisplay
+            , svg
+                [ Svg.Attributes.class "w-5 h-5 text-gray-400"
+                , viewBox "0 0 24 24"
+                , fill "none"
+                , stroke "currentColor"
+                ]
+                [ Svg.path
+                    [ d chevronIcon
+                    , Svg.Attributes.strokeLinecap "round"
+                    , Svg.Attributes.strokeLinejoin "round"
+                    , Svg.Attributes.strokeWidth "2"
+                    ]
+                    []
+                ]
+            ]
+        , if isOpen then
+            div
+                [ class "absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-md shadow-lg"
+                , stopPropagationOn "mousedown" (Decode.succeed ( NoOp, True ))
+                ]
+                [ div [ class "p-2 border-b border-gray-200" ]
+                    [ label [ class "flex items-center space-x-2" ]
                         [ input
                             [ type_ "checkbox"
-                            , checked (List.member option selectedValues)
-                            , onClick (ToggleFilter filterType option)
-                            , class "text-purple-600 rounded focus:ring-purple-500"
+                            , checked allSelected
+                            , onClick (SelectAllFilter filterType (not allSelected))
+                            , class "rounded border-gray-300 text-purple-600 focus:ring-purple-500"
                             ]
                             []
                         , span [ class "text-sm text-gray-600" ]
-                            [ text option ]
+                            [ text "Select All" ]
                         ]
-                )
-                options
-            )
+                    ]
+                , div [ class "max-h-48 overflow-y-auto p-2" ]
+                    (List.map
+                        (\option ->
+                            label
+                                [ class "flex items-center space-x-2 py-1" ]
+                                [ input
+                                    [ type_ "checkbox"
+                                    , checked (List.member option selectedValues)
+                                    , onClick (ToggleFilter filterType option)
+                                    , class "rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                                    ]
+                                    []
+                                , span [ class "text-sm text-gray-600" ]
+                                    [ text option ]
+                                ]
+                        )
+                        options
+                    )
+                ]
+
+          else
+            text ""
+        ]
+
+
+viewAgeFilter : Maybe ( Int, Int ) -> Html Msg
+viewAgeFilter maybeRange =
+    div [ class "w-48" ]
+        [ label [ class "block text-sm font-medium text-gray-700 mb-2" ]
+            [ text "Age Range (years)" ]
+        , div [ class "flex items-center space-x-2" ]
+            [ div [ class "flex items-center space-x-1" ]
+                [ span [ class "text-sm text-gray-600" ] [ text "Min:" ]
+                , input
+                    [ type_ "number"
+                    , class "w-16 px-4 py-2 border border-gray-200 rounded-md text-sm"
+                    , value (Maybe.map (Tuple.first >> String.fromInt) maybeRange |> Maybe.withDefault "")
+                    , onInput
+                        (\val ->
+                            if String.isEmpty val then
+                                SetAgeFilter 0 0
+
+                            else
+                                SetAgeFilter (String.toInt val |> Maybe.withDefault 0) (Maybe.map Tuple.second maybeRange |> Maybe.withDefault 0)
+                        )
+                    ]
+                    []
+                ]
+            , div [ class "flex items-center space-x-1" ]
+                [ span [ class "text-sm text-gray-600" ] [ text "Max:" ]
+                , input
+                    [ type_ "number"
+                    , class "w-16 px-4 py-2 border border-gray-200 rounded-md text-sm"
+                    , value (Maybe.map (Tuple.second >> String.fromInt) maybeRange |> Maybe.withDefault "")
+                    , onInput
+                        (\val ->
+                            if String.isEmpty val then
+                                SetAgeFilter (Maybe.map Tuple.first maybeRange |> Maybe.withDefault 0) 0
+
+                            else
+                                SetAgeFilter (Maybe.map Tuple.first maybeRange |> Maybe.withDefault 0) (String.toInt val |> Maybe.withDefault 0)
+                        )
+                    ]
+                    []
+                ]
+            , case maybeRange of
+                Just _ ->
+                    button
+                        [ class "px-2 py-1 text-xs text-gray-600 hover:text-gray-800 border border-gray-200 rounded-md hover:border-gray-300 bg-white hover:bg-gray-50 transition-colors duration-200"
+                        , onClick (SetAgeFilter 0 0)
+                        ]
+                        [ text "Reset" ]
+
+                Nothing ->
+                    text ""
+            ]
         ]
 
 
@@ -621,42 +849,96 @@ viewContactsTable model =
     let
         filteredAndSortedContacts =
             model.contacts
-                |> filterContacts model.activeFilters model.searchQuery
+                |> filterContacts model.activeFilters model.searchQuery model.currentTime
                 |> sortContacts model.sortColumn model.sortDirection
+
+        selectionCount =
+            List.length model.selectedContacts
+
+        selectionText =
+            case selectionCount of
+                0 ->
+                    "No contacts selected"
+
+                1 ->
+                    "1 contact selected"
+
+                n ->
+                    String.fromInt n ++ " contacts selected"
     in
-    div [ class "bg-white shadow-sm rounded-lg border border-gray-200" ]
-        [ div [ class "overflow-x-auto" ]
-            [ table [ class "min-w-full table-fixed" ]
-                [ viewTableHeader model
-                , tbody [ class "divide-y divide-gray-200" ]
-                    (List.map viewContactRow filteredAndSortedContacts)
+    div []
+        [ div [ class "mb-4 flex items-center space-x-2" ]
+            -- Changed to space-x-2 and removed justify-between
+            [ span [ class "text-sm text-gray-600" ]
+                [ text selectionText ]
+            , if selectionCount > 0 then
+                button
+                    [ class "px-2 py-1 text-sm text-purple-600 hover:text-purple-800 hover:bg-purple-50 rounded-md transition-colors duration-200 flex items-center space-x-1"
+                    , onClick EmailSelectedContacts
+                    ]
+                    [ viewIcon "M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+                    , span [] [ text "Email" ]
+                    ]
+
+              else
+                text ""
+            ]
+        , div [ class "bg-white shadow-sm rounded-lg border border-gray-200" ]
+            [ div [ class "overflow-x-auto" ]
+                [ table [ class "min-w-full table-fixed" ]
+                    [ viewTableHeader model filteredAndSortedContacts
+                    , tbody [ class "divide-y divide-gray-200" ]
+                        (List.map (viewContactRow model) filteredAndSortedContacts)
+                    ]
                 ]
             ]
         ]
 
 
-viewTableHeader : Model -> Html Msg
-viewTableHeader model =
+viewTableHeader : Model -> List Contact -> Html Msg
+viewTableHeader model visibleContacts =
+    let
+        allSelected =
+            not (List.isEmpty model.selectedContacts)
+                && List.length model.selectedContacts
+                == List.length visibleContacts
+    in
     thead []
         [ tr [ class "bg-gray-50 border-b border-gray-200" ]
-            (List.map
-                (\( col, label ) ->
-                    viewSortableHeaderCell model col label
-                )
-                [ ( FirstNameCol, "First Name" )
-                , ( LastNameCol, "Last Name" )
-                , ( CarrierCol, "Current Carrier" )
-                , ( PlanTypeCol, "Plan Type" )
-                , ( EffectiveDateCol, "Effective Date" )
-                , ( BirthDateCol, "Birth Date" )
-                , ( TobaccoCol, "Tobacco" )
-                , ( GenderCol, "Gender" )
-                , ( StateCol, "State" )
-                , ( ZipCodeCol, "ZIP Code" )
+            (th
+                [ class "w-12 px-4 py-3 border-r border-gray-200" ]
+                [ div [ class "flex items-center justify-between" ]
+                    [ input
+                        [ type_ "checkbox"
+                        , class "rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                        , checked allSelected
+                        , onClick
+                            (if allSelected then
+                                DeselectAllContacts
+
+                             else
+                                SelectAllContacts
+                            )
+                        ]
+                        []
+                    ]
                 ]
-                ++ [ th [ class "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-r border-gray-200" ]
-                        [ text "Actions" ]
-                   ]
+                :: List.map
+                    (\( col, label ) ->
+                        viewSortableHeaderCell model col label
+                    )
+                    [ ( FirstNameCol, "First Name" )
+                    , ( LastNameCol, "Last Name" )
+                    , ( EmailCol, "Email" )
+                    , ( CarrierCol, "Current Carrier" )
+                    , ( PlanTypeCol, "Plan Type" )
+                    , ( EffectiveDateCol, "Effective Date" )
+                    , ( BirthDateCol, "Birth Date" )
+                    , ( TobaccoCol, "Tobacco" )
+                    , ( GenderCol, "Gender" )
+                    , ( StateCol, "State" )
+                    , ( ZipCodeCol, "ZIP Code" )
+                    ]
             )
         ]
 
@@ -688,33 +970,45 @@ viewSortIcon model column =
         text ""
 
 
-viewContactRow : Contact -> Html Msg
-viewContactRow contact =
+viewContactRow : Model -> Contact -> Html Msg
+viewContactRow model contact =
     let
         mainClass =
             [ class "px-4 py-3 text-sm text-gray-900 border-r border-gray-200" ]
     in
     tr [ class "hover:bg-gray-50" ]
-        [ td mainClass [ text contact.firstName ]
-        , td mainClass [ text contact.lastName ]
-        , td mainClass [ text contact.currentCarrier ]
-        , td mainClass [ text contact.planType ]
-        , td mainClass [ text contact.effectiveDate ]
-        , td mainClass [ text contact.birthDate ]
-        , td mainClass
-            [ text
-                (if contact.tobaccoUser then
-                    "Yes"
-
-                 else
-                    "No"
-                )
+        (td
+            [ class "w-12 px-4 py-3 border-r border-gray-200" ]
+            [ input
+                [ type_ "checkbox"
+                , class "rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                , checked (List.member contact.id model.selectedContacts)
+                , onClick (ToggleSelectContact contact.id)
+                ]
+                []
             ]
-        , td mainClass [ text contact.gender ]
-        , td mainClass [ text contact.state ]
-        , td mainClass [ text contact.zipCode ]
-        , td [ class "px-4 py-3 text-sm text-gray-900" ] [ viewContactActions contact ]
-        ]
+            :: [ td mainClass [ text contact.firstName ]
+               , td mainClass [ text contact.lastName ]
+               , td mainClass [ text contact.email ]
+               , td mainClass [ text contact.currentCarrier ]
+               , td mainClass [ text contact.planType ]
+               , td mainClass [ text contact.effectiveDate ]
+               , td mainClass [ text contact.birthDate ]
+               , td mainClass
+                    [ text
+                        (if contact.tobaccoUser then
+                            "Yes"
+
+                         else
+                            "No"
+                        )
+                    ]
+               , td mainClass [ text contact.gender ]
+               , td mainClass [ text contact.state ]
+               , td mainClass [ text contact.zipCode ]
+               , td [ class "px-4 py-3 text-sm text-gray-900" ] [ viewContactActions contact ]
+               ]
+        )
 
 
 viewContactActions : Contact -> Html Msg
@@ -799,6 +1093,7 @@ contactDecoder =
         |> Pipeline.required "id" Decode.int
         |> Pipeline.required "first_name" Decode.string
         |> Pipeline.required "last_name" Decode.string
+        |> Pipeline.required "email" Decode.string
         |> Pipeline.required "current_carrier" Decode.string
         |> Pipeline.required "plan_type" Decode.string
         |> Pipeline.required "effective_date" Decode.string
@@ -807,7 +1102,8 @@ contactDecoder =
         |> Pipeline.required "gender" Decode.string
         |> Pipeline.required "state" Decode.string
         |> Pipeline.required "zip_code" Decode.string
-        |> Pipeline.optional "last_emailed" (Decode.nullable Decode.string) Nothing
+        |> Pipeline.optional "agent_id" (Decode.nullable Decode.int) Nothing
+        |> Pipeline.optional "last_emailed_date" (Decode.nullable Decode.string) Nothing
 
 
 contactsDecoder : Decode.Decoder (List Contact)
@@ -820,6 +1116,7 @@ encodeContactForm form =
     Encode.object
         [ ( "first_name", Encode.string form.firstName )
         , ( "last_name", Encode.string form.lastName )
+        , ( "email", Encode.string form.email )
         , ( "current_carrier", Encode.string form.currentCarrier )
         , ( "plan_type", Encode.string form.planType )
         , ( "effective_date", Encode.string form.effectiveDate )
@@ -828,6 +1125,7 @@ encodeContactForm form =
         , ( "gender", Encode.string form.gender )
         , ( "state", Encode.string form.state )
         , ( "zip_code", Encode.string form.zipCode )
+        , ( "agent_id", Maybe.map Encode.int form.agentId |> Maybe.withDefault Encode.null )
         ]
 
 
@@ -882,6 +1180,7 @@ viewContactForm form updateMsg submitMsg buttonText =
         [ div [ class "grid grid-cols-2 gap-x-8 gap-y-6" ]
             [ viewFormInput "First Name" "text" form.firstName FirstName updateMsg True
             , viewFormInput "Last Name" "text" form.lastName LastName updateMsg True
+            , viewFormInput "Email" "text" form.email Email updateMsg True
             , viewFormInput "Current Carrier" "text" form.currentCarrier CurrentCarrier updateMsg True
             , viewFormInput "Plan Type" "text" form.planType PlanType updateMsg True
             , viewFormInput "Effective Date" "date" form.effectiveDate EffectiveDate updateMsg True
@@ -1002,12 +1301,20 @@ viewFormSelect labelText selectedValue field updateMsg options =
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
-    case model.showModal of
-        NoModal ->
-            Sub.none
+    Sub.batch
+        [ case model.showModal of
+            NoModal ->
+                Sub.none
 
-        _ ->
-            Browser.Events.onKeyDown (Decode.map HandleKeyDown (Decode.field "key" Decode.string))
+            _ ->
+                Browser.Events.onKeyDown (Decode.map HandleKeyDown (Decode.field "key" Decode.string))
+        , case model.openFilter of
+            Just _ ->
+                Browser.Events.onMouseDown (Decode.succeed CloseFilterDropdown)
+
+            Nothing ->
+                Sub.none
+        ]
 
 
 sortContacts : Maybe SortColumn -> SortDirection -> List Contact -> List Contact
@@ -1025,6 +1332,9 @@ sortContacts maybeColumn direction contacts =
 
                         LastNameCol ->
                             \a b -> compare a.lastName b.lastName
+
+                        EmailCol ->
+                            \a b -> compare a.email b.email
 
                         CarrierCol ->
                             \a b -> compare a.currentCarrier b.currentCarrier
@@ -1073,12 +1383,10 @@ sortContacts maybeColumn direction contacts =
                 contacts
 
 
-filterContacts : Filters -> String -> List Contact -> List Contact
-filterContacts filters searchQuery contacts =
+filterContacts : Filters -> String -> Time.Posix -> List Contact -> List Contact
+filterContacts filters searchQuery currentTime contacts =
     contacts
         |> filterBySearch searchQuery
-        |> filterByDateRange .birthDate filters.birthDateRange
-        |> filterByDateRange .effectiveDate filters.effectiveDateRange
         |> filterByList .currentCarrier filters.carriers
         |> filterByList .state filters.states
         |> filterByAge filters.ageRange
@@ -1099,37 +1407,6 @@ filterBySearch query contacts =
                 String.contains loweredQuery (String.toLower contact.firstName)
                     || String.contains loweredQuery (String.toLower contact.lastName)
                     || String.contains loweredQuery (String.toLower contact.currentCarrier)
-            )
-            contacts
-
-
-filterByDateRange : (Contact -> String) -> Maybe ( String, String ) -> List Contact -> List Contact
-filterByDateRange getter maybeRange contacts =
-    case maybeRange of
-        Nothing ->
-            contacts
-
-        Just ( start, end ) ->
-            List.filter
-                (\contact ->
-                    let
-                        date =
-                            getter contact
-                    in
-                    date >= start && date <= end
-                )
-                contacts
-
-
-filterByList : (Contact -> String) -> List String -> List Contact -> List Contact
-filterByList getter values contacts =
-    if List.isEmpty values then
-        contacts
-
-    else
-        List.filter
-            (\contact ->
-                List.member (getter contact) values
             )
             contacts
 
@@ -1161,12 +1438,6 @@ calculateAge birthDate =
 toggleFilter : Filters -> FilterType -> String -> Filters
 toggleFilter filters filterType value =
     case filterType of
-        BirthDateFilter ->
-            { filters | birthDateRange = toggleRange filters.birthDateRange value }
-
-        EffectiveDateFilter ->
-            { filters | effectiveDateRange = toggleRange filters.effectiveDateRange value }
-
         CarrierFilter ->
             { filters | carriers = toggleList filters.carriers value }
 
@@ -1175,23 +1446,6 @@ toggleFilter filters filterType value =
 
         AgeFilter ->
             { filters | ageRange = toggleAgeRange filters.ageRange value }
-
-
-toggleRange : Maybe ( String, String ) -> String -> Maybe ( String, String )
-toggleRange maybeRange value =
-    case maybeRange of
-        Nothing ->
-            Just ( value, value )
-
-        Just ( start, end ) ->
-            if start == value then
-                Just ( value, end )
-
-            else if end == value then
-                Just ( start, value )
-
-            else
-                Just ( start, end )
 
 
 toggleList : List String -> String -> List String
@@ -1220,22 +1474,14 @@ toggleAgeRange maybeRange value =
                 Just ( min, max )
 
 
-setDateFilter : Filters -> FilterType -> ( String, String ) -> Filters
-setDateFilter filters filterType ( start, end ) =
-    case filterType of
-        BirthDateFilter ->
-            { filters | birthDateRange = Just ( start, end ) }
+setAgeFilter : Int -> Int -> Filters -> Filters
+setAgeFilter min max filters =
+    if max < 1 then
+        { filters | ageRange = Nothing }
+        -- Don't apply filter if max is 0 or negative
 
-        EffectiveDateFilter ->
-            { filters | effectiveDateRange = Just ( start, end ) }
-
-        _ ->
-            filters
-
-
-setAgeFilter : Filters -> Int -> Int -> Filters
-setAgeFilter filters min max =
-    { filters | ageRange = Just ( min, max ) }
+    else
+        { filters | ageRange = Just ( min, max ) }
 
 
 
@@ -1256,3 +1502,16 @@ zipInfoDecoder =
         |> Pipeline.required "state" Decode.string
         |> Pipeline.required "counties" (Decode.list Decode.string)
         |> Pipeline.required "cities" (Decode.list Decode.string)
+
+
+filterByList : (Contact -> String) -> List String -> List Contact -> List Contact
+filterByList getter selectedValues contacts =
+    if List.isEmpty selectedValues then
+        contacts
+
+    else
+        List.filter
+            (\contact ->
+                List.member (getter contact) selectedValues
+            )
+            contacts

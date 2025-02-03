@@ -1,10 +1,11 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 from datetime import date
 from typing import Optional
 
 class ContactBase(BaseModel):
     first_name: str
     last_name: str
+    email: EmailStr
     current_carrier: str
     plan_type: str
     effective_date: date
@@ -13,6 +14,7 @@ class ContactBase(BaseModel):
     gender: str = Field(..., pattern="^[MF]$")
     state: str
     zip_code: str
+    agent_id: Optional[int] = None
     last_emailed_date: Optional[date] = None
 
 class ContactCreate(ContactBase):
