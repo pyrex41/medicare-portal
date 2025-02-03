@@ -36,5 +36,12 @@ class Database:
         result = conn.execute(query, params)
         return result.fetchone()
 
+    def update(self, query: str, params: tuple = None):
+        """Execute an update query and return the updated row"""
+        conn = self.get_connection()
+        result = conn.execute(query, params)
+        conn.commit()
+        return result.fetchone()
+
 def get_db():
     return Database()

@@ -1,0 +1,10 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom styles can go here */
+.form-group {
+  @apply mb-4;
+}
+
+/* Add any other custom styles as needed */ 
