@@ -108,7 +108,6 @@ const startServer = async () => {
             zip_code: contact[11],
             last_emailed: contact[12],
             created_at: contact[13],
-            updated_at: contact[14]
           }))
 
           logger.info(`GET /api/contacts - Returning ${mappedContacts.length} contacts`)
@@ -167,7 +166,6 @@ const startServer = async () => {
             agent_id: row[12],
             last_emailed_date: row[13],
             created_at: row[14],
-            updated_at: row[15]
           }
         } catch (e) {
           logger.error(`Error creating contact: ${e}`)
@@ -193,7 +191,6 @@ const startServer = async () => {
               gender = ?,
               state = ?,
               zip_code = ?,
-              updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             RETURNING *
           ` : `
@@ -210,7 +207,6 @@ const startServer = async () => {
               state = ?,
               zip_code = ?,
               agent_id = ?,
-              updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             RETURNING *
           `
@@ -263,7 +259,6 @@ const startServer = async () => {
             agent_id: row[12],
             last_emailed_date: row[13],
             created_at: row[14],
-            updated_at: row[15]
           }
         } catch (e) {
           logger.error(`Error updating contact: ${e}`)
@@ -472,8 +467,7 @@ const startServer = async () => {
                   tobacco_user = ?,
                   gender = ?,
                   state = ?,
-                  zip_code = ?,
-                  updated_at = CURRENT_TIMESTAMP
+                  zip_code = ?
                 WHERE LOWER(email) = ?
               `
 

@@ -17,8 +17,10 @@ export class Database {
 
     try {
       this.client = createClient({
-        url: config.TURSO_DATABASE_URL,
-        authToken: config.TURSO_AUTH_TOKEN
+        url: "file:" + config.TURSO_DATABASE_PATH,
+        syncUrl: config.TURSO_DATABASE_URL,
+        authToken: config.TURSO_AUTH_TOKEN,
+        offline: true,
       })
       logger.info('Database client created successfully')
     } catch (error) {
@@ -32,6 +34,8 @@ export class Database {
     try {
       await this.initTables()
       logger.info('Database tables initialized successfully')
+      await this.client.sync();
+      logger.info('Database synced successfully')
 
       // Check contact count
       const countResult = await this.client.execute('SELECT COUNT(*) as count FROM contacts')
@@ -91,10 +95,22 @@ export class Database {
         sql,
         args
       })
+      await this.client.sync();
       return result.rows
     } catch (error) {
       logger.error(`Database execute error: ${error}`)
       throw error
+    }
+  }
+
+  async executeMany(statements: (string | { sql: string, args?: any[] })[]) {
+    try {
+      const results = await this.client.batch(statements, "write");
+      await this.client.sync();
+      return results.map(result => result.rows);
+    } catch (error) {
+      logger.error(`Database executeMany error: ${error}`);
+      throw error;
     }
   }
 

@@ -26,7 +26,7 @@ if (result.error) {
 // Debug: Print raw env file path and contents
 console.log('📁 Loading .env from:', envPath)
 console.log('📝 Environment variables loaded:', {
-  TURSO_DATABASE_URL: process.env.TURSO_DATABASE_URL?.substring(0, 20) + '...',
+  TURSO_DATABASE_URL: process.env.TURSO_DATABASE_URL,
   TURSO_AUTH_TOKEN: process.env.TURSO_AUTH_TOKEN ? '[PRESENT]' : '[MISSING]',
   TURSO_DATABASE_PATH: process.env.TURSO_DATABASE_PATH
 })
