@@ -75,6 +75,10 @@ type alias Model =
     , activeFilters : Filters
     , openFilter : Maybe FilterType
     , currentTime : Time.Posix
+    , isLoadingContacts : Bool
+    , isUploadingCsv : Bool
+    , isDeletingContacts : Bool
+    , isSubmittingForm : Bool
     }
 
 
@@ -134,6 +138,7 @@ type alias UploadState =
     , error : Maybe String
     , errorCsv : Maybe String
     , stats : Maybe UploadStats
+    , overwriteDuplicates : Bool
     }
 
 
@@ -164,6 +169,10 @@ init _ =
       , activeFilters = emptyFilters
       , openFilter = Nothing
       , currentTime = Time.millisToPosix 0
+      , isLoadingContacts = True
+      , isUploadingCsv = False
+      , isDeletingContacts = False
+      , isSubmittingForm = False
       }
     , Cmd.batch
         [ fetchContacts
@@ -205,6 +214,7 @@ emptyUploadState =
     , error = Nothing
     , errorCsv = Nothing
     , stats = Nothing
+    , overwriteDuplicates = True
     }
 
 
@@ -253,6 +263,7 @@ type Msg
     | DownloadErrorCsv String
     | DeleteSelectedContacts
     | ContactsDeleted (Result Http.Error DeleteResponse)
+    | ToggleOverwriteDuplicates Bool
 
 
 type ContactFormField
@@ -397,13 +408,17 @@ update msg model =
             ( { model | editForm = updatedForm }, Cmd.none )
 
         SubmitAddForm ->
-            ( model, submitAddForm model.addForm )
+            ( { model | isSubmittingForm = True }
+            , submitAddForm model.addForm
+            )
 
         SubmitEditForm ->
-            ( model, submitEditForm model.editForm )
+            ( { model | isSubmittingForm = True }
+            , submitEditForm model.editForm
+            )
 
         GotContacts (Ok contacts) ->
-            ( { model | contacts = contacts }, Cmd.none )
+            ( { model | contacts = contacts, isLoadingContacts = False }, Cmd.none )
 
         GotContacts (Err error) ->
             let
@@ -412,31 +427,35 @@ update msg model =
             in
             ( model, Cmd.none )
 
-        -- TODO: Handle error
         ContactAdded (Ok contact) ->
             ( { model
                 | contacts = contact :: model.contacts
                 , showModal = NoModal
                 , addForm = emptyForm
+                , isSubmittingForm = False
               }
             , Cmd.none
             )
 
         ContactAdded (Err _) ->
-            ( model, Cmd.none )
+            ( { model | isSubmittingForm = False }
+            , Cmd.none
+            )
 
-        -- TODO: Handle error
         ContactUpdated (Ok contact) ->
             ( { model
                 | contacts = updateContact contact model.contacts
                 , showModal = NoModal
                 , editForm = emptyForm
+                , isSubmittingForm = False
               }
             , Cmd.none
             )
 
         ContactUpdated (Err _) ->
-            ( model, Cmd.none )
+            ( { model | isSubmittingForm = False }
+            , Cmd.none
+            )
 
         HandleKeyDown key ->
             if key == "Escape" then
@@ -673,15 +692,10 @@ update msg model =
                     case state.file of
                         Just file ->
                             ( { model
-                                | showModal =
-                                    CsvUploadModal
-                                        { state
-                                            | error = Nothing
-                                            , errorCsv = Nothing
-                                            , stats = Nothing
-                                        }
+                                | showModal = CsvUploadModal { state | error = Nothing, errorCsv = Nothing, stats = Nothing }
+                                , isUploadingCsv = True
                               }
-                            , uploadCsv file
+                            , uploadCsv file state.overwriteDuplicates
                             )
 
                         Nothing ->
@@ -696,11 +710,9 @@ update msg model =
                     case model.showModal of
                         CsvUploadModal state ->
                             if response.success && response.errorRows == 0 then
-                                -- Only close modal if there are no errors
                                 NoModal
 
                             else
-                                -- Keep modal open with error info
                                 CsvUploadModal
                                     { state
                                         | error = Just response.message
@@ -716,9 +728,11 @@ update msg model =
                         _ ->
                             model.showModal
             in
-            ( { model | showModal = currentModal }
+            ( { model
+                | showModal = currentModal
+                , isUploadingCsv = False
+              }
             , if response.success then
-                -- Always fetch contacts if any were successfully imported
                 fetchContacts
 
               else
@@ -750,7 +764,7 @@ update msg model =
             )
 
         DeleteSelectedContacts ->
-            ( model
+            ( { model | isDeletingContacts = True }
             , if List.isEmpty model.selectedContacts then
                 Cmd.none
 
@@ -763,15 +777,26 @@ update msg model =
                 ( { model
                     | contacts = List.filter (\c -> not (List.member c.id response.deletedIds)) model.contacts
                     , selectedContacts = []
+                    , isDeletingContacts = False
                   }
                 , fetchContacts
                 )
 
             else
-                ( model, Cmd.none )
+                ( { model | isDeletingContacts = False }, Cmd.none )
 
         ContactsDeleted (Err _) ->
             ( model, Cmd.none )
+
+        ToggleOverwriteDuplicates value ->
+            case model.showModal of
+                CsvUploadModal state ->
+                    ( { model | showModal = CsvUploadModal { state | overwriteDuplicates = value } }
+                    , Cmd.none
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
 
 
 
@@ -1049,61 +1074,73 @@ viewAgeFilter maybeRange =
 
 viewContactsTable : Model -> Html Msg
 viewContactsTable model =
-    let
-        filteredAndSortedContacts =
-            model.contacts
-                |> filterContacts model.activeFilters model.searchQuery model.currentTime
-                |> sortContacts model.sortColumn model.sortDirection
-
-        selectionCount =
-            List.length model.selectedContacts
-
-        selectionText =
-            case selectionCount of
-                0 ->
-                    "No contacts selected"
-
-                1 ->
-                    "1 contact selected"
-
-                n ->
-                    String.fromInt n ++ " contacts selected"
-    in
-    div []
-        [ div [ class "mb-4 flex items-center space-x-2" ]
-            [ span [ class "text-sm text-gray-600" ]
-                [ text selectionText ]
-            , if selectionCount > 0 then
-                div [ class "flex space-x-2" ]
-                    [ button
-                        [ class "px-2 py-1 text-sm text-purple-600 hover:text-purple-800 hover:bg-purple-50 rounded-md transition-colors duration-200 flex items-center space-x-1"
-                        , onClick EmailSelectedContacts
-                        ]
-                        [ viewIcon "M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
-                        , span [] [ text "Email" ]
-                        ]
-                    , button
-                        [ class "px-2 py-1 text-sm text-red-600 hover:text-red-800 hover:bg-red-50 rounded-md transition-colors duration-200 flex items-center space-x-1"
-                        , onClick DeleteSelectedContacts
-                        ]
-                        [ viewIcon "M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                        , span [] [ text "Delete" ]
-                        ]
-                    ]
-
-              else
-                text ""
+    if model.isLoadingContacts then
+        div [ class "flex justify-center items-center h-64" ]
+            [ viewSpinner
+            , span [ class "ml-2 text-gray-600" ] [ text "Loading contacts..." ]
             ]
-        , div [ class "bg-white shadow-sm rounded-lg border border-gray-200" ]
-            [ div [ class "overflow-x-auto" ]
-                [ table [ class "min-w-full table-fixed" ]
-                    [ viewTableHeader model filteredAndSortedContacts
-                    , tbody [ class "divide-y divide-gray-200" ]
-                        (List.map (viewContactRow model) filteredAndSortedContacts)
+
+    else
+        let
+            filteredAndSortedContacts =
+                model.contacts
+                    |> filterContacts model.activeFilters model.searchQuery model.currentTime
+                    |> sortContacts model.sortColumn model.sortDirection
+
+            selectionCount =
+                List.length model.selectedContacts
+
+            selectionText =
+                case selectionCount of
+                    0 ->
+                        "No contacts selected"
+
+                    1 ->
+                        "1 contact selected"
+
+                    n ->
+                        String.fromInt n ++ " contacts selected"
+        in
+        div []
+            [ div [ class "mb-4 flex items-center space-x-2" ]
+                [ span [ class "text-sm text-gray-600" ]
+                    [ text selectionText ]
+                , if selectionCount > 0 then
+                    div [ class "flex space-x-2" ]
+                        [ button
+                            [ class "px-2 py-1 text-sm text-purple-600 hover:text-purple-800 hover:bg-purple-50 rounded-md transition-colors duration-200 flex items-center space-x-1"
+                            , onClick EmailSelectedContacts
+                            ]
+                            [ viewIcon "M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+                            , span [] [ text "Email" ]
+                            ]
+                        , if model.isDeletingContacts then
+                            div [ class "px-2 py-1 flex items-center space-x-1" ]
+                                [ viewSpinner ]
+
+                          else
+                            button
+                                [ class "px-2 py-1 text-sm text-red-600 hover:text-red-800 hover:bg-red-50 rounded-md transition-colors duration-200 flex items-center space-x-1"
+                                , onClick DeleteSelectedContacts
+                                ]
+                                [ viewIcon "M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                                , span [] [ text "Delete" ]
+                                ]
+                        ]
+
+                  else
+                    text ""
+                ]
+            , div [ class "bg-white shadow-sm rounded-lg border border-gray-200" ]
+                [ div [ class "overflow-x-auto" ]
+                    [ table [ class "min-w-full table-fixed" ]
+                        [ viewTableHeader model filteredAndSortedContacts
+                        , tbody [ class "divide-y divide-gray-200" ]
+                            (List.map (viewContactRow model) filteredAndSortedContacts)
+                        ]
                     ]
                 ]
             ]
-        ]
 
 
 viewTableHeader : Model -> List Contact -> Html Msg
@@ -1217,13 +1254,13 @@ viewContactRow model contact =
                , td mainClass [ text contact.gender ]
                , td mainClass [ text contact.state ]
                , td mainClass [ text contact.zipCode ]
-               , td [ class "px-4 py-3 text-sm text-gray-900" ] [ viewContactActions contact ]
+               , td [ class "px-4 py-3 text-sm text-gray-900" ] [ viewContactActions contact model.isDeletingContacts ]
                ]
         )
 
 
-viewContactActions : Contact -> Html Msg
-viewContactActions contact =
+viewContactActions : Contact -> Bool -> Html Msg
+viewContactActions contact isDeleting =
     div [ class "flex space-x-2 justify-center" ]
         [ button
             [ class "text-gray-400 hover:text-purple-500 transition-colors duration-200"
@@ -1347,17 +1384,17 @@ viewModals model =
             text ""
 
         AddModal ->
-            viewAddModal model.addForm
+            viewAddModal model.addForm model.isSubmittingForm
 
         EditModal contact ->
-            viewEditModal model.editForm
+            viewEditModal model.editForm model.isSubmittingForm
 
         CsvUploadModal state ->
-            viewCsvUploadModal state
+            viewCsvUploadModal state model.isUploadingCsv
 
 
-viewAddModal : ContactForm -> Html Msg
-viewAddModal form =
+viewAddModal : ContactForm -> Bool -> Html Msg
+viewAddModal form isSubmitting =
     div [ class "fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center p-8" ]
         [ div [ class "bg-white rounded-xl p-10 max-w-5xl w-full mx-4 shadow-xl relative" ]
             [ button
@@ -1367,13 +1404,13 @@ viewAddModal form =
                 [ viewIcon "M6 18L18 6M6 6l12 12" ]
             , h2 [ class "text-2xl font-semibold text-gray-900 mb-8" ]
                 [ text "Add New Client" ]
-            , viewContactForm form UpdateAddForm SubmitAddForm "Add Client"
+            , viewContactForm form UpdateAddForm SubmitAddForm "Add Client" isSubmitting
             ]
         ]
 
 
-viewEditModal : ContactForm -> Html Msg
-viewEditModal form =
+viewEditModal : ContactForm -> Bool -> Html Msg
+viewEditModal form isSubmitting =
     div [ class "fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center p-8" ]
         [ div [ class "bg-white rounded-xl p-10 max-w-5xl w-full mx-4 shadow-xl relative" ]
             [ button
@@ -1383,13 +1420,13 @@ viewEditModal form =
                 [ viewIcon "M6 18L18 6M6 6l12 12" ]
             , h2 [ class "text-2xl font-semibold text-gray-900 mb-8" ]
                 [ text "Edit Client" ]
-            , viewContactForm form UpdateEditForm SubmitEditForm "Save Changes"
+            , viewContactForm form UpdateEditForm SubmitEditForm "Save Changes" isSubmitting
             ]
         ]
 
 
-viewCsvUploadModal : UploadState -> Html Msg
-viewCsvUploadModal state =
+viewCsvUploadModal : UploadState -> Bool -> Html Msg
+viewCsvUploadModal state isUploading =
     div [ class "fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center p-8" ]
         [ div [ class "bg-white rounded-xl p-10 max-w-2xl w-full mx-4 shadow-xl relative" ]
             [ button
@@ -1399,6 +1436,26 @@ viewCsvUploadModal state =
                 [ viewIcon "M6 18L18 6M6 6l12 12" ]
             , h2 [ class "text-2xl font-semibold text-gray-900 mb-8" ]
                 [ text "Upload CSV" ]
+            , div [ class "mb-6 text-sm text-gray-600" ]
+                [ text "Need help formatting your CSV? "
+                , Html.a
+                    [ class "text-purple-600 hover:text-purple-800 hover:underline"
+                    , Html.Attributes.href "/example.csv"
+                    , Html.Attributes.download "example.csv"
+                    ]
+                    [ text "Download example CSV file" ]
+                ]
+            , div [ class "mb-4 flex items-center space-x-2" ]
+                [ input
+                    [ type_ "checkbox"
+                    , checked state.overwriteDuplicates
+                    , onInput (\val -> ToggleOverwriteDuplicates (val == "true"))
+                    , class "rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                    ]
+                    []
+                , label [ class "text-sm text-gray-600" ]
+                    [ text "Overwrite existing contacts with matching email addresses" ]
+                ]
             , div
                 [ class
                     ("w-full h-64 border-2 border-dashed rounded-lg flex flex-col items-center justify-center p-8 transition-colors "
@@ -1472,12 +1529,17 @@ viewCsvUploadModal state =
                     , onClick CloseModal
                     ]
                     [ text "Cancel" ]
-                , button
-                    [ class "px-6 py-3 bg-purple-500 text-white text-sm font-medium rounded-lg hover:bg-purple-600 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                    , onClick UploadCsv
-                    , Html.Attributes.disabled (state.file == Nothing)
-                    ]
-                    [ text "Upload" ]
+                , if isUploading then
+                    div [ class "px-6 py-3 flex items-center space-x-2" ]
+                        [ viewSpinner ]
+
+                  else
+                    button
+                        [ class "px-6 py-3 bg-purple-500 text-white text-sm font-medium rounded-lg hover:bg-purple-600 transition-colors duration-200"
+                        , onClick UploadCsv
+                        , Html.Attributes.disabled (state.file == Nothing)
+                        ]
+                        [ text "Upload" ]
                 ]
             ]
         ]
@@ -1489,11 +1551,24 @@ dropDecoder toMsg =
         |> Decode.map (\file -> ( toMsg file, True ))
 
 
-uploadCsv : File -> Cmd Msg
-uploadCsv file =
+uploadCsv : File -> Bool -> Cmd Msg
+uploadCsv file overwriteDuplicates =
+    let
+        body =
+            Http.multipartBody
+                [ Http.filePart "file" file
+                , Http.stringPart "overwrite_duplicates"
+                    (if overwriteDuplicates then
+                        "true"
+
+                     else
+                        "false"
+                    )
+                ]
+    in
     Http.post
         { url = "http://localhost:8000/api/contacts/upload"
-        , body = Http.multipartBody [ Http.filePart "file" file ]
+        , body = body
         , expect = Http.expectJson CsvUploaded uploadResponseDecoder
         }
 
@@ -1748,8 +1823,8 @@ filterByList getter selectedValues contacts =
             contacts
 
 
-viewContactForm : ContactForm -> (ContactFormField -> String -> Msg) -> Msg -> String -> Html Msg
-viewContactForm form updateMsg submitMsg buttonText =
+viewContactForm : ContactForm -> (ContactFormField -> String -> Msg) -> Msg -> String -> Bool -> Html Msg
+viewContactForm form updateMsg submitMsg buttonText isSubmitting =
     Html.form [ onSubmit submitMsg ]
         [ div [ class "grid grid-cols-2 gap-x-8 gap-y-6" ]
             [ viewFormInput "First Name" "text" form.firstName FirstName updateMsg True
@@ -1825,11 +1900,16 @@ viewContactForm form updateMsg submitMsg buttonText =
                 , class "px-6 py-3 bg-white text-gray-700 text-sm font-medium rounded-lg border-2 border-gray-200 hover:border-gray-300 hover:bg-gray-50 transition-colors duration-200 focus:ring-4 focus:ring-purple-100"
                 ]
                 [ text "Cancel" ]
-            , button
-                [ type_ "submit"
-                , class "px-6 py-3 bg-purple-500 text-white text-sm font-medium rounded-lg hover:bg-purple-600 transition-colors duration-200 focus:ring-4 focus:ring-purple-200"
-                ]
-                [ text buttonText ]
+            , if isSubmitting then
+                div [ class "px-6 py-3 flex items-center space-x-2" ]
+                    [ viewSpinner ]
+
+              else
+                button
+                    [ type_ "submit"
+                    , class "px-6 py-3 bg-purple-500 text-white text-sm font-medium rounded-lg hover:bg-purple-600 transition-colors duration-200 focus:ring-4 focus:ring-purple-200"
+                    ]
+                    [ text buttonText ]
             ]
         ]
 
@@ -1893,3 +1973,8 @@ deleteResponseDecoder =
         |> Pipeline.required "success" Decode.bool
         |> Pipeline.required "deleted_ids" (Decode.list Decode.int)
         |> Pipeline.required "message" Decode.string
+
+
+viewSpinner : Html Msg
+viewSpinner =
+    div [ class "animate-spin rounded-full h-5 w-5 border-2 border-purple-500 border-t-transparent" ] []

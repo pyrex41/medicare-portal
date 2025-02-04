@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 import libsql_experimental as libsql
 from pathlib import Path
 from contextlib import contextmanager
-
+from pprint import pprint
 # Load environment variables from .env file
 ENV_FILE = Path(__file__).resolve().parent.parent / '.env'
 load_dotenv(ENV_FILE, override=True)
@@ -87,13 +87,15 @@ class Database:
         
         # Add VALUES to the query if not present
         if "VALUES" not in query.upper():
-            values = ','.join(['(' + ','.join(['?'] * len(params_list[0])) + ')'] * len(params_list))
+            values = ','.join(['(' + ','.join(['?'] * len(params_list[0])) + ')'] * len(params_list[0]))
             query = f"{query} VALUES {values}"
         
-        # Flatten the params list and convert to tuple
-        flat_params = tuple(item for sublist in params_list for item in sublist)
+        # Convert list items to tuples if needed
+        params = [tuple(item) if not isinstance(item, tuple) else item for item in params_list]
+        pprint(query)
+        pprint(params)
         
-        result = self.connection.execute(query, flat_params)
+        result = self.connection.executemany(query, params)
         self.connection.commit()
         return result
 

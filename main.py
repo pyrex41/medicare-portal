@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, UploadFile, File
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Form
 from db.database import get_db, Database
 from models.contact import ContactCreate
 from models.agent import AgentCreate
@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 import csv
 import io
 from datetime import datetime
-
+from pprint import pprint
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -312,7 +312,11 @@ async def startup_event():
         raise
 
 @app.post("/api/contacts/upload")
-async def upload_contacts(file: UploadFile = File(...), db: Database = Depends(get_db)):
+async def upload_contacts(
+    file: UploadFile = File(...), 
+    overwrite_duplicates: bool = Form(False),
+    db: Database = Depends(get_db)
+):
     try:
         contents = await file.read()
         decoded = contents.decode()
@@ -353,6 +357,12 @@ async def upload_contacts(file: UploadFile = File(...), db: Database = Depends(g
         error_rows = []
         params_list = []
         
+        # Get existing emails for duplicate checking
+        existing_emails = set()
+        if not overwrite_duplicates:
+            result = db.fetch_all("SELECT email FROM contacts")
+            existing_emails = {row[0].lower() for row in result}  # Convert to lowercase
+        
         for row_num, row in enumerate(csv_reader, start=2):
             missing_values = [field for field in required_fields if not row.get(field, '').strip()]
             
@@ -391,6 +401,18 @@ async def upload_contacts(file: UploadFile = File(...), db: Database = Depends(g
                 error_rows.append(error_row)
                 continue
 
+            # Check for duplicate email if not overwriting
+            email = row['Email'].strip().lower()  # Convert to lowercase
+            if not overwrite_duplicates and email in existing_emails:
+                error_row = {
+                    'Row': row_num
+                }
+                for field in required_fields_ordered:
+                    error_row[field] = row.get(field, '')
+                error_row['Error'] = f"Email already exists: {row['Email']}"
+                error_rows.append(error_row)
+                continue
+
             try:
                 effective_date = datetime.strptime(row['Effective Date'].strip(), '%Y-%m-%d').date()
                 birth_date = datetime.strptime(row['Birth Date'].strip(), '%Y-%m-%d').date()
@@ -399,7 +421,7 @@ async def upload_contacts(file: UploadFile = File(...), db: Database = Depends(g
                 params_list.append((
                     row['First Name'].strip(),
                     row['Last Name'].strip(),
-                    row['Email'].strip(),
+                    email,  # Use the lowercase email
                     row['Current Carrier'].strip(),
                     row['Plan Type'].strip(),
                     effective_date.isoformat(),
@@ -420,16 +442,28 @@ async def upload_contacts(file: UploadFile = File(...), db: Database = Depends(g
                 error_row['Error'] = f"Invalid date format. Dates should be YYYY-MM-DD"
                 error_rows.append(error_row)
         
-        # Insert valid rows if we have any
+        # Insert valid rows
         inserted_count = 0
         if params_list:
-            query = """
-                INSERT INTO contacts (
-                    first_name, last_name, email, current_carrier, plan_type,
-                    effective_date, birth_date, tobacco_user, gender,
-                    state, zip_code
-                )
-            """
+            pprint(params_list)
+            if overwrite_duplicates:
+                # Use REPLACE INTO or equivalent for your DB
+                query = """
+                    INSERT OR REPLACE INTO contacts (
+                        first_name, last_name, email, current_carrier, plan_type,
+                        effective_date, birth_date, tobacco_user, gender,
+                        state, zip_code
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """
+            else:
+                query = """
+                    INSERT INTO contacts (
+                        first_name, last_name, email, current_carrier, plan_type,
+                        effective_date, birth_date, tobacco_user, gender,
+                        state, zip_code
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """
+            
             try:
                 db.executemany(query, params_list)
                 db.connection.commit()
@@ -444,7 +478,7 @@ async def upload_contacts(file: UploadFile = File(...), db: Database = Depends(g
                         "message": f"Error inserting contacts: {str(e)}",
                         "error_csv": None,
                         "total_rows": len(valid_rows) + len(error_rows),
-                        "error_rows": len(error_rows) + len(valid_rows),  # All rows failed
+                        "error_rows": len(error_rows) + len(valid_rows),
                         "valid_rows": 0
                     }
                 )
