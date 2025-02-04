@@ -445,17 +445,81 @@ async def upload_contacts(
         # Insert valid rows
         inserted_count = 0
         if params_list:
-            pprint(params_list)
             if overwrite_duplicates:
-                # Use REPLACE INTO or equivalent for your DB
-                query = """
-                    INSERT OR REPLACE INTO contacts (
+                # First update existing records
+                update_query = """
+                    UPDATE contacts SET 
+                        first_name = ?,
+                        last_name = ?,
+                        current_carrier = ?,
+                        plan_type = ?,
+                        effective_date = ?,
+                        birth_date = ?,
+                        tobacco_user = ?,
+                        gender = ?,
+                        state = ?,
+                        zip_code = ?
+                    WHERE LOWER(email) = ?
+                """
+                
+                insert_query = """
+                    INSERT INTO contacts (
                         first_name, last_name, email, current_carrier, plan_type,
                         effective_date, birth_date, tobacco_user, gender,
                         state, zip_code
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) 
+                    SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM contacts WHERE LOWER(email) = ?
+                    )
                 """
+                
+                try:
+                    for params in params_list:
+                        # Split params into parts for update and insert
+                        update_params = (
+                            params[0],  # first_name
+                            params[1],  # last_name
+                            params[3],  # current_carrier
+                            params[4],  # plan_type
+                            params[5],  # effective_date
+                            params[6],  # birth_date
+                            params[7],  # tobacco_user
+                            params[8],  # gender
+                            params[9],  # state
+                            params[10], # zip_code
+                            params[2]   # email (for WHERE clause)
+                        )
+                        
+                        # For insert, we need all params plus email again for WHERE clause
+                        insert_params = params + (params[2],)
+                        
+                        # Try update first
+                        result = db.execute(update_query, update_params)
+                        if result.rowcount == 0:
+                            # If no update, try insert
+                            db.execute(insert_query, insert_params)
+                    
+                    db.connection.commit()
+                    inserted_count = len(params_list)
+                    logger.info(f"Successfully inserted/updated {inserted_count} contacts")
+
+                except Exception as e:
+                    logger.error(f"Error inserting/updating contacts: {e}", exc_info=True)
+                    return JSONResponse(
+                        status_code=200,
+                        content={
+                            "success": False,
+                            "message": f"Error inserting/updating contacts: {str(e)}",
+                            "error_csv": None,
+                            "total_rows": len(valid_rows) + len(error_rows),
+                            "error_rows": len(error_rows) + len(valid_rows),
+                            "valid_rows": 0
+                        }
+                    )
+                
             else:
+                # Regular insert for non-duplicates
                 query = """
                     INSERT INTO contacts (
                         first_name, last_name, email, current_carrier, plan_type,
@@ -463,25 +527,24 @@ async def upload_contacts(
                         state, zip_code
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """
-            
-            try:
-                db.executemany(query, params_list)
-                db.connection.commit()
-                inserted_count = len(params_list)
-                logger.info(f"Successfully inserted {inserted_count} contacts")
-            except Exception as e:
-                logger.error(f"Error inserting contacts: {e}", exc_info=True)
-                return JSONResponse(
-                    status_code=200,
-                    content={
-                        "success": False,
-                        "message": f"Error inserting contacts: {str(e)}",
-                        "error_csv": None,
-                        "total_rows": len(valid_rows) + len(error_rows),
-                        "error_rows": len(error_rows) + len(valid_rows),
-                        "valid_rows": 0
-                    }
-                )
+                try:
+                    db.executemany(query, params_list)
+                    db.connection.commit()
+                    inserted_count = len(params_list)
+                    logger.info(f"Successfully inserted {inserted_count} contacts")
+                except Exception as e:
+                    logger.error(f"Error inserting contacts: {e}", exc_info=True)
+                    return JSONResponse(
+                        status_code=200,
+                        content={
+                            "success": False,
+                            "message": f"Error inserting contacts: {str(e)}",
+                            "error_csv": None,
+                            "total_rows": len(valid_rows) + len(error_rows),
+                            "error_rows": len(error_rows) + len(valid_rows),
+                            "valid_rows": 0
+                        }
+                    )
 
         # If there are errors, create an error CSV
         if error_rows:
