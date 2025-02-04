@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, File
 from db.database import get_db, Database
 from models.contact import ContactCreate
 from models.agent import AgentCreate
@@ -9,6 +9,9 @@ import json
 import os
 from typing import Optional
 from fastapi.responses import JSONResponse
+import csv
+import io
+from datetime import datetime
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -302,9 +305,222 @@ async def startup_event():
     # Test database connection
     db = get_db()
     try:
-        conn = db.get_connection()
-        result = conn.execute("SELECT 1").fetchone()
+        result = db.connection.execute("SELECT 1").fetchone()
         logger.info("Database connection test successful")
     except Exception as e:
         logger.error(f"Database connection test failed: {e}", exc_info=True)
-        raise 
+        raise
+
+@app.post("/api/contacts/upload")
+async def upload_contacts(file: UploadFile = File(...), db: Database = Depends(get_db)):
+    try:
+        contents = await file.read()
+        decoded = contents.decode()
+        csv_reader = csv.DictReader(io.StringIO(decoded))
+        
+        # Required fields in desired order
+        required_fields_ordered = [
+            'First Name',
+            'Last Name',
+            'Email',
+            'Current Carrier',
+            'Plan Type',
+            'Effective Date',
+            'Birth Date',
+            'Tobacco User',
+            'Gender',
+            'ZIP Code'
+        ]
+        required_fields = set(required_fields_ordered)
+        
+        # Validate headers
+        headers = set(csv_reader.fieldnames)
+        if not required_fields.issubset(headers):
+            missing_fields = required_fields - headers
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "success": False,
+                    "message": f"Missing required columns: {', '.join(missing_fields)}",
+                    "error_csv": None,
+                    "total_rows": 0,
+                    "error_rows": 0,
+                    "valid_rows": 0
+                }
+            )
+        
+        valid_rows = []
+        error_rows = []
+        params_list = []
+        
+        for row_num, row in enumerate(csv_reader, start=2):
+            missing_values = [field for field in required_fields if not row.get(field, '').strip()]
+            
+            if missing_values:
+                error_row = {
+                    'Row': row_num
+                }
+                for field in required_fields_ordered:
+                    error_row[field] = row.get(field, '')
+                error_row['Error'] = f"Missing values for: {', '.join(missing_values)}"
+                error_rows.append(error_row)
+                continue
+
+            # Validate ZIP code and get state
+            zip_code = row['ZIP Code'].strip()
+            zip_info = ZIP_DATA.get(zip_code)
+            if not zip_info:
+                error_row = {
+                    'Row': row_num
+                }
+                for field in required_fields_ordered:
+                    error_row[field] = row.get(field, '')
+                error_row['Error'] = f"Invalid ZIP code: {zip_code}"
+                error_rows.append(error_row)
+                continue
+
+            # Validate gender
+            gender = row['Gender'].strip().upper()
+            if gender not in ['M', 'F']:
+                error_row = {
+                    'Row': row_num
+                }
+                for field in required_fields_ordered:
+                    error_row[field] = row.get(field, '')
+                error_row['Error'] = f"Invalid gender: {gender}. Must be 'M' or 'F'"
+                error_rows.append(error_row)
+                continue
+
+            try:
+                effective_date = datetime.strptime(row['Effective Date'].strip(), '%Y-%m-%d').date()
+                birth_date = datetime.strptime(row['Birth Date'].strip(), '%Y-%m-%d').date()
+                tobacco_user = row['Tobacco User'].strip().lower() in ['yes', 'true', '1', 'y']
+
+                params_list.append((
+                    row['First Name'].strip(),
+                    row['Last Name'].strip(),
+                    row['Email'].strip(),
+                    row['Current Carrier'].strip(),
+                    row['Plan Type'].strip(),
+                    effective_date.isoformat(),
+                    birth_date.isoformat(),
+                    1 if tobacco_user else 0,
+                    gender,
+                    zip_info['state'],
+                    zip_code
+                ))
+                valid_rows.append(row)
+
+            except ValueError as e:
+                error_row = {
+                    'Row': row_num
+                }
+                for field in required_fields_ordered:
+                    error_row[field] = row.get(field, '')
+                error_row['Error'] = f"Invalid date format. Dates should be YYYY-MM-DD"
+                error_rows.append(error_row)
+        
+        # Insert valid rows if we have any
+        inserted_count = 0
+        if params_list:
+            query = """
+                INSERT INTO contacts (
+                    first_name, last_name, email, current_carrier, plan_type,
+                    effective_date, birth_date, tobacco_user, gender,
+                    state, zip_code
+                )
+            """
+            try:
+                db.executemany(query, params_list)
+                db.connection.commit()
+                inserted_count = len(params_list)
+                logger.info(f"Successfully inserted {inserted_count} contacts")
+            except Exception as e:
+                logger.error(f"Error inserting contacts: {e}", exc_info=True)
+                return JSONResponse(
+                    status_code=200,
+                    content={
+                        "success": False,
+                        "message": f"Error inserting contacts: {str(e)}",
+                        "error_csv": None,
+                        "total_rows": len(valid_rows) + len(error_rows),
+                        "error_rows": len(error_rows) + len(valid_rows),  # All rows failed
+                        "valid_rows": 0
+                    }
+                )
+
+        # If there are errors, create an error CSV
+        if error_rows:
+            output = io.StringIO()
+            fieldnames = ['Row'] + required_fields_ordered + ['Error']
+            writer = csv.DictWriter(output, fieldnames=fieldnames)
+            writer.writeheader()
+            for row in error_rows:
+                writer.writerow(row)
+            
+            error_csv = output.getvalue()
+            
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "success": True,  # Changed to True since we inserted valid rows
+                    "message": f"Found {len(error_rows)} rows with errors. Successfully imported {inserted_count} rows.",
+                    "error_csv": error_csv,
+                    "total_rows": len(valid_rows) + len(error_rows),
+                    "error_rows": len(error_rows),
+                    "valid_rows": inserted_count
+                }
+            )
+        
+        # If no errors, return success
+        return {
+            "success": True,
+            "message": f"Successfully imported {inserted_count} rows",
+            "error_csv": None,
+            "total_rows": inserted_count,
+            "error_rows": 0,
+            "valid_rows": inserted_count
+        }
+        
+    except Exception as e:
+        logger.error(f"Error processing CSV upload: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=200,
+            content={
+                "success": False,
+                "message": str(e),
+                "error_csv": None,
+                "total_rows": 0,
+                "error_rows": 0,
+                "valid_rows": 0
+            }
+        ) 
+
+@app.delete("/api/contacts")
+def delete_contacts(contact_ids: list[int], db: Database = Depends(get_db)):
+    try:
+        logger.info(f"Attempting to delete contacts with IDs: {contact_ids}")
+        
+        # Convert list to comma-separated string for SQL IN clause
+        ids_str = ','.join('?' * len(contact_ids))
+        
+        query = f"""
+            DELETE FROM contacts 
+            WHERE id IN ({ids_str})
+            RETURNING id
+        """
+        
+        result = db.execute(query, tuple(contact_ids))
+        deleted_ids = [row[0] for row in result.fetchall()]
+        
+        logger.info(f"Successfully deleted {len(deleted_ids)} contacts")
+        
+        return {
+            "success": True,
+            "deleted_ids": deleted_ids,
+            "message": f"Successfully deleted {len(deleted_ids)} contacts"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error deleting contacts: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e)) 

@@ -1,0 +1,11 @@
+First Name,Last Name,Email,Current Carrier,Plan Type,Effective Date,Birth Date,Tobacco User,Gender,ZIP Code
+John,Smith,john.smith@email.com,Humana,Medicare Advantage,2023-01-01,1955-03-15,No,M,33401
+Mary,Johnson,mary.j@email.com,UnitedHealthcare,Medicare Supplement,2023-02-15,1948-07-22,No,F,75001
+Robert,Williams,rob.w@email.com,Aetna,Medicare Advantage,2023-03-01,1952-11-30,Yes,M,85001
+Patricia,Brown,pat.brown@email.com,Cigna,Medicare Supplement,2023-01-15,1950-04-18,No,F,90001
+James,Davis,james.d@email.com,Anthem,Medicare Advantage,2023-02-01,1953-09-05,No,M,10001
+Linda,Miller,linda.m@email.com,Humana,Medicare Supplement,2023-03-15,1951-06-12,No,F,60601
+Michael,Wilson,mike.w@email.com,UnitedHealthcare,Medicare Advantage,2023-01-01,1954-08-25,Yes,M,30301
+Barbara,Moore,barb.moore@email.com,Aetna,Medicare Supplement,2023-02-15,1949-12-03,No,F,27601
+William,Taylor,will.t@email.com,Cigna,Medicare Advantage,2023-03-01,1956-02-28,No,M,43201
+Elizabeth,Anderson,liz.a@email.com,Anthem,Medicare Supplement,2023-01-15,1947-10-14,No,F,48201

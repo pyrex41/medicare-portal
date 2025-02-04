@@ -2,11 +2,14 @@ module Main exposing (main)
 
 import Browser
 import Browser.Events
+import File exposing (File)
+import File.Download
+import File.Select as Select
 import Html exposing (Html, button, div, h1, h2, h3, input, label, nav, option, select, span, table, tbody, td, text, th, thead, tr)
 import Html.Attributes exposing (attribute, checked, class, placeholder, required, title, type_, value)
-import Html.Events exposing (onClick, onInput, onSubmit, stopPropagationOn)
+import Html.Events exposing (onClick, onInput, onSubmit, preventDefaultOn, stopPropagationOn)
 import Http
-import Json.Decode as Decode
+import Json.Decode as Decode exposing (Decoder, bool, int, nullable, string)
 import Json.Decode.Pipeline as Pipeline
 import Json.Encode as Encode
 import List.Extra
@@ -57,6 +60,7 @@ type Modal
     = NoModal
     | AddModal
     | EditModal Contact
+    | CsvUploadModal UploadState
 
 
 type alias Model =
@@ -124,6 +128,29 @@ type alias ZipInfo =
     }
 
 
+type alias UploadState =
+    { dragOver : Bool
+    , file : Maybe File
+    , error : Maybe String
+    , errorCsv : Maybe String
+    , stats : Maybe UploadStats
+    }
+
+
+type alias UploadStats =
+    { totalRows : Int
+    , errorRows : Int
+    , validRows : Int
+    }
+
+
+type alias DeleteResponse =
+    { success : Bool
+    , deletedIds : List Int
+    , message : String
+    }
+
+
 init : () -> ( Model, Cmd Msg )
 init _ =
     ( { contacts = []
@@ -171,6 +198,16 @@ emptyFilters =
     }
 
 
+emptyUploadState : UploadState
+emptyUploadState =
+    { dragOver = False
+    , file = Nothing
+    , error = Nothing
+    , errorCsv = Nothing
+    , stats = Nothing
+    }
+
+
 
 -- UPDATE
 
@@ -205,6 +242,17 @@ type Msg
     | DeselectAllContacts
     | EmailSelectedCarriers
     | EmailSelectedContacts
+    | ShowCsvUploadModal
+    | DragEnter
+    | DragLeave
+    | FileDrop File
+    | FileSelected File
+    | ClickedSelectFile
+    | UploadCsv
+    | CsvUploaded (Result Http.Error UploadResponse)
+    | DownloadErrorCsv String
+    | DeleteSelectedContacts
+    | ContactsDeleted (Result Http.Error DeleteResponse)
 
 
 type ContactFormField
@@ -459,6 +507,9 @@ update msg model =
                 NoModal ->
                     ( model, Cmd.none )
 
+                CsvUploadModal _ ->
+                    ( model, Cmd.none )
+
         GotZipLookup (Err _) ->
             ( model, Cmd.none )
 
@@ -572,6 +623,156 @@ update msg model =
             -- For now, just a placeholder that does nothing
             ( model, Cmd.none )
 
+        ShowCsvUploadModal ->
+            ( { model | showModal = CsvUploadModal emptyUploadState }, Cmd.none )
+
+        DragEnter ->
+            case model.showModal of
+                CsvUploadModal state ->
+                    ( { model | showModal = CsvUploadModal { state | dragOver = True } }, Cmd.none )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        DragLeave ->
+            case model.showModal of
+                CsvUploadModal state ->
+                    ( { model | showModal = CsvUploadModal { state | dragOver = False } }, Cmd.none )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        FileDrop file ->
+            case model.showModal of
+                CsvUploadModal state ->
+                    ( { model | showModal = CsvUploadModal { state | file = Just file, dragOver = False } }
+                    , Cmd.none
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        FileSelected file ->
+            case model.showModal of
+                CsvUploadModal state ->
+                    ( { model | showModal = CsvUploadModal { state | file = Just file } }
+                    , Cmd.none
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        ClickedSelectFile ->
+            ( model
+            , Select.file [ "text/csv" ] FileSelected
+            )
+
+        UploadCsv ->
+            case model.showModal of
+                CsvUploadModal state ->
+                    case state.file of
+                        Just file ->
+                            ( { model
+                                | showModal =
+                                    CsvUploadModal
+                                        { state
+                                            | error = Nothing
+                                            , errorCsv = Nothing
+                                            , stats = Nothing
+                                        }
+                              }
+                            , uploadCsv file
+                            )
+
+                        Nothing ->
+                            ( model, Cmd.none )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        CsvUploaded (Ok response) ->
+            let
+                currentModal =
+                    case model.showModal of
+                        CsvUploadModal state ->
+                            if response.success && response.errorRows == 0 then
+                                -- Only close modal if there are no errors
+                                NoModal
+
+                            else
+                                -- Keep modal open with error info
+                                CsvUploadModal
+                                    { state
+                                        | error = Just response.message
+                                        , errorCsv = response.errorCsv
+                                        , stats =
+                                            Just
+                                                { totalRows = response.totalRows
+                                                , errorRows = response.errorRows
+                                                , validRows = response.validRows
+                                                }
+                                    }
+
+                        _ ->
+                            model.showModal
+            in
+            ( { model | showModal = currentModal }
+            , if response.success then
+                -- Always fetch contacts if any were successfully imported
+                fetchContacts
+
+              else
+                Cmd.none
+            )
+
+        CsvUploaded (Err httpError) ->
+            case model.showModal of
+                CsvUploadModal state ->
+                    let
+                        errorMessage =
+                            case httpError |> Debug.log "HTTP Error" of
+                                Http.BadStatus 400 ->
+                                    "Invalid CSV format. Please check the required columns and data."
+
+                                _ ->
+                                    "Failed to upload CSV. Please try again."
+                    in
+                    ( { model | showModal = CsvUploadModal { state | error = Just errorMessage } }
+                    , Cmd.none
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        DownloadErrorCsv csvContent ->
+            ( model
+            , File.Download.string "upload_errors.csv" "text/csv" csvContent
+            )
+
+        DeleteSelectedContacts ->
+            ( model
+            , if List.isEmpty model.selectedContacts then
+                Cmd.none
+
+              else
+                deleteContacts model.selectedContacts
+            )
+
+        ContactsDeleted (Ok response) ->
+            if response.success then
+                ( { model
+                    | contacts = List.filter (\c -> not (List.member c.id response.deletedIds)) model.contacts
+                    , selectedContacts = []
+                  }
+                , fetchContacts
+                )
+
+            else
+                ( model, Cmd.none )
+
+        ContactsDeleted (Err _) ->
+            ( model, Cmd.none )
+
 
 
 -- TODO: Handle error
@@ -643,7 +844,9 @@ viewActionBar model =
                     , text "Add Client"
                     ]
                 , button
-                    [ class "px-3 py-1.5 bg-white text-gray-700 text-sm font-medium rounded-md border border-gray-200 hover:border-gray-300 hover:bg-gray-50 transition-colors duration-200" ]
+                    [ class "px-3 py-1.5 bg-white text-gray-700 text-sm font-medium rounded-md border border-gray-200 hover:border-gray-300 hover:bg-gray-50 transition-colors duration-200"
+                    , onClick ShowCsvUploadModal
+                    ]
                     [ viewIcon "M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"
                     , text "Upload CSV"
                     ]
@@ -868,16 +1071,24 @@ viewContactsTable model =
     in
     div []
         [ div [ class "mb-4 flex items-center space-x-2" ]
-            -- Changed to space-x-2 and removed justify-between
             [ span [ class "text-sm text-gray-600" ]
                 [ text selectionText ]
             , if selectionCount > 0 then
-                button
-                    [ class "px-2 py-1 text-sm text-purple-600 hover:text-purple-800 hover:bg-purple-50 rounded-md transition-colors duration-200 flex items-center space-x-1"
-                    , onClick EmailSelectedContacts
-                    ]
-                    [ viewIcon "M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
-                    , span [] [ text "Email" ]
+                div [ class "flex space-x-2" ]
+                    [ button
+                        [ class "px-2 py-1 text-sm text-purple-600 hover:text-purple-800 hover:bg-purple-50 rounded-md transition-colors duration-200 flex items-center space-x-1"
+                        , onClick EmailSelectedContacts
+                        ]
+                        [ viewIcon "M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+                        , span [] [ text "Email" ]
+                        ]
+                    , button
+                        [ class "px-2 py-1 text-sm text-red-600 hover:text-red-800 hover:bg-red-50 rounded-md transition-colors duration-200 flex items-center space-x-1"
+                        , onClick DeleteSelectedContacts
+                        ]
+                        [ viewIcon "M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                        , span [] [ text "Delete" ]
+                        ]
                     ]
 
               else
@@ -1141,6 +1352,9 @@ viewModals model =
         EditModal contact ->
             viewEditModal model.editForm
 
+        CsvUploadModal state ->
+            viewCsvUploadModal state
+
 
 viewAddModal : ContactForm -> Html Msg
 viewAddModal form =
@@ -1174,125 +1388,142 @@ viewEditModal form =
         ]
 
 
-viewContactForm : ContactForm -> (ContactFormField -> String -> Msg) -> Msg -> String -> Html Msg
-viewContactForm form updateMsg submitMsg buttonText =
-    Html.form [ onSubmit submitMsg ]
-        [ div [ class "grid grid-cols-2 gap-x-8 gap-y-6" ]
-            [ viewFormInput "First Name" "text" form.firstName FirstName updateMsg True
-            , viewFormInput "Last Name" "text" form.lastName LastName updateMsg True
-            , viewFormInput "Email" "text" form.email Email updateMsg True
-            , viewFormInput "Current Carrier" "text" form.currentCarrier CurrentCarrier updateMsg True
-            , viewFormInput "Plan Type" "text" form.planType PlanType updateMsg True
-            , viewFormInput "Effective Date" "date" form.effectiveDate EffectiveDate updateMsg True
-            , viewFormInput "Birth Date" "date" form.birthDate BirthDate updateMsg True
-            , viewFormSelect "Tobacco User"
-                (if form.tobaccoUser then
-                    "true"
-
-                 else
-                    "false"
-                )
-                TobaccoUser
-                updateMsg
-                [ ( "false", "No" )
-                , ( "true", "Yes" )
+viewCsvUploadModal : UploadState -> Html Msg
+viewCsvUploadModal state =
+    div [ class "fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center p-8" ]
+        [ div [ class "bg-white rounded-xl p-10 max-w-2xl w-full mx-4 shadow-xl relative" ]
+            [ button
+                [ class "absolute top-4 right-4 text-gray-400 hover:text-gray-600 transition-colors duration-200"
+                , onClick CloseModal
                 ]
-            , viewFormSelect "Gender"
-                form.gender
-                Gender
-                updateMsg
-                [ ( "M", "Male" )
-                , ( "F", "Female" )
-                ]
-            , div [ class "form-group" ]
-                [ Html.label [ class "block text-sm font-medium text-gray-700 mb-2" ]
-                    [ text "ZIP Code" ]
-                , Html.input
-                    [ type_ "text"
-                    , class "w-full px-4 py-3 bg-white border-[2.5px] border-purple-300 rounded-lg text-gray-700 placeholder-gray-400 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 focus:bg-white transition-all duration-200"
-                    , value form.zipCode
-                    , onInput
-                        (\zip ->
-                            if String.all Char.isDigit zip && String.length zip <= 5 then
-                                Batch
-                                    [ updateMsg ZipCode zip
-                                    , if String.length zip == 5 then
-                                        LookupZipCode zip
-
-                                      else
-                                        NoOp
-                                    ]
+                [ viewIcon "M6 18L18 6M6 6l12 12" ]
+            , h2 [ class "text-2xl font-semibold text-gray-900 mb-8" ]
+                [ text "Upload CSV" ]
+            , div
+                [ class
+                    ("w-full h-64 border-2 border-dashed rounded-lg flex flex-col items-center justify-center p-8 transition-colors "
+                        ++ (if state.dragOver then
+                                "border-purple-500 bg-purple-50"
 
                             else
-                                NoOp
-                        )
-                    , required True
-                    , Html.Attributes.maxlength 5
-                    , Html.Attributes.pattern "[0-9]*"
+                                "border-gray-300 hover:border-purple-400"
+                           )
+                    )
+                , preventDefaultOn "dragenter" (Decode.succeed ( DragEnter, True ))
+                , preventDefaultOn "dragover" (Decode.succeed ( NoOp, True ))
+                , preventDefaultOn "dragleave" (Decode.succeed ( DragLeave, True ))
+                , preventDefaultOn "drop" (dropDecoder FileDrop)
+                ]
+                [ viewIcon "M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
+                , div [ class "mt-4 text-center" ]
+                    [ text "Drag and drop your CSV file here, or "
+                    , button
+                        [ class "text-purple-500 hover:text-purple-700 hover:underline"
+                        , onClick ClickedSelectFile
+                        ]
+                        [ text "browse" ]
                     ]
-                    []
+                , case state.file of
+                    Just file ->
+                        div [ class "mt-4 text-sm text-gray-600" ]
+                            [ text ("Selected: " ++ File.name file) ]
+
+                    Nothing ->
+                        text ""
+                , case state.error of
+                    Just error ->
+                        div [ class "mt-4 text-sm text-red-600" ]
+                            [ text error ]
+
+                    Nothing ->
+                        text ""
                 ]
-            , div [ class "form-group" ]
-                [ Html.label [ class "block text-sm font-medium text-gray-700 mb-2" ]
-                    [ text "State" ]
-                , Html.input
-                    [ type_ "text"
-                    , class "w-full px-4 py-3 bg-gray-100 border-[2.5px] border-gray-200 rounded-lg text-gray-700 cursor-not-allowed"
-                    , value form.state
-                    , Html.Attributes.disabled True
+            , case state.stats of
+                Just stats ->
+                    div [ class "mt-4 space-y-2" ]
+                        [ div [ class "text-sm text-gray-600" ]
+                            [ text <| "Total rows: " ++ String.fromInt stats.totalRows ]
+                        , div [ class "text-sm text-gray-600" ]
+                            [ text <| "Valid rows: " ++ String.fromInt stats.validRows ]
+                        , if stats.errorRows > 0 then
+                            div [ class "text-sm text-red-600" ]
+                                [ text <| "Error rows: " ++ String.fromInt stats.errorRows
+                                , case state.errorCsv of
+                                    Just csvContent ->
+                                        button
+                                            [ class "ml-2 text-purple-600 hover:text-purple-800 hover:underline"
+                                            , onClick (DownloadErrorCsv csvContent)
+                                            ]
+                                            [ text "Download Errors" ]
+
+                                    Nothing ->
+                                        text ""
+                                ]
+
+                          else
+                            text ""
+                        ]
+
+                Nothing ->
+                    text ""
+            , div [ class "mt-8 flex justify-end space-x-4" ]
+                [ button
+                    [ class "px-6 py-3 bg-white text-gray-700 text-sm font-medium rounded-lg border-2 border-gray-200 hover:border-gray-300 hover:bg-gray-50 transition-colors duration-200"
+                    , onClick CloseModal
                     ]
-                    []
+                    [ text "Cancel" ]
+                , button
+                    [ class "px-6 py-3 bg-purple-500 text-white text-sm font-medium rounded-lg hover:bg-purple-600 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                    , onClick UploadCsv
+                    , Html.Attributes.disabled (state.file == Nothing)
+                    ]
+                    [ text "Upload" ]
                 ]
-            ]
-        , div [ class "mt-10 flex justify-end space-x-4" ]
-            [ button
-                [ type_ "button"
-                , onClick CloseModal
-                , class "px-6 py-3 bg-white text-gray-700 text-sm font-medium rounded-lg border-2 border-gray-200 hover:border-gray-300 hover:bg-gray-50 transition-colors duration-200 focus:ring-4 focus:ring-purple-100"
-                ]
-                [ text "Cancel" ]
-            , button
-                [ type_ "submit"
-                , class "px-6 py-3 bg-purple-500 text-white text-sm font-medium rounded-lg hover:bg-purple-600 transition-colors duration-200 focus:ring-4 focus:ring-purple-200"
-                ]
-                [ text buttonText ]
             ]
         ]
 
 
-viewFormInput : String -> String -> String -> ContactFormField -> (ContactFormField -> String -> Msg) -> Bool -> Html Msg
-viewFormInput labelText inputType inputValue field updateMsg isRequired =
-    div [ class "form-group" ]
-        [ Html.label [ class "block text-sm font-medium text-gray-700 mb-2" ]
-            [ text labelText ]
-        , Html.input
-            [ type_ inputType
-            , class "w-full px-4 py-3 bg-white border-[2.5px] border-purple-300 rounded-lg text-gray-700 placeholder-gray-400 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 focus:bg-white transition-all duration-200"
-            , value inputValue
-            , onInput (updateMsg field)
-            , required isRequired
-            ]
-            []
-        ]
+dropDecoder : (File -> msg) -> Decoder ( msg, Bool )
+dropDecoder toMsg =
+    Decode.at [ "dataTransfer", "files" ] (Decode.index 0 File.decoder)
+        |> Decode.map (\file -> ( toMsg file, True ))
 
 
-viewFormSelect : String -> String -> ContactFormField -> (ContactFormField -> String -> Msg) -> List ( String, String ) -> Html Msg
-viewFormSelect labelText selectedValue field updateMsg options =
-    div [ class "form-group" ]
-        [ Html.label [ class "block text-sm font-medium text-gray-700 mb-2" ]
-            [ text labelText ]
-        , Html.select
-            [ class "w-full px-4 py-3 bg-white border-[2.5px] border-purple-300 rounded-lg text-gray-700 placeholder-gray-400 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 focus:bg-white transition-all duration-200 appearance-none"
-            , value selectedValue
-            , onInput (updateMsg field)
-            ]
-            (List.map
-                (\( val, txt ) ->
-                    option [ value val ] [ text txt ]
-                )
-                options
-            )
-        ]
+uploadCsv : File -> Cmd Msg
+uploadCsv file =
+    Http.post
+        { url = "http://localhost:8000/api/contacts/upload"
+        , body = Http.multipartBody [ Http.filePart "file" file ]
+        , expect = Http.expectJson CsvUploaded uploadResponseDecoder
+        }
+
+
+uploadResponseDecoder : Decode.Decoder UploadResponse
+uploadResponseDecoder =
+    let
+        errorCsvDecoder =
+            Decode.oneOf
+                [ Decode.string |> Decode.map Just
+                , Decode.null Nothing
+                ]
+    in
+    Decode.succeed UploadResponse
+        |> Pipeline.required "success" Decode.bool
+        |> Pipeline.required "message" Decode.string
+        |> Pipeline.required "error_csv" errorCsvDecoder
+        |> Pipeline.required "total_rows" Decode.int
+        |> Pipeline.required "error_rows" Decode.int
+        |> Pipeline.required "valid_rows" Decode.int
+
+
+type alias UploadResponse =
+    { success : Bool
+    , message : String
+    , errorCsv : Maybe String
+    , totalRows : Int
+    , errorRows : Int
+    , validRows : Int
+    }
 
 
 
@@ -1515,3 +1746,150 @@ filterByList getter selectedValues contacts =
                 List.member (getter contact) selectedValues
             )
             contacts
+
+
+viewContactForm : ContactForm -> (ContactFormField -> String -> Msg) -> Msg -> String -> Html Msg
+viewContactForm form updateMsg submitMsg buttonText =
+    Html.form [ onSubmit submitMsg ]
+        [ div [ class "grid grid-cols-2 gap-x-8 gap-y-6" ]
+            [ viewFormInput "First Name" "text" form.firstName FirstName updateMsg True
+            , viewFormInput "Last Name" "text" form.lastName LastName updateMsg True
+            , viewFormInput "Email" "email" form.email Email updateMsg True
+            , viewFormInput "Current Carrier" "text" form.currentCarrier CurrentCarrier updateMsg True
+            , viewFormInput "Plan Type" "text" form.planType PlanType updateMsg True
+            , viewFormInput "Effective Date" "date" form.effectiveDate EffectiveDate updateMsg True
+            , viewFormInput "Birth Date" "date" form.birthDate BirthDate updateMsg True
+            , viewFormSelect "Tobacco User"
+                (if form.tobaccoUser then
+                    "true"
+
+                 else
+                    "false"
+                )
+                TobaccoUser
+                updateMsg
+                [ ( "false", "No" )
+                , ( "true", "Yes" )
+                ]
+            , viewFormSelect "Gender"
+                form.gender
+                Gender
+                updateMsg
+                [ ( "M", "Male" )
+                , ( "F", "Female" )
+                ]
+            , div [ class "form-group" ]
+                [ Html.label [ class "block text-sm font-medium text-gray-700 mb-2" ]
+                    [ text "ZIP Code" ]
+                , Html.input
+                    [ type_ "text"
+                    , class "w-full px-4 py-3 bg-white border-[2.5px] border-purple-300 rounded-lg text-gray-700 placeholder-gray-400 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 focus:bg-white transition-all duration-200"
+                    , value form.zipCode
+                    , onInput
+                        (\zip ->
+                            if String.all Char.isDigit zip && String.length zip <= 5 then
+                                Batch
+                                    [ updateMsg ZipCode zip
+                                    , if String.length zip == 5 then
+                                        LookupZipCode zip
+
+                                      else
+                                        NoOp
+                                    ]
+
+                            else
+                                NoOp
+                        )
+                    , required True
+                    , Html.Attributes.maxlength 5
+                    , Html.Attributes.pattern "[0-9]*"
+                    ]
+                    []
+                ]
+            , div [ class "form-group" ]
+                [ Html.label [ class "block text-sm font-medium text-gray-700 mb-2" ]
+                    [ text "State" ]
+                , Html.input
+                    [ type_ "text"
+                    , class "w-full px-4 py-3 bg-gray-100 border-[2.5px] border-gray-200 rounded-lg text-gray-700 cursor-not-allowed"
+                    , value form.state
+                    , Html.Attributes.disabled True
+                    ]
+                    []
+                ]
+            ]
+        , div [ class "mt-10 flex justify-end space-x-4" ]
+            [ button
+                [ type_ "button"
+                , onClick CloseModal
+                , class "px-6 py-3 bg-white text-gray-700 text-sm font-medium rounded-lg border-2 border-gray-200 hover:border-gray-300 hover:bg-gray-50 transition-colors duration-200 focus:ring-4 focus:ring-purple-100"
+                ]
+                [ text "Cancel" ]
+            , button
+                [ type_ "submit"
+                , class "px-6 py-3 bg-purple-500 text-white text-sm font-medium rounded-lg hover:bg-purple-600 transition-colors duration-200 focus:ring-4 focus:ring-purple-200"
+                ]
+                [ text buttonText ]
+            ]
+        ]
+
+
+viewFormInput : String -> String -> String -> ContactFormField -> (ContactFormField -> String -> Msg) -> Bool -> Html Msg
+viewFormInput labelText inputType inputValue field updateMsg isRequired =
+    div [ class "form-group" ]
+        [ Html.label [ class "block text-sm font-medium text-gray-700 mb-2" ]
+            [ text labelText ]
+        , Html.input
+            [ type_ inputType
+            , class "w-full px-4 py-3 bg-white border-[2.5px] border-purple-300 rounded-lg text-gray-700 placeholder-gray-400 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 focus:bg-white transition-all duration-200"
+            , value inputValue
+            , onInput (updateMsg field)
+            , required isRequired
+            ]
+            []
+        ]
+
+
+viewFormSelect : String -> String -> ContactFormField -> (ContactFormField -> String -> Msg) -> List ( String, String ) -> Html Msg
+viewFormSelect labelText selectedValue field updateMsg options =
+    div [ class "form-group" ]
+        [ Html.label [ class "block text-sm font-medium text-gray-700 mb-2" ]
+            [ text labelText ]
+        , Html.select
+            [ class "w-full px-4 py-3 bg-white border-[2.5px] border-purple-300 rounded-lg text-gray-700 placeholder-gray-400 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 focus:bg-white transition-all duration-200 appearance-none"
+            , value selectedValue
+            , onInput (updateMsg field)
+            ]
+            (List.map
+                (\( val, txt ) ->
+                    option [ value val ] [ text txt ]
+                )
+                options
+            )
+        ]
+
+
+deleteContacts : List Int -> Cmd Msg
+deleteContacts contactIds =
+    Http.request
+        { method = "DELETE"
+        , headers = []
+        , url = "http://localhost:8000/api/contacts"
+        , body = Http.jsonBody (encodeContactIds contactIds)
+        , expect = Http.expectJson ContactsDeleted deleteResponseDecoder
+        , timeout = Nothing
+        , tracker = Nothing
+        }
+
+
+encodeContactIds : List Int -> Encode.Value
+encodeContactIds ids =
+    Encode.list Encode.int ids
+
+
+deleteResponseDecoder : Decode.Decoder DeleteResponse
+deleteResponseDecoder =
+    Decode.succeed DeleteResponse
+        |> Pipeline.required "success" Decode.bool
+        |> Pipeline.required "deleted_ids" (Decode.list Decode.int)
+        |> Pipeline.required "message" Decode.string
