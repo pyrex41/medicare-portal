@@ -1,4 +1,10 @@
 export const logger = {
-  info: (message: string) => console.log(`[INFO] ${message}`),
-  error: (message: string) => console.error(`[ERROR] ${message}`)
+  info: (message: string) => {
+    const timestamp = new Date().toISOString()
+    console.log(`[${timestamp}] [INFO] ${message}`)
+  },
+  error: (message: string) => {
+    const timestamp = new Date().toISOString()
+    console.error(`[${timestamp}] [ERROR] ${message}`)
+  }
 } 

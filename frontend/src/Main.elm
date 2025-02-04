@@ -506,7 +506,7 @@ update msg model =
         LookupZipCode zipCode ->
             ( model
             , Http.get
-                { url = "http://localhost:8000/api/zip-lookup/" ++ zipCode
+                { url = "/api/zip-lookup/" ++ zipCode
                 , expect = Http.expectJson GotZipLookup zipInfoDecoder
                 }
             )
@@ -846,7 +846,7 @@ viewNavHeader =
 fetchContacts : Cmd Msg
 fetchContacts =
     Http.get
-        { url = "http://localhost:8000/api/contacts"
+        { url = "/api/contacts"
         , expect = Http.expectJson GotContacts contactsDecoder
         }
 
@@ -1307,7 +1307,7 @@ updateContact updated contacts =
 submitAddForm : ContactForm -> Cmd Msg
 submitAddForm form =
     Http.post
-        { url = "http://localhost:8000/api/contacts"
+        { url = "/api/contacts"
         , body = Http.jsonBody (encodeContactForm form)
         , expect = Http.expectJson ContactAdded contactDecoder
         }
@@ -1320,7 +1320,7 @@ submitEditForm form =
             Http.request
                 { method = "PUT"
                 , headers = []
-                , url = "http://localhost:8000/api/contacts/" ++ String.fromInt id
+                , url = "/api/contacts/" ++ String.fromInt id
                 , body = Http.jsonBody (encodeContactForm form)
                 , expect = Http.expectJson ContactUpdated contactDecoder
                 , timeout = Nothing
@@ -1567,7 +1567,7 @@ uploadCsv file overwriteDuplicates =
                 ]
     in
     Http.post
-        { url = "http://localhost:8000/api/contacts/upload"
+        { url = "/api/contacts/upload"
         , body = body
         , expect = Http.expectJson CsvUploaded uploadResponseDecoder
         }
@@ -1954,7 +1954,7 @@ deleteContacts contactIds =
     Http.request
         { method = "DELETE"
         , headers = []
-        , url = "http://localhost:8000/api/contacts"
+        , url = "/api/contacts"
         , body = Http.jsonBody (encodeContactIds contactIds)
         , expect = Http.expectJson ContactsDeleted deleteResponseDecoder
         , timeout = Nothing
