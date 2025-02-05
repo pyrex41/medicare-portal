@@ -584,8 +584,8 @@ const startServer = async () => {
           }
         }
       })
-      // Add auth routes
-      .use(createAuthRoutes(db))
+      // Add auth routes without database dependency
+      .use(createAuthRoutes())
       // In production, serve the frontend static files
       .use(process.env.NODE_ENV === 'production' 
         ? async (app) => {

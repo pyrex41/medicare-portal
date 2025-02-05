@@ -1,0 +1,168 @@
+I'll create a file with instructions for adding a protected route:
+
+```text:add_protected_route_directions.txt
+How to Add a Protected Route
+===========================
+
+Follow these steps to add a new protected route to the application:
+
+1. Create New Page Module
+------------------------
+Create a new file in frontend/src/ (e.g., NewPage.elm):
+
+```elm
+module NewPage exposing (Model, Msg, init, subscriptions, update, view)
+
+import Browser
+import Html exposing (..)
+import Html.Attributes exposing (..)
+
+type alias Model =
+    {}
+
+type Msg
+    = NoOp
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( {}, Cmd.none )
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        NoOp ->
+            ( model, Cmd.none )
+
+view : Model -> Browser.Document Msg
+view model =
+    { title = "New Page"
+    , body =
+        [ div [ class "min-h-screen bg-gray-50" ]
+            [ div [ class "max-w-7xl mx-auto py-6 sm:px-6 lg:px-8" ]
+                [ h1 [ class "text-2xl font-semibold text-gray-900" ]
+                    [ text "New Page" ]
+                ]
+            ]
+        ]
+    }
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+```
+
+2. Update Main.elm
+-----------------
+
+a. Add import:
+```elm
+import NewPage
+```
+
+b. Add to Page type:
+```elm
+type Page
+    = ...
+    | NewPagePage NewPage.Model
+```
+
+c. Add to Msg type:
+```elm
+type Msg
+    = ...
+    | NewPageMsg NewPage.Msg
+```
+
+d. Add to ProtectedRoute type:
+```elm
+type ProtectedRoute
+    = ...
+    | NewPageRoute
+```
+
+e. Add route to parser:
+```elm
+routeParser : Parser (Route -> a) a
+routeParser =
+    oneOf
+        [ ...
+        , map (Protected NewPageRoute) (s "new-page")
+        ]
+```
+
+f. Add to showProtectedRoute:
+```elm
+showProtectedRoute : ProtectedRoute -> Model -> ( Model, Cmd Msg )
+showProtectedRoute route model =
+    case route of
+        ...
+        NewPageRoute ->
+            let
+                ( pageModel, pageCmd ) =
+                    NewPage.init ()
+            in
+            ( { model | page = NewPagePage pageModel }
+            , Cmd.map NewPageMsg pageCmd
+            )
+```
+
+g. Add to update:
+```elm
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        ...
+        NewPageMsg subMsg ->
+            case model.page of
+                NewPagePage pageModel ->
+                    let
+                        ( newPageModel, newCmd ) =
+                            NewPage.update subMsg pageModel
+                    in
+                    ( { model | page = NewPagePage newPageModel }
+                    , Cmd.map NewPageMsg newCmd
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
+```
+
+h. Add to view:
+```elm
+view : Model -> Document Msg
+view model =
+    case model.page of
+        ...
+        NewPagePage pageModel ->
+            { title = "New Page"
+            , body = List.map (Html.map NewPageMsg) (NewPage.view pageModel).body
+            }
+```
+
+i. Add to subscriptions:
+```elm
+subscriptions : Model -> Sub Msg
+subscriptions model =
+    case model.page of
+        ...
+        NewPagePage pageModel ->
+            Sub.map NewPageMsg (NewPage.subscriptions pageModel)
+```
+
+3. Testing
+----------
+1. Try accessing /new-page without being logged in
+   - Should redirect to login page
+2. Log in and try accessing /new-page
+   - Should show the new protected page
+3. Log out and try accessing /new-page again
+   - Should redirect to login page
+
+The route is protected because:
+- It's defined as a ProtectedRoute type
+- Protected routes require session verification
+- Users without a valid session are redirected to login
+- After successful login, users can access the protected page
+
+Note: Remember to compile and test thoroughly after adding new routes.
+```

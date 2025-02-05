@@ -1,7 +1,0 @@
-# This file can be deleted 
-fastapi
-uvicorn
-jinja2
-python-multipart
-python-dotenv
-libsql-experimental 

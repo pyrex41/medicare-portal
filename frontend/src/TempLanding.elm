@@ -1,5 +1,6 @@
 module TempLanding exposing (Model, Msg, init, subscriptions, update, view)
 
+import Browser
 import Html exposing (..)
 import Html.Attributes exposing (..)
 
@@ -19,19 +20,19 @@ init _ =
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
-    ( model, Cmd.none )
+    case msg of
+        NoOp ->
+            ( model, Cmd.none )
 
 
-view : Model -> { title : String, body : List (Html Msg) }
-view _ =
+view : Model -> Browser.Document Msg
+view model =
     { title = "Welcome"
     , body =
-        [ div [ class "min-h-screen bg-gray-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8" ]
-            [ div [ class "sm:mx-auto sm:w-full sm:max-w-md" ]
-                [ h2 [ class "mt-6 text-center text-3xl font-extrabold text-gray-900" ]
-                    [ text "Login Successful!" ]
-                , p [ class "mt-2 text-center text-sm text-gray-600" ]
-                    [ text "You are now logged in." ]
+        [ div [ class "min-h-screen bg-gray-50 flex flex-col justify-center" ]
+            [ div [ class "text-center" ]
+                [ h1 [ class "text-4xl font-bold text-gray-900" ]
+                    [ text "Welcome! You're logged in!" ]
                 ]
             ]
         ]

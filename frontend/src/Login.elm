@@ -2,7 +2,7 @@ module Login exposing (Model, Msg, init, subscriptions, update, view)
 
 import Html exposing (..)
 import Html.Attributes exposing (..)
-import Html.Events exposing (onInput, onSubmit)
+import Html.Events exposing (onClick, onInput, onSubmit)
 import Http
 import Json.Encode as Encode
 
@@ -10,6 +10,7 @@ import Json.Encode as Encode
 type alias Model =
     { email : String
     , status : Status
+    , isLoggedIn : Bool
     }
 
 
@@ -24,12 +25,15 @@ type Msg
     = EmailChanged String
     | SubmitForm
     | GotLoginResponse (Result Http.Error ())
+    | LogOut
+    | NoOp
 
 
-init : () -> ( Model, Cmd Msg )
-init _ =
+init : Bool -> ( Model, Cmd Msg )
+init isLoggedIn =
     ( { email = ""
       , status = Idle
+      , isLoggedIn = isLoggedIn
       }
     , Cmd.none
     )
@@ -52,6 +56,21 @@ update msg model =
                 }
             )
 
+        NoOp ->
+            ( model, Cmd.none )
+
+        LogOut ->
+            ( { model
+                | isLoggedIn = False
+                , status = Idle
+              }
+            , Http.post
+                { url = "/api/auth/logout"
+                , body = Http.emptyBody
+                , expect = Http.expectWhatever (\_ -> NoOp)
+                }
+            )
+
         GotLoginResponse result ->
             case result of
                 Ok _ ->
@@ -67,6 +86,40 @@ update msg model =
 
 view : Model -> { title : String, body : List (Html Msg) }
 view model =
+    if model.isLoggedIn then
+        viewLoggedIn
+
+    else
+        viewLoginForm model
+
+
+viewLoggedIn : { title : String, body : List (Html Msg) }
+viewLoggedIn =
+    { title = "Already Logged In"
+    , body =
+        [ div [ class "min-h-screen bg-gray-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8" ]
+            [ div [ class "sm:mx-auto sm:w-full sm:max-w-md" ]
+                [ h2 [ class "mt-6 text-center text-3xl font-extrabold text-gray-900" ]
+                    [ text "Already Logged In" ]
+                , div [ class "mt-8 sm:mx-auto sm:w-full sm:max-w-md" ]
+                    [ div [ class "bg-white py-8 px-4 shadow sm:rounded-lg sm:px-10" ]
+                        [ p [ class "text-center text-gray-600 mb-6" ]
+                            [ text "You are already logged in." ]
+                        , button
+                            [ onClick LogOut
+                            , class "w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+                            ]
+                            [ text "Log Out" ]
+                        ]
+                    ]
+                ]
+            ]
+        ]
+    }
+
+
+viewLoginForm : Model -> { title : String, body : List (Html Msg) }
+viewLoginForm model =
     { title = "Login"
     , body =
         [ div [ class "min-h-screen bg-gray-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8" ]

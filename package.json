@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "@elysiajs/cookie": "^0.8.0"
+  }
+}

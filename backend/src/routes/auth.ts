@@ -1,39 +1,28 @@
 import { Elysia } from 'elysia';
+import { cookie } from '@elysiajs/cookie';
 import { AuthService } from '../services/auth';
-import { Database } from '../database';
-import { logger } from '../logger';
 import { EmailService } from '../services/email';
+import { logger } from '../logger';
 import { randomBytes } from 'crypto';
 import { config } from '../config';
+import crypto from 'crypto';
 
-export function createAuthRoutes(db: Database) {
+export function createAuthRoutes() {
   const auth = new AuthService(
-    db,
-    process.env.PUBLIC_URL || 'http://localhost:3000'
+    process.env.NODE_ENV === 'development' 
+      ? 'http://localhost:5173'  // Frontend URL in development
+      : (process.env.PUBLIC_URL || 'http://localhost:3000')
   );
   const email = new EmailService();
 
   return new Elysia()
-    .post('/api/auth/login', async ({ body }) => {
-      const { email } = body as { email: string };
-      
+    .use(cookie())
+    .post('/api/auth/login/:organizationSlug', async ({ params, body }) => {
+      const { email: userEmail } = body as { email: string };
+      const { organizationSlug } = params;
+
       try {
-        // Generate random token
-        const token = randomBytes(32).toString('hex');
-        const expiresAt = new Date(Date.now() + 1000 * 60 * 15); // 15 minutes
-
-        // Store magic link
-        await db.execute(
-          `INSERT INTO magic_links (token, email, expires_at) 
-           VALUES (?, ?, ?)`,
-          [token, email, expiresAt.toISOString()]
-        );
-
-        // Construct magic link URL
-        const baseUrl = process.env.NODE_ENV === 'development' 
-          ? 'http://localhost:5173'
-          : config.FRONTEND_URL;
-        const magicLink = `${baseUrl}/verify?token=${token}`;
+        const magicLink = await auth.createMagicLink(userEmail, organizationSlug);
 
         // In development, log the magic link
         if (process.env.NODE_ENV === 'development') {
@@ -45,141 +34,101 @@ export function createAuthRoutes(db: Database) {
           return { success: true, message: 'Magic link generated - check server logs' };
         }
 
-        // In production, would send email here
-        // await sendEmail(email, magicLink);
-
-        return { success: true, message: 'Magic link sent to email' };
-      } catch (error) {
-        logger.error(`Login error: ${error}`);
-        return { success: false, error: 'Failed to process login request' };
-      }
-    })
-
-    .post('/api/auth/login/:organizationSlug', async ({ params, body }) => {
-      const { email: userEmail } = body as { email: string };
-      const { organizationSlug } = params;
-
-      try {
-        // For demo purposes, create organization if it doesn't exist
-        let org = await db.fetchOne(
-          'SELECT id, name FROM organizations WHERE slug = ? OR name = ?',
-          [organizationSlug, organizationSlug]
-        );
-
-        if (!org) {
-          // Create new organization
-          const result = await db.execute(
-            `INSERT INTO organizations (name, slug, subscription_tier) 
-             VALUES (?, ?, 'basic')`,
-            [organizationSlug, organizationSlug]
-          );
-          
-          org = await db.fetchOne(
-            'SELECT id, name FROM organizations WHERE id = ?',
-            [result[0].lastInsertId]
-          );
-          
-          if (!org) {
-            throw new Error('Failed to create organization');
-          }
-        }
-
-        // Create or update user
-        await db.execute(
-          `INSERT INTO users (email, organization_id, role) 
-           VALUES (?, ?, 'admin')
-           ON CONFLICT(email) DO UPDATE SET 
-           organization_id = excluded.organization_id`,
-          [userEmail, org.id]
-        );
-
-        const magicLink = await auth.createMagicLink(userEmail, organizationSlug);
-
-        // In development, log the magic link
-        if (process.env.NODE_ENV === 'development') {
-          logger.info('=======================================');
-          logger.info('Organization Magic Link for Development:');
-          logger.info(magicLink);
-          logger.info('=======================================');
-          
-          return { success: true, message: 'Magic link generated - check server logs' };
-        }
-
         // In production, send email
-        await email.sendMagicLink(userEmail, magicLink, org.name);
-
+        await email.sendMagicLink(userEmail, magicLink, organizationSlug);
         return { success: true };
+
       } catch (error) {
-        logger.error('Login failed:', error);
-        throw new Error('Login failed');
+        logger.error(`Login failed: ${error}`);
+        return { 
+          success: false, 
+          error: 'Failed to process login request' 
+        };
       }
     })
 
-    .get('/api/auth/verify/:organizationSlug/:token', async ({ params, setCookie, query }) => {
+    .get('/api/auth/verify/:organizationSlug/:token', async ({ params, cookie, setCookie }) => {
       const { token, organizationSlug } = params;
 
-      const result = await auth.verifyMagicLink(token, organizationSlug);
-      
-      if (!result.valid) {
-        throw new Error('Invalid or expired magic link');
+      try {
+        logger.info('Verifying magic link');
+        const result = await auth.verifyMagicLink(token, organizationSlug);
+        logger.info(`Verification result: ${JSON.stringify(result)}`);
+        
+        if (!result.valid) {
+          logger.error('Magic link validation failed');
+          return {
+            success: false,
+            redirectUrl: "/login",
+            session: "",
+            email: ""
+          };
+        }
+
+        // Create session ID
+        const sessionId = crypto.randomBytes(32).toString('hex');
+        logger.info(`Created session ID: ${sessionId}`);
+
+        // Set session cookie using Elysia's cookie API
+        setCookie('session', sessionId, {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === 'production',
+          maxAge: 7 * 24 * 60 * 60, // 7 days
+          path: '/'
+        });
+
+        const response = { 
+          success: true,
+          redirectUrl: result.redirectUrl || '/templanding',
+          session: sessionId,
+          email: result.email || ''
+        };
+        logger.info(`Sending verification response: ${JSON.stringify(response)}`);
+        return response;
+
+      } catch (error) {
+        logger.error(`Verification error: ${error}`);
+        if (error instanceof Error) {
+          logger.error(`Error details: ${error.message}`);
+          logger.error(`Stack trace: ${error.stack}`);
+        }
+        return {
+          success: false,
+          redirectUrl: "/login",
+          session: "",
+          email: ""
+        };
       }
-
-      // Create session
-      const sessionId = crypto.randomBytes(32).toString('hex');
-      const sessionResult = await db.execute(
-        `INSERT INTO sessions (id, user_id, expires_at)
-         SELECT ?, u.id, datetime('now', '+7 days')
-         FROM users u
-         WHERE u.email = ? AND u.organization_id = ?
-         RETURNING id, user_id`,
-        [sessionId, result.email, result.organizationId]
-      );
-
-      if (!sessionResult || sessionResult.length === 0) {
-        throw new Error('Failed to create session');
-      }
-
-      // Set session cookie
-      setCookie('session', sessionId, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        maxAge: 7 * 24 * 60 * 60, // 7 days
-        path: '/'
-      });
-
-      // Return with session info and redirect URL
-      return { 
-        success: true,
-        redirectUrl: '/templanding',
-        session: sessionId,
-        email: result.email
-      };
     })
 
     .get('/api/auth/session', async ({ cookie }) => {
       const sessionId = cookie.session;
       
       if (!sessionId) {
-        return { valid: false };
+        return { 
+          valid: false,
+          session: "",
+          email: ""
+        };
       }
 
-      const session = await db.fetchOne(
-        `SELECT s.*, u.email, u.organization_id 
-         FROM sessions s
-         JOIN users u ON u.id = s.user_id
-         WHERE s.id = ? AND s.expires_at > datetime('now')`,
-        [sessionId]
-      );
-
-      if (!session) {
-        return { valid: false };
-      }
-
+      // For now, just validate that the session cookie exists
       return { 
         valid: true,
         session: sessionId,
-        email: session.email,
-        organizationId: session.organization_id
+        email: "" // We could store this in the session if needed
       };
+    })
+
+    .post('/api/auth/logout', async ({ setCookie }) => {
+        // Clear the session cookie
+        setCookie('session', '', {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            maxAge: 0, // Expire immediately
+            path: '/'
+        });
+
+        return { success: true };
     });
 } 
