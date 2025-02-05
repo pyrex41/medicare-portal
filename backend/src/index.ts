@@ -8,6 +8,7 @@ import { staticPlugin } from '@elysiajs/static'
 import { parse as csvParse } from 'csv-parse/sync'
 import { Readable } from 'stream'
 import { Buffer } from 'buffer'
+import { createAuthRoutes } from './routes/auth'
 
 // Load ZIP code data
 let ZIP_DATA = {}
@@ -573,6 +574,8 @@ const startServer = async () => {
           }
         }
       })
+      // Add auth routes
+      .use(createAuthRoutes(db))
       // In production, serve the frontend static files
       .use(process.env.NODE_ENV === 'production' 
         ? staticPlugin({
