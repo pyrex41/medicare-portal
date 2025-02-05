@@ -10,8 +10,14 @@ import { Readable } from 'stream'
 import { Buffer } from 'buffer'
 import { createAuthRoutes } from './routes/auth'
 
-// Load ZIP code data
-let ZIP_DATA = {}
+// At the top of the file, add interface for ZIP data
+interface ZipInfo {
+  state: string;
+  // Add other ZIP info properties as needed
+}
+
+// Update ZIP_DATA declaration
+let ZIP_DATA: Record<string, ZipInfo> = {}
 try {
   ZIP_DATA = JSON.parse(readFileSync('../zipData.json', 'utf-8'))
 } catch (e) {
@@ -191,7 +197,7 @@ const startServer = async () => {
               tobacco_user = ?,
               gender = ?,
               state = ?,
-              zip_code = ?,
+              zip_code = ?
             WHERE id = ?
             RETURNING *
           ` : `
@@ -207,7 +213,7 @@ const startServer = async () => {
               gender = ?,
               state = ?,
               zip_code = ?,
-              agent_id = ?,
+              agent_id = ?
             WHERE id = ?
             RETURNING *
           `
@@ -357,7 +363,11 @@ const startServer = async () => {
           // Get existing emails for duplicate checking
           let existingEmails = new Set<string>()
           const emailResults = await db.fetchAll("SELECT email FROM contacts")
-          existingEmails = new Set(emailResults.map(row => row[0].toLowerCase()))
+          existingEmails = new Set(emailResults
+            .map(row => row[0])
+            .filter((email): email is string => typeof email === 'string')
+            .map(email => email.toLowerCase())
+          )
 
           logger.info(`Found ${existingEmails.size} existing emails in database`)
 
@@ -578,10 +588,13 @@ const startServer = async () => {
       .use(createAuthRoutes(db))
       // In production, serve the frontend static files
       .use(process.env.NODE_ENV === 'production' 
-        ? staticPlugin({
-            assets: '../dist', // Where your built frontend files are
-            prefix: '/' // Serve at root path
-          })
+        ? async (app) => {
+            const plugin = staticPlugin({
+              assets: '../dist',
+              prefix: '/'
+            })
+            return app.use(plugin)
+          }
         : (app) => app
       )
       .listen(8000)

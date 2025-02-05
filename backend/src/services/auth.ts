@@ -60,13 +60,15 @@ export class AuthService {
       [token, email, org.id, new Date(payload.expiresAt).toISOString()]
     );
 
-    return `${this.baseUrl}/auth/verify/${organizationSlug}/${encodeURIComponent(token)}`;
+    // Update URL to include redirect
+    return `${this.baseUrl}/auth/verify/${organizationSlug}/${encodeURIComponent(token)}?redirect=/templanding`;
   }
 
   async verifyMagicLink(token: string, organizationSlug: string): Promise<{
     valid: boolean;
     email?: string;
     organizationId?: number;
+    redirectUrl?: string;
   }> {
     try {
       // First check database record
@@ -107,7 +109,8 @@ export class AuthService {
       return {
         valid: true,
         email: payload.email,
-        organizationId: link.org_id
+        organizationId: link.org_id,
+        redirectUrl: '/templanding' // Add default redirect URL
       };
     } catch (error) {
       logger.error('Magic link verification failed:', error);

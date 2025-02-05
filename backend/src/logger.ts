@@ -6,5 +6,9 @@ export const logger = {
   error: (message: string) => {
     const timestamp = new Date().toISOString()
     console.error(`[${timestamp}] [ERROR] ${message}`)
+  },
+  warn: (message: string) => {
+    const timestamp = new Date().toISOString()
+    console.warn(`[${timestamp}] [WARN] ${message}`)
   }
 } 

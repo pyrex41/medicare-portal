@@ -11,6 +11,16 @@ export class EmailService {
 
   async sendMagicLink(email: string, magicLink: string, organizationName: string) {
     try {
+      // Always log in development
+      if (process.env.NODE_ENV === 'development') {
+        logger.info('=======================================');
+        logger.info('Magic Link Email Details:');
+        logger.info(`To: ${email}`);
+        logger.info(`Organization: ${organizationName}`);
+        logger.info(`Link: ${magicLink}`);
+        logger.info('=======================================');
+      }
+
       await sgMail.send({
         to: email,
         from: process.env.SENDGRID_FROM_EMAIL || 'noreply@medicaremax.com',
@@ -28,9 +38,14 @@ export class EmailService {
           </p>
           <p>This link will expire in 30 minutes.</p>
           <p>If you didn't request this login link, you can safely ignore this email.</p>
+          <p>After logging in, you'll be redirected to your dashboard.</p>
         `
       });
-      logger.info(`Magic link email sent to ${email}`);
+      
+      // Only log success message, not the actual link in production
+      if (process.env.NODE_ENV === 'production') {
+        logger.info(`Magic link email sent to ${email}`);
+      }
     } catch (error) {
       logger.error('Failed to send magic link email:', error);
       throw new Error('Failed to send login email');

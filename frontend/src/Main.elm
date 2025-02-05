@@ -5,16 +5,49 @@ import Browser.Navigation as Nav
 import Dashboard
 import Html exposing (Html, div, h1, text)
 import Html.Attributes exposing (class)
+import Http
+import Json.Decode as Decode exposing (Decoder)
 import Login
 import TempLanding
 import Url exposing (Url)
 import Url.Parser as Parser exposing ((</>), Parser, oneOf)
 
 
+type alias VerificationResponse =
+    { success : Bool
+    , session : String
+    , redirectUrl : String
+    }
+
+
+type alias SessionResponse =
+    { valid : Bool
+    , session : String
+    , email : String
+    }
+
+
+verificationDecoder : Decoder VerificationResponse
+verificationDecoder =
+    Decode.map3 VerificationResponse
+        (Decode.field "success" Decode.bool)
+        (Decode.field "session" Decode.string)
+        (Decode.field "redirectUrl" Decode.string)
+
+
+sessionDecoder : Decoder SessionResponse
+sessionDecoder =
+    Decode.map3 SessionResponse
+        (Decode.field "valid" Decode.bool)
+        (Decode.field "session" Decode.string)
+        (Decode.field "email" Decode.string)
+
+
 type alias Model =
     { key : Nav.Key
     , url : Url
     , page : Page
+    , session : Maybe String
     }
 
 
@@ -31,6 +64,8 @@ type Msg
     | LoginMsg Login.Msg
     | DashboardMsg Dashboard.Msg
     | TempLandingMsg TempLanding.Msg
+    | GotVerification (Result Http.Error VerificationResponse)
+    | GotSession (Result Http.Error SessionResponse)
 
 
 main : Program () Model Msg
@@ -47,23 +82,62 @@ main =
 
 init : () -> Url -> Nav.Key -> ( Model, Cmd Msg )
 init _ url key =
-    changeRouteTo url
-        { key = key
-        , url = url
-        , page = NotFoundPage
+    let
+        model =
+            { key = key
+            , url = url
+            , page = NotFoundPage
+            , session = Nothing
+            }
+    in
+    ( model
+    , Cmd.batch
+        [ verifySession -- Check session when app starts
+        , changeRouteTo url model |> Tuple.second
+        ]
+    )
+
+
+verifySession : Cmd Msg
+verifySession =
+    Http.get
+        { url = "/api/auth/session"
+        , expect = Http.expectJson GotSession sessionDecoder
         }
+
+
+type Route
+    = Login
+    | Dashboard
+    | TempLanding
+    | Verify String String -- for orgSlug and token
+
+
+routeParser : Parser (Route -> a) a
+routeParser =
+    oneOf
+        [ Parser.map Login (Parser.s "login")
+        , Parser.map Dashboard (Parser.s "dashboard")
+        , Parser.map TempLanding (Parser.s "templanding")
+        , Parser.map Verify
+            (Parser.s "auth"
+                </> Parser.s "verify"
+                </> Parser.string
+                </> Parser.string
+            )
+        , Parser.map Login Parser.top
+        ]
 
 
 changeRouteTo : Url -> Model -> ( Model, Cmd Msg )
 changeRouteTo url model =
     case Parser.parse routeParser url of
         Nothing ->
-            -- Default to login page if route not found
             ( model, Nav.pushUrl model.key "/login" )
 
         Just route ->
             case route of
-                "/login" ->
+                Login ->
                     let
                         ( pageModel, pageCmd ) =
                             Login.init ()
@@ -72,7 +146,7 @@ changeRouteTo url model =
                     , Cmd.map LoginMsg pageCmd
                     )
 
-                "/dashboard" ->
+                Dashboard ->
                     let
                         ( pageModel, pageCmd ) =
                             Dashboard.init ()
@@ -81,27 +155,27 @@ changeRouteTo url model =
                     , Cmd.map DashboardMsg pageCmd
                     )
 
-                "/temp-landing" ->
-                    let
-                        ( pageModel, pageCmd ) =
-                            TempLanding.init ()
-                    in
-                    ( { model | page = TempLandingPage pageModel }
-                    , Cmd.map TempLandingMsg pageCmd
+                TempLanding ->
+                    case model.session of
+                        Just _ ->
+                            let
+                                ( pageModel, pageCmd ) =
+                                    TempLanding.init ()
+                            in
+                            ( { model | page = TempLandingPage pageModel }
+                            , Cmd.map TempLandingMsg pageCmd
+                            )
+
+                        Nothing ->
+                            ( model, Nav.pushUrl model.key "/login" )
+
+                Verify orgSlug token ->
+                    ( model
+                    , Http.get
+                        { url = "/api/auth/verify/" ++ orgSlug ++ "/" ++ token
+                        , expect = Http.expectJson GotVerification verificationDecoder
+                        }
                     )
-
-                _ ->
-                    ( model, Nav.pushUrl model.key "/login" )
-
-
-routeParser : Parser (String -> a) a
-routeParser =
-    oneOf
-        [ Parser.map "/login" (Parser.s "login")
-        , Parser.map "/dashboard" (Parser.s "dashboard")
-        , Parser.map "/temp-landing" (Parser.s "temp-landing")
-        , Parser.map "/login" Parser.top
-        ]
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -163,6 +237,30 @@ update msg model =
 
                 _ ->
                     ( model, Cmd.none )
+
+        GotVerification result ->
+            case result of
+                Ok response ->
+                    if response.success then
+                        ( { model | session = Just response.session }
+                        , Nav.pushUrl model.key response.redirectUrl
+                        )
+
+                    else
+                        ( model, Nav.pushUrl model.key "/login" )
+
+                Err _ ->
+                    ( model, Nav.pushUrl model.key "/login" )
+
+        GotSession result ->
+            case result of
+                Ok response ->
+                    ( { model | session = Just response.session }
+                    , Cmd.none
+                    )
+
+                Err _ ->
+                    ( model, Nav.pushUrl model.key "/login" )
 
 
 view : Model -> Document Msg

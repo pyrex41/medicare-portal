@@ -3,6 +3,8 @@ import { AuthService } from '../services/auth';
 import { Database } from '../database';
 import { logger } from '../logger';
 import { EmailService } from '../services/email';
+import { randomBytes } from 'crypto';
+import { config } from '../config';
 
 export function createAuthRoutes(db: Database) {
   const auth = new AuthService(
@@ -12,6 +14,47 @@ export function createAuthRoutes(db: Database) {
   const email = new EmailService();
 
   return new Elysia()
+    .post('/api/auth/login', async ({ body }) => {
+      const { email } = body as { email: string };
+      
+      try {
+        // Generate random token
+        const token = randomBytes(32).toString('hex');
+        const expiresAt = new Date(Date.now() + 1000 * 60 * 15); // 15 minutes
+
+        // Store magic link
+        await db.execute(
+          `INSERT INTO magic_links (token, email, expires_at) 
+           VALUES (?, ?, ?)`,
+          [token, email, expiresAt.toISOString()]
+        );
+
+        // Construct magic link URL
+        const baseUrl = process.env.NODE_ENV === 'development' 
+          ? 'http://localhost:5173'
+          : config.FRONTEND_URL;
+        const magicLink = `${baseUrl}/verify?token=${token}`;
+
+        // In development, log the magic link
+        if (process.env.NODE_ENV === 'development') {
+          logger.info('=======================================');
+          logger.info('Magic Link for Development:');
+          logger.info(magicLink);
+          logger.info('=======================================');
+          
+          return { success: true, message: 'Magic link generated - check server logs' };
+        }
+
+        // In production, would send email here
+        // await sendEmail(email, magicLink);
+
+        return { success: true, message: 'Magic link sent to email' };
+      } catch (error) {
+        logger.error(`Login error: ${error}`);
+        return { success: false, error: 'Failed to process login request' };
+      }
+    })
+
     .post('/api/auth/login/:organizationSlug', async ({ params, body }) => {
       const { email: userEmail } = body as { email: string };
       const { organizationSlug } = params;
@@ -51,6 +94,18 @@ export function createAuthRoutes(db: Database) {
         );
 
         const magicLink = await auth.createMagicLink(userEmail, organizationSlug);
+
+        // In development, log the magic link
+        if (process.env.NODE_ENV === 'development') {
+          logger.info('=======================================');
+          logger.info('Organization Magic Link for Development:');
+          logger.info(magicLink);
+          logger.info('=======================================');
+          
+          return { success: true, message: 'Magic link generated - check server logs' };
+        }
+
+        // In production, send email
         await email.sendMagicLink(userEmail, magicLink, org.name);
 
         return { success: true };
@@ -60,7 +115,7 @@ export function createAuthRoutes(db: Database) {
       }
     })
 
-    .get('/api/auth/verify/:organizationSlug/:token', async ({ params, setCookie }) => {
+    .get('/api/auth/verify/:organizationSlug/:token', async ({ params, setCookie, query }) => {
       const { token, organizationSlug } = params;
 
       const result = await auth.verifyMagicLink(token, organizationSlug);
@@ -71,13 +126,18 @@ export function createAuthRoutes(db: Database) {
 
       // Create session
       const sessionId = crypto.randomBytes(32).toString('hex');
-      await db.execute(
+      const sessionResult = await db.execute(
         `INSERT INTO sessions (id, user_id, expires_at)
          SELECT ?, u.id, datetime('now', '+7 days')
          FROM users u
-         WHERE u.email = ? AND u.organization_id = ?`,
+         WHERE u.email = ? AND u.organization_id = ?
+         RETURNING id, user_id`,
         [sessionId, result.email, result.organizationId]
       );
+
+      if (!sessionResult || sessionResult.length === 0) {
+        throw new Error('Failed to create session');
+      }
 
       // Set session cookie
       setCookie('session', sessionId, {
@@ -87,6 +147,39 @@ export function createAuthRoutes(db: Database) {
         path: '/'
       });
 
-      return { success: true };
+      // Return with session info and redirect URL
+      return { 
+        success: true,
+        redirectUrl: '/templanding',
+        session: sessionId,
+        email: result.email
+      };
+    })
+
+    .get('/api/auth/session', async ({ cookie }) => {
+      const sessionId = cookie.session;
+      
+      if (!sessionId) {
+        return { valid: false };
+      }
+
+      const session = await db.fetchOne(
+        `SELECT s.*, u.email, u.organization_id 
+         FROM sessions s
+         JOIN users u ON u.id = s.user_id
+         WHERE s.id = ? AND s.expires_at > datetime('now')`,
+        [sessionId]
+      );
+
+      if (!session) {
+        return { valid: false };
+      }
+
+      return { 
+        valid: true,
+        session: sessionId,
+        email: session.email,
+        organizationId: session.organization_id
+      };
     });
 } 

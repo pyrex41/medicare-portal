@@ -1,6 +1,8 @@
 import { createClient, type Client } from '@libsql/client'
 import { config } from './config'
 import { logger } from './logger'
+import { readFileSync, readdirSync } from 'fs'
+import path from 'path'
 
 export class Database {
   private client: Client
@@ -17,10 +19,8 @@ export class Database {
 
     try {
       this.client = createClient({
-        url: "file:" + config.TURSO_DATABASE_PATH,
-        syncUrl: config.TURSO_DATABASE_URL,
+        url: config.TURSO_DATABASE_URL,
         authToken: config.TURSO_AUTH_TOKEN,
-        offline: true,
       })
       logger.info('Database client created successfully')
     } catch (error) {
@@ -32,10 +32,10 @@ export class Database {
   // Initialize separately since constructor can't be async
   async init() {
     try {
-      await this.initTables()
-      logger.info('Database tables initialized successfully')
-      await this.client.sync();
-      logger.info('Database synced successfully')
+      // await this.initTables()
+      // logger.info('Database tables initialized successfully')
+      // await this.client.sync();
+      // logger.info('Database synced successfully')
 
       // Check contact count
       const countResult = await this.client.execute('SELECT COUNT(*) as count FROM contacts')
@@ -46,6 +46,8 @@ export class Database {
       if (count === 0) {
         logger.info('Database is empty - ready for new contacts')
       }
+
+      // await this.runMigrations()
 
     } catch (error) {
       logger.error(`Failed to initialize database tables: ${error}`)
@@ -79,7 +81,7 @@ export class Database {
         WHERE slug IS NULL OR slug = ''
       `)
     } catch (error) {
-      logger.error('Error updating organization slugs:', error)
+      logger.error(`Error updating organization slugs: ${error}`)
     }
 
     // Create users table
@@ -189,7 +191,7 @@ export class Database {
         sql,
         args
       })
-      await this.client.sync();
+      // await this.client.sync();
       return result.rows
     } catch (error) {
       logger.error(`Database execute error: ${error}`)
@@ -200,7 +202,7 @@ export class Database {
   async executeMany(statements: (string | { sql: string, args?: any[] })[]) {
     try {
       const results = await this.client.batch(statements, "write");
-      await this.client.sync();
+      // await this.client.sync();
       return results.map(result => result.rows);
     } catch (error) {
       logger.error(`Database executeMany error: ${error}`);
@@ -231,6 +233,42 @@ export class Database {
     } catch (error) {
       logger.error(`Database fetchOne error: ${error}`)
       throw error
+    }
+  }
+
+  async runMigrations() {
+    try {
+      // Create migrations table if it doesn't exist
+      await this.execute(`
+        CREATE TABLE IF NOT EXISTS migrations (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL UNIQUE,
+          executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `)
+
+      // Get list of executed migrations
+      const executed = await this.fetchAll('SELECT name FROM migrations')
+      const executedNames = new Set(executed.map(row => row[0]))
+
+      // Read migration files from migrations directory
+      const migrationsDir = path.join(__dirname, '../../migrations')
+      const files = readdirSync(migrationsDir)
+        .filter(f => f.endsWith('.sql'))
+        .sort()
+
+      // Run pending migrations
+      for (const file of files) {
+        if (!executedNames.has(file)) {
+          const sql = readFileSync(path.join(migrationsDir, file), 'utf-8')
+          await this.execute(sql)
+          await this.execute('INSERT INTO migrations (name) VALUES (?)', [file])
+          console.log(`Executed migration: ${file}`)
+        }
+      }
+    } catch (e) {
+      console.error('Migration error:', e)
+      throw e
     }
   }
 } 
