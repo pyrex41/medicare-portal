@@ -6,6 +6,7 @@ import { logger } from '../logger';
 import { randomBytes } from 'crypto';
 import { config } from '../config';
 import crypto from 'crypto';
+import { db } from '../database';
 
 export function createAuthRoutes() {
   const auth = new AuthService(
@@ -20,6 +21,26 @@ export function createAuthRoutes() {
     .post('/api/auth/login/:organizationSlug', async ({ params, body }) => {
       const { email: userEmail } = body as { email: string };
       const { organizationSlug } = params;
+
+      // Check if this is a valid user before sending magic link
+      const user = await db.fetchOne(
+        `SELECT u.id 
+         FROM users u
+         JOIN organizations o ON u.organization_id = o.id
+         WHERE LOWER(u.email) = LOWER(?)
+         AND o.slug = ?
+         AND u.is_active = true`,  // Removed role check - allow any active user to login
+        [userEmail, organizationSlug]
+      );
+
+      if (!user) {
+        logger.warn(`Login attempt by non-user email: ${userEmail} for org: ${organizationSlug}`);
+        // Return success to avoid leaking information about registered emails
+        return {
+          success: true,
+          message: "If this email is registered, you'll receive a login link shortly."
+        };
+      }
 
       try {
         const magicLink = await auth.createMagicLink(userEmail, organizationSlug);
@@ -36,7 +57,10 @@ export function createAuthRoutes() {
 
         // In production, send email
         await email.sendMagicLink(userEmail, magicLink, organizationSlug);
-        return { success: true };
+        return {
+          success: true,
+          message: "If this email is registered, you'll receive a login link shortly."
+        };
 
       } catch (error) {
         logger.error(`Login failed: ${error}`);

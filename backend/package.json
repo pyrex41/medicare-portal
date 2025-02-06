@@ -3,18 +3,23 @@
   "module": "index.ts",
   "type": "module",
   "scripts": {
-    "dev": "bun run --watch --env-file .env src/index.ts"
+    "dev": "bun run --watch --env-file .env src/index.ts",
+    "add-agent": "bun run scripts/add-agent.ts"
   },
   "dependencies": {
+    "@clack/prompts": "^0.7.0",
     "@elysiajs/cookie": "^0.8.0",
     "@elysiajs/cors": "^0.8.0",
     "@elysiajs/static": "^1.2.0",
     "@libsql/client": "^0.15.0-pre.1",
     "@sendgrid/mail": "^8.1.4",
     "@types/bun": "latest",
+    "chalk": "^5.4.1",
     "csv-parse": "^5.6.0",
     "dotenv": "^16.3.1",
-    "elysia": "^0.8.9"
+    "elysia": "^0.8.9",
+    "prompts": "^2.4.2",
+    "zod": "^3.24.1"
   },
   "devDependencies": {
     "bun-types": "latest"

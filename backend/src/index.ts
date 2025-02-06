@@ -9,6 +9,7 @@ import { parse as csvParse } from 'csv-parse/sync'
 import { Readable } from 'stream'
 import { Buffer } from 'buffer'
 import { createAuthRoutes } from './routes/auth'
+import { settingsRoutes } from './routes/settings'
 
 // At the top of the file, add interface for ZIP data
 interface ZipInfo {
@@ -586,6 +587,8 @@ const startServer = async () => {
       })
       // Add auth routes without database dependency
       .use(createAuthRoutes())
+      // Add settings routes
+      .use(settingsRoutes)
       // In production, serve the frontend static files
       .use(process.env.NODE_ENV === 'production' 
         ? async (app) => {

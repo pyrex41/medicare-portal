@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { logger } from '../logger';
+import { db } from '../database';
 
 const algorithm = "aes-256-gcm";
 const IV_LENGTH = 12;
@@ -56,13 +57,8 @@ export class AuthService {
       logger.info(`Organization slug: ${organizationSlug}`);
 
       const decodedToken = decodeURIComponent(token);
-      logger.info(`Decoded token: ${decodedToken}`);
-
       const decrypted = this.decrypt(decodedToken);
-      logger.info(`Decrypted payload: ${decrypted}`);
-
       const payload: MagicLinkPayload = JSON.parse(decrypted);
-      logger.info(`Parsed payload: ${JSON.stringify(payload)}`);
 
       // Verify organization and expiration
       if (payload.organizationSlug !== organizationSlug) {
@@ -75,6 +71,8 @@ export class AuthService {
         return { valid: false };
       }
 
+      // No need to check agent status here since we only send links to valid agents
+
       logger.info('Verification successful, returning payload');
       return {
         valid: true,
@@ -84,10 +82,6 @@ export class AuthService {
 
     } catch (error) {
       logger.error(`Magic link verification failed: ${error}`);
-      if (error instanceof Error) {
-        logger.error(`Error details: ${error.message}`);
-        logger.error(`Stack trace: ${error.stack}`);
-      }
       return { valid: false };
     }
   }

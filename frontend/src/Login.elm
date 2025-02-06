@@ -174,8 +174,10 @@ viewStatus status =
     case status of
         Success ->
             div [ class "mt-4 p-4 bg-green-50 rounded-md" ]
-                [ p [ class "text-sm text-green-700" ]
-                    [ text "Check your email for the login link!" ]
+                [ p [ class "text-sm text-green-700 text-center space-y-2" ]
+                    [ p [] [ text "You will receive an email if you are a registered agent." ]
+                    , p [] [ text "Check your email for the login link!" ]
+                    ]
                 ]
 
         Failed error ->

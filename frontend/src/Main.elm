@@ -9,6 +9,7 @@ import Html.Attributes exposing (class)
 import Http
 import Json.Decode as Decode exposing (Decoder)
 import Login
+import Settings
 import TempLanding
 import Url exposing (Url)
 import Url.Parser as Parser exposing ((</>), Parser, map, oneOf, s, string)
@@ -65,6 +66,7 @@ type Page
     | LoginPage Login.Model
     | DashboardPage Dashboard.Model
     | TempLandingPage TempLanding.Model
+    | SettingsPage Settings.Model
 
 
 type Msg
@@ -73,6 +75,7 @@ type Msg
     | LoginMsg Login.Msg
     | DashboardMsg Dashboard.Msg
     | TempLandingMsg TempLanding.Msg
+    | SettingsMsg Settings.Msg
     | GotVerification (Result Http.Error VerificationResponse)
     | GotSession (Result Http.Error SessionResponse)
 
@@ -123,6 +126,7 @@ type PublicRoute
 type ProtectedRoute
     = TempLandingRoute
     | DashboardRoute
+    | SettingsRoute
 
 
 routeParser : Parser (Route -> a) a
@@ -136,6 +140,7 @@ routeParser =
         -- Protected routes
         , map (Protected TempLandingRoute) (s "templanding")
         , map (Protected DashboardRoute) (s "dashboard")
+        , map (Protected SettingsRoute) (s "settings")
         ]
 
 
@@ -233,6 +238,15 @@ showProtectedRoute route model =
             , Cmd.map DashboardMsg pageCmd
             )
 
+        SettingsRoute ->
+            let
+                ( pageModel, pageCmd ) =
+                    Settings.init ()
+            in
+            ( { model | page = SettingsPage pageModel }
+            , Cmd.map SettingsMsg pageCmd
+            )
+
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
@@ -287,12 +301,24 @@ update msg model =
         TempLandingMsg subMsg ->
             case model.page of
                 TempLandingPage pageModel ->
+                    case subMsg of
+                        TempLanding.NavigateTo path ->
+                            ( model
+                            , Nav.pushUrl model.key path
+                            )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        SettingsMsg subMsg ->
+            case model.page of
+                SettingsPage pageModel ->
                     let
                         ( newPageModel, newCmd ) =
-                            TempLanding.update subMsg pageModel
+                            Settings.update subMsg pageModel
                     in
-                    ( { model | page = TempLandingPage newPageModel }
-                    , Cmd.map TempLandingMsg newCmd
+                    ( { model | page = SettingsPage newPageModel }
+                    , Cmd.map SettingsMsg newCmd
                     )
 
                 _ ->
@@ -397,6 +423,11 @@ view model =
             , body = List.map (Html.map TempLandingMsg) (TempLanding.view pageModel).body
             }
 
+        SettingsPage pageModel ->
+            { title = "Settings"
+            , body = List.map (Html.map SettingsMsg) (Settings.view pageModel).body
+            }
+
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
@@ -409,6 +440,9 @@ subscriptions model =
 
         TempLandingPage pageModel ->
             Sub.map TempLandingMsg (TempLanding.subscriptions pageModel)
+
+        SettingsPage pageModel ->
+            Sub.map SettingsMsg (Settings.subscriptions pageModel)
 
         NotFoundPage ->
             Sub.none

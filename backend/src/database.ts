@@ -271,4 +271,6 @@ export class Database {
       throw e
     }
   }
-} 
+}
+
+export const db = new Database() 
