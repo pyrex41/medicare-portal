@@ -4,12 +4,13 @@ import Browser exposing (Document)
 import Browser.Navigation as Nav
 import Dashboard
 import Debug
-import Html exposing (Html, div, h1, text)
-import Html.Attributes exposing (class)
+import Html exposing (Html, div, h1, p, text)
+import Html.Attributes exposing (class, href)
 import Http
 import Json.Decode as Decode exposing (Decoder)
 import Login
 import Settings
+import Signup
 import TempLanding
 import Url exposing (Url)
 import Url.Parser as Parser exposing ((</>), Parser, map, oneOf, s, string)
@@ -67,6 +68,7 @@ type Page
     | DashboardPage Dashboard.Model
     | TempLandingPage TempLanding.Model
     | SettingsPage Settings.Model
+    | Signup Signup.Model
 
 
 type Msg
@@ -76,6 +78,7 @@ type Msg
     | DashboardMsg Dashboard.Msg
     | TempLandingMsg TempLanding.Msg
     | SettingsMsg Settings.Msg
+    | SignupMsg Signup.Msg
     | GotVerification (Result Http.Error VerificationResponse)
     | GotSession (Result Http.Error SessionResponse)
 
@@ -92,16 +95,29 @@ main =
         }
 
 
-init : () -> Url -> Nav.Key -> ( Model, Cmd Msg )
+init : () -> Url.Url -> Nav.Key -> ( Model, Cmd Msg )
 init _ url key =
-    ( { key = key
-      , url = url
-      , page = NotFoundPage
-      , session = Unknown
-      }
-    , verifySession
-      -- Check session when app starts
-    )
+    let
+        model =
+            { key = key
+            , url = url
+            , page = NotFoundPage
+            , session = Unknown
+            }
+
+        route =
+            Parser.parse routeParser url
+    in
+    case route of
+        Just (Public _) ->
+            -- Don't verify session for public routes
+            changeRouteTo url model
+
+        _ ->
+            -- Verify session for protected routes or unknown routes
+            ( model
+            , verifySession
+            )
 
 
 verifySession : Cmd Msg
@@ -121,6 +137,7 @@ type Route
 type PublicRoute
     = LoginRoute
     | VerifyRoute String String -- orgSlug token
+    | SignupRoute
 
 
 type ProtectedRoute
@@ -136,6 +153,7 @@ routeParser =
           map (Public LoginRoute) (s "login")
         , map (\slug token -> Public (VerifyRoute slug token))
             (s "auth" </> s "verify" </> string </> string)
+        , map (Public SignupRoute) (s "signup")
 
         -- Protected routes
         , map (Protected TempLandingRoute) (s "templanding")
@@ -184,6 +202,19 @@ changeRouteTo url model =
                                     ( { model | page = LoginPage pageModel }
                                     , Cmd.map LoginMsg pageCmd
                                     )
+
+                        SignupRoute ->
+                            -- Always allow access to signup, regardless of session state
+                            let
+                                _ =
+                                    Debug.log "Signing up"
+
+                                ( signupModel, signupCmd ) =
+                                    Signup.init
+                            in
+                            ( { model | page = Signup signupModel }
+                            , Cmd.map SignupMsg signupCmd
+                            )
 
                         VerifyRoute orgSlug token ->
                             ( model
@@ -324,6 +355,20 @@ update msg model =
                 _ ->
                     ( model, Cmd.none )
 
+        SignupMsg subMsg ->
+            case model.page of
+                Signup signupModel ->
+                    let
+                        ( newSignupModel, newCmd ) =
+                            Signup.update subMsg signupModel
+                    in
+                    ( { model | page = Signup newSignupModel }
+                    , Cmd.map SignupMsg newCmd
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
+
         GotVerification result ->
             case result of
                 Ok response ->
@@ -381,16 +426,33 @@ update msg model =
                             newModel =
                                 { model | session = NoSession }
                         in
-                        changeRouteTo model.url newModel
+                        -- For public routes, don't redirect on invalid session
+                        case Parser.parse routeParser model.url of
+                            Just (Public _) ->
+                                changeRouteTo model.url newModel
+
+                            _ ->
+                                ( newModel
+                                , Nav.replaceUrl model.key "/login"
+                                )
 
                 Err error ->
                     let
                         _ =
                             Debug.log "Session verification error" error
+
+                        newModel =
+                            { model | session = NoSession }
                     in
-                    ( { model | session = NoSession }
-                    , Nav.replaceUrl model.key "/login"
-                    )
+                    -- For public routes, don't redirect on session error
+                    case Parser.parse routeParser model.url of
+                        Just (Public _) ->
+                            changeRouteTo model.url newModel
+
+                        _ ->
+                            ( newModel
+                            , Nav.replaceUrl model.key "/login"
+                            )
 
 
 view : Model -> Document Msg
@@ -428,6 +490,11 @@ view model =
             , body = List.map (Html.map SettingsMsg) (Settings.view pageModel).body
             }
 
+        Signup signupModel ->
+            { title = "Create Organization"
+            , body = List.map (Html.map SignupMsg) (Signup.view signupModel).body
+            }
+
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
@@ -443,6 +510,9 @@ subscriptions model =
 
         SettingsPage pageModel ->
             Sub.map SettingsMsg (Settings.subscriptions pageModel)
+
+        Signup signupModel ->
+            Sub.map SignupMsg (Signup.subscriptions signupModel)
 
         NotFoundPage ->
             Sub.none

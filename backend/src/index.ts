@@ -10,6 +10,8 @@ import { Readable } from 'stream'
 import { Buffer } from 'buffer'
 import { createAuthRoutes } from './routes/auth'
 import { settingsRoutes } from './routes/settings'
+import { organizationRoutes } from './routes/organizations'
+import { errorHandler } from './middleware/error'
 
 // At the top of the file, add interface for ZIP data
 interface ZipInfo {
@@ -585,10 +587,14 @@ const startServer = async () => {
           }
         }
       })
+      // Add error handler
+      .use(errorHandler)
       // Add auth routes without database dependency
       .use(createAuthRoutes())
       // Add settings routes
       .use(settingsRoutes)
+      // Add organization routes
+      .use(organizationRoutes)
       // In production, serve the frontend static files
       .use(process.env.NODE_ENV === 'production' 
         ? async (app) => {

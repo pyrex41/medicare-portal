@@ -25,6 +25,8 @@ interface MagicLinkPayload {
   organizationSlug: string;
   expiresAt: number;
   redirectUrl: string;
+  orgId?: number;
+  name?: string;
 }
 
 export class AuthService {
@@ -33,15 +35,25 @@ export class AuthService {
     this.baseUrl = baseUrl.replace(/\/$/, '');
   }
 
-  async createMagicLink(email: string, organizationSlug: string): Promise<string> {
+  async createMagicLink(
+    email: string, 
+    organizationSlug: string, 
+    options?: { 
+      redirectUrl?: string;
+      orgId?: number;
+      name?: string;
+    }
+  ): Promise<string> {
     const payload: MagicLinkPayload = {
       email,
       organizationSlug,
       expiresAt: Date.now() + (30 * 60 * 1000), // 30 minutes
-      redirectUrl: '/templanding'  // Make sure this matches exactly
+      redirectUrl: options?.redirectUrl || '/dashboard',
+      ...(options?.orgId && { orgId: options.orgId }),
+      ...(options?.name && { name: options.name })
     };
 
-    logger.info(`Creating magic link with payload: ${JSON.stringify(payload)}`);
+    logger.info(`Creating magic link with payload:`, payload);
     const token = this.encrypt(JSON.stringify(payload));
     // URL encode the entire token
     const encodedToken = encodeURIComponent(token);
@@ -173,4 +185,8 @@ export async function validateSession(sessionId: string): Promise<User | null> {
   logger.info(`User lookup result: ${user ? JSON.stringify(user) : 'not found'}`);
 
   return user;
+}
+
+export function generateToken(): string {
+  return crypto.randomBytes(32).toString('hex');
 } 

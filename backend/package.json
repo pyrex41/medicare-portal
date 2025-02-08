@@ -4,7 +4,9 @@
   "type": "module",
   "scripts": {
     "dev": "bun run --watch --env-file .env src/index.ts",
-    "add-agent": "bun run scripts/add-agent.ts"
+    "add-agent": "bun run scripts/add-agent.ts",
+    "manage-recommendations": "bun run scripts/manage-recommendations.ts",
+    "manage-turso": "bun run scripts/manage-turso.ts"
   },
   "dependencies": {
     "@clack/prompts": "^0.7.0",
@@ -19,6 +21,7 @@
     "dotenv": "^16.3.1",
     "elysia": "^0.8.9",
     "prompts": "^2.4.2",
+    "stripe": "^17.6.0",
     "zod": "^3.24.1"
   },
   "devDependencies": {
