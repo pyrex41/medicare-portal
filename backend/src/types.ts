@@ -18,4 +18,15 @@ export interface AgentCreate {
   last_name: string
   email: string
   phone: string
+}
+
+export interface User {
+  id: number;
+  email: string;
+  organization_id: number;
+  role: 'admin' | 'agent';
+  is_active: boolean;
+  last_login: string | null;
+  created_at: string;
+  organization_name?: string;
 } 

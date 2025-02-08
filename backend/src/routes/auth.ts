@@ -93,12 +93,42 @@ export function createAuthRoutes() {
         const sessionId = crypto.randomBytes(32).toString('hex');
         logger.info(`Created session ID: ${sessionId}`);
 
-        // Set session cookie using Elysia's cookie API
+        // Get user info
+        const user = await db.fetchOne<User>(
+          `SELECT u.* FROM users u 
+           JOIN organizations o ON u.organization_id = o.id 
+           WHERE LOWER(u.email) = LOWER(?) AND o.slug = ?`,
+          [result.email, organizationSlug]
+        );
+
+        if (!user) {
+          logger.error('User not found after magic link verification');
+          return {
+            success: false,
+            redirectUrl: "/login",
+            session: "",
+            email: ""
+          };
+        }
+
+        // Create session in database
+        const expiresAt = new Date();
+        expiresAt.setDate(expiresAt.getDate() + 7); // 7 days from now
+
+        await db.execute(
+          'INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)',
+          [sessionId, user.id, expiresAt.toISOString()]
+        );
+
+        logger.info(`Created session in database for user ${user.id}`);
+
+        // Set session cookie
         setCookie('session', sessionId, {
+          path: '/',
           httpOnly: true,
           secure: process.env.NODE_ENV === 'production',
-          maxAge: 7 * 24 * 60 * 60, // 7 days
-          path: '/'
+          sameSite: 'lax',
+          maxAge: 60 * 60 * 24 * 7 // 7 days
         });
 
         const response = { 

@@ -1,6 +1,8 @@
 import crypto from 'crypto';
 import { logger } from '../logger';
 import { db } from '../database';
+import { Database } from '../database';
+import { User } from '../types';
 
 const algorithm = "aes-256-gcm";
 const IV_LENGTH = 12;
@@ -126,4 +128,49 @@ export class AuthService {
       throw error;
     }
   }
+}
+
+export async function validateSession(sessionId: string): Promise<User | null> {
+  logger.info(`Validating session: ${sessionId}`);
+  
+  const db = new Database();
+  await db.init();
+
+  // Get the session
+  const session = await db.fetchOne<{
+    id: string;
+    user_id: number;
+    expires_at: string;
+  }>('SELECT * FROM sessions WHERE id = ?', [sessionId]);
+
+  logger.info(`Session lookup result: ${session ? JSON.stringify(session) : 'not found'}`);
+
+  if (!session) {
+    logger.warn('No session found in database');
+    return null;
+  }
+
+  // Check if session is expired
+  const expiresAt = new Date(session.expires_at);
+  const now = new Date();
+  logger.info(`Session expires: ${expiresAt}, current time: ${now}`);
+
+  if (expiresAt < now) {
+    logger.warn('Session is expired');
+    await db.execute('DELETE FROM sessions WHERE id = ?', [sessionId]);
+    return null;
+  }
+
+  // Get the user associated with this session
+  const user = await db.fetchOne<User>(
+    `SELECT users.*, organizations.name as organization_name 
+     FROM users 
+     JOIN organizations ON users.organization_id = organizations.id 
+     WHERE users.id = ?`,
+    [session.user_id]
+  );
+
+  logger.info(`User lookup result: ${user ? JSON.stringify(user) : 'not found'}`);
+
+  return user;
 } 
