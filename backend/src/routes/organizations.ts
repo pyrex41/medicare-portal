@@ -129,20 +129,24 @@ export const organizationRoutes = new Elysia()
 
         // Create inactive admin user
         logger.info('Creating admin user');
-        await transactionDb.execute(
+        const userId = await transactionDb.execute(
           `INSERT INTO users (
             email,
-            first_name,
-            last_name,
             organization_id,
             role,
-            is_active
-          ) VALUES (?, ?, ?, ?, 'admin', false)`,
+            is_active,
+            first_name,
+            last_name,
+            created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
           [
             data.adminEmail,
+            org.id,
+            'admin',
+            1,
             data.adminFirstName,
             data.adminLastName,
-            org.id
+            new Date().toISOString()
           ]
         );
 
@@ -275,6 +279,84 @@ export const organizationRoutes = new Elysia()
       return {
         available: false,
         message: 'Failed to check email availability'
+      };
+    }
+  })
+  .get('/api/organizations/subscription-tiers', async ({ set }) => {
+    try {
+      const tiers = [
+        {
+          id: "basic",
+          name: "Basic",
+          price: "$99/month",
+          agentLimit: 5,
+          contactLimit: 100,
+          features: ["Basic CRM features", "Email integration", "Contact management"]
+        },
+        {
+          id: "professional",
+          name: "Professional",
+          price: "$199/month",
+          agentLimit: 15,
+          contactLimit: 500,
+          features: ["All Basic features", "Advanced analytics", "API access"]
+        },
+        {
+          id: "enterprise",
+          name: "Enterprise",
+          price: "$499/month",
+          agentLimit: 50,
+          contactLimit: 2000,
+          features: ["All Professional features", "Priority support", "Custom integrations"]
+        }
+      ];
+
+      return { success: true, tiers };
+    } catch (error) {
+      logger.error(`Error fetching subscription tiers: ${error}`);
+      set.status = 500;
+      return { success: false, error: 'Failed to fetch subscription tiers' };
+    }
+  })
+  .post('/api/organizations/:orgSlug/subscription', async ({ params, body, set }) => {
+    const { orgSlug } = params;
+    const { tierId } = body as { tierId: string };
+
+    try {
+      const db = new Database();
+      await db.init();
+
+      // First verify the organization exists
+      const org = await db.fetchOne<{ id: number }>(
+        'SELECT id FROM organizations WHERE slug = ?',
+        [orgSlug]
+      );
+
+      if (!org) {
+        set.status = 404;
+        return { 
+          success: false, 
+          error: 'Organization not found' 
+        };
+      }
+
+      await db.execute(
+        `UPDATE organizations 
+         SET subscription_tier = ?
+         WHERE slug = ?`,
+        [tierId, orgSlug]
+      );
+
+      return { 
+        success: true, 
+        message: 'Subscription updated successfully' 
+      };
+    } catch (error) {
+      logger.error(`Error updating subscription: ${error}`);
+      set.status = 500;
+      return { 
+        success: false, 
+        error: 'Failed to update subscription' 
       };
     }
   }); 

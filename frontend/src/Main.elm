@@ -1,5 +1,6 @@
 module Main exposing (main)
 
+import AddAgent
 import Browser exposing (Document)
 import Browser.Navigation as Nav
 import Dashboard
@@ -14,6 +15,7 @@ import Signup
 import TempLanding
 import Url exposing (Url)
 import Url.Parser as Parser exposing ((</>), Parser, map, oneOf, s, string)
+import VerifyOrganization
 
 
 type alias VerificationResponse =
@@ -21,6 +23,7 @@ type alias VerificationResponse =
     , redirectUrl : String
     , session : String
     , email : String
+    , orgSlug : String
     }
 
 
@@ -33,11 +36,12 @@ type alias SessionResponse =
 
 verificationDecoder : Decoder VerificationResponse
 verificationDecoder =
-    Decode.map4 VerificationResponse
+    Decode.map5 VerificationResponse
         (Decode.field "success" Decode.bool)
         (Decode.field "redirectUrl" Decode.string)
         (Decode.field "session" Decode.string)
         (Decode.field "email" Decode.string)
+        (Decode.field "orgSlug" Decode.string)
 
 
 sessionDecoder : Decoder SessionResponse
@@ -69,6 +73,8 @@ type Page
     | TempLandingPage TempLanding.Model
     | SettingsPage Settings.Model
     | Signup Signup.Model
+    | VerifyOrganizationPage VerifyOrganization.Model
+    | AddAgentsPage AddAgent.Model
 
 
 type Msg
@@ -79,6 +85,8 @@ type Msg
     | TempLandingMsg TempLanding.Msg
     | SettingsMsg Settings.Msg
     | SignupMsg Signup.Msg
+    | VerifyOrganizationMsg VerifyOrganization.Msg
+    | AddAgentsMsg AddAgent.Msg
     | GotVerification (Result Http.Error VerificationResponse)
     | GotSession (Result Http.Error SessionResponse)
 
@@ -143,7 +151,9 @@ type PublicRoute
 type ProtectedRoute
     = TempLandingRoute
     | DashboardRoute
-    | SettingsRoute
+    | SettingsRoute Bool
+    | VerifyOrganizationRoute
+    | AddAgentsRoute Bool -- Add setup flag like Settings
 
 
 routeParser : Parser (Route -> a) a
@@ -158,7 +168,11 @@ routeParser =
         -- Protected routes
         , map (Protected TempLandingRoute) (s "templanding")
         , map (Protected DashboardRoute) (s "dashboard")
-        , map (Protected SettingsRoute) (s "settings")
+        , map (Protected (SettingsRoute False)) (s "settings")
+        , map (Protected (SettingsRoute True)) (s "settings" </> s "setup")
+        , map (Protected VerifyOrganizationRoute) (s "verify-organization")
+        , map (Protected (AddAgentsRoute False)) (s "add-agents")
+        , map (Protected (AddAgentsRoute True)) (s "add-agents" </> s "setup")
         ]
 
 
@@ -269,14 +283,48 @@ showProtectedRoute route model =
             , Cmd.map DashboardMsg pageCmd
             )
 
-        SettingsRoute ->
+        SettingsRoute isSetup ->
             let
                 ( pageModel, pageCmd ) =
-                    Settings.init ()
+                    Settings.init
+                        { isSetup = isSetup
+                        , key = model.key
+                        }
             in
             ( { model | page = SettingsPage pageModel }
             , Cmd.map SettingsMsg pageCmd
             )
+
+        VerifyOrganizationRoute ->
+            case model.session of
+                Verified session ->
+                    let
+                        ( pageModel, pageCmd ) =
+                            VerifyOrganization.init "test-org" session model.key
+                    in
+                    ( { model | page = VerifyOrganizationPage pageModel }
+                    , Cmd.map VerifyOrganizationMsg pageCmd
+                    )
+
+                _ ->
+                    ( model, Nav.pushUrl model.key "/login" )
+
+        AddAgentsRoute isSetup ->
+            case model.session of
+                Verified session ->
+                    let
+                        ( pageModel, pageCmd ) =
+                            AddAgent.init
+                                { isSetup = isSetup
+                                , key = model.key
+                                }
+                    in
+                    ( { model | page = AddAgentsPage pageModel }
+                    , Cmd.map AddAgentsMsg pageCmd
+                    )
+
+                _ ->
+                    ( model, Nav.pushUrl model.key "/login" )
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -369,25 +417,70 @@ update msg model =
                 _ ->
                     ( model, Cmd.none )
 
+        VerifyOrganizationMsg subMsg ->
+            case model.page of
+                VerifyOrganizationPage pageModel ->
+                    let
+                        ( newPageModel, newCmd ) =
+                            VerifyOrganization.update subMsg pageModel
+                    in
+                    ( { model | page = VerifyOrganizationPage newPageModel }
+                    , Cmd.map VerifyOrganizationMsg newCmd
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        AddAgentsMsg subMsg ->
+            case model.page of
+                AddAgentsPage pageModel ->
+                    let
+                        ( newPageModel, newCmd ) =
+                            AddAgent.update subMsg pageModel
+                    in
+                    ( { model | page = AddAgentsPage newPageModel }
+                    , Cmd.map AddAgentsMsg newCmd
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
+
         GotVerification result ->
+            let
+                _ =
+                    Debug.log "Got verification result" result
+            in
             case result of
                 Ok response ->
                     if response.success then
                         let
                             _ =
-                                Debug.log "Verification successful" response
+                                Debug.log "Successful verification"
+                                    { response = response
+                                    , orgSlug = response.orgSlug
+                                    }
+
+                            ( verifyOrgModel, verifyOrgCmd ) =
+                                VerifyOrganization.init response.orgSlug response.session model.key
 
                             _ =
-                                Debug.log "Redirecting to" response.redirectUrl
+                                Debug.log "Created verify org model"
+                                    { model = verifyOrgModel
+                                    , orgSlug = verifyOrgModel.orgSlug
+                                    , cmd = verifyOrgCmd
+                                    }
 
                             newModel =
                                 { model
                                     | session = Verified response.session
-                                    , page = TempLandingPage (TempLanding.init () |> Tuple.first)
+                                    , page = VerifyOrganizationPage verifyOrgModel
                                 }
                         in
                         ( newModel
-                        , Nav.replaceUrl model.key response.redirectUrl
+                        , Cmd.batch
+                            [ Nav.replaceUrl model.key response.redirectUrl
+                            , Cmd.map VerifyOrganizationMsg verifyOrgCmd
+                            ]
                         )
 
                     else
@@ -495,6 +588,16 @@ view model =
             , body = List.map (Html.map SignupMsg) (Signup.view signupModel).body
             }
 
+        VerifyOrganizationPage pageModel ->
+            { title = "Verify Organization"
+            , body = List.map (Html.map VerifyOrganizationMsg) (VerifyOrganization.view pageModel).body
+            }
+
+        AddAgentsPage pageModel ->
+            { title = "Add Agent"
+            , body = List.map (Html.map AddAgentsMsg) (AddAgent.view pageModel).body
+            }
+
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
@@ -513,6 +616,12 @@ subscriptions model =
 
         Signup signupModel ->
             Sub.map SignupMsg (Signup.subscriptions signupModel)
+
+        VerifyOrganizationPage pageModel ->
+            Sub.map VerifyOrganizationMsg (VerifyOrganization.subscriptions pageModel)
+
+        AddAgentsPage pageModel ->
+            Sub.map AddAgentsMsg (AddAgent.subscriptions pageModel)
 
         NotFoundPage ->
             Sub.none

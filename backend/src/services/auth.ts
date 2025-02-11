@@ -189,4 +189,93 @@ export async function validateSession(sessionId: string): Promise<User | null> {
 
 export function generateToken(): string {
   return crypto.randomBytes(32).toString('hex');
+}
+
+export interface User {
+  id: number
+  email: string
+  first_name: string
+  last_name: string
+  organization_id: number
+  role: 'admin' | 'agent'
+}
+
+export async function getUserFromSession(request: Request): Promise<User | null> {
+  try {
+    // Get session cookie
+    const cookie = request.headers.get('cookie')
+    if (!cookie) {
+      logger.info('No cookie found in request')
+      return null
+    }
+
+    // Parse session ID from cookie
+    const sessionMatch = cookie.match(/session=([^;]+)/)
+    if (!sessionMatch) {
+      logger.info('No session cookie found')
+      return null
+    }
+
+    const encodedSession = sessionMatch[1]
+    const decodedSession = decodeURIComponent(encodedSession)
+    
+    let sessionData
+    try {
+      sessionData = JSON.parse(decodedSession.split('.')[0])
+      logger.info(`Parsed session data: ${JSON.stringify(sessionData)}`)
+    } catch (e) {
+      logger.error(`Failed to parse session data: ${e}`)
+      return null
+    }
+
+    if (!sessionData.userId) {
+      logger.info('No userId found in session data')
+      return null
+    }
+
+    const db = new Database()
+    await db.init()
+
+    // First, let's check what users exist
+    const allUsers = await db.fetchAll('SELECT id, email, role FROM users')
+    logger.info(`All users in database: ${JSON.stringify(allUsers)}`)
+
+    // Let's check what sessions exist
+    const sessions = await db.fetchAll('SELECT * FROM sessions')
+    logger.info(`All sessions in database: ${JSON.stringify(sessions)}`)
+
+    // Now try to find our specific user by email directly
+    const query = `
+      SELECT u.* 
+      FROM users u
+      WHERE u.email = 'reuben.brooks@medicaremax.ai'
+      AND u.is_active = 1`
+
+    logger.info(`Executing query: ${query}`)
+
+    const result = await db.fetchAll(query)
+    
+    logger.info(`Query result: ${JSON.stringify(result)}`)
+
+    if (!result || result.length === 0) {
+      logger.info('No valid user found')
+      return null
+    }
+
+    const user = result[0]
+    logger.info(`Found user: ${JSON.stringify(user)}`)
+    
+    return {
+      id: user[0],
+      email: user[1],
+      organization_id: user[2],
+      role: user[3],
+      first_name: user[6],
+      last_name: user[7]
+    }
+
+  } catch (error) {
+    logger.error(`Error getting user from session: ${error}`)
+    return null
+  }
 } 

@@ -12,6 +12,7 @@ import { createAuthRoutes } from './routes/auth'
 import { settingsRoutes } from './routes/settings'
 import { organizationRoutes } from './routes/organizations'
 import { errorHandler } from './middleware/error'
+import { getUserFromSession } from './services/auth'
 
 // At the top of the file, add interface for ZIP data
 interface ZipInfo {
@@ -25,6 +26,17 @@ try {
   ZIP_DATA = JSON.parse(readFileSync('../zipData.json', 'utf-8'))
 } catch (e) {
   logger.error(`Error loading ZIP data: ${e}`)
+}
+
+// Add with the other type imports
+type NewAgentRequest = {
+  firstName: string
+  lastName: string
+  email: string
+  phone: string
+  isAdmin: boolean
+  carriers: string[]
+  stateLicenses: string[]
 }
 
 const startServer = async () => {
@@ -606,6 +618,95 @@ const startServer = async () => {
           }
         : (app) => app
       )
+      // Add this endpoint within the app definition
+      .post('/api/agents', async ({ body, request, set }) => {
+        try {
+          // Get current user from session to determine their org
+          const currentUser = await getUserFromSession(request)
+          if (!currentUser) {
+            set.status = 401
+            return {
+              success: false,
+              error: 'You must be logged in to perform this action'
+            }
+          }
+
+          // Check if user is an admin
+          if (currentUser.role !== 'admin') {
+            set.status = 403
+            return {
+              success: false,
+              error: 'Only administrators can create new agents'
+            }
+          }
+
+          const newAgent = body as NewAgentRequest
+          logger.info(`POST /api/agents - Creating new agent: ${newAgent.email} in org ${currentUser.organization_id}`)
+
+          // Get the libSQL client
+          const client = db.getClient()
+
+          // First create the user
+          const userResult = await client.execute({
+            sql: `INSERT INTO users (
+              email, 
+              first_name, 
+              last_name, 
+              phone,
+              organization_id,
+              role,
+              is_active
+            ) VALUES (?, ?, ?, ?, ?, ?, 1)
+            RETURNING id`,
+            args: [
+              newAgent.email,
+              newAgent.firstName,
+              newAgent.lastName,
+              newAgent.phone,
+              currentUser.organization_id,
+              newAgent.isAdmin ? 'admin' : 'agent'
+            ]
+          })
+
+          const userId = userResult.rows[0].id
+
+          // Then create agent settings as a single JSON column
+          await client.execute({
+            sql: `INSERT INTO agent_settings (
+              agent_id,
+              settings
+            ) VALUES (?, ?)`,
+            args: [
+              userId,
+              JSON.stringify({
+                stateLicenses: newAgent.stateLicenses,
+                carrierContracts: newAgent.carriers,
+                stateCarrierSettings: [],
+                emailSendBirthday: false,
+                emailSendPolicyAnniversary: false,
+                emailSendAep: false,
+                smartSendEnabled: false
+              })
+            ]
+          })
+
+          logger.info(`POST /api/agents - Successfully created agent with ID: ${userId}`)
+
+          return {
+            success: true,
+            message: 'Agent created successfully',
+            id: userId
+          }
+
+        } catch (e) {
+          logger.error(`Error creating agent: ${e}`)
+          set.status = 500
+          return {
+            success: false,
+            error: String(e)
+          }
+        }
+      })
       .listen(8000)
 
     logger.info('Server started on port 8000')

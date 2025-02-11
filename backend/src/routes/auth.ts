@@ -18,32 +18,37 @@ export function createAuthRoutes() {
 
   return new Elysia()
     .use(cookie())
-    .post('/api/auth/login/:organizationSlug', async ({ params, body }) => {
+    .post('/api/auth/login', async ({ body }) => {
       const { email: userEmail } = body as { email: string };
-      const { organizationSlug } = params;
-
-      // Check if this is a valid user before sending magic link
-      const user = await db.fetchOne(
-        `SELECT u.id 
-         FROM users u
-         JOIN organizations o ON u.organization_id = o.id
-         WHERE LOWER(u.email) = LOWER(?)
-         AND o.slug = ?
-         AND u.is_active = true`,  // Removed role check - allow any active user to login
-        [userEmail, organizationSlug]
-      );
-
-      if (!user) {
-        logger.warn(`Login attempt by non-user email: ${userEmail} for org: ${organizationSlug}`);
-        // Return success to avoid leaking information about registered emails
-        return {
-          success: true,
-          message: "If this email is registered, you'll receive a login link shortly."
-        };
-      }
 
       try {
-        const magicLink = await auth.createMagicLink(userEmail, organizationSlug);
+        // Look up the user and their organization
+        const userOrg = await db.fetchOne<{
+          userId: number,
+          orgSlug: string,
+          isActive: number  // Change this to number since SQLite uses 0/1
+        }>(
+          `SELECT 
+            u.id as userId,
+            o.slug as orgSlug,
+            u.is_active as isActive
+          FROM users u
+          JOIN organizations o ON u.organization_id = o.id
+          WHERE LOWER(u.email) = LOWER(?)`,
+          [userEmail]
+        );
+
+        // Check isActive as 1 since SQLite uses 0/1 for booleans
+        if (!userOrg || userOrg.isActive !== 1) {
+          logger.warn(`Login attempt by non-user or inactive user: ${userEmail}`);
+          logger.info(`User found: ${JSON.stringify(userOrg)}`);  // Add this for debugging
+          return {
+            success: true,
+            message: "If this email is registered, you'll receive a login link shortly."
+          };
+        }
+
+        const magicLink = await auth.createMagicLink(userEmail, userOrg.orgSlug);
 
         // In development, log the magic link
         if (process.env.NODE_ENV === 'development') {
@@ -56,7 +61,7 @@ export function createAuthRoutes() {
         }
 
         // In production, send email
-        await email.sendMagicLink(userEmail, magicLink, organizationSlug);
+        await email.sendMagicLink(userEmail, magicLink, userOrg.orgSlug);
         return {
           success: true,
           message: "If this email is registered, you'll receive a login link shortly."
@@ -73,11 +78,13 @@ export function createAuthRoutes() {
 
     .get('/api/auth/verify/:organizationSlug/:token', async ({ params, cookie, setCookie }) => {
       const { token, organizationSlug } = params;
+      
+      logger.info(`Starting verification for org ${organizationSlug}`);
 
       try {
         logger.info('Verifying magic link');
         const result = await auth.verifyMagicLink(token, organizationSlug);
-        logger.info(`Verification result: ${JSON.stringify(result)}`);
+        logger.info(`Magic link verification result: ${JSON.stringify(result)}`);
         
         if (!result.valid) {
           logger.error('Magic link validation failed');
@@ -131,14 +138,15 @@ export function createAuthRoutes() {
           maxAge: 60 * 60 * 24 * 7 // 7 days
         });
 
-        const response = { 
+        const verificationResult = {
           success: true,
-          redirectUrl: result.redirectUrl || '/templanding',
+          redirectUrl: "/verify-organization",
           session: sessionId,
-          email: result.email || ''
+          email: result.email || '',
+          orgSlug: organizationSlug
         };
-        logger.info(`Sending verification response: ${JSON.stringify(response)}`);
-        return response;
+        logger.info(`Sending verification response: ${JSON.stringify(verificationResult)}`);
+        return verificationResult;
 
       } catch (error) {
         logger.error(`Verification error: ${error}`);

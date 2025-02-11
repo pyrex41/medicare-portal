@@ -175,6 +175,10 @@ export class Database {
       await transaction.close()
     }
   }
+
+  getClient() {
+    return this.client
+  }
 }
 
 export const db = new Database() 

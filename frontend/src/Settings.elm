@@ -1,6 +1,7 @@
 module Settings exposing (Model, Msg, init, subscriptions, update, view)
 
 import Browser
+import Browser.Navigation as Nav
 import Debug
 import Html exposing (..)
 import Html.Attributes exposing (..)
@@ -8,6 +9,7 @@ import Html.Events exposing (onCheck, onClick, onInput)
 import Http exposing (expectJson, jsonBody)
 import Json.Decode as Decode exposing (Decoder)
 import Json.Encode as Encode
+import StateRegions exposing (Region(..), getRegionStates, regionToString)
 import Svg exposing (path, svg)
 import Svg.Attributes exposing (clipRule, d, fill, fillRule, viewBox)
 
@@ -80,7 +82,7 @@ allCarriers =
     , "Cigna"
     , "Aflac"
     , "Allstate"
-    , "Mutual of Ohamaha"
+    , "Mutual of Omaha"
     , "Ace Chubb"
     ]
 
@@ -92,7 +94,7 @@ type Carrier
     | Cigna
     | Aflac
     | Allstate
-    | MutualOfOhamaha
+    | MutualOfOmaha
     | AceChubb
 
 
@@ -106,11 +108,19 @@ type GISelectionMode
     | GIRecommended
 
 
+type alias InitFlags =
+    { isSetup : Bool
+    , key : Nav.Key
+    }
+
+
 type alias Model =
     { orgSettings : Maybe Settings
     , status : Status
     , expandedSections : List String
-    , recommendedGICombos : List StateCarrierSetting -- Add this to store recommendations
+    , recommendedGICombos : List StateCarrierSetting
+    , isSetup : Bool
+    , key : Nav.Key
     }
 
 
@@ -160,6 +170,8 @@ type Msg
     | ApplyGISelection GISelectionMode
     | GotRecommendedGICombos (Result Http.Error (List StateCarrierSetting))
     | ToggleAllowAgentSettings Bool
+    | FinishSetup
+    | SelectCommonStates Region
 
 
 type alias SettingsResponse =
@@ -168,12 +180,14 @@ type alias SettingsResponse =
     }
 
 
-init : () -> ( Model, Cmd Msg )
-init _ =
+init : InitFlags -> ( Model, Cmd Msg )
+init flags =
     ( { orgSettings = Nothing
       , status = Loading
       , expandedSections = []
       , recommendedGICombos = []
+      , isSetup = flags.isSetup
+      , key = flags.key
       }
     , Cmd.batch
         [ fetchSettings
@@ -244,14 +258,9 @@ update msg model =
                     )
 
         SaveSettings ->
-            case model.orgSettings of
-                Just settings ->
-                    ( { model | status = Saving }
-                    , saveSettings settings
-                    )
-
-                Nothing ->
-                    ( model, Cmd.none )
+            ( { model | status = Saving }
+            , Cmd.none
+            )
 
         SettingsSaved result ->
             case result of
@@ -500,6 +509,17 @@ update msg model =
         ToggleAllowAgentSettings value ->
             updateSettings model (\s -> { s | allowAgentSettings = value })
 
+        FinishSetup ->
+            ( model
+            , Nav.pushUrl model.key "/add-agents"
+            )
+
+        SelectCommonStates region ->
+            updateSettings model
+                (\s ->
+                    { s | stateLicenses = s.stateLicenses ++ getRegionStates region }
+                )
+
 
 updateSettings : Model -> (Settings -> Settings) -> ( Model, Cmd Msg )
 updateSettings model updateFn =
@@ -556,17 +576,67 @@ stateCarrierSettingEncoder setting =
 
 view : Model -> Browser.Document Msg
 view model =
-    { title = "Settings"
+    { title =
+        if model.isSetup then
+            "Organization Setup - Settings"
+
+        else
+            "Settings"
     , body =
         [ div [ class "min-h-screen bg-gray-50" ]
             [ div [ class "max-w-7xl mx-auto py-6 sm:px-6 lg:px-8" ]
-                [ h1 [ class "text-2xl font-semibold text-gray-900 mb-6" ]
-                    [ text "Organization Settings" ]
+                [ if model.isSetup then
+                    viewSetupHeader
+
+                  else
+                    viewNormalHeader
                 , viewSettingsContent model.orgSettings True model.expandedSections
+                , viewBottomBar model
                 ]
             ]
         ]
     }
+
+
+viewSetupHeader : Html Msg
+viewSetupHeader =
+    div [ class "mb-8 text-center" ]
+        [ h1 [ class "text-3xl font-bold text-gray-900" ]
+            [ text "Set Up Your Organization" ]
+        , p [ class "mt-2 text-gray-600" ]
+            [ text "Configure your organization's settings to get started" ]
+        ]
+
+
+viewNormalHeader : Html Msg
+viewNormalHeader =
+    h1 [ class "text-2xl font-semibold text-gray-900 mb-6" ]
+        [ text "Organization Settings" ]
+
+
+viewBottomBar : Model -> Html Msg
+viewBottomBar model =
+    div
+        [ class """fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 
+                  px-4 py-4 sm:px-6 lg:px-8 flex justify-between items-center"""
+        ]
+        [ button
+            [ class """px-4 py-2 text-sm font-medium text-gray-700 bg-white 
+                      border border-gray-300 rounded-md hover:bg-gray-50"""
+            , onClick SaveSettings
+            ]
+            [ text "Save Changes" ]
+        , if model.isSetup then
+            button
+                [ class """px-4 py-2 text-sm font-medium text-white bg-blue-600 
+                          rounded-md hover:bg-blue-700 ml-4"""
+                , onClick FinishSetup
+                ]
+                [ text "Next: Add Agents" ]
+
+          else
+            text ""
+        ]
 
 
 viewSettingsContent : Maybe Settings -> Bool -> List String -> Html Msg
@@ -655,10 +725,43 @@ viewExpandableSection title content expandedSections =
 viewLicensesGrid : Settings -> Html Msg
 viewLicensesGrid settings =
     div []
-        [ div [ class "mb-4 flex items-center" ]
-            [ checkbox "Select All States"
-                (List.length settings.stateLicenses == List.length allStates)
-                ToggleAllStates
+        [ div [ class "mb-4 space-y-2" ]
+            [ div [ class "flex gap-4" ]
+                -- Container for both label groups
+                [ div []
+                    -- Batch Select group
+                    [ div [ class "text-sm font-medium text-gray-700 mb-2" ]
+                        [ text "Batch Select" ]
+                    , div [ class "flex gap-2" ]
+                        [ button
+                            [ class "px-3 py-1 text-sm border rounded-md hover:bg-gray-50 min-w-[70px]"
+                            , onClick (ToggleAllStates True)
+                            ]
+                            [ text "Select All" ]
+                        , button
+                            [ class "px-3 py-1 text-sm border rounded-md hover:bg-gray-50 min-w-[70px]"
+                            , onClick (ToggleAllStates False)
+                            ]
+                            [ text "Clear All" ]
+                        ]
+                    ]
+                , div []
+                    -- By Region: group
+                    [ div [ class "text-sm font-medium text-gray-700 mb-2" ]
+                        [ text "By Region:" ]
+                    , div [ class "flex gap-2" ]
+                        (List.map
+                            (\region ->
+                                button
+                                    [ class "px-3 py-1 text-sm border rounded-md hover:bg-gray-50"
+                                    , onClick (SelectCommonStates region)
+                                    ]
+                                    [ text (regionToString region) ]
+                            )
+                            StateRegions.allRegions
+                        )
+                    ]
+                ]
             ]
         , div [ class "grid grid-cols-5 gap-4" ]
             (List.map

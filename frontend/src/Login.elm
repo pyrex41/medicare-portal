@@ -50,7 +50,7 @@ update msg model =
         SubmitForm ->
             ( { model | status = Submitting }
             , Http.post
-                { url = "/api/auth/login/demo-org" -- TODO: Make organization configurable
+                { url = "/api/auth/login"
                 , body = Http.jsonBody (encodeLoginBody model.email)
                 , expect = Http.expectWhatever GotLoginResponse
                 }

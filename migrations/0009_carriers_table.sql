@@ -13,7 +13,7 @@ INSERT INTO carriers (name) VALUES
     ('Cigna'),
     ('Aflac'),
     ('Allstate'),
-    ('Mutual of Ohamaha'),
+    ('Mutual of Omaha'),
     ('Ace Chubb');
 
 CREATE TRIGGER update_carriers_timestamp 
