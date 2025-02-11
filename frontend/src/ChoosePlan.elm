@@ -1,9 +1,10 @@
-module VerifyOrganization exposing (Model, Msg(..), init, subscriptions, update, view)
+module ChoosePlan exposing (Model, Msg(..), init, subscriptions, update, view)
 
 import Browser exposing (Document)
 import Browser.Navigation as Nav
+import Components.ProgressIndicator
 import Debug
-import Html exposing (Html, button, div, h2, input, label, li, p, span, text, ul)
+import Html exposing (Html, button, div, h1, h2, h3, input, label, li, p, span, text, ul)
 import Html.Attributes exposing (class, type_, value)
 import Html.Events exposing (onClick, onInput)
 import Http
@@ -167,11 +168,31 @@ update msg model =
 
 view : Model -> Document Msg
 view model =
-    { title = "Organization Setup"
+    { title = "Choose Plan - Medicare Max"
     , body =
-        [ div [ class "min-h-screen bg-gray-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8" ]
-            [ div [ class "mt-8 sm:mx-auto sm:w-full sm:max-w-md" ]
-                [ div [ class "bg-white py-8 px-4 shadow sm:rounded-lg sm:px-10" ]
+        [ div [ class "flex min-h-screen bg-[#0D1117]" ]
+            [ Components.ProgressIndicator.view
+                [ { icon = "1"
+                  , title = "Organization Details"
+                  , description = "Enter your organization information"
+                  , isCompleted = True
+                  , isActive = False
+                  }
+                , { icon = "2"
+                  , title = "Choose Plan"
+                  , description = "Select your subscription plan"
+                  , isCompleted = False
+                  , isActive = True
+                  }
+                , { icon = "3"
+                  , title = "Add Team Members"
+                  , description = "Invite your team to join"
+                  , isCompleted = False
+                  , isActive = False
+                  }
+                ]
+            , div [ class "flex-1 p-8" ]
+                [ div [ class "max-w-4xl mx-auto" ]
                     [ viewStep model ]
                 ]
             ]
@@ -224,10 +245,14 @@ viewLoading =
 
 viewPlanSelection : Model -> Html Msg
 viewPlanSelection model =
-    div []
-        [ h2 [ class "text-2xl font-bold text-gray-900 mb-6" ]
-            [ text "Choose your plan" ]
-        , div [ class "space-y-6" ]
+    div [ class "space-y-8" ]
+        [ div [ class "mb-8" ]
+            [ h1 [ class "text-2xl font-semibold text-white" ]
+                [ text "Choose your plan" ]
+            , p [ class "text-[#8B8B8B] mt-2" ]
+                [ text "Select a plan that best fits your organization's needs" ]
+            ]
+        , div [ class "grid grid-cols-1 md:grid-cols-3 gap-4" ]
             (List.map
                 (\tier ->
                     viewPlanOption
@@ -242,16 +267,27 @@ viewPlanSelection model =
                 model.tiers
             )
         , if model.error /= Nothing then
-            div [ class "mt-4 text-red-600" ]
+            div [ class "mt-4 text-red-500" ]
                 [ text (Maybe.withDefault "" model.error) ]
 
           else
             text ""
-        , button
-            [ class "mt-6 w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-            , onClick NextStep
+        , div [ class "mt-8 flex justify-center" ]
+            [ button
+                [ class
+                    ("px-6 py-3 rounded-lg transition-colors duration-200 "
+                        ++ (if model.selectedPlan == Nothing then
+                                "bg-[#2563EB] bg-opacity-50 cursor-not-allowed text-white/70"
+
+                            else
+                                "bg-[#2563EB] hover:bg-[#1D4ED8] text-white"
+                           )
+                    )
+                , onClick NextStep
+                , Html.Attributes.disabled (model.selectedPlan == Nothing)
+                ]
+                [ text "Select" ]
             ]
-            [ text "Continue to payment" ]
         ]
 
 
@@ -259,47 +295,40 @@ viewPlanOption : String -> String -> String -> List String -> Int -> Int -> Mayb
 viewPlanOption id name price features agentLimit contactLimit selectedPlan =
     div
         [ class
-            ("p-6 border rounded-lg cursor-pointer transition-all "
+            ("p-6 rounded-lg cursor-pointer transition-all "
                 ++ (if Just id == selectedPlan then
-                        "border-blue-500 ring-2 ring-blue-500 bg-blue-50"
+                        "bg-[#2563EB] bg-opacity-10 ring-2 ring-[#2563EB]"
 
                     else
-                        "border-gray-300 hover:border-blue-500 hover:shadow-md"
+                        "bg-white bg-opacity-5 hover:bg-opacity-10"
                    )
             )
         , onClick (SelectPlan id)
         ]
-        [ div [ class "flex justify-between items-start" ]
-            [ div [ class "space-y-4 flex-grow" ]
-                [ div []
-                    [ h2 [ class "text-xl font-semibold text-gray-900" ] [ text name ]
-                    , p [ class "text-2xl font-bold text-gray-900 mt-2" ] [ text price ]
-                    ]
-                , div [ class "space-y-2" ]
-                    [ div [ class "flex items-center text-gray-600" ]
-                        [ text ("Up to " ++ String.fromInt agentLimit ++ " agents") ]
-                    , div [ class "flex items-center text-gray-600" ]
-                        [ text ("Up to " ++ String.fromInt contactLimit ++ " contacts") ]
-                    ]
-                , div [ class "mt-4" ]
-                    [ p [ class "text-sm font-medium text-gray-900 mb-2" ] [ text "Features:" ]
-                    , ul [ class "space-y-2" ]
-                        (List.map
-                            (\feature ->
-                                li [ class "flex items-center text-sm text-gray-600" ]
-                                    [ span [ class "text-green-500 mr-2" ] [ text "✓" ]
-                                    , text feature
-                                    ]
-                            )
-                            features
-                        )
-                    ]
+        [ div [ class "space-y-4" ]
+            [ div []
+                [ h3 [ class "text-xl font-semibold text-white" ] [ text name ]
+                , p [ class "text-3xl font-bold text-white mt-2" ] [ text price ]
                 ]
-            , if Just id == selectedPlan then
-                div [ class "h-6 w-6 text-blue-600" ] [ text "✓" ]
-
-              else
-                div [] []
+            , div [ class "space-y-2 py-4 border-t border-b border-white border-opacity-10" ]
+                [ div [ class "text-[#8B8B8B]" ]
+                    [ text ("Up to " ++ String.fromInt agentLimit ++ " agents") ]
+                , div [ class "text-[#8B8B8B]" ]
+                    [ text ("Up to " ++ String.fromInt contactLimit ++ " contacts") ]
+                ]
+            , div [ class "mt-4" ]
+                [ p [ class "text-sm font-medium text-white mb-2" ] [ text "Features:" ]
+                , ul [ class "space-y-2" ]
+                    (List.map
+                        (\feature ->
+                            li [ class "flex items-center text-sm text-[#8B8B8B]" ]
+                                [ span [ class "text-[#059669] mr-2" ] [ text "✓" ]
+                                , text feature
+                                ]
+                        )
+                        features
+                    )
+                ]
             ]
         ]
 

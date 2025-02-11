@@ -3,6 +3,7 @@ module Main exposing (main)
 import AddAgent
 import Browser exposing (Document)
 import Browser.Navigation as Nav
+import ChoosePlan
 import Dashboard
 import Debug
 import Html exposing (Html, div, h1, p, text)
@@ -15,7 +16,6 @@ import Signup
 import TempLanding
 import Url exposing (Url)
 import Url.Parser as Parser exposing ((</>), Parser, map, oneOf, s, string)
-import VerifyOrganization
 
 
 type alias VerificationResponse =
@@ -73,7 +73,7 @@ type Page
     | TempLandingPage TempLanding.Model
     | SettingsPage Settings.Model
     | Signup Signup.Model
-    | VerifyOrganizationPage VerifyOrganization.Model
+    | ChoosePlanPage ChoosePlan.Model
     | AddAgentsPage AddAgent.Model
 
 
@@ -85,7 +85,7 @@ type Msg
     | TempLandingMsg TempLanding.Msg
     | SettingsMsg Settings.Msg
     | SignupMsg Signup.Msg
-    | VerifyOrganizationMsg VerifyOrganization.Msg
+    | ChoosePlanMsg ChoosePlan.Msg
     | AddAgentsMsg AddAgent.Msg
     | GotVerification (Result Http.Error VerificationResponse)
     | GotSession (Result Http.Error SessionResponse)
@@ -152,7 +152,7 @@ type ProtectedRoute
     = TempLandingRoute
     | DashboardRoute
     | SettingsRoute Bool
-    | VerifyOrganizationRoute
+    | ChoosePlanRoute
     | AddAgentsRoute Bool -- Add setup flag like Settings
 
 
@@ -170,7 +170,7 @@ routeParser =
         , map (Protected DashboardRoute) (s "dashboard")
         , map (Protected (SettingsRoute False)) (s "settings")
         , map (Protected (SettingsRoute True)) (s "settings" </> s "setup")
-        , map (Protected VerifyOrganizationRoute) (s "verify-organization")
+        , map (Protected ChoosePlanRoute) (s "choose-plan")
         , map (Protected (AddAgentsRoute False)) (s "add-agents")
         , map (Protected (AddAgentsRoute True)) (s "add-agents" </> s "setup")
         ]
@@ -295,15 +295,15 @@ showProtectedRoute route model =
             , Cmd.map SettingsMsg pageCmd
             )
 
-        VerifyOrganizationRoute ->
+        ChoosePlanRoute ->
             case model.session of
                 Verified session ->
                     let
                         ( pageModel, pageCmd ) =
-                            VerifyOrganization.init "test-org" session model.key
+                            ChoosePlan.init "test-org" session model.key
                     in
-                    ( { model | page = VerifyOrganizationPage pageModel }
-                    , Cmd.map VerifyOrganizationMsg pageCmd
+                    ( { model | page = ChoosePlanPage pageModel }
+                    , Cmd.map ChoosePlanMsg pageCmd
                     )
 
                 _ ->
@@ -417,15 +417,15 @@ update msg model =
                 _ ->
                     ( model, Cmd.none )
 
-        VerifyOrganizationMsg subMsg ->
+        ChoosePlanMsg subMsg ->
             case model.page of
-                VerifyOrganizationPage pageModel ->
+                ChoosePlanPage pageModel ->
                     let
                         ( newPageModel, newCmd ) =
-                            VerifyOrganization.update subMsg pageModel
+                            ChoosePlan.update subMsg pageModel
                     in
-                    ( { model | page = VerifyOrganizationPage newPageModel }
-                    , Cmd.map VerifyOrganizationMsg newCmd
+                    ( { model | page = ChoosePlanPage newPageModel }
+                    , Cmd.map ChoosePlanMsg newCmd
                     )
 
                 _ ->
@@ -446,55 +446,30 @@ update msg model =
                     ( model, Cmd.none )
 
         GotVerification result ->
-            let
-                _ =
-                    Debug.log "Got verification result" result
-            in
             case result of
                 Ok response ->
                     if response.success then
                         let
-                            _ =
-                                Debug.log "Successful verification"
-                                    { response = response
-                                    , orgSlug = response.orgSlug
-                                    }
-
-                            ( verifyOrgModel, verifyOrgCmd ) =
-                                VerifyOrganization.init response.orgSlug response.session model.key
-
-                            _ =
-                                Debug.log "Created verify org model"
-                                    { model = verifyOrgModel
-                                    , orgSlug = verifyOrgModel.orgSlug
-                                    , cmd = verifyOrgCmd
-                                    }
+                            ( choosePlanModel, choosePlanCmd ) =
+                                ChoosePlan.init response.orgSlug response.session model.key
 
                             newModel =
                                 { model
                                     | session = Verified response.session
-                                    , page = VerifyOrganizationPage verifyOrgModel
+                                    , page = ChoosePlanPage choosePlanModel
                                 }
                         in
                         ( newModel
                         , Cmd.batch
                             [ Nav.replaceUrl model.key response.redirectUrl
-                            , Cmd.map VerifyOrganizationMsg verifyOrgCmd
+                            , Cmd.map ChoosePlanMsg choosePlanCmd
                             ]
                         )
 
                     else
-                        let
-                            _ =
-                                Debug.log "Verification failed" response
-                        in
                         ( model, Nav.pushUrl model.key "/login" )
 
                 Err error ->
-                    let
-                        _ =
-                            Debug.log "Verification error" error
-                    in
                     ( model, Nav.pushUrl model.key "/login" )
 
         GotSession result ->
@@ -588,9 +563,9 @@ view model =
             , body = List.map (Html.map SignupMsg) (Signup.view signupModel).body
             }
 
-        VerifyOrganizationPage pageModel ->
-            { title = "Verify Organization"
-            , body = List.map (Html.map VerifyOrganizationMsg) (VerifyOrganization.view pageModel).body
+        ChoosePlanPage pageModel ->
+            { title = "Choose Plan"
+            , body = List.map (Html.map ChoosePlanMsg) (ChoosePlan.view pageModel).body
             }
 
         AddAgentsPage pageModel ->
@@ -617,8 +592,8 @@ subscriptions model =
         Signup signupModel ->
             Sub.map SignupMsg (Signup.subscriptions signupModel)
 
-        VerifyOrganizationPage pageModel ->
-            Sub.map VerifyOrganizationMsg (VerifyOrganization.subscriptions pageModel)
+        ChoosePlanPage pageModel ->
+            Sub.map ChoosePlanMsg (ChoosePlan.subscriptions pageModel)
 
         AddAgentsPage pageModel ->
             Sub.map AddAgentsMsg (AddAgent.subscriptions pageModel)

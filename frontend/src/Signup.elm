@@ -1,6 +1,7 @@
 module Signup exposing (Model, Msg(..), init, subscriptions, update, view)
 
 import Browser
+import Components.ProgressIndicator as ProgressIndicator exposing (Step)
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (onBlur, onInput, onSubmit)
@@ -26,6 +27,7 @@ type alias Model =
     , submitted : Bool
     , orgNameStatus : OrgNameStatus
     , emailStatus : EmailStatus
+    , currentStep : SignupStep
     }
 
 
@@ -74,6 +76,13 @@ type alias EmailResponse =
     }
 
 
+type SignupStep
+    = AccountSetup
+    | CompanyDetails
+    | CompanyStyle
+    | SetupPayment
+
+
 init : ( Model, Cmd Msg )
 init =
     ( { organizationName = ""
@@ -85,6 +94,7 @@ init =
       , submitted = False
       , orgNameStatus = NotChecked
       , emailStatus = EmailNotChecked
+      , currentStep = AccountSetup
       }
     , Cmd.none
     )
@@ -294,13 +304,10 @@ view : Model -> Browser.Document Msg
 view model =
     { title = "Create Organization"
     , body =
-        [ div [ class "min-h-screen bg-gray-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8" ]
-            [ div [ class "sm:mx-auto sm:w-full sm:max-w-md" ]
-                [ h2 [ class "mt-6 text-center text-3xl font-extrabold text-gray-900" ]
-                    [ text "Create your organization" ]
-                ]
-            , div [ class "mt-8 sm:mx-auto sm:w-full sm:max-w-md" ]
-                [ div [ class "bg-white py-8 px-4 shadow sm:rounded-lg sm:px-10" ]
+        [ div [ class "min-h-screen bg-gray-50 flex" ]
+            [ viewProgress model
+            , div [ class "flex-1 ml-80" ]
+                [ div [ class "max-w-2xl mx-auto py-12 px-8" ]
                     [ if model.submitted then
                         viewSuccess
 
@@ -589,3 +596,37 @@ submitButtonClass model =
             else
                 "text-white bg-purple-300 cursor-not-allowed"
            )
+
+
+viewProgress : Model -> Html Msg
+viewProgress model =
+    let
+        currentStep =
+            case model.currentStep of
+                AccountSetup ->
+                    1
+
+                CompanyDetails ->
+                    2
+
+                CompanyStyle ->
+                    3
+
+                SetupPayment ->
+                    4
+
+        makeStep : Int -> String -> String -> String -> Step
+        makeStep stepNum icon title description =
+            { icon = icon
+            , title = title
+            , description = description
+            , isCompleted = stepNum < currentStep
+            , isActive = stepNum == currentStep
+            }
+    in
+    ProgressIndicator.view
+        [ makeStep 1 "👤" "Your Details" "Please provide your name and email"
+        , makeStep 2 "🏢" "Company Details" "General info for your Company"
+        , makeStep 3 "⚙️" "Company Style" "Style your platform"
+        , makeStep 4 "💳" "Setup Payment" "The final step to get started"
+        ]
