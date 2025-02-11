@@ -54,10 +54,7 @@ init : String -> String -> Nav.Key -> ( Model, Cmd Msg )
 init orgSlug session key =
     let
         _ =
-            Debug.log "Initializing VerifyOrganization"
-                { orgSlug = orgSlug
-                , session = session
-                }
+            Debug.log "Initializing ChoosePlan with orgSlug" orgSlug
     in
     ( { session = Just session
       , orgSlug = orgSlug
@@ -83,14 +80,18 @@ fetchSubscriptionTiers =
 saveSubscription : String -> String -> Cmd Msg
 saveSubscription orgSlug tierId =
     let
+        url =
+            "/api/organizations/" ++ orgSlug ++ "/subscription"
+
         _ =
             Debug.log "Making subscription request"
-                { url = "/api/organizations/" ++ orgSlug ++ "/subscription"
+                { url = url
                 , tierId = tierId
+                , orgSlug = orgSlug
                 }
     in
     Http.post
-        { url = "/api/organizations/" ++ orgSlug ++ "/subscription"
+        { url = url
         , body = Http.jsonBody (encodeSubscriptionUpdate tierId)
         , expect = Http.expectWhatever SubscriptionSaved
         }
@@ -106,12 +107,24 @@ update msg model =
         SubscriptionSaved result ->
             case result of
                 Ok _ ->
-                    ( model
+                    ( { model | error = Nothing }
                     , Nav.pushUrl model.key "/settings/setup"
                     )
 
-                Err _ ->
-                    ( { model | error = Just "Failed to update subscription" }
+                Err error ->
+                    let
+                        errorMessage =
+                            case error of
+                                Http.BadStatus 403 ->
+                                    "You don't have permission to update this organization"
+
+                                Http.BadStatus 404 ->
+                                    "Organization not found"
+
+                                _ ->
+                                    "Failed to update subscription. Please try again."
+                    in
+                    ( { model | error = Just errorMessage }
                     , Cmd.none
                     )
 
@@ -120,6 +133,10 @@ update msg model =
                 PlanSelection ->
                     case model.selectedPlan of
                         Just planId ->
+                            let
+                                _ =
+                                    Debug.log "Saving subscription with orgSlug" model.orgSlug
+                            in
                             ( { model | currentStep = Payment }
                             , saveSubscription model.orgSlug planId
                             )
@@ -277,7 +294,7 @@ viewPlanSelection model =
                 [ class
                     ("px-6 py-3 rounded-lg transition-colors duration-200 "
                         ++ (if model.selectedPlan == Nothing then
-                                "bg-[#2563EB] bg-opacity-50 cursor-not-allowed text-white/70"
+                                "bg-[#2563EB]/50 cursor-not-allowed text-white/70"
 
                             else
                                 "bg-[#2563EB] hover:bg-[#1D4ED8] text-white"
@@ -297,10 +314,10 @@ viewPlanOption id name price features agentLimit contactLimit selectedPlan =
         [ class
             ("p-6 rounded-lg cursor-pointer transition-all "
                 ++ (if Just id == selectedPlan then
-                        "bg-[#2563EB] bg-opacity-10 ring-2 ring-[#2563EB]"
+                        "bg-[#2563EB]/10 ring-2 ring-[#2563EB]"
 
                     else
-                        "bg-white bg-opacity-5 hover:bg-opacity-10"
+                        "bg-white/5 hover:bg-black/10"
                    )
             )
         , onClick (SelectPlan id)
@@ -310,7 +327,7 @@ viewPlanOption id name price features agentLimit contactLimit selectedPlan =
                 [ h3 [ class "text-xl font-semibold text-white" ] [ text name ]
                 , p [ class "text-3xl font-bold text-white mt-2" ] [ text price ]
                 ]
-            , div [ class "space-y-2 py-4 border-t border-b border-white border-opacity-10" ]
+            , div [ class "space-y-2 py-4 border-t border-b border-white/10" ]
                 [ div [ class "text-[#8B8B8B]" ]
                     [ text ("Up to " ++ String.fromInt agentLimit ++ " agents") ]
                 , div [ class "text-[#8B8B8B]" ]

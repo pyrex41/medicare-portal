@@ -140,9 +140,9 @@ export function createAuthRoutes() {
 
         const verificationResult = {
           success: true,
-          redirectUrl: "/verify-organization",
+          redirectUrl: result.redirectUrl || '/dashboard',
           session: sessionId,
-          email: result.email || '',
+          email: result.email,
           orgSlug: organizationSlug
         };
         logger.info(`Sending verification response: ${JSON.stringify(verificationResult)}`);
@@ -170,16 +170,46 @@ export function createAuthRoutes() {
         return { 
           valid: false,
           session: "",
-          email: ""
+          email: "",
+          organizationSlug: ""
         };
       }
 
-      // For now, just validate that the session cookie exists
-      return { 
-        valid: true,
-        session: sessionId,
-        email: "" // We could store this in the session if needed
-      };
+      try {
+        // Get user and organization info from session
+        const sessionUser = await db.fetchOne(
+          `SELECT u.email, o.slug as organization_slug
+           FROM sessions s
+           JOIN users u ON s.user_id = u.id
+           JOIN organizations o ON u.organization_id = o.id
+           WHERE s.id = ?`,
+          [sessionId]
+        );
+
+        if (!sessionUser) {
+          return { 
+            valid: false,
+            session: "",
+            email: "",
+            organizationSlug: ""
+          };
+        }
+
+        return { 
+          valid: true,
+          session: sessionId,
+          email: sessionUser.email,
+          organizationSlug: sessionUser.organization_slug
+        };
+      } catch (error) {
+        logger.error('Error getting session info:', error);
+        return { 
+          valid: false,
+          session: "",
+          email: "",
+          organizationSlug: ""
+        };
+      }
     })
 
     .post('/api/auth/logout', async ({ setCookie }) => {

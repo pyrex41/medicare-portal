@@ -48,7 +48,7 @@ viewStep step =
         , classList [ ( "opacity-50", not step.isActive && not step.isCompleted ) ]
         ]
         [ div
-            [ class "flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center mr-3 transition-all duration-300"
+            [ class "shrink-0 w-6 h-6 rounded-full flex items-center justify-center mr-3 transition-all duration-300"
             , classList
                 [ ( "bg-[#2563EB] text-white", step.isActive )
                 , ( "bg-[#059669] text-white", step.isCompleted )

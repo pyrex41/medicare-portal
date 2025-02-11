@@ -823,7 +823,7 @@ viewNavHeader =
         [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8" ]
             [ div [ class "flex justify-between h-16" ]
                 [ div [ class "flex" ]
-                    [ div [ class "flex-shrink-0 flex items-center" ]
+                    [ div [ class "shrink-0 flex items-center" ]
                         [ h1 [ class "text-xl font-semibold text-purple-600" ]
                             [ text "Medicare Max" ]
                         ]
@@ -1395,7 +1395,7 @@ viewModals model =
 
 viewAddModal : ContactForm -> Bool -> Html Msg
 viewAddModal form isSubmitting =
-    div [ class "fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center p-8" ]
+    div [ class "fixed inset-0 bg-gray-500/75 flex items-center justify-center p-8" ]
         [ div [ class "bg-white rounded-xl p-10 max-w-5xl w-full mx-4 shadow-xl relative" ]
             [ button
                 [ class "absolute top-4 right-4 text-gray-400 hover:text-gray-600 transition-colors duration-200"
@@ -1411,7 +1411,7 @@ viewAddModal form isSubmitting =
 
 viewEditModal : ContactForm -> Bool -> Html Msg
 viewEditModal form isSubmitting =
-    div [ class "fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center p-8" ]
+    div [ class "fixed inset-0 bg-gray-500/75 flex items-center justify-center p-8" ]
         [ div [ class "bg-white rounded-xl p-10 max-w-5xl w-full mx-4 shadow-xl relative" ]
             [ button
                 [ class "absolute top-4 right-4 text-gray-400 hover:text-gray-600 transition-colors duration-200"
@@ -1427,7 +1427,7 @@ viewEditModal form isSubmitting =
 
 viewCsvUploadModal : UploadState -> Bool -> Html Msg
 viewCsvUploadModal state isUploading =
-    div [ class "fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center p-8" ]
+    div [ class "fixed inset-0 bg-gray-500/75 flex items-center justify-center p-8" ]
         [ div [ class "bg-white rounded-xl p-10 max-w-2xl w-full mx-4 shadow-xl relative" ]
             [ button
                 [ class "absolute top-4 right-4 text-gray-400 hover:text-gray-600 transition-colors duration-200"

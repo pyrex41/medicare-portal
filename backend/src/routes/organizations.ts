@@ -3,7 +3,7 @@ import { Database } from '../database';
 import { TursoService } from '../services/turso';
 import { z } from 'zod';
 import { sendMagicLink } from '../services/email';
-import { generateToken } from '../services/auth';
+import { generateToken, getUserFromSession } from '../services/auth';
 import { logger } from '../logger';
 import { AuthService } from '../services/auth';
 
@@ -48,8 +48,8 @@ async function generateUniqueSlug(db: Database, name: string): Promise<string> {
   return uniqueSlug;
 }
 
-export const organizationRoutes = new Elysia()
-  .post('/api/organizations/signup', async ({ body, set }) => {
+export const organizationRoutes = new Elysia({ prefix: '/api' })
+  .post('/organizations/signup', async ({ body, set }) => {
     const db = new Database();
     await db.init();
     const turso = new TursoService();
@@ -158,7 +158,7 @@ export const organizationRoutes = new Elysia()
           data.adminEmail, 
           slug,
           {
-            redirectUrl: '/verify-organization',
+            redirectUrl: '/choose-plan',
             orgId: org.id,
             name: `${data.adminFirstName} ${data.adminLastName}`
           }
@@ -192,7 +192,7 @@ export const organizationRoutes = new Elysia()
       };
     }
   })
-  .get('/api/organizations/check-name/:name', async ({ params, set }) => {
+  .get('/organizations/check-name/:name', async ({ params, set }) => {
     const db = new Database();
     await db.init();
 
@@ -239,7 +239,7 @@ export const organizationRoutes = new Elysia()
       };
     }
   })
-  .get('/api/organizations/check-email/:email', async ({ params, set }) => {
+  .get('/organizations/check-email/:email', async ({ params, set }) => {
     const db = new Database();
     await db.init();
 
@@ -282,7 +282,7 @@ export const organizationRoutes = new Elysia()
       };
     }
   })
-  .get('/api/organizations/subscription-tiers', async ({ set }) => {
+  .get('/organizations/subscription-tiers', async ({ set }) => {
     try {
       const tiers = [
         {
@@ -318,45 +318,78 @@ export const organizationRoutes = new Elysia()
       return { success: false, error: 'Failed to fetch subscription tiers' };
     }
   })
-  .post('/api/organizations/:orgSlug/subscription', async ({ params, body, set }) => {
-    const { orgSlug } = params;
-    const { tierId } = body as { tierId: string };
-
+  .post('/organizations/:orgSlug/subscription', async ({ params: { orgSlug }, body, request, set }) => {
     try {
       const db = new Database();
       await db.init();
 
-      // First verify the organization exists
-      const org = await db.fetchOne<{ id: number }>(
-        'SELECT id FROM organizations WHERE slug = ?',
-        [orgSlug]
-      );
-
-      if (!org) {
-        set.status = 404;
-        return { 
-          success: false, 
-          error: 'Organization not found' 
-        };
+      // Get current user from session to determine their org
+      const currentUser = await getUserFromSession(request)
+      if (!currentUser) {
+        set.status = 401
+        return {
+          success: false,
+          error: 'You must be logged in to perform this action'
+        }
       }
 
+      // Add more detailed logging
+      logger.info('Updating subscription', {
+        orgSlug,
+        currentUser: currentUser.organization_id,
+        requestBody: body
+      })
+
+      // First verify this user belongs to the organization they're trying to update
+      const orgResult = await db.fetchAll(
+        'SELECT id FROM organizations WHERE slug = ?',
+        [orgSlug]
+      )
+
+      if (!orgResult || orgResult.length === 0) {
+        set.status = 404
+        return {
+          success: false,
+          error: 'Organization not found'
+        }
+      }
+
+      const organizationId = orgResult[0][0]
+
+      // Verify user has permission for this org
+      if (organizationId !== currentUser.organization_id) {
+        logger.error(`User from org ${currentUser.organization_id} attempted to update org ${organizationId}`)
+        set.status = 403
+        return {
+          success: false,
+          error: 'You do not have permission to update this organization'
+        }
+      }
+
+      // Type assertion for body
+      const { tierId } = body as { tierId: string }
+      
+      // Update subscription using the verified organization ID
       await db.execute(
         `UPDATE organizations 
          SET subscription_tier = ?
-         WHERE slug = ?`,
-        [tierId, orgSlug]
-      );
+         WHERE id = ?`,
+        [tierId, organizationId]
+      )
 
-      return { 
-        success: true, 
-        message: 'Subscription updated successfully' 
-      };
-    } catch (error) {
-      logger.error(`Error updating subscription: ${error}`);
-      set.status = 500;
-      return { 
-        success: false, 
-        error: 'Failed to update subscription' 
-      };
+      logger.info(`Successfully updated subscription for org ${organizationId} to tier ${tierId}`)
+
+      return {
+        success: true,
+        message: 'Subscription updated successfully'
+      }
+
+    } catch (e) {
+      logger.error(`Error updating subscription: ${e}`)
+      set.status = 500
+      return {
+        success: false,
+        error: String(e)
+      }
     }
   }); 

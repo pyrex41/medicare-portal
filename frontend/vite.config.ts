@@ -1,17 +1,13 @@
 import { defineConfig } from 'vite'
 import elmPlugin from 'vite-plugin-elm'
 import path from 'path'
+import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
-  plugins: [elmPlugin()],
-  css: {
-    postcss: {
-      plugins: [
-        (await import('tailwindcss')).default,
-        (await import('autoprefixer')).default,
-      ],
-    },
-  },
+  plugins: [
+    elmPlugin(),
+    tailwindcss(),
+  ],
   resolve: {
     extensions: ['.ts', '.js', '.elm']
   },

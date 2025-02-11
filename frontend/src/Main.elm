@@ -31,6 +31,7 @@ type alias SessionResponse =
     { valid : Bool
     , session : String
     , email : String
+    , organizationSlug : String
     }
 
 
@@ -46,10 +47,11 @@ verificationDecoder =
 
 sessionDecoder : Decoder SessionResponse
 sessionDecoder =
-    Decode.map3 SessionResponse
+    Decode.map4 SessionResponse
         (Decode.field "valid" Decode.bool)
         (Decode.field "session" Decode.string)
         (Decode.field "email" Decode.string)
+        (Decode.field "organizationSlug" Decode.string)
 
 
 type alias Model =
@@ -57,6 +59,7 @@ type alias Model =
     , url : Url
     , page : Page
     , session : SessionState
+    , currentUser : { organizationSlug : String }
     }
 
 
@@ -111,6 +114,7 @@ init _ url key =
             , url = url
             , page = NotFoundPage
             , session = Unknown
+            , currentUser = { organizationSlug = "" }
             }
 
         route =
@@ -300,7 +304,7 @@ showProtectedRoute route model =
                 Verified session ->
                     let
                         ( pageModel, pageCmd ) =
-                            ChoosePlan.init "test-org" session model.key
+                            ChoosePlan.init model.currentUser.organizationSlug session model.key
                     in
                     ( { model | page = ChoosePlanPage pageModel }
                     , Cmd.map ChoosePlanMsg pageCmd
@@ -450,6 +454,9 @@ update msg model =
                 Ok response ->
                     if response.success then
                         let
+                            _ =
+                                Debug.log "Got verification response" response
+
                             ( choosePlanModel, choosePlanCmd ) =
                                 ChoosePlan.init response.orgSlug response.session model.key
 
@@ -457,6 +464,7 @@ update msg model =
                                 { model
                                     | session = Verified response.session
                                     , page = ChoosePlanPage choosePlanModel
+                                    , currentUser = { organizationSlug = response.orgSlug }
                                 }
                         in
                         ( newModel
@@ -481,9 +489,11 @@ update msg model =
                                 Debug.log "Session verified" response
 
                             newModel =
-                                { model | session = Verified response.session }
+                                { model
+                                    | session = Verified response.session
+                                    , currentUser = { organizationSlug = response.organizationSlug }
+                                }
                         in
-                        -- Re-evaluate current route with verified session
                         changeRouteTo model.url newModel
 
                     else
@@ -564,7 +574,7 @@ view model =
             }
 
         ChoosePlanPage pageModel ->
-            { title = "Choose Plan"
+            { title = "Choose Plan - Medicare Max"
             , body = List.map (Html.map ChoosePlanMsg) (ChoosePlan.view pageModel).body
             }
 

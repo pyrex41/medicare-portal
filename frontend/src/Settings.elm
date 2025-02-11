@@ -879,7 +879,7 @@ viewStateCarrierGrid settings =
                                                     [ div [ class "flex flex-col items-start space-y-2 w-[120px] mx-auto" ]
                                                         [ div [ class "w-full" ]
                                                             [ label [ class "flex items-center cursor-pointer w-full" ]
-                                                                [ div [ class "relative w-4 h-4 mr-2 flex-shrink-0" ]
+                                                                [ div [ class "relative w-4 h-4 mr-2 shrink-0" ]
                                                                     [ input
                                                                         [ type_ "checkbox"
                                                                         , checked setting.active
@@ -912,7 +912,7 @@ viewStateCarrierGrid settings =
                                                                             text ""
                                                                         ]
                                                                     ]
-                                                                , div [ class "flex-grow text-left" ] [ text "Active" ]
+                                                                , div [ class "grow text-left" ] [ text "Active" ]
                                                                 ]
                                                             ]
                                                         , div [ class "w-full" ]
@@ -923,7 +923,7 @@ viewStateCarrierGrid settings =
                                                                     , ( "cursor-not-allowed opacity-50", not setting.active )
                                                                     ]
                                                                 ]
-                                                                [ div [ class "relative w-4 h-4 mr-2 flex-shrink-0" ]
+                                                                [ div [ class "relative w-4 h-4 mr-2 shrink-0" ]
                                                                     [ input
                                                                         [ type_ "checkbox"
                                                                         , checked setting.targetGI
@@ -946,7 +946,7 @@ viewStateCarrierGrid settings =
                                                                             text ""
                                                                         ]
                                                                     ]
-                                                                , div [ class "flex-grow text-left" ] [ text "GI" ]
+                                                                , div [ class "grow text-left" ] [ text "GI" ]
                                                                 ]
                                                             ]
                                                         ]

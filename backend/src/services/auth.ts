@@ -200,82 +200,72 @@ export interface User {
   role: 'admin' | 'agent'
 }
 
-export async function getUserFromSession(request: Request): Promise<User | null> {
+export async function getUserFromSession(request: Request) {
   try {
     // Get session cookie
-    const cookie = request.headers.get('cookie')
-    if (!cookie) {
-      logger.info('No cookie found in request')
-      return null
-    }
-
-    // Parse session ID from cookie
-    const sessionMatch = cookie.match(/session=([^;]+)/)
-    if (!sessionMatch) {
-      logger.info('No session cookie found')
-      return null
-    }
-
-    const encodedSession = sessionMatch[1]
-    const decodedSession = decodeURIComponent(encodedSession)
+    const sessionId = request.headers.get('cookie')?.split('session=')[1]?.split(';')[0];
     
-    let sessionData
-    try {
-      sessionData = JSON.parse(decodedSession.split('.')[0])
-      logger.info(`Parsed session data: ${JSON.stringify(sessionData)}`)
-    } catch (e) {
-      logger.error(`Failed to parse session data: ${e}`)
-      return null
+    if (!sessionId) {
+      logger.warn('No session cookie found');
+      return null;
     }
 
-    if (!sessionData.userId) {
-      logger.info('No userId found in session data')
-      return null
+    // Initialize database
+    const db = new Database();
+    await db.init();
+
+    // Get session data
+    const sessionResult = await db.fetchAll(
+      'SELECT user_id FROM sessions WHERE id = ?',
+      [sessionId]
+    );
+
+    if (!sessionResult || sessionResult.length === 0) {
+      logger.warn('No session found for ID:', sessionId);
+      return null;
     }
 
-    const db = new Database()
-    await db.init()
+    const userId = sessionResult[0][0];
 
-    // First, let's check what users exist
-    const allUsers = await db.fetchAll('SELECT id, email, role FROM users')
-    logger.info(`All users in database: ${JSON.stringify(allUsers)}`)
+    // Get user data
+    const userResult = await db.fetchAll(
+      `SELECT 
+        users.id,
+        users.email,
+        users.organization_id,
+        users.role,
+        users.first_name,
+        users.last_name,
+        users.is_active,
+        users.phone,
+        organizations.name as organization_name
+       FROM users 
+       JOIN organizations ON users.organization_id = organizations.id 
+       WHERE users.id = ?`,
+      [userId]
+    );
 
-    // Let's check what sessions exist
-    const sessions = await db.fetchAll('SELECT * FROM sessions')
-    logger.info(`All sessions in database: ${JSON.stringify(sessions)}`)
-
-    // Now try to find our specific user by email directly
-    const query = `
-      SELECT u.* 
-      FROM users u
-      WHERE u.email = 'reuben.brooks@medicaremax.ai'
-      AND u.is_active = 1`
-
-    logger.info(`Executing query: ${query}`)
-
-    const result = await db.fetchAll(query)
-    
-    logger.info(`Query result: ${JSON.stringify(result)}`)
-
-    if (!result || result.length === 0) {
-      logger.info('No valid user found')
-      return null
+    if (!userResult || userResult.length === 0) {
+      logger.warn('No user found for session');
+      return null;
     }
 
-    const user = result[0]
-    logger.info(`Found user: ${JSON.stringify(user)}`)
-    
-    return {
-      id: user[0],
-      email: user[1],
-      organization_id: user[2],
-      role: user[3],
-      first_name: user[6],
-      last_name: user[7]
-    }
+    const user = {
+      id: userResult[0][0],
+      email: userResult[0][1],
+      organization_id: userResult[0][2],
+      role: userResult[0][3],
+      first_name: userResult[0][4],
+      last_name: userResult[0][5],
+      is_active: userResult[0][6],
+      phone: userResult[0][7],
+      organization_name: userResult[0][8]
+    };
+
+    return user;
 
   } catch (error) {
-    logger.error(`Error getting user from session: ${error}`)
-    return null
+    logger.error('Error getting user from session:', error);
+    return null;
   }
 } 
