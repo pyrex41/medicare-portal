@@ -73,7 +73,7 @@ export const settingsRoutes = new Elysia()
             [user.organization_id]
         );
         
-        logger.info(`Retrieved org settings row: ${JSON.stringify(orgSettingsRow)}`);
+        logger.info(`Retrieved org settings row`);
 
         // Parse the JSON string into an object
         let orgSettings: BaseSettings;
@@ -130,7 +130,7 @@ export const settingsRoutes = new Elysia()
             canEditOrgSettings
         };
 
-        logger.info(`Sending response: ${JSON.stringify(response, null, 2)}`);
+        logger.info(`Sending response`);
         return response;
 
     } catch (error) {

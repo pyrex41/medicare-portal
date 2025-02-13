@@ -39,6 +39,17 @@ type NewAgentRequest = {
   stateLicenses: string[]
 }
 
+type AgentUpdate = {
+  firstName: string
+  lastName: string
+  email: string
+  phone: string
+  isAdmin: boolean
+  isAgent: boolean
+  carriers: string[]
+  stateLicenses: string[]
+}
+
 interface DbRow {
   id: number;
   first_name: string;
@@ -79,13 +90,11 @@ const startServer = async () => {
       // Log all requests
       .onRequest(({ request: { method, url, headers } }) => {
         const path = new URL(url).pathname
-        console.log(`⮕ ${method} ${path}`) 
         logger.info(`⮕ ${method} ${path}`)
       })
       // Log all responses
       .onResponse((context) => {
         const { request: { method }, path, set } = context
-        console.log(`⬅ ${method} ${path} ${set.status}`)
         logger.info(`⬅ ${method} ${path} ${set.status}`)
       })
       // Enhanced error handling
@@ -96,7 +105,6 @@ const startServer = async () => {
       }) => {
         const path = new URL(request.url).pathname
         const errorMessage = `❌ ${request.method} ${path} - ${error.message}`
-        console.error(errorMessage)
         logger.error(errorMessage)
 
         return new Response(JSON.stringify({
@@ -654,7 +662,7 @@ const startServer = async () => {
           }
 
           const newAgent = body as NewAgentRequest
-          logger.info(`POST /api/agents - Creating new agent: ${newAgent.email} in org ${currentUser.organization_id}`)
+          logger.info(`Creating new agent: ${newAgent.email} (org: ${currentUser.organization_id})`)
 
           // Get the libSQL client
           const client = db.getClient()
@@ -682,8 +690,9 @@ const startServer = async () => {
           })
 
           const userId = userResult.rows[0].id
+          logger.info(`Created new agent with ID: ${userId}`)
 
-          // Then create agent settings as a single JSON column
+          // Then create agent settings
           await client.execute({
             sql: `INSERT INTO agent_settings (
               agent_id,
@@ -703,7 +712,7 @@ const startServer = async () => {
             ]
           })
 
-          logger.info(`POST /api/agents - Successfully created agent with ID: ${userId}`)
+          logger.info(`Initialized settings for agent: ${userId}`)
 
           return {
             success: true,
@@ -795,28 +804,21 @@ const startServer = async () => {
           }
         }
       })
-      // Add new PUT endpoint for updating user role
-      .put('/api/agents/:id/role', {
-        params: t.Object({
-          id: t.String()
-        }),
-        body: t.Object({
-          role: t.String(),
-          carriers: t.Array(t.String()),
-          stateLicenses: t.Array(t.String()),
-          phone: t.String()  // Add phone to expected parameters
-        })
-      }, async ({ params, body, request, set }: { 
+      // Update PUT endpoint for updating agent details - moved here to be with other agent endpoints
+      .put('/api/agents/:id',  async ({ params, body, request, set }: { 
         params: { id: string }, 
-        body: { role: string, carriers: string[], stateLicenses: string[], phone: string },
+        body: AgentUpdate,
         request: Request,
         set: { status: number }
       }) => {
+        console.log('DEBUG: PUT handler hit', { params, path: request.url })
+        logger.info(`Starting update for agent ${params.id}`)
+        logger.info(`Request body: ${JSON.stringify(body, null, 2)}`)
+        
         try {
           const currentUser = await getUserFromSession(request)
-          logger.info(`PUT /api/agents/${params.id}/role - Updating user role and phone. Body: ${JSON.stringify(body)}`)
-          
           if (!currentUser) {
+            logger.error('Authentication failed: No user in session')
             set.status = 401
             return {
               success: false,
@@ -826,65 +828,120 @@ const startServer = async () => {
 
           // Check if user is an admin
           if (currentUser.role !== 'admin') {
+            logger.error(`Authorization failed: User ${currentUser.id} is not an admin`)
             set.status = 403
             return {
               success: false,
-              error: 'Only administrators can update roles'
+              error: 'Only administrators can update agents'
             }
           }
 
-          const { id } = params
-          const { role, carriers, stateLicenses, phone } = body
-          logger.info(`Updating user ${id} to role ${role} with phone ${phone}`)
+          const agent = body
+          logger.info(`Updating agent ${params.id} - Name: ${agent.firstName} ${agent.lastName}, Phone: ${agent.phone}`)
 
           // Get the libSQL client
           const client = db.getClient()
 
-          // Update both the user's role and phone number
-          const updateResult = await client.execute({
-            sql: `UPDATE users 
-                  SET role = ?, phone = ?
-                  WHERE id = ? AND organization_id = ?`,
-            args: [role, phone, parseInt(id, 10), currentUser.organization_id]
-          })
+          const role = agent.isAdmin && agent.isAgent ? 'admin_agent' : agent.isAdmin ? 'admin' : 'agent'
+          logger.info(`Calculated role: ${role}`)
           
-          logger.info(`User update result: ${JSON.stringify(updateResult)}`)
+          // Log the query parameters
+          const userUpdateParams = [
+            agent.firstName,
+            agent.lastName,
+            agent.email,
+            agent.phone,
+            role,
+            params.id,
+            currentUser.organization_id
+          ]
+          logger.info(`User update parameters: ${JSON.stringify(userUpdateParams, null, 2)}`)
 
-          // Create or update agent settings
-          const settingsResult = await client.execute({
+          // Update user details
+          const userUpdateResult = await client.execute({
+            sql: `UPDATE users 
+                  SET first_name = ?, 
+                      last_name = ?, 
+                      email = ?, 
+                      phone = ?,
+                      role = ?
+                  WHERE id = ? AND organization_id = ?
+                  RETURNING *`,
+            args: userUpdateParams
+          })
+
+          logger.info(`User update result: ${JSON.stringify(userUpdateResult.rows, null, 2)}`)
+
+          if (!userUpdateResult.rows || userUpdateResult.rows.length === 0) {
+            logger.error('User update failed: No rows affected')
+            throw new Error('User update failed - no rows affected')
+          }
+
+          logger.info('User details updated successfully')
+
+          // Update agent settings
+          const settings = {
+            stateLicenses: agent.stateLicenses,
+            carrierContracts: agent.carriers,
+            stateCarrierSettings: [],
+            emailSendBirthday: false,
+            emailSendPolicyAnniversary: false,
+            emailSendAep: false,
+            smartSendEnabled: false
+          }
+
+          logger.info(`Agent settings to update: ${JSON.stringify(settings, null, 2)}`)
+
+          const settingsUpdateResult = await client.execute({
             sql: `INSERT INTO agent_settings (
               agent_id,
               settings
             ) VALUES (?, ?)
             ON CONFLICT (agent_id) 
-            DO UPDATE SET settings = EXCLUDED.settings`,
+            DO UPDATE SET settings = EXCLUDED.settings
+            RETURNING *`,
             args: [
-              parseInt(id, 10),
-              JSON.stringify({
-                stateLicenses,
-                carrierContracts: carriers,
-                stateCarrierSettings: [],
-                emailSendBirthday: false,
-                emailSendPolicyAnniversary: false,
-                emailSendAep: false,
-                smartSendEnabled: false
-              })
+              params.id,
+              JSON.stringify(settings)
             ]
           })
-          
-          logger.info(`Agent settings update result: ${JSON.stringify(settingsResult)}`)
+
+          logger.info(`Settings update result: ${JSON.stringify(settingsUpdateResult.rows, null, 2)}`)
+
+          if (!settingsUpdateResult.rows || settingsUpdateResult.rows.length === 0) {
+            logger.error('Settings update failed: No rows affected')
+            throw new Error('Settings update failed - no rows affected')
+          }
+
+          logger.info('Settings updated successfully')
+
+          const updatedUser = userUpdateResult.rows[0]
+          const updatedSettings = JSON.parse(settingsUpdateResult.rows[0].settings)
 
           return {
             success: true,
-            message: 'User role and settings updated successfully'
+            message: 'Agent updated successfully',
+            agent: {
+              id: updatedUser.id.toString(),
+              firstName: updatedUser.first_name,
+              lastName: updatedUser.last_name,
+              email: updatedUser.email,
+              phone: updatedUser.phone || '',
+              role: updatedUser.role,
+              carriers: updatedSettings.carrierContracts,
+              stateLicenses: updatedSettings.stateLicenses,
+              isAdmin: updatedUser.role === 'admin' || updatedUser.role === 'admin_agent',
+              isAgent: updatedUser.role === 'agent' || updatedUser.role === 'admin_agent'
+            }
           }
 
-        } catch (e) {
-          logger.error(`Error updating user role: ${e}`)
+        } catch (error: unknown) {
+          const dbError = error as Error
+          logger.error(`Database error: ${dbError.message}`)
           set.status = 500
           return {
             success: false,
-            error: String(e)
+            error: dbError.message
           }
         }
       })
@@ -920,7 +977,7 @@ const startServer = async () => {
             args: [currentUser.id]
           })
 
-          logger.info(`GET /api/me - Raw user details from DB: ${JSON.stringify(userDetails)}`)
+          logger.info(`GET /api/me - Raw user details from DB: (omitted)`)
 
           if (!userDetails.rows[0]) {
             set.status = 404
@@ -942,7 +999,7 @@ const startServer = async () => {
               agentSettings: user.agentSettings ? JSON.parse(user.agentSettings) : null
             }
           }
-          logger.info(`GET /api/me - Sending response: ${JSON.stringify(response)}`)
+          logger.info(`GET /api/me - Sending response`)
           return response
 
         } catch (e) {

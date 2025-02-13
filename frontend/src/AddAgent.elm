@@ -14,6 +14,7 @@ import Parser exposing ((|.), (|=), Parser, chompIf, chompWhile, end, succeed, s
 import StateRegions exposing (Region(..), getRegionStates, regionToString)
 import Svg exposing (path, svg)
 import Svg.Attributes exposing (d, fill, viewBox)
+import Time
 
 
 
@@ -107,6 +108,8 @@ type alias Model =
     , showAddForm : Bool
     , currentUser : Maybe User
     , isLoadingForAgent : Maybe String
+    , orgSettings : Maybe Settings
+    , pendingSave : Maybe String
     }
 
 
@@ -166,6 +169,9 @@ type Msg
     | LoadFromOrgForAgent String
     | GotOrgSettingsForAgent String (Result Http.Error Settings)
     | SelectAllCarriersForAgent String Bool
+    | SaveAgentDetails String
+    | AgentDetailsSaved String (Result Http.Error ())
+    | DebounceSaveAgent String
 
 
 type alias CurrentUserResponse =
@@ -193,10 +199,16 @@ init flags =
       , showAddForm = False
       , currentUser = Nothing
       , isLoadingForAgent = Nothing
+      , orgSettings = Nothing
+      , pendingSave = Nothing
       }
     , Cmd.batch
         [ fetchAgents
         , fetchCurrentUser
+        , Http.get
+            { url = "/api/settings"
+            , expect = Http.expectJson GotOrgSettings (Decode.field "orgSettings" settingsObjectDecoder)
+            }
         ]
     )
 
@@ -430,6 +442,12 @@ viewBasicInfo model =
 
 viewWritingNumbers : Model -> Html Msg
 viewWritingNumbers model =
+    let
+        orgCarriers =
+            model.orgSettings
+                |> Maybe.map .carrierContracts
+                |> Maybe.withDefault []
+    in
     div [ class "space-y-4" ]
         [ h3 [ class "text-lg font-medium text-gray-900" ]
             [ text "Carriers" ]
@@ -456,12 +474,20 @@ viewWritingNumbers model =
         , div [ class "grid grid-cols-3 gap-4" ]
             (List.map
                 (\carrier ->
-                    label [ class "inline-flex items-center" ]
+                    let
+                        isEnabled =
+                            List.member carrier orgCarriers
+                    in
+                    label
+                        [ class "inline-flex items-center"
+                        , classList [ ( "opacity-50 cursor-not-allowed", not isEnabled ) ]
+                        ]
                         [ input
                             [ type_ "checkbox"
                             , class "rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                             , checked (List.member carrier model.carriers)
                             , onCheck (\isChecked -> SelectCarrier carrier isChecked)
+                            , disabled (not isEnabled)
                             ]
                             []
                         , span [ class "ml-2 text-sm text-gray-700" ]
@@ -475,6 +501,12 @@ viewWritingNumbers model =
 
 viewStateLicenses : Model -> Html Msg
 viewStateLicenses model =
+    let
+        orgStates =
+            model.orgSettings
+                |> Maybe.map .stateLicenses
+                |> Maybe.withDefault []
+    in
     div [ class "space-y-4" ]
         [ h3 [ class "text-lg font-medium text-gray-900" ]
             [ text "State Licenses" ]
@@ -514,22 +546,30 @@ viewStateLicenses model =
                 ]
             ]
         , div [ class "grid grid-cols-6 gap-4" ]
-            (List.map (viewStateCheckbox model) allStates)
-        ]
-
-
-viewStateCheckbox : Model -> String -> Html Msg
-viewStateCheckbox model state =
-    label [ class "inline-flex items-center" ]
-        [ input
-            [ type_ "checkbox"
-            , class "rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-            , checked (List.member state model.stateLicenses)
-            , onCheck (\isChecked -> SelectState state isChecked)
-            ]
-            []
-        , span [ class "ml-2 text-sm text-gray-700" ]
-            [ text state ]
+            (List.map
+                (\state ->
+                    let
+                        isEnabled =
+                            List.member state orgStates
+                    in
+                    label
+                        [ class "inline-flex items-center"
+                        , classList [ ( "opacity-50 cursor-not-allowed", not isEnabled ) ]
+                        ]
+                        [ input
+                            [ type_ "checkbox"
+                            , class "rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            , checked (List.member state model.stateLicenses)
+                            , onCheck (\isChecked -> SelectState state isChecked)
+                            , disabled (not isEnabled)
+                            ]
+                            []
+                        , span [ class "ml-2 text-sm text-gray-700" ]
+                            [ text state ]
+                        ]
+                )
+                allStates
+            )
         ]
 
 
@@ -681,6 +721,16 @@ viewAgentItem model agent =
 viewAgentDetails : Model -> Agent -> Html Msg
 viewAgentDetails model agent =
     let
+        orgCarriers =
+            model.orgSettings
+                |> Maybe.map .carrierContracts
+                |> Maybe.withDefault []
+
+        orgStates =
+            model.orgSettings
+                |> Maybe.map .stateLicenses
+                |> Maybe.withDefault []
+
         fieldError field =
             case field of
                 "phone" ->
@@ -836,12 +886,20 @@ viewAgentDetails model agent =
                     , div [ class "grid grid-cols-3 gap-4" ]
                         (List.map
                             (\carrier ->
-                                label [ class "inline-flex items-center" ]
+                                let
+                                    isEnabled =
+                                        List.member carrier orgCarriers
+                                in
+                                label
+                                    [ class "inline-flex items-center"
+                                    , classList [ ( "opacity-50 cursor-not-allowed", not isEnabled ) ]
+                                    ]
                                     [ input
                                         [ type_ "checkbox"
                                         , class "rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                                         , checked (List.member carrier agent.carriers)
                                         , onCheck (\isChecked -> UpdateAgentCarrier agent.id carrier isChecked)
+                                        , disabled (not isEnabled)
                                         ]
                                         []
                                     , span [ class "ml-2 text-sm text-gray-700" ]
@@ -892,12 +950,20 @@ viewAgentDetails model agent =
                     , div [ class "grid grid-cols-6 gap-4" ]
                         (List.map
                             (\state ->
-                                label [ class "inline-flex items-center" ]
+                                let
+                                    isEnabled =
+                                        List.member state orgStates
+                                in
+                                label
+                                    [ class "inline-flex items-center"
+                                    , classList [ ( "opacity-50 cursor-not-allowed", not isEnabled ) ]
+                                    ]
                                     [ input
                                         [ type_ "checkbox"
                                         , class "rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                                         , checked (List.member state agent.stateLicenses)
                                         , onCheck (\isChecked -> UpdateAgentState agent.id state isChecked)
+                                        , disabled (not isEnabled)
                                         ]
                                         []
                                     , span [ class "ml-2 text-sm text-gray-700" ]
@@ -1050,10 +1116,14 @@ update msg model =
 
                 formattedPhone =
                     formatPhoneNumber rawDigits
+
+                _ =
+                    Debug.log "Phone number updated" { raw = rawDigits, formatted = formattedPhone }
             in
             ( { model
                 | rawPhone = rawDigits
                 , displayPhone = formattedPhone
+                , pendingSave = Just "main" -- Add pending save for main agent
               }
             , Cmd.none
             )
@@ -1169,6 +1239,7 @@ update msg model =
                 | carriers = settings.carrierContracts
                 , stateLicenses = settings.stateLicenses
                 , isLoading = False
+                , orgSettings = Just settings
               }
             , Cmd.none
             )
@@ -1280,7 +1351,12 @@ update msg model =
                     else
                         agent
             in
-            ( { model | agents = List.map updateAgent model.agents }, Cmd.none )
+            ( { model
+                | agents = List.map updateAgent model.agents
+                , pendingSave = Just agentId
+              }
+            , Cmd.none
+            )
 
         UpdateAgentField agentId field value ->
             let
@@ -1302,7 +1378,12 @@ update msg model =
                     else
                         agent
             in
-            ( { model | agents = List.map updateAgent model.agents }, Cmd.none )
+            ( { model
+                | agents = List.map updateAgent model.agents
+                , pendingSave = Just agentId
+              }
+            , Cmd.none
+            )
 
         ToggleAgentExpanded agentId ->
             let
@@ -1331,7 +1412,12 @@ update msg model =
                     else
                         agent
             in
-            ( { model | agents = List.map updateAgent model.agents }, Cmd.none )
+            ( { model
+                | agents = List.map updateAgent model.agents
+                , pendingSave = Just agentId
+              }
+            , Cmd.none
+            )
 
         UpdateAgentState agentId state isSelected ->
             let
@@ -1349,7 +1435,12 @@ update msg model =
                     else
                         agent
             in
-            ( { model | agents = List.map updateAgent model.agents }, Cmd.none )
+            ( { model
+                | agents = List.map updateAgent model.agents
+                , pendingSave = Just agentId
+              }
+            , Cmd.none
+            )
 
         SelectAllStatesForAgent agentId isSelected ->
             let
@@ -1367,7 +1458,12 @@ update msg model =
                     else
                         agent
             in
-            ( { model | agents = List.map updateAgent model.agents }, Cmd.none )
+            ( { model
+                | agents = List.map updateAgent model.agents
+                , pendingSave = Just agentId
+              }
+            , Cmd.none
+            )
 
         SelectCommonStatesForAgent agentId region ->
             let
@@ -1380,7 +1476,12 @@ update msg model =
                     else
                         agent
             in
-            ( { model | agents = List.map updateAgent model.agents }, Cmd.none )
+            ( { model
+                | agents = List.map updateAgent model.agents
+                , pendingSave = Just agentId
+              }
+            , Cmd.none
+            )
 
         LoadFromOrgForAgent agentId ->
             ( { model | isLoadingForAgent = Just agentId }
@@ -1433,7 +1534,50 @@ update msg model =
                     else
                         agent
             in
-            ( { model | agents = List.map updateAgent model.agents }, Cmd.none )
+            ( { model
+                | agents = List.map updateAgent model.agents
+                , pendingSave = Just agentId
+              }
+            , Cmd.none
+            )
+
+        SaveAgentDetails agentId ->
+            ( { model | pendingSave = Nothing }
+            , case List.filter (\a -> a.id == agentId) model.agents of
+                agent :: _ ->
+                    saveAgentDetails agent
+
+                [] ->
+                    Cmd.none
+            )
+
+        AgentDetailsSaved agentId (Ok _) ->
+            ( model, Cmd.none )
+
+        AgentDetailsSaved agentId (Err _) ->
+            ( { model | error = Just "Failed to save agent details" }, Cmd.none )
+
+        DebounceSaveAgent agentId ->
+            let
+                _ =
+                    Debug.log "Debounced save triggered for agent" agentId
+            in
+            if agentId == "main" then
+                -- Handle main agent save
+                ( { model | pendingSave = Nothing }
+                , saveAgent model
+                )
+
+            else
+                -- Handle sub-agent save
+                ( { model | pendingSave = Nothing }
+                , case List.filter (\a -> a.id == agentId) model.agents of
+                    agent :: _ ->
+                        saveAgentDetails agent
+
+                    [] ->
+                        Cmd.none
+                )
 
 
 
@@ -1470,6 +1614,10 @@ formatPhoneNumber rawPhone =
 
 saveAgent : Model -> Cmd Msg
 saveAgent model =
+    let
+        _ =
+            Debug.log "Saving main agent" { email = model.email, phone = model.rawPhone }
+    in
     case model.currentUser of
         Just user ->
             let
@@ -1482,9 +1630,6 @@ saveAgent model =
 
                     else
                         "agent"
-
-                _ =
-                    Debug.log "Saving agent for user" { id = user.id, role = user.role }
             in
             if user.role == "admin" && model.isAdmin then
                 -- Admin becoming agent - use PUT endpoint
@@ -1526,23 +1671,7 @@ saveAgent model =
                     }
 
         Nothing ->
-            -- Creating new agent without being logged in (shouldn't happen)
-            Http.post
-                { url = "/api/agents"
-                , body =
-                    Http.jsonBody
-                        (Encode.object
-                            [ ( "firstName", Encode.string model.firstName )
-                            , ( "lastName", Encode.string model.lastName )
-                            , ( "email", Encode.string model.email )
-                            , ( "phone", Encode.string model.rawPhone )
-                            , ( "role", Encode.string "agent" )
-                            , ( "carriers", Encode.list Encode.string model.carriers )
-                            , ( "stateLicenses", Encode.list Encode.string model.stateLicenses )
-                            ]
-                        )
-                , expect = Http.expectWhatever AgentSaved
-                }
+            Cmd.none
 
 
 settingsDecoder : Decoder SettingsResponse
@@ -1601,8 +1730,13 @@ stateCarrierSettingDecoder =
 
 
 subscriptions : Model -> Sub Msg
-subscriptions _ =
-    Sub.none
+subscriptions model =
+    case model.pendingSave of
+        Just agentId ->
+            Time.every 2000 (\_ -> DebounceSaveAgent agentId)
+
+        Nothing ->
+            Sub.none
 
 
 isValidEmail : String -> Bool
@@ -1829,3 +1963,73 @@ userDecoder =
         (Decode.field "firstName" (Debug.log "firstName field" Decode.string))
         (Decode.field "lastName" (Debug.log "lastName field" Decode.string))
         (Decode.field "role" (Debug.log "role field" Decode.string))
+
+
+saveAgentDetails : Agent -> Cmd Msg
+saveAgentDetails agent =
+    let
+        _ =
+            Debug.log "Saving agent details" { id = agent.id, email = agent.email, phone = agent.phone }
+
+        rawPhone =
+            String.filter Char.isDigit agent.phone
+    in
+    Http.request
+        { method = "PUT"
+        , headers = []
+        , url = "/api/agents/" ++ agent.id
+        , body =
+            Http.jsonBody
+                (Encode.object
+                    [ ( "firstName", Encode.string agent.firstName )
+                    , ( "lastName", Encode.string agent.lastName )
+                    , ( "email", Encode.string agent.email )
+                    , ( "phone", Encode.string rawPhone )
+                    , ( "isAdmin", Encode.bool agent.isAdmin )
+                    , ( "isAgent", Encode.bool agent.isAgent )
+                    , ( "carriers", Encode.list Encode.string agent.carriers )
+                    , ( "stateLicenses", Encode.list Encode.string agent.stateLicenses )
+                    ]
+                )
+        , expect =
+            Http.expectStringResponse (AgentDetailsSaved agent.id)
+                (\response ->
+                    case response of
+                        Http.BadUrl_ url ->
+                            let
+                                _ =
+                                    Debug.log "Bad URL error" url
+                            in
+                            Err (Http.BadUrl url)
+
+                        Http.Timeout_ ->
+                            let
+                                _ =
+                                    Debug.log "Request timeout" "Request timed out"
+                            in
+                            Err Http.Timeout
+
+                        Http.NetworkError_ ->
+                            let
+                                _ =
+                                    Debug.log "Network error" "Network error occurred"
+                            in
+                            Err Http.NetworkError
+
+                        Http.BadStatus_ metadata body ->
+                            let
+                                _ =
+                                    Debug.log "Bad status response" { status = metadata.statusCode, body = body }
+                            in
+                            Err (Http.BadStatus metadata.statusCode)
+
+                        Http.GoodStatus_ metadata body ->
+                            let
+                                _ =
+                                    Debug.log "Successful response" { status = metadata.statusCode, body = body }
+                            in
+                            Ok ()
+                )
+        , timeout = Nothing
+        , tracker = Nothing
+        }
