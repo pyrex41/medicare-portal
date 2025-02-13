@@ -39,6 +39,16 @@ type NewAgentRequest = {
   stateLicenses: string[]
 }
 
+interface DbRow {
+  id: number;
+  first_name: string;
+  last_name: string;
+  email: string;
+  phone: string | null;
+  role: 'admin' | 'agent' | 'admin_agent';
+  settings: string | null;
+}
+
 const startServer = async () => {
   try {
     const db = new Database()
@@ -52,7 +62,7 @@ const startServer = async () => {
           ? 'http://localhost:5173'
           : false, // Disable CORS in production
         methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-        allowedHeaders: ['Content-Type'],
+        allowedHeaders: ['Content-Type', 'Cookie'],  // Add Cookie to allowed headers
         credentials: true,
         preflight: true
       }))
@@ -303,7 +313,7 @@ const startServer = async () => {
           `
 
           const result = await db.execute(query, contactIds)
-          const deletedIds = result.map(row => row[0])
+          const deletedIds = result.map((row: any[]) => row[0])
 
           logger.info(`DELETE /api/contacts - Successfully deleted ${deletedIds.length} contacts`)
 
@@ -379,9 +389,9 @@ const startServer = async () => {
           let existingEmails = new Set<string>()
           const emailResults = await db.fetchAll("SELECT email FROM contacts")
           existingEmails = new Set(emailResults
-            .map(row => row[0])
-            .filter((email): email is string => typeof email === 'string')
-            .map(email => email.toLowerCase())
+            .map((row: any[]) => row[0])
+            .filter((email: unknown): email is string => typeof email === 'string')
+            .map((email: string) => email.toLowerCase())
           )
 
           logger.info(`Found ${existingEmails.size} existing emails in database`)
@@ -601,8 +611,11 @@ const startServer = async () => {
       })
       // Add error handler
       .use(errorHandler)
-      // Add auth routes without database dependency
-      .use(createAuthRoutes())
+      // Add explicit debug log for auth routes
+      .use(app => {
+        logger.info('Registering auth routes...')
+        return app.use(createAuthRoutes())
+      })
       // Add settings routes
       .use(settingsRoutes)
       // Add organization routes
@@ -664,7 +677,7 @@ const startServer = async () => {
               newAgent.lastName,
               newAgent.phone,
               currentUser.organization_id,
-              newAgent.isAdmin ? 'admin' : 'agent'
+              newAgent.isAdmin ? 'admin_agent' : 'agent'
             ]
           })
 
@@ -705,6 +718,324 @@ const startServer = async () => {
             success: false,
             error: String(e)
           }
+        }
+      })
+      // Add this GET endpoint within the app definition, near the POST /api/agents endpoint
+      .get('/api/agents', async ({ request, set }) => {
+        try {
+          const currentUser = await getUserFromSession(request)
+          if (!currentUser) {
+            set.status = 401
+            return {
+              success: false,
+              error: 'You must be logged in to perform this action'
+            }
+          }
+
+          // Add admin check
+          if (currentUser.role !== 'admin' && !request.url.includes('/setup')) {
+            set.status = 403
+            return {
+              success: false,
+              error: 'Only administrators can view agents'
+            }
+          }
+
+          // Get the libSQL client
+          const client = db.getClient()
+
+          // Fetch all agents (users) from the organization along with their settings
+          const result = await client.execute({
+            sql: `
+              SELECT 
+                u.id,
+                u.first_name,
+                u.last_name,
+                u.email,
+                u.phone,
+                u.role,
+                a.settings
+              FROM users u
+              LEFT JOIN agent_settings a ON u.id = a.agent_id
+              WHERE u.organization_id = ?
+              AND u.is_active = 1
+              ORDER BY u.first_name, u.last_name
+            `,
+            args: [currentUser.organization_id]
+          })
+
+          // Map the database results to the expected format
+          const agents = result.rows.map((row: DbRow) => {
+            const settings = row.settings ? JSON.parse(row.settings) : {
+              stateLicenses: [],
+              carrierContracts: [],
+              stateCarrierSettings: []
+            }
+
+            return {
+              id: row.id,
+              firstName: row.first_name,
+              lastName: row.last_name,
+              email: row.email,
+              phone: row.phone || '',
+              role: row.role,
+              carriers: settings.carrierContracts || [],
+              stateLicenses: settings.stateLicenses || []
+            }
+          })
+
+          return agents
+
+        } catch (e) {
+          logger.error(`Error fetching agents: ${e}`)
+          set.status = 500
+          return {
+            success: false,
+            error: String(e)
+          }
+        }
+      })
+      // Add new PUT endpoint for updating user role
+      .put('/api/agents/:id/role', {
+        params: t.Object({
+          id: t.String()
+        }),
+        body: t.Object({
+          role: t.String(),
+          carriers: t.Array(t.String()),
+          stateLicenses: t.Array(t.String()),
+          phone: t.String()  // Add phone to expected parameters
+        })
+      }, async ({ params, body, request, set }: { 
+        params: { id: string }, 
+        body: { role: string, carriers: string[], stateLicenses: string[], phone: string },
+        request: Request,
+        set: { status: number }
+      }) => {
+        try {
+          const currentUser = await getUserFromSession(request)
+          logger.info(`PUT /api/agents/${params.id}/role - Updating user role and phone. Body: ${JSON.stringify(body)}`)
+          
+          if (!currentUser) {
+            set.status = 401
+            return {
+              success: false,
+              error: 'You must be logged in to perform this action'
+            }
+          }
+
+          // Check if user is an admin
+          if (currentUser.role !== 'admin') {
+            set.status = 403
+            return {
+              success: false,
+              error: 'Only administrators can update roles'
+            }
+          }
+
+          const { id } = params
+          const { role, carriers, stateLicenses, phone } = body
+          logger.info(`Updating user ${id} to role ${role} with phone ${phone}`)
+
+          // Get the libSQL client
+          const client = db.getClient()
+
+          // Update both the user's role and phone number
+          const updateResult = await client.execute({
+            sql: `UPDATE users 
+                  SET role = ?, phone = ?
+                  WHERE id = ? AND organization_id = ?`,
+            args: [role, phone, parseInt(id, 10), currentUser.organization_id]
+          })
+          
+          logger.info(`User update result: ${JSON.stringify(updateResult)}`)
+
+          // Create or update agent settings
+          const settingsResult = await client.execute({
+            sql: `INSERT INTO agent_settings (
+              agent_id,
+              settings
+            ) VALUES (?, ?)
+            ON CONFLICT (agent_id) 
+            DO UPDATE SET settings = EXCLUDED.settings`,
+            args: [
+              parseInt(id, 10),
+              JSON.stringify({
+                stateLicenses,
+                carrierContracts: carriers,
+                stateCarrierSettings: [],
+                emailSendBirthday: false,
+                emailSendPolicyAnniversary: false,
+                emailSendAep: false,
+                smartSendEnabled: false
+              })
+            ]
+          })
+          
+          logger.info(`Agent settings update result: ${JSON.stringify(settingsResult)}`)
+
+          return {
+            success: true,
+            message: 'User role and settings updated successfully'
+          }
+
+        } catch (e) {
+          logger.error(`Error updating user role: ${e}`)
+          set.status = 500
+          return {
+            success: false,
+            error: String(e)
+          }
+        }
+      })
+      // Add this endpoint within the app definition
+      .get('/api/me', async ({ request, set }) => {
+        try {
+          const currentUser = await getUserFromSession(request)
+          logger.info(`GET /api/me - Current user from session: ${JSON.stringify(currentUser)}`)
+          
+          if (!currentUser) {
+            set.status = 401
+            return {
+              success: false,
+              error: 'Not authenticated'
+            }
+          }
+
+          // Get user details including agent settings if they exist
+          const client = db.getClient()
+          const userDetails = await client.execute({
+            sql: `
+              SELECT 
+                u.id,
+                u.email,
+                u.first_name as firstName,
+                u.last_name as lastName,
+                u.role,
+                a.settings as agentSettings
+              FROM users u
+              LEFT JOIN agent_settings a ON a.agent_id = u.id
+              WHERE u.id = ?
+            `,
+            args: [currentUser.id]
+          })
+
+          logger.info(`GET /api/me - Raw user details from DB: ${JSON.stringify(userDetails)}`)
+
+          if (!userDetails.rows[0]) {
+            set.status = 404
+            return {
+              success: false,
+              error: 'User not found'
+            }
+          }
+
+          const user = userDetails.rows[0]
+          const response = {
+            success: true,
+            user: {
+              id: user.id,
+              email: user.email,
+              firstName: user.firstName,
+              lastName: user.lastName,
+              role: user.role,
+              agentSettings: user.agentSettings ? JSON.parse(user.agentSettings) : null
+            }
+          }
+          logger.info(`GET /api/me - Sending response: ${JSON.stringify(response)}`)
+          return response
+
+        } catch (e) {
+          logger.error(`Error fetching current user: ${e}`)
+          set.status = 500
+          return {
+            success: false,
+            error: String(e)
+          }
+        }
+      })
+      // Add development endpoints for easy session management
+      .get('/api/dev/session/:redirect', async ({ params, set }) => {
+        // Only allow in development
+        if (process.env.NODE_ENV === 'production') {
+          set.status = 404
+          return { error: 'Not found' }
+        }
+
+        try {
+          // Get most recent session from database
+          const client = db.getClient()
+          const result = await client.execute({
+            sql: `
+              SELECT s.id 
+              FROM sessions s
+              JOIN users u ON s.user_id = u.id
+              WHERE u.is_active = 1
+              ORDER BY s.created_at DESC 
+              LIMIT 1
+            `
+          })
+
+          if (!result.rows[0]) {
+            set.status = 404
+            return { error: 'No sessions found' }
+          }
+
+          // Convert the numeric ID to a string
+          const sessionId = String(result.rows[0].id)
+          logger.info(`Setting session cookie: ${sessionId} for redirect to: ${params.redirect}`)
+
+          // Set the session cookie
+          set.headers['Set-Cookie'] = `session=${sessionId}; Path=/; HttpOnly; SameSite=Lax`
+
+          // Handle redirect
+          const redirectPath = params.redirect === 'add-agent' ? 'agents/add' : params.redirect
+          set.redirect = `/${redirectPath}`
+          return { success: true }
+        } catch (e) {
+          logger.error(`Error in dev session endpoint: ${e}`)
+          set.status = 500
+          return { error: String(e) }
+        }
+      })
+      // Add development endpoints for easy session management
+      .get('/api/dev/session/login', async ({ set }) => {
+        // Only allow in development
+        if (process.env.NODE_ENV === 'production') {
+          set.status = 404
+          return { error: 'Not found' }
+        }
+
+        try {
+          // Get most recent session from database
+          const client = db.getClient()
+          const result = await client.execute({
+            sql: `
+              SELECT s.id 
+              FROM sessions s
+              JOIN users u ON s.user_id = u.id
+              WHERE u.is_active = 1
+              ORDER BY s.created_at DESC 
+              LIMIT 1
+            `
+          })
+
+          if (!result.rows[0]) {
+            set.status = 404
+            return { error: 'No sessions found' }
+          }
+
+          // Convert the numeric ID to a string
+          const sessionId = String(result.rows[0].id)
+          logger.info(`Setting session cookie: ${sessionId} for login page`)
+
+          // Set the session cookie
+          set.headers['Set-Cookie'] = `session=${sessionId}; Path=/; HttpOnly; SameSite=Lax`
+          return { success: true }
+        } catch (e) {
+          logger.error(`Error in dev session endpoint: ${e}`)
+          set.status = 500
+          return { error: String(e) }
         }
       })
       .listen(8000)

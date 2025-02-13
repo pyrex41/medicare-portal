@@ -24,7 +24,7 @@ export interface User {
   id: number;
   email: string;
   organization_id: number;
-  role: 'admin' | 'agent';
+  role: 'admin' | 'agent' | 'admin_agent';
   is_active: boolean;
   last_login: string | null;
   created_at: string;

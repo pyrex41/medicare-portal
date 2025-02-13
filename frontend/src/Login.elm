@@ -35,7 +35,15 @@ init isLoggedIn =
       , status = Idle
       , isLoggedIn = isLoggedIn
       }
-    , Cmd.none
+    , if not isLoggedIn then
+        -- When not logged in, try to get the most recent session
+        Http.get
+            { url = "/api/dev/session/login"
+            , expect = Http.expectWhatever GotLoginResponse
+            }
+
+      else
+        Cmd.none
     )
 
 
@@ -110,6 +118,22 @@ viewLoggedIn =
                             , class "w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
                             ]
                             [ text "Log Out" ]
+                        , div [ class "mt-6 pt-6 border-t border-gray-200" ]
+                            [ p [ class "text-sm text-gray-500 text-center mb-4" ]
+                                [ text "Development Login Links" ]
+                            , div [ class "space-y-2" ]
+                                [ a
+                                    [ href "/api/dev/session/settings"
+                                    , class "block text-center text-sm text-indigo-600 hover:text-indigo-500"
+                                    ]
+                                    [ text "Login to Settings" ]
+                                , a
+                                    [ href "/api/dev/session/add-agent"
+                                    , class "block text-center text-sm text-indigo-600 hover:text-indigo-500"
+                                    ]
+                                    [ text "Login to Add Agent" ]
+                                ]
+                            ]
                         ]
                     ]
                 ]
@@ -162,6 +186,33 @@ viewLoginForm model =
                             ]
                         ]
                     , viewStatus model.status
+                    , div [ class "mt-6 text-center" ]
+                        [ p [ class "text-sm text-gray-600" ]
+                            [ text "Don't have an account? "
+                            , a [ href "/signup", class "font-medium text-indigo-600 hover:text-indigo-500" ]
+                                [ text "Sign up" ]
+                            ]
+                        ]
+                    , if model.isLoggedIn then
+                        text ""
+
+                      else
+                        div [ class "mt-6 pt-6 border-t border-gray-200" ]
+                            [ p [ class "text-sm text-gray-500 text-center mb-4" ]
+                                [ text "Development Login Links" ]
+                            , div [ class "space-y-2" ]
+                                [ a
+                                    [ href "/api/dev/session/settings"
+                                    , class "block text-center text-sm text-indigo-600 hover:text-indigo-500"
+                                    ]
+                                    [ text "Login to Settings" ]
+                                , a
+                                    [ href "/api/dev/session/add-agent"
+                                    , class "block text-center text-sm text-indigo-600 hover:text-indigo-500"
+                                    ]
+                                    [ text "Login to Add Agent" ]
+                                ]
+                            ]
                     ]
                 ]
             ]

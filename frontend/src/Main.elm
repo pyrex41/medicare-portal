@@ -32,6 +32,9 @@ type alias SessionResponse =
     , session : String
     , email : String
     , organizationSlug : String
+    , firstName : String
+    , lastName : String
+    , id : String
     }
 
 
@@ -47,11 +50,30 @@ verificationDecoder =
 
 sessionDecoder : Decoder SessionResponse
 sessionDecoder =
-    Decode.map4 SessionResponse
+    Decode.map7 SessionResponse
         (Decode.field "valid" Decode.bool)
         (Decode.field "session" Decode.string)
         (Decode.field "email" Decode.string)
         (Decode.field "organizationSlug" Decode.string)
+        (Decode.field "first_name" Decode.string)
+        (Decode.field "last_name" Decode.string)
+        (Decode.field "id" (Decode.map String.fromInt Decode.int))
+
+
+type Role
+    = AdminOnly
+    | AdminAgent
+    | AgentOnly
+
+
+type alias User =
+    { id : String
+    , email : String
+    , role : Role
+    , organizationSlug : String
+    , firstName : String
+    , lastName : String
+    }
 
 
 type alias Model =
@@ -59,7 +81,8 @@ type alias Model =
     , url : Url
     , page : Page
     , session : SessionState
-    , currentUser : { organizationSlug : String }
+    , currentUser : Maybe User
+    , isSetup : Bool
     }
 
 
@@ -94,7 +117,11 @@ type Msg
     | GotSession (Result Http.Error SessionResponse)
 
 
-main : Program () Model Msg
+type alias Flags =
+    { initialSession : Maybe String }
+
+
+main : Program Flags Model Msg
 main =
     Browser.application
         { init = init
@@ -106,15 +133,24 @@ main =
         }
 
 
-init : () -> Url.Url -> Nav.Key -> ( Model, Cmd Msg )
-init _ url key =
+init : Flags -> Url.Url -> Nav.Key -> ( Model, Cmd Msg )
+init flags url key =
     let
+        initialSession =
+            case flags.initialSession of
+                Just session ->
+                    Verified session
+
+                Nothing ->
+                    Unknown
+
         model =
             { key = key
             , url = url
             , page = NotFoundPage
-            , session = Unknown
-            , currentUser = { organizationSlug = "" }
+            , session = initialSession
+            , currentUser = Nothing
+            , isSetup = False
             }
 
         route =
@@ -134,9 +170,14 @@ init _ url key =
 
 verifySession : Cmd Msg
 verifySession =
-    Http.get
-        { url = "/api/auth/session"
+    Http.riskyRequest
+        { method = "GET"
+        , headers = []
+        , url = "/api/auth/session"
+        , body = Http.emptyBody
         , expect = Http.expectJson GotSession sessionDecoder
+        , timeout = Nothing
+        , tracker = Nothing
         }
 
 
@@ -198,12 +239,16 @@ changeRouteTo url model =
         Just route ->
             case route of
                 Public publicRoute ->
-                    -- Public routes are always accessible
                     case publicRoute of
                         LoginRoute ->
+                            -- Always verify session when hitting login page
                             case model.session of
-                                Verified _ ->
-                                    -- Already logged in, show logged-in view
+                                Unknown ->
+                                    -- If session state unknown, verify first
+                                    ( model, verifySession )
+
+                                Verified session ->
+                                    -- Already verified, show logged-in view
                                     let
                                         ( pageModel, pageCmd ) =
                                             Login.init True
@@ -212,7 +257,8 @@ changeRouteTo url model =
                                     , Cmd.map LoginMsg pageCmd
                                     )
 
-                                _ ->
+                                NoSession ->
+                                    -- No valid session, show login form
                                     let
                                         ( pageModel, pageCmd ) =
                                             Login.init False
@@ -293,6 +339,15 @@ showProtectedRoute route model =
                     Settings.init
                         { isSetup = isSetup
                         , key = model.key
+                        , currentUser =
+                            model.currentUser
+                                |> Maybe.map
+                                    (\user ->
+                                        { id = user.id
+                                        , email = user.email
+                                        , role = roleToString user.role
+                                        }
+                                    )
                         }
             in
             ( { model | page = SettingsPage pageModel }
@@ -300,11 +355,11 @@ showProtectedRoute route model =
             )
 
         ChoosePlanRoute ->
-            case model.session of
-                Verified session ->
+            case ( model.session, model.currentUser ) of
+                ( Verified session, Just user ) ->
                     let
                         ( pageModel, pageCmd ) =
-                            ChoosePlan.init model.currentUser.organizationSlug session model.key
+                            ChoosePlan.init user.organizationSlug session model.key
                     in
                     ( { model | page = ChoosePlanPage pageModel }
                     , Cmd.map ChoosePlanMsg pageCmd
@@ -348,10 +403,51 @@ update msg model =
 
         UrlChanged url ->
             let
-                _ =
-                    Debug.log "URL changed to" (Url.toString url)
+                newRoute =
+                    Parser.parse routeParser url
+
+                authorized =
+                    case newRoute of
+                        Nothing ->
+                            False
+
+                        Just route ->
+                            case getRouteAccess route of
+                                PublicOnly ->
+                                    True
+
+                                RequiresAuth ->
+                                    model.currentUser /= Nothing
+
+                                AdminRouteOnly ->
+                                    case model.currentUser of
+                                        Just user ->
+                                            user.role == AdminOnly
+
+                                        Nothing ->
+                                            False
+
+                                SetupOnly ->
+                                    model.isSetup && model.currentUser /= Nothing
             in
-            changeRouteTo url { model | url = url }
+            if authorized then
+                -- Handle normal route change
+                changeRouteTo url model
+
+            else
+                -- Redirect to appropriate page
+                ( model
+                , Nav.pushUrl model.key
+                    (if model.currentUser == Nothing then
+                        "/login"
+
+                     else if model.isSetup then
+                        "/settings/setup"
+
+                     else
+                        "/dashboard"
+                    )
+                )
 
         LoginMsg subMsg ->
             case model.page of
@@ -464,7 +560,16 @@ update msg model =
                                 { model
                                     | session = Verified response.session
                                     , page = ChoosePlanPage choosePlanModel
-                                    , currentUser = { organizationSlug = response.orgSlug }
+                                    , currentUser =
+                                        Just
+                                            { id = ""
+                                            , email = response.email
+                                            , role = AdminOnly
+                                            , organizationSlug = response.orgSlug
+                                            , firstName = ""
+                                            , lastName = ""
+                                            }
+                                    , isSetup = True
                                 }
                         in
                         ( newModel
@@ -491,10 +596,27 @@ update msg model =
                             newModel =
                                 { model
                                     | session = Verified response.session
-                                    , currentUser = { organizationSlug = response.organizationSlug }
+                                    , currentUser =
+                                        Just
+                                            { id = response.id
+                                            , email = response.email
+                                            , role = AdminOnly
+                                            , organizationSlug = response.organizationSlug
+                                            , firstName = response.firstName
+                                            , lastName = response.lastName
+                                            }
+                                    , isSetup = model.isSetup
                                 }
                         in
-                        changeRouteTo model.url newModel
+                        -- If we're on the login page and have a valid session, redirect to dashboard
+                        case model.page of
+                            LoginPage _ ->
+                                ( newModel
+                                , Nav.pushUrl model.key "/dashboard"
+                                )
+
+                            _ ->
+                                changeRouteTo model.url newModel
 
                     else
                         let
@@ -610,3 +732,91 @@ subscriptions model =
 
         NotFoundPage ->
             Sub.none
+
+
+type RouteAccess
+    = PublicOnly -- Login, etc
+    | RequiresAuth -- Dashboard etc
+    | AdminRouteOnly -- Agents, certain settings
+    | SetupOnly -- Special setup flow
+
+
+getRouteAccess : Route -> RouteAccess
+getRouteAccess route =
+    case route of
+        Public LoginRoute ->
+            PublicOnly
+
+        Public (VerifyRoute _ _) ->
+            PublicOnly
+
+        Public SignupRoute ->
+            PublicOnly
+
+        Protected TempLandingRoute ->
+            PublicOnly
+
+        Protected DashboardRoute ->
+            RequiresAuth
+
+        Protected (SettingsRoute False) ->
+            RequiresAuth
+
+        Protected (SettingsRoute True) ->
+            SetupOnly
+
+        Protected ChoosePlanRoute ->
+            SetupOnly
+
+        Protected (AddAgentsRoute False) ->
+            AdminRouteOnly
+
+        Protected (AddAgentsRoute True) ->
+            SetupOnly
+
+        NotFound ->
+            PublicOnly
+
+
+roleDecoder : Decoder Role
+roleDecoder =
+    Decode.string
+        |> Decode.andThen
+            (\str ->
+                case str of
+                    "admin" ->
+                        Decode.succeed AdminOnly
+
+                    "admin_agent" ->
+                        Decode.succeed AdminAgent
+
+                    "agent" ->
+                        Decode.succeed AgentOnly
+
+                    _ ->
+                        Decode.fail ("Invalid role: " ++ str)
+            )
+
+
+roleToString : Role -> String
+roleToString role =
+    case role of
+        AdminOnly ->
+            "admin"
+
+        AdminAgent ->
+            "admin_agent"
+
+        AgentOnly ->
+            "agent"
+
+
+userDecoder : Decoder User
+userDecoder =
+    Decode.map6 User
+        (Decode.field "id" (Decode.map String.fromInt Decode.int))
+        (Decode.field "email" Decode.string)
+        (Decode.field "role" roleDecoder)
+        (Decode.field "organization_name" Decode.string)
+        (Decode.field "first_name" Decode.string)
+        (Decode.field "last_name" Decode.string)

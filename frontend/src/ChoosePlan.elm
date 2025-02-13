@@ -190,20 +190,20 @@ view model =
         [ div [ class "flex min-h-screen bg-[#0D1117]" ]
             [ Components.ProgressIndicator.view
                 [ { icon = "1"
-                  , title = "Organization Details"
-                  , description = "Enter your organization information"
-                  , isCompleted = True
-                  , isActive = False
-                  }
-                , { icon = "2"
                   , title = "Choose Plan"
-                  , description = "Select your subscription plan"
+                  , description = "Select your subscription"
                   , isCompleted = False
                   , isActive = True
                   }
+                , { icon = "2"
+                  , title = "Organization Settings"
+                  , description = "Configure your organization"
+                  , isCompleted = False
+                  , isActive = False
+                  }
                 , { icon = "3"
                   , title = "Add Team Members"
-                  , description = "Invite your team to join"
+                  , description = "Invite your team"
                   , isCompleted = False
                   , isActive = False
                   }

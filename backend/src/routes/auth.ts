@@ -171,14 +171,17 @@ export function createAuthRoutes() {
           valid: false,
           session: "",
           email: "",
-          organizationSlug: ""
+          organizationSlug: "",
+          first_name: "",
+          last_name: "",
+          id: ""
         };
       }
 
       try {
         // Get user and organization info from session
         const sessionUser = await db.fetchOne(
-          `SELECT u.email, o.slug as organization_slug
+          `SELECT u.id, u.email, u.first_name, u.last_name, o.slug as organization_slug
            FROM sessions s
            JOIN users u ON s.user_id = u.id
            JOIN organizations o ON u.organization_id = o.id
@@ -191,7 +194,10 @@ export function createAuthRoutes() {
             valid: false,
             session: "",
             email: "",
-            organizationSlug: ""
+            organizationSlug: "",
+            first_name: "",
+            last_name: "",
+            id: ""
           };
         }
 
@@ -199,7 +205,10 @@ export function createAuthRoutes() {
           valid: true,
           session: sessionId,
           email: sessionUser.email,
-          organizationSlug: sessionUser.organization_slug
+          organizationSlug: sessionUser.organization_slug,
+          first_name: sessionUser.first_name,
+          last_name: sessionUser.last_name,
+          id: sessionUser.id
         };
       } catch (error) {
         logger.error('Error getting session info:', error);
@@ -207,7 +216,10 @@ export function createAuthRoutes() {
           valid: false,
           session: "",
           email: "",
-          organizationSlug: ""
+          organizationSlug: "",
+          first_name: "",
+          last_name: "",
+          id: ""
         };
       }
     })

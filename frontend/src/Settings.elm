@@ -2,6 +2,7 @@ module Settings exposing (Model, Msg, init, subscriptions, update, view)
 
 import Browser
 import Browser.Navigation as Nav
+import Components.ProgressIndicator
 import Debug
 import Html exposing (..)
 import Html.Attributes exposing (..)
@@ -111,6 +112,14 @@ type GISelectionMode
 type alias InitFlags =
     { isSetup : Bool
     , key : Nav.Key
+    , currentUser : Maybe User
+    }
+
+
+type alias User =
+    { id : String
+    , email : String
+    , role : String -- "admin" or "agent"
     }
 
 
@@ -121,6 +130,7 @@ type alias Model =
     , recommendedGICombos : List StateCarrierSetting
     , isSetup : Bool
     , key : Nav.Key
+    , currentUser : Maybe User
     }
 
 
@@ -188,6 +198,7 @@ init flags =
       , recommendedGICombos = []
       , isSetup = flags.isSetup
       , key = flags.key
+      , currentUser = flags.currentUser
       }
     , Cmd.batch
         [ fetchSettings
@@ -449,34 +460,60 @@ update msg model =
                                 GIAll ->
                                     { settings
                                         | stateCarrierSettings =
-                                            List.map
-                                                (\setting -> { setting | targetGI = True })
-                                                settings.stateCarrierSettings
+                                            List.concatMap
+                                                (\state ->
+                                                    List.map
+                                                        (\carrier ->
+                                                            { state = state
+                                                            , carrier = carrier
+                                                            , active = True
+                                                            , targetGI = True
+                                                            }
+                                                        )
+                                                        settings.carrierContracts
+                                                )
+                                                settings.stateLicenses
                                     }
 
                                 GINone ->
                                     { settings
                                         | stateCarrierSettings =
-                                            List.map
-                                                (\setting -> { setting | targetGI = False })
-                                                settings.stateCarrierSettings
+                                            List.concatMap
+                                                (\state ->
+                                                    List.map
+                                                        (\carrier ->
+                                                            { state = state
+                                                            , carrier = carrier
+                                                            , active = True
+                                                            , targetGI = False
+                                                            }
+                                                        )
+                                                        settings.carrierContracts
+                                                )
+                                                settings.stateLicenses
                                     }
 
                                 GIRecommended ->
                                     { settings
                                         | stateCarrierSettings =
-                                            List.map
-                                                (\setting ->
-                                                    { setting
-                                                        | targetGI =
-                                                            List.any
-                                                                (\rec ->
-                                                                    rec.state == setting.state && rec.carrier == setting.carrier
-                                                                )
-                                                                model.recommendedGICombos
-                                                    }
+                                            List.concatMap
+                                                (\state ->
+                                                    List.map
+                                                        (\carrier ->
+                                                            { state = state
+                                                            , carrier = carrier
+                                                            , active = True
+                                                            , targetGI =
+                                                                List.any
+                                                                    (\rec ->
+                                                                        rec.state == state && rec.carrier == carrier
+                                                                    )
+                                                                    model.recommendedGICombos
+                                                            }
+                                                        )
+                                                        settings.carrierContracts
                                                 )
-                                                settings.stateCarrierSettings
+                                                settings.stateLicenses
                                     }
                     in
                     ( { model | orgSettings = Just newSettings }
@@ -511,7 +548,7 @@ update msg model =
 
         FinishSetup ->
             ( model
-            , Nav.pushUrl model.key "/add-agents"
+            , Nav.pushUrl model.key "/add-agents/setup"
             )
 
         SelectCommonStates region ->
@@ -583,16 +620,50 @@ view model =
         else
             "Settings"
     , body =
-        [ div [ class "min-h-screen bg-gray-50" ]
-            [ div [ class "max-w-7xl mx-auto py-6 sm:px-6 lg:px-8" ]
-                [ if model.isSetup then
-                    viewSetupHeader
+        [ div [ class "min-h-screen bg-gray-50 flex" ]
+            [ if model.isSetup then
+                div [ class "flex w-full" ]
+                    [ div [ class "w-64 bg-[#111827] fixed h-screen" ]
+                        [ div [ class "p-6" ]
+                            [ div [ class "text-white text-xl font-bold mb-8" ]
+                                [ text "Medicare Max" ]
+                            , Components.ProgressIndicator.view
+                                [ { icon = "1"
+                                  , title = "Choose Plan"
+                                  , description = "Select your subscription"
+                                  , isCompleted = True
+                                  , isActive = False
+                                  }
+                                , { icon = "2"
+                                  , title = "Organization Settings"
+                                  , description = "Configure your organization"
+                                  , isCompleted = False
+                                  , isActive = True
+                                  }
+                                , { icon = "3"
+                                  , title = "Add Team Members"
+                                  , description = "Invite your team"
+                                  , isCompleted = False
+                                  , isActive = False
+                                  }
+                                ]
+                            ]
+                        ]
+                    , div [ class "flex-1 ml-64" ]
+                        [ div [ class "max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8 min-h-screen overflow-y-auto" ]
+                            [ viewSetupHeader
+                            , viewSettingsContent model.orgSettings True model.expandedSections
+                            , viewBottomBar model
+                            ]
+                        ]
+                    ]
 
-                  else
-                    viewNormalHeader
-                , viewSettingsContent model.orgSettings True model.expandedSections
-                , viewBottomBar model
-                ]
+              else
+                div [ class "max-w-7xl mx-auto py-6 sm:px-6 lg:px-8" ]
+                    [ viewNormalHeader
+                    , viewSettingsContent model.orgSettings True model.expandedSections
+                    , viewBottomBar model
+                    ]
             ]
         ]
     }
@@ -600,7 +671,7 @@ view model =
 
 viewSetupHeader : Html Msg
 viewSetupHeader =
-    div [ class "mb-8 text-center" ]
+    div [ class "mb-8" ]
         [ h1 [ class "text-3xl font-bold text-gray-900" ]
             [ text "Set Up Your Organization" ]
         , p [ class "mt-2 text-gray-600" ]
@@ -617,8 +688,9 @@ viewNormalHeader =
 viewBottomBar : Model -> Html Msg
 viewBottomBar model =
     div
-        [ class """fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 
-                  px-4 py-4 sm:px-6 lg:px-8 flex justify-between items-center"""
+        [ class """sticky bottom-0 left-0 right-0 bg-white border-t border-gray-200 
+                  px-4 py-4 sm:px-6 lg:px-8 flex justify-between items-center
+                  mt-8"""
         ]
         [ button
             [ class """px-4 py-2 text-sm font-medium text-gray-700 bg-white 
@@ -835,8 +907,7 @@ viewStateCarrierGrid settings =
                             , onClick (ApplyGISelection GIRecommended)
                             ]
                             [ text "Apply Recommended"
-                            , div
-                                [ class "ml-2 w-5 h-5 rounded-full bg-indigo-50 flex items-center justify-center text-indigo-700" ]
+                            , div [ class "ml-2 w-5 h-5 rounded-full bg-indigo-50 flex items-center justify-center text-indigo-700" ]
                                 [ text "i" ]
                             ]
                         , div
@@ -850,14 +921,13 @@ viewStateCarrierGrid settings =
                 ]
             , div [ class "overflow-x-auto" ]
                 [ table [ class "min-w-full divide-y divide-gray-200" ]
-                    [ thead
-                        [ class "bg-gray-50" ]
+                    [ thead [ class "bg-gray-50" ]
                         [ tr []
-                            (th [ class "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider sticky left-0 bg-gray-50 z-10" ]
+                            (th [ class "px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider sticky left-0 bg-gray-50 z-10 w-16" ]
                                 [ text "State" ]
                                 :: List.map
                                     (\carrier ->
-                                        th [ class "px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[120px]" ]
+                                        th [ class "px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-24" ]
                                             [ text carrier ]
                                     )
                                     settings.carrierContracts
@@ -867,7 +937,7 @@ viewStateCarrierGrid settings =
                         (List.indexedMap
                             (\index state ->
                                 tr [ classList [ ( "bg-gray-50", modBy 2 index == 0 ) ] ]
-                                    (td [ class "px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 sticky left-0 bg-inherit z-10" ]
+                                    (td [ class "px-3 py-4 whitespace-nowrap text-sm font-medium text-gray-900 sticky left-0 bg-inherit z-10" ]
                                         [ text state ]
                                         :: List.map
                                             (\carrier ->
@@ -875,11 +945,11 @@ viewStateCarrierGrid settings =
                                                     setting =
                                                         findStateCarrierSetting settings state carrier
                                                 in
-                                                td [ class "px-6 py-4 whitespace-nowrap text-sm text-center" ]
-                                                    [ div [ class "flex flex-col items-start space-y-2 w-[120px] mx-auto" ]
+                                                td [ class "px-3 py-2 whitespace-nowrap text-sm text-center" ]
+                                                    [ div [ class "flex flex-col items-start space-y-1 w-20 mx-auto" ]
                                                         [ div [ class "w-full" ]
                                                             [ label [ class "flex items-center cursor-pointer w-full" ]
-                                                                [ div [ class "relative w-4 h-4 mr-2 shrink-0" ]
+                                                                [ div [ class "relative w-4 h-4 mr-1 shrink-0" ]
                                                                     [ input
                                                                         [ type_ "checkbox"
                                                                         , checked setting.active
@@ -895,7 +965,7 @@ viewStateCarrierGrid settings =
                                                                                         False
                                                                                     )
                                                                             )
-                                                                        , class "absolute w-0 h-0 opacity-0" -- Hide the actual checkbox
+                                                                        , class "absolute w-0 h-0 opacity-0"
                                                                         ]
                                                                         []
                                                                     , div
@@ -912,7 +982,7 @@ viewStateCarrierGrid settings =
                                                                             text ""
                                                                         ]
                                                                     ]
-                                                                , div [ class "grow text-left" ] [ text "Active" ]
+                                                                , span [ class "text-xs ml-1" ] [ text "Active" ]
                                                                 ]
                                                             ]
                                                         , div [ class "w-full" ]
@@ -923,12 +993,12 @@ viewStateCarrierGrid settings =
                                                                     , ( "cursor-not-allowed opacity-50", not setting.active )
                                                                     ]
                                                                 ]
-                                                                [ div [ class "relative w-4 h-4 mr-2 shrink-0" ]
+                                                                [ div [ class "relative w-4 h-4 mr-1 shrink-0" ]
                                                                     [ input
                                                                         [ type_ "checkbox"
                                                                         , checked setting.targetGI
                                                                         , onCheck (\targetGI -> UpdateStateCarrierSetting state carrier setting.active targetGI)
-                                                                        , class "absolute w-0 h-0 opacity-0" -- Hide the actual checkbox
+                                                                        , class "absolute w-0 h-0 opacity-0"
                                                                         , disabled (not setting.active)
                                                                         ]
                                                                         []
@@ -946,7 +1016,7 @@ viewStateCarrierGrid settings =
                                                                             text ""
                                                                         ]
                                                                     ]
-                                                                , div [ class "grow text-left" ] [ text "GI" ]
+                                                                , span [ class "text-xs ml-1" ] [ text "GI" ]
                                                                 ]
                                                             ]
                                                         ]
@@ -1113,3 +1183,28 @@ tab label isActive isDisabled msg =
         , disabled isDisabled
         ]
         [ text label ]
+
+
+viewNavLink : String -> String -> Html Msg
+viewNavLink label path =
+    a
+        [ class "text-gray-700 hover:text-gray-900 hover:bg-gray-50 group flex items-center px-3 py-2 text-sm font-medium rounded-md"
+        , href path
+        ]
+        [ text label ]
+
+
+viewNavigation : Model -> Html Msg
+viewNavigation model =
+    nav []
+        [ case model.currentUser of
+            Just user ->
+                if user.role == "admin" then
+                    viewNavLink "Manage Agents" "/agents"
+
+                else
+                    text ""
+
+            Nothing ->
+                text ""
+        ]
