@@ -82,7 +82,6 @@ async function main() {
   p.intro(chalk.green('✨ Turso Database Manager ✨'));
 
   const db = new Database();
-  await db.init();
   const turso = new TursoManager();
 
   while (true) {

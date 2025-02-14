@@ -31,7 +31,6 @@ export async function authMiddleware(
     };
 
     const db = new Database();
-    await db.init();
 
     // Get user with organization info from central DB
     const user = await db.execute(

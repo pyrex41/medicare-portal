@@ -64,7 +64,6 @@ export const settingsRoutes = new Elysia()
     }
 
     const db = new Database();
-    await db.init();
 
     try {
         // Get organization settings
@@ -161,7 +160,6 @@ export const settingsRoutes = new Elysia()
     }
 
     const db = new Database();
-    await db.init();
 
     try {
         if (scope === 'org') {
@@ -262,7 +260,6 @@ export const settingsRoutes = new Elysia()
     }
 
     const db = new Database();
-    await db.init();
 
     try {
       const recommendations = await db.fetchAll<{ state: string; carrier: string }>(
@@ -295,7 +292,6 @@ export const settingsRoutes = new Elysia()
     }
 
     const db = new Database();
-    await db.init();
 
     try {
       const carriers = await db.fetchAll<{ name: string }>(

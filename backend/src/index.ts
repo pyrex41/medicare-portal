@@ -63,7 +63,6 @@ interface DbRow {
 const startServer = async () => {
   try {
     const db = new Database()
-    await db.init()
     logger.info('Database initialized successfully')
 
     const app = new Elysia()

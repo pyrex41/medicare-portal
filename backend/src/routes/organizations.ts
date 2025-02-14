@@ -51,7 +51,6 @@ async function generateUniqueSlug(db: Database, name: string): Promise<string> {
 export const organizationRoutes = new Elysia({ prefix: '/api' })
   .post('/organizations/signup', async ({ body, set }) => {
     const db = new Database();
-    await db.init();
     const turso = new TursoService();
     const auth = new AuthService(process.env.PUBLIC_URL || 'http://localhost:5173');
 
@@ -194,7 +193,6 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
   })
   .get('/organizations/check-name/:name', async ({ params, set }) => {
     const db = new Database();
-    await db.init();
 
     try {
       const decodedName = decodeURIComponent(params.name);
@@ -241,7 +239,6 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
   })
   .get('/organizations/check-email/:email', async ({ params, set }) => {
     const db = new Database();
-    await db.init();
 
     try {
       const decodedEmail = decodeURIComponent(params.email);
@@ -321,7 +318,6 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
   .post('/organizations/:orgSlug/subscription', async ({ params: { orgSlug }, body, request, set }) => {
     try {
       const db = new Database();
-      await db.init();
 
       // Get current user from session to determine their org
       const currentUser = await getUserFromSession(request)

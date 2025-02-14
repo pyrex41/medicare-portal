@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import { logger } from '../logger';
 import { db } from '../database';
 import { Database } from '../database';
-import { User } from '../types';
+import type { User } from '../types';
 
 const algorithm = "aes-256-gcm";
 const IV_LENGTH = 12;
@@ -53,7 +53,7 @@ export class AuthService {
       ...(options?.name && { name: options.name })
     };
 
-    logger.info(`Creating magic link with payload:`, payload);
+    logger.info(`Creating magic link with payload: ${JSON.stringify(payload)}`);
     const token = this.encrypt(JSON.stringify(payload));
     // URL encode the entire token
     const encodedToken = encodeURIComponent(token);
@@ -146,7 +146,6 @@ export async function validateSession(sessionId: string): Promise<User | null> {
   logger.info(`Validating session: ${sessionId}`);
   
   const db = new Database();
-  await db.init();
 
   // Get the session
   const session = await db.fetchOne<{
@@ -191,15 +190,6 @@ export function generateToken(): string {
   return crypto.randomBytes(32).toString('hex');
 }
 
-export interface User {
-  id: number
-  email: string
-  first_name: string
-  last_name: string
-  organization_id: number
-  role: 'admin' | 'agent'
-}
-
 export async function getUserFromSession(request: Request) {
   try {
     // Get session cookie
@@ -212,7 +202,6 @@ export async function getUserFromSession(request: Request) {
 
     // Initialize database
     const db = new Database();
-    await db.init();
 
     // Get session data
     const sessionResult = await db.fetchAll(
@@ -221,7 +210,7 @@ export async function getUserFromSession(request: Request) {
     );
 
     if (!sessionResult || sessionResult.length === 0) {
-      logger.warn('No session found for ID:', sessionId);
+      logger.warn(`No session found for ID: ${sessionId}`);
       return null;
     }
 
@@ -265,7 +254,7 @@ export async function getUserFromSession(request: Request) {
     return user;
 
   } catch (error) {
-    logger.error('Error getting user from session:', error);
+    logger.error(`Error getting user from session: ${error}`);
     return null;
   }
 } 

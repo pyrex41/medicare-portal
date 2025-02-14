@@ -17,7 +17,6 @@ async function main() {
   p.intro(chalk.green('✨ Interactive Agent Creation Tool ✨'));
 
   const db = new Database();
-  await db.init();
 
   // Get all organizations
   const orgs = await db.fetchAll<{ id: number; name: string }>('SELECT id, name FROM organizations');

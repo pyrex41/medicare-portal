@@ -14,7 +14,6 @@ async function main() {
   p.intro(chalk.green('✨ Guaranteed Issue Recommendations Manager ✨'));
 
   const db = new Database();
-  await db.init();
 
   while (true) {
     const action = await p.select({
