@@ -1454,7 +1454,7 @@ viewCsvUploadModal state isUploading =
                     ]
                     []
                 , label [ class "text-sm text-gray-600" ]
-                    [ text "Overwrite existing contacts with matching email addresses" ]
+                    [ text "Overwrite existing contacts (matched on email address)" ]
                 ]
             , div
                 [ class
@@ -1511,7 +1511,7 @@ viewCsvUploadModal state isUploading =
                                             [ class "ml-2 text-purple-600 hover:text-purple-800 hover:underline"
                                             , onClick (DownloadErrorCsv csvContent)
                                             ]
-                                            [ text "Download Errors" ]
+                                            [ text "Download and Fix Errors" ]
 
                                     Nothing ->
                                         text ""

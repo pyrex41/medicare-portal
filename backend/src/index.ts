@@ -395,11 +395,7 @@ const startServer = async () => {
           // Get existing emails for duplicate checking
           let existingEmails = new Set<string>()
           const emailResults = await db.fetchAll("SELECT email FROM contacts")
-          existingEmails = new Set(emailResults
-            .map((row: any[]) => row[0])
-            .filter((email: unknown): email is string => typeof email === 'string')
-            .map((email: string) => email.toLowerCase())
-          )
+          existingEmails = new Set(emailResults.map((row: any[]) => row[0].trim().toLowerCase()))
 
           logger.info(`Found ${existingEmails.size} existing emails in database`)
 
