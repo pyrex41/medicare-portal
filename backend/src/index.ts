@@ -964,6 +964,7 @@ const startServer = async () => {
                 u.first_name as firstName,
                 u.last_name as lastName,
                 u.role,
+                u.phone,
                 a.settings as agentSettings
               FROM users u
               LEFT JOIN agent_settings a ON a.agent_id = u.id
@@ -991,6 +992,7 @@ const startServer = async () => {
               firstName: user.firstName,
               lastName: user.lastName,
               role: user.role,
+              phone: user.phone || '',
               agentSettings: user.agentSettings ? JSON.parse(user.agentSettings) : null
             }
           }

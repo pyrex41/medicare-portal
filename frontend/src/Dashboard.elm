@@ -1,19 +1,27 @@
-module Dashboard exposing (Model, Msg, init, main, subscriptions, update, view)
+module Dashboard exposing
+    ( Model
+    , Msg(..)
+    , init
+    , subscriptions
+    , update
+    , view
+    )
 
 import Browser
 import Browser.Events
+import Browser.Navigation as Nav
 import File exposing (File)
 import File.Download
 import File.Select as Select
 import Html exposing (Html, button, div, h1, h2, h3, input, label, nav, option, select, span, table, tbody, td, text, th, thead, tr)
 import Html.Attributes exposing (attribute, checked, class, placeholder, required, title, type_, value)
-import Html.Events exposing (onClick, onInput, onSubmit, preventDefaultOn, stopPropagationOn)
+import Html.Events exposing (on, onClick, onInput, onSubmit, preventDefaultOn, stopPropagationOn)
 import Http
 import Json.Decode as Decode exposing (Decoder, bool, int, nullable, string)
 import Json.Decode.Pipeline as Pipeline
 import Json.Encode as Encode
 import List.Extra
-import Svg exposing (svg)
+import Svg exposing (path, svg)
 import Svg.Attributes exposing (d, fill, stroke, viewBox)
 import Task
 import Time
@@ -27,7 +35,7 @@ import Url.Builder as Url
 main : Program () Model Msg
 main =
     Browser.element
-        { init = init
+        { init = \_ -> init
         , update = update
         , view = view
         , subscriptions = subscriptions
@@ -79,6 +87,8 @@ type alias Model =
     , isUploadingCsv : Bool
     , isDeletingContacts : Bool
     , isSubmittingForm : Bool
+    , currentUser : Maybe User
+    , showProfileMenu : Bool
     }
 
 
@@ -156,8 +166,16 @@ type alias DeleteResponse =
     }
 
 
-init : () -> ( Model, Cmd Msg )
-init _ =
+type alias User =
+    { id : Int
+    , email : String
+    , firstName : String
+    , role : String
+    }
+
+
+init : ( Model, Cmd Msg )
+init =
     ( { contacts = []
       , selectedContacts = []
       , showModal = NoModal
@@ -173,9 +191,12 @@ init _ =
       , isUploadingCsv = False
       , isDeletingContacts = False
       , isSubmittingForm = False
+      , currentUser = Nothing
+      , showProfileMenu = False
       }
     , Cmd.batch
         [ fetchContacts
+        , fetchCurrentUser
         , Task.perform GotCurrentTime Time.now
         ]
     )
@@ -238,7 +259,7 @@ type Msg
     | HandleKeyDown String
     | SetSort SortColumn
     | ToggleFilter FilterType String
-    | SetAgeFilter Int Int -- (min, max)
+    | SetAgeFilter Int Int
     | ClearFilters
     | LookupZipCode String
     | GotZipLookup (Result Http.Error ZipInfo)
@@ -264,6 +285,11 @@ type Msg
     | DeleteSelectedContacts
     | ContactsDeleted (Result Http.Error DeleteResponse)
     | ToggleOverwriteDuplicates Bool
+    | ToggleProfileMenu
+    | CloseProfileMenu
+    | GotCurrentUser (Result Http.Error User)
+    | ViewProfile
+    | ViewSettings
 
 
 type ContactFormField
@@ -798,6 +824,28 @@ update msg model =
                 _ ->
                     ( model, Cmd.none )
 
+        ToggleProfileMenu ->
+            ( { model | showProfileMenu = not model.showProfileMenu }
+            , Cmd.none
+            )
+
+        CloseProfileMenu ->
+            ( { model | showProfileMenu = False }
+            , Cmd.none
+            )
+
+        GotCurrentUser (Ok user) ->
+            ( { model | currentUser = Just user }, Cmd.none )
+
+        GotCurrentUser (Err _) ->
+            ( model, Cmd.none )
+
+        ViewProfile ->
+            ( model, Cmd.none )
+
+        ViewSettings ->
+            ( model, Cmd.none )
+
 
 
 -- TODO: Handle error
@@ -808,7 +856,7 @@ update msg model =
 view : Model -> Html Msg
 view model =
     div [ class "min-h-screen bg-gray-50" ]
-        [ viewNavHeader
+        [ viewNavHeader model
         , div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" ]
             [ viewActionBar model
             , viewContactsTable model
@@ -817,8 +865,8 @@ view model =
         ]
 
 
-viewNavHeader : Html Msg
-viewNavHeader =
+viewNavHeader : Model -> Html Msg
+viewNavHeader model =
     nav [ class "bg-white border-b border-gray-200" ]
         [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8" ]
             [ div [ class "flex justify-between h-16" ]
@@ -828,14 +876,35 @@ viewNavHeader =
                             [ text "Medicare Max" ]
                         ]
                     ]
-                , div [ class "flex items-center" ]
+                , div [ class "flex items-center space-x-4" ]
                     [ button
-                        [ class "px-3 py-1.5 bg-purple-500 text-white text-sm font-medium rounded-md hover:bg-purple-600 transition-colors duration-200" ]
+                        [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:text-purple-600 transition-colors duration-200"
+                        , onClick ViewProfile
+                        ]
                         [ text "Profile" ]
+                    , if isAdminOrAdminAgent model.currentUser then
+                        button
+                            [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:text-purple-600 transition-colors duration-200"
+                            , onClick ViewSettings
+                            ]
+                            [ text "Organization Settings" ]
+
+                      else
+                        text ""
                     ]
                 ]
             ]
         ]
+
+
+isAdminOrAdminAgent : Maybe User -> Bool
+isAdminOrAdminAgent maybeUser =
+    case maybeUser of
+        Just user ->
+            user.role == "admin" || user.role == "admin_agent"
+
+        Nothing ->
+            False
 
 
 
@@ -848,6 +917,14 @@ fetchContacts =
     Http.get
         { url = "/api/contacts"
         , expect = Http.expectJson GotContacts contactsDecoder
+        }
+
+
+fetchCurrentUser : Cmd Msg
+fetchCurrentUser =
+    Http.get
+        { url = "/api/me"
+        , expect = Http.expectJson GotCurrentUser userDecoder
         }
 
 
@@ -1487,13 +1564,6 @@ viewCsvUploadModal state isUploading =
 
                     Nothing ->
                         text ""
-                , case state.error of
-                    Just error ->
-                        div [ class "mt-4 text-sm text-red-600" ]
-                            [ text error ]
-
-                    Nothing ->
-                        text ""
                 ]
             , case state.stats of
                 Just stats ->
@@ -1620,6 +1690,11 @@ subscriptions model =
 
             Nothing ->
                 Sub.none
+        , if model.showProfileMenu then
+            Browser.Events.onMouseDown (Decode.succeed CloseProfileMenu)
+
+          else
+            Sub.none
         ]
 
 
@@ -1834,7 +1909,8 @@ viewContactForm form updateMsg submitMsg buttonText isSubmitting =
             , viewFormInput "Plan Type" "text" form.planType PlanType updateMsg True
             , viewFormInput "Effective Date" "date" form.effectiveDate EffectiveDate updateMsg True
             , viewFormInput "Birth Date" "date" form.birthDate BirthDate updateMsg True
-            , viewFormSelect "Tobacco User"
+            , viewFormInput "Tobacco User"
+                "text"
                 (if form.tobaccoUser then
                     "true"
 
@@ -1843,9 +1919,7 @@ viewContactForm form updateMsg submitMsg buttonText isSubmitting =
                 )
                 TobaccoUser
                 updateMsg
-                [ ( "false", "No" )
-                , ( "true", "Yes" )
-                ]
+                True
             , viewFormSelect "Gender"
                 form.gender
                 Gender
@@ -1853,45 +1927,8 @@ viewContactForm form updateMsg submitMsg buttonText isSubmitting =
                 [ ( "M", "Male" )
                 , ( "F", "Female" )
                 ]
-            , div [ class "form-group" ]
-                [ Html.label [ class "block text-sm font-medium text-gray-700 mb-2" ]
-                    [ text "ZIP Code" ]
-                , Html.input
-                    [ type_ "text"
-                    , class "w-full px-4 py-3 bg-white border-[2.5px] border-purple-300 rounded-lg text-gray-700 placeholder-gray-400 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 focus:bg-white transition-all duration-200"
-                    , value form.zipCode
-                    , onInput
-                        (\zip ->
-                            if String.all Char.isDigit zip && String.length zip <= 5 then
-                                Batch
-                                    [ updateMsg ZipCode zip
-                                    , if String.length zip == 5 then
-                                        LookupZipCode zip
-
-                                      else
-                                        NoOp
-                                    ]
-
-                            else
-                                NoOp
-                        )
-                    , required True
-                    , Html.Attributes.maxlength 5
-                    , Html.Attributes.pattern "[0-9]*"
-                    ]
-                    []
-                ]
-            , div [ class "form-group" ]
-                [ Html.label [ class "block text-sm font-medium text-gray-700 mb-2" ]
-                    [ text "State" ]
-                , Html.input
-                    [ type_ "text"
-                    , class "w-full px-4 py-3 bg-gray-100 border-[2.5px] border-gray-200 rounded-lg text-gray-700 cursor-not-allowed"
-                    , value form.state
-                    , Html.Attributes.disabled True
-                    ]
-                    []
-                ]
+            , viewZipCodeField form
+            , viewStateField form
             ]
         , div [ class "mt-10 flex justify-end space-x-4" ]
             [ button
@@ -1949,6 +1986,55 @@ viewFormSelect labelText selectedValue field updateMsg options =
         ]
 
 
+viewZipCodeField : ContactForm -> Html Msg
+viewZipCodeField form =
+    div [ class "col-span-6 sm:col-span-3" ]
+        [ Html.label [ class "block text-sm font-medium text-gray-700 mb-2" ]
+            [ text "ZIP Code" ]
+        , Html.input
+            [ type_ "text"
+            , class "mt-1 focus:ring-purple-500 focus:border-purple-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md"
+            , value form.zipCode
+            , onInput (UpdateAddForm ZipCode)
+            ]
+            []
+        ]
+
+
+viewStateField : ContactForm -> Html Msg
+viewStateField form =
+    div [ class "col-span-6 sm:col-span-3" ]
+        [ Html.label [ class "block text-sm font-medium text-gray-700 mb-2" ]
+            [ text "State" ]
+        , Html.input
+            [ type_ "text"
+            , class "mt-1 focus:ring-purple-500 focus:border-purple-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md"
+            , value form.state
+            , onInput (UpdateAddForm State)
+            ]
+            []
+        ]
+
+
+viewSpinner : Html msg
+viewSpinner =
+    div [ class "animate-spin rounded-full h-5 w-5 border-2 border-purple-500 border-t-transparent" ] []
+
+
+onClickOutside : msg -> Html.Attribute msg
+onClickOutside msg =
+    on "click" (Decode.succeed msg)
+
+
+userDecoder : Decode.Decoder User
+userDecoder =
+    Decode.map4 User
+        (Decode.field "id" Decode.int)
+        (Decode.field "email" Decode.string)
+        (Decode.field "firstName" Decode.string)
+        (Decode.field "role" Decode.string)
+
+
 deleteContacts : List Int -> Cmd Msg
 deleteContacts contactIds =
     Http.request
@@ -1969,12 +2055,7 @@ encodeContactIds ids =
 
 deleteResponseDecoder : Decode.Decoder DeleteResponse
 deleteResponseDecoder =
-    Decode.succeed DeleteResponse
-        |> Pipeline.required "success" Decode.bool
-        |> Pipeline.required "deleted_ids" (Decode.list Decode.int)
-        |> Pipeline.required "message" Decode.string
-
-
-viewSpinner : Html Msg
-viewSpinner =
-    div [ class "animate-spin rounded-full h-5 w-5 border-2 border-purple-500 border-t-transparent" ] []
+    Decode.map3 DeleteResponse
+        (Decode.field "success" Decode.bool)
+        (Decode.field "deleted_ids" (Decode.list Decode.int))
+        (Decode.field "message" Decode.string)

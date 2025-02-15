@@ -6,16 +6,18 @@ import Browser.Navigation as Nav
 import ChoosePlan
 import Dashboard
 import Debug
+import Home
 import Html exposing (Html, div, h1, p, text)
 import Html.Attributes exposing (class, href)
 import Http
 import Json.Decode as Decode exposing (Decoder)
 import Login
+import Profile
 import Settings
 import Signup
 import TempLanding
 import Url exposing (Url)
-import Url.Parser as Parser exposing ((</>), Parser, map, oneOf, s, string)
+import Url.Parser as Parser exposing ((</>), Parser, map, oneOf, s, string, top)
 
 
 type alias VerificationResponse =
@@ -101,6 +103,9 @@ type Page
     | Signup Signup.Model
     | ChoosePlanPage ChoosePlan.Model
     | AddAgentsPage AddAgent.Model
+    | ProfilePage Profile.Model
+    | LoadingPage
+    | HomePage Home.Model
 
 
 type Msg
@@ -115,6 +120,8 @@ type Msg
     | AddAgentsMsg AddAgent.Msg
     | GotVerification (Result Http.Error VerificationResponse)
     | GotSession (Result Http.Error SessionResponse)
+    | ProfileMsg Profile.Msg
+    | HomeMsg Home.Msg
 
 
 type alias Flags =
@@ -147,7 +154,7 @@ init flags url key =
         model =
             { key = key
             , url = url
-            , page = NotFoundPage
+            , page = LoadingPage
             , session = initialSession
             , currentUser = Nothing
             , isSetup = False
@@ -191,6 +198,7 @@ type PublicRoute
     = LoginRoute
     | VerifyRoute String String -- orgSlug token
     | SignupRoute
+    | HomeRoute
 
 
 type ProtectedRoute
@@ -199,12 +207,14 @@ type ProtectedRoute
     | SettingsRoute Bool
     | ChoosePlanRoute
     | AddAgentsRoute Bool -- Add setup flag like Settings
+    | ProfileRoute
 
 
 routeParser : Parser (Route -> a) a
 routeParser =
     oneOf
-        [ -- Public routes
+        [ map (Public HomeRoute) top
+        , -- Public routes
           map (Public LoginRoute) (s "login")
         , map (\slug token -> Public (VerifyRoute slug token))
             (s "auth" </> s "verify" </> string </> string)
@@ -218,6 +228,7 @@ routeParser =
         , map (Protected ChoosePlanRoute) (s "choose-plan")
         , map (Protected (AddAgentsRoute False)) (s "add-agents")
         , map (Protected (AddAgentsRoute True)) (s "add-agents" </> s "setup")
+        , map (Protected ProfileRoute) (s "profile")
         ]
 
 
@@ -240,11 +251,20 @@ changeRouteTo url model =
             case route of
                 Public publicRoute ->
                     case publicRoute of
+                        HomeRoute ->
+                            let
+                                ( homeModel, homeCmd ) =
+                                    Home.init ()
+                            in
+                            ( { model | page = HomePage homeModel }
+                            , Cmd.map HomeMsg homeCmd
+                            )
+
                         LoginRoute ->
                             -- Always verify session when hitting login page
                             case model.session of
                                 Unknown ->
-                                    -- If session state unknown, verify first
+                                    -- If session state unknown, verify first but don't change page yet
                                     ( model, verifySession )
 
                                 Verified session ->
@@ -281,6 +301,7 @@ changeRouteTo url model =
                             )
 
                         VerifyRoute orgSlug token ->
+                            -- Keep current page while verifying
                             ( model
                             , Http.get
                                 { url = "/api/auth/verify/" ++ orgSlug ++ "/" ++ token
@@ -290,21 +311,14 @@ changeRouteTo url model =
 
                 Protected protectedRoute ->
                     case model.session of
-                        Verified _ ->
-                            -- Show protected page
+                        Unknown ->
+                            ( model, verifySession )
+
+                        Verified session ->
                             showProtectedRoute protectedRoute model
 
-                        Unknown ->
-                            -- Keep current page and verify session
-                            ( model
-                            , verifySession
-                            )
-
                         NoSession ->
-                            -- Redirect to login
-                            ( model
-                            , Nav.replaceUrl model.key "/login"
-                            )
+                            ( model, Nav.replaceUrl model.key "/login" )
 
                 NotFound ->
                     ( { model | page = NotFoundPage }
@@ -327,7 +341,7 @@ showProtectedRoute route model =
         DashboardRoute ->
             let
                 ( pageModel, pageCmd ) =
-                    Dashboard.init ()
+                    Dashboard.init
             in
             ( { model | page = DashboardPage pageModel }
             , Cmd.map DashboardMsg pageCmd
@@ -384,6 +398,15 @@ showProtectedRoute route model =
 
                 _ ->
                     ( model, Nav.pushUrl model.key "/login" )
+
+        ProfileRoute ->
+            let
+                ( pageModel, pageCmd ) =
+                    Profile.init ()
+            in
+            ( { model | page = ProfilePage pageModel }
+            , Cmd.map ProfileMsg pageCmd
+            )
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -464,14 +487,22 @@ update msg model =
                     ( model, Cmd.none )
 
         DashboardMsg subMsg ->
-            case model.page of
-                DashboardPage pageModel ->
+            case ( model.page, subMsg ) of
+                ( DashboardPage pageModel, dashboardMsg ) ->
                     let
                         ( newPageModel, newCmd ) =
-                            Dashboard.update subMsg pageModel
+                            Dashboard.update dashboardMsg pageModel
                     in
                     ( { model | page = DashboardPage newPageModel }
-                    , Cmd.map DashboardMsg newCmd
+                    , case dashboardMsg of
+                        Dashboard.ViewProfile ->
+                            Nav.pushUrl model.key "/profile"
+
+                        Dashboard.ViewSettings ->
+                            Nav.pushUrl model.key "/settings"
+
+                        _ ->
+                            Cmd.map DashboardMsg newCmd
                     )
 
                 _ ->
@@ -654,10 +685,50 @@ update msg model =
                             , Nav.replaceUrl model.key "/login"
                             )
 
+        ProfileMsg subMsg ->
+            case model.page of
+                ProfilePage pageModel ->
+                    let
+                        ( newPageModel, newCmd ) =
+                            Profile.update subMsg pageModel
+                    in
+                    ( { model | page = ProfilePage newPageModel }
+                    , case subMsg of
+                        Profile.NavigateTo path ->
+                            Nav.pushUrl model.key path
+
+                        _ ->
+                            Cmd.map ProfileMsg newCmd
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        HomeMsg subMsg ->
+            case model.page of
+                HomePage pageModel ->
+                    case subMsg of
+                        Home.NavigateTo path ->
+                            ( model
+                            , Nav.pushUrl model.key path
+                            )
+
+                _ ->
+                    ( model, Cmd.none )
+
 
 view : Model -> Document Msg
 view model =
     case model.page of
+        LoadingPage ->
+            { title = "Loading..."
+            , body =
+                [ div [ class "min-h-screen bg-gray-50 flex items-center justify-center" ]
+                    [ div [ class "animate-spin rounded-full h-12 w-12 border-4 border-blue-500 border-t-transparent" ] []
+                    ]
+                ]
+            }
+
         NotFoundPage ->
             { title = "Not Found"
             , body =
@@ -705,10 +776,23 @@ view model =
             , body = List.map (Html.map AddAgentsMsg) (AddAgent.view pageModel).body
             }
 
+        ProfilePage pageModel ->
+            { title = "Profile"
+            , body = List.map (Html.map ProfileMsg) (Profile.view pageModel).body
+            }
+
+        HomePage pageModel ->
+            { title = "Medicare Max"
+            , body = List.map (Html.map HomeMsg) (Home.view pageModel).body
+            }
+
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
     case model.page of
+        LoadingPage ->
+            Sub.none
+
         LoginPage pageModel ->
             Sub.map LoginMsg (Login.subscriptions pageModel)
 
@@ -729,6 +813,12 @@ subscriptions model =
 
         AddAgentsPage pageModel ->
             Sub.map AddAgentsMsg (AddAgent.subscriptions pageModel)
+
+        ProfilePage pageModel ->
+            Sub.map ProfileMsg (Profile.subscriptions pageModel)
+
+        HomePage pageModel ->
+            Sub.map HomeMsg (Home.subscriptions pageModel)
 
         NotFoundPage ->
             Sub.none
@@ -753,6 +843,9 @@ getRouteAccess route =
         Public SignupRoute ->
             PublicOnly
 
+        Public HomeRoute ->
+            PublicOnly
+
         Protected TempLandingRoute ->
             PublicOnly
 
@@ -773,6 +866,9 @@ getRouteAccess route =
 
         Protected (AddAgentsRoute True) ->
             SetupOnly
+
+        Protected ProfileRoute ->
+            RequiresAuth
 
         NotFound ->
             PublicOnly
