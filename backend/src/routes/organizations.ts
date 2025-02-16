@@ -97,10 +97,10 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
       }
 
       // Wrap all database operations in a transaction
-      await db.transaction(async (transactionDb) => {
+      const orgId = await db.transaction('write', async (transactionDb) => {
         // Create organization
         logger.info('Creating organization');
-        const org = await transactionDb.execute<{ id: number }>(
+        const org = await transactionDb.execute(
           `INSERT INTO organizations (
             name,
             slug,
@@ -111,11 +111,16 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
           [data.organizationName, slug]
         );
 
-        logger.info(`Organization created with ID: ${org.id}`);
+        const orgId = org.rows?.[0]?.id;
+        if (!orgId) {
+          throw new Error('Failed to create organization');
+        }
+
+        logger.info(`Organization created with ID: ${orgId}`);
 
         // Create Turso database for organization
         logger.info('Creating Turso database');
-        const { url, token } = await turso.createOrganizationDatabase(org.id.toString());
+        const { url, token } = await turso.createOrganizationDatabase(orgId.toString());
 
         logger.info('Turso database created');
 
@@ -123,12 +128,12 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
         logger.info('Updating organization with Turso credentials');
         await transactionDb.execute(
           'UPDATE organizations SET turso_db_url = ?, turso_auth_token = ? WHERE id = ?',
-          [url, token, org.id]
+          [url, token, orgId]
         );
 
         // Create inactive admin user
         logger.info('Creating admin user');
-        const userId = await transactionDb.execute(
+        await transactionDb.execute(
           `INSERT INTO users (
             email,
             organization_id,
@@ -140,7 +145,7 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
           ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
           [
             data.adminEmail,
-            org.id,
+            orgId,
             'admin',
             1,
             data.adminFirstName,
@@ -149,31 +154,29 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
           ]
         );
 
-        logger.info('Admin user created');
-
-        // Generate and send magic link outside the transaction
-        logger.info('Generating magic link');
-        const magicLink = await auth.createMagicLink(
-          data.adminEmail, 
-          slug,
-          {
-            redirectUrl: '/choose-plan',
-            orgId: org.id,
-            name: `${data.adminFirstName} ${data.adminLastName}`
-          }
-        );
-
-        logger.info(`Magic link generated successfully: ${magicLink}`);
-        await sendMagicLink({
-          email: data.adminEmail,
-          magicLink,
-          name: `${data.adminFirstName} ${data.adminLastName}`
-        });
-
-        logger.info('Magic link email sent successfully');
-        return org.id;
+        return orgId;
       });
 
+      // Generate and send magic link outside the transaction
+      logger.info('Generating magic link');
+      const magicLink = await auth.createMagicLink(
+        data.adminEmail, 
+        slug,
+        {
+          redirectUrl: '/choose-plan',
+          orgId,
+          name: `${data.adminFirstName} ${data.adminLastName}`
+        }
+      );
+
+      logger.info(`Magic link generated successfully: ${magicLink}`);
+      await sendMagicLink({
+        email: data.adminEmail,
+        magicLink,
+        name: `${data.adminFirstName} ${data.adminLastName}`
+      });
+
+      logger.info('Magic link email sent successfully');
       set.status = 201;
       return { 
         success: true,

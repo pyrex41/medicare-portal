@@ -15,15 +15,17 @@ type alias Step =
 
 view : List Step -> Html msg
 view steps =
-    div [ class "fixed left-0 top-0 bottom-0 w-[280px] bg-[#0D1117] border-r border-[#1C1F26]" ]
+    div [ class "fixed left-0 top-0 bottom-0 w-[280px] bg-white border-r border-[#eaecf0]" ]
         [ div [ class "flex flex-col h-full px-8 py-8" ]
             [ -- Logo
               div [ class "mb-14" ]
                 [ div [ class "flex items-center" ]
-                    [ span [ class "text-lg font-medium text-white" ]
-                        [ text "Medicare" ]
-                    , span [ class "text-lg font-medium text-white ml-1.5 opacity-90" ]
-                        [ text "Max" ]
+                    [ img
+                        [ src "/images/medicare-max-logo.png"
+                        , class "h-8 w-auto"
+                        , alt "Medicare Max logo"
+                        ]
+                        []
                     ]
                 ]
 
@@ -33,9 +35,9 @@ view steps =
                 ]
 
             -- Help email
-            , div [ class "text-sm text-[#8B8B8B] flex items-center mt-8" ]
-                [ span [ class "mr-2.5" ] [ text "📧" ]
-                , text "information@medicaremax.ai"
+            , div [ class "text-sm text-[#667085] flex items-center mt-8" ]
+                [ span [ class "mr-2" ] [ text "✉️" ]
+                , text "help@medicaremax.com"
                 ]
             ]
         ]
@@ -45,29 +47,29 @@ viewStep : Step -> Html msg
 viewStep step =
     div
         [ class "flex items-start"
-        , classList [ ( "opacity-50", not step.isActive && not step.isCompleted ) ]
+        , classList [ ( "opacity-60", not step.isActive && not step.isCompleted ) ]
         ]
         [ div
-            [ class "shrink-0 w-6 h-6 rounded-full flex items-center justify-center mr-3 transition-all duration-300"
+            [ class "shrink-0 w-8 h-8 rounded-full flex items-center justify-center mr-3 transition-all duration-300"
             , classList
-                [ ( "bg-[#2563EB] text-white", step.isActive )
-                , ( "bg-[#059669] text-white", step.isCompleted )
-                , ( "bg-[#1F2937] text-[#9CA3AF]", not step.isActive && not step.isCompleted )
+                [ ( "bg-[#03045e] text-white", step.isActive )
+                , ( "bg-[#03045e]/90 text-white", step.isCompleted )
+                , ( "bg-[#f9fafb] text-[#667085] border border-[#eaecf0]", not step.isActive && not step.isCompleted )
                 ]
             ]
-            [ span [ class "text-sm" ] [ text step.icon ]
+            [ span [ class "text-base" ] [ text step.icon ]
             ]
         , div [ class "flex-1" ]
             [ h3
-                [ class "text-[13px] font-medium transition-colors duration-300"
+                [ class "text-sm font-medium transition-colors duration-300"
                 , classList
-                    [ ( "text-white", step.isActive )
-                    , ( "text-white opacity-90", step.isCompleted )
-                    , ( "text-[#9CA3AF]", not step.isActive && not step.isCompleted )
+                    [ ( "text-[#101828]", step.isActive )
+                    , ( "text-[#101828]/90", step.isCompleted )
+                    , ( "text-[#667085]", not step.isActive && not step.isCompleted )
                     ]
                 ]
                 [ text step.title ]
-            , p [ class "text-xs text-[#6B7280] mt-1 leading-relaxed" ]
+            , p [ class "text-sm text-[#667085] mt-1 leading-relaxed" ]
                 [ text step.description ]
             ]
         ]

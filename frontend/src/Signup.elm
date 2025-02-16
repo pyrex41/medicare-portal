@@ -161,14 +161,17 @@ update msg model =
             )
 
         CheckAdminEmail ->
-            if String.length model.adminEmail >= 1 then
-                ( { model | emailStatus = EmailChecking }
-                , checkEmail model.adminEmail
-                )
-
-            else
+            if String.isEmpty (String.trim model.adminEmail) then
                 ( { model | emailStatus = EmailNotChecked }
                 , Cmd.none
+                )
+
+            else if model.emailStatus == EmailChecking then
+                ( model, Cmd.none )
+
+            else
+                ( { model | emailStatus = EmailChecking }
+                , checkEmail model.adminEmail
                 )
 
         GotEmailResponse result ->
@@ -266,15 +269,19 @@ submitForm model =
 
 checkOrgName : String -> Cmd Msg
 checkOrgName name =
-    Http.get
-        { url = "/api/organizations/check-name/" ++ Url.percentEncode name
-        , expect =
-            Http.expectJson GotOrgNameResponse
-                (Decode.map2 OrgNameResponse
-                    (Decode.field "available" Decode.bool)
-                    (Decode.field "message" Decode.string)
-                )
-        }
+    if String.isEmpty (String.trim name) then
+        Cmd.none
+
+    else
+        Http.get
+            { url = "/api/organizations/check-name/" ++ Url.percentEncode (String.trim name)
+            , expect =
+                Http.expectJson GotOrgNameResponse
+                    (Decode.map2 OrgNameResponse
+                        (Decode.field "available" Decode.bool)
+                        (Decode.field "message" Decode.string)
+                    )
+            }
 
 
 
@@ -349,92 +356,96 @@ viewSuccess =
 
 viewForm : Model -> Html Msg
 viewForm model =
-    Html.form [ onSubmit SubmitForm, class "space-y-6" ]
-        [ -- Admin Email with validation
-          div []
-            [ label [ for "admin-email", class "block text-sm font-medium text-gray-700" ]
-                [ text "Admin Email" ]
-            , div [ class "mt-1" ]
-                [ input
-                    [ type_ "email"
-                    , id "admin-email"
-                    , value model.adminEmail
-                    , onInput UpdateAdminEmail
-                    , onBlur CheckAdminEmail
-                    , class "appearance-none block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
+    Html.form [ onSubmit SubmitForm, class "space-y-6 max-w-md" ]
+        [ h1 [ class "text-2xl font-semibold text-[#101828] mb-2" ]
+            [ text "Agent Details" ]
+        , p [ class "text-[#667085] text-base mb-8" ]
+            [ text "Let's get to know you" ]
+        , -- Form fields
+          div [ class "space-y-6" ]
+            [ -- Email field first
+              div []
+                [ label [ for "admin-email", class "block text-sm font-medium text-[#344054] mb-1.5" ]
+                    [ text "Email" ]
+                , div [ class "mt-1" ]
+                    [ input
+                        [ type_ "email"
+                        , id "admin-email"
+                        , value model.adminEmail
+                        , onInput UpdateAdminEmail
+                        , onBlur CheckAdminEmail
+                        , class "block w-full px-3.5 py-2.5 bg-white border border-[#d0d5dd] rounded-lg shadow-sm text-[#101828] focus:outline-none focus:ring-2 focus:ring-[#03045e] focus:border-[#03045e] sm:text-sm"
+                        , placeholder "Enter your email"
+                        ]
+                        []
+                    , viewEmailStatus model.emailStatus
                     ]
-                    []
-                , viewEmailStatus model.emailStatus
                 ]
-            ]
-        , -- Organization Name with validation
-          div []
-            [ label [ for "organization-name", class "block text-sm font-medium text-gray-700" ]
-                [ text "Organization Name" ]
-            , div [ class "mt-1" ]
-                [ input
-                    [ type_ "text"
-                    , id "organization-name"
-                    , value model.organizationName
-                    , onInput UpdateOrganizationName
-                    , onBlur CheckOrganizationName
-                    , class "appearance-none block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
-                    ]
-                    []
-                , viewOrgNameStatus model.orgNameStatus
-                ]
-            ]
-        , -- Admin First Name
-          div []
-            [ label [ for "admin-first-name", class "block text-sm font-medium text-gray-700" ]
-                [ text "Admin First Name" ]
-            , div [ class "mt-1" ]
-                [ input
-                    [ type_ "text"
-                    , id "admin-first-name"
-                    , value model.adminFirstName
-                    , onInput UpdateAdminFirstName
-                    , class "appearance-none block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
-                    ]
-                    []
-                ]
-            ]
-        , -- Admin Last Name
-          div []
-            [ label [ for "admin-last-name", class "block text-sm font-medium text-gray-700" ]
-                [ text "Admin Last Name" ]
-            , div [ class "mt-1" ]
-                [ input
-                    [ type_ "text"
-                    , id "admin-last-name"
-                    , value model.adminLastName
-                    , onInput UpdateAdminLastName
-                    , class "appearance-none block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
-                    ]
-                    []
-                ]
-            ]
-        , -- Error Message
-          case model.error of
-            Just error ->
-                div [ class "text-red-600 text-sm" ]
-                    [ text error ]
 
-            Nothing ->
-                text ""
-        , -- Submit Button
-          div []
-            [ button
-                [ type_ "submit"
-                , class (submitButtonClass model)
-                , disabled (not (isFormValid model) || model.isSubmitting)
+            -- Organization name field second
+            , div []
+                [ label [ for "organization-name", class "block text-sm font-medium text-[#344054] mb-1.5" ]
+                    [ text "Organization name" ]
+                , div [ class "mt-1" ]
+                    [ input
+                        [ type_ "text"
+                        , id "organization-name"
+                        , value model.organizationName
+                        , onInput UpdateOrganizationName
+                        , onBlur CheckOrganizationName
+                        , class "block w-full px-3.5 py-2.5 bg-white border border-[#d0d5dd] rounded-lg shadow-sm text-[#101828] focus:outline-none focus:ring-2 focus:ring-[#03045e] focus:border-[#03045e] sm:text-sm"
+                        , placeholder "Enter organization name"
+                        ]
+                        []
+                    , viewOrgNameStatus model.orgNameStatus
+                    ]
                 ]
-                [ if model.isSubmitting then
-                    text "Creating Organization..."
 
-                  else
-                    text "Create Organization"
+            -- First Name field third
+            , div []
+                [ label [ for "admin-first-name", class "block text-sm font-medium text-[#344054] mb-1.5" ]
+                    [ text "First Name" ]
+                , div [ class "mt-1" ]
+                    [ input
+                        [ type_ "text"
+                        , id "admin-first-name"
+                        , value model.adminFirstName
+                        , onInput UpdateAdminFirstName
+                        , class "block w-full px-3.5 py-2.5 bg-white border border-[#d0d5dd] rounded-lg shadow-sm text-[#101828] focus:outline-none focus:ring-2 focus:ring-[#03045e] focus:border-[#03045e] sm:text-sm"
+                        , placeholder "Enter your first name"
+                        ]
+                        []
+                    ]
                 ]
+
+            -- Last Name field fourth
+            , div []
+                [ label [ for "admin-last-name", class "block text-sm font-medium text-[#344054] mb-1.5" ]
+                    [ text "Last Name" ]
+                , div [ class "mt-1" ]
+                    [ input
+                        [ type_ "text"
+                        , id "admin-last-name"
+                        , value model.adminLastName
+                        , onInput UpdateAdminLastName
+                        , class "block w-full px-3.5 py-2.5 bg-white border border-[#d0d5dd] rounded-lg shadow-sm text-[#101828] focus:outline-none focus:ring-2 focus:ring-[#03045e] focus:border-[#03045e] sm:text-sm"
+                        , placeholder "Enter your last name"
+                        ]
+                        []
+                    ]
+                ]
+            ]
+        , -- Submit button
+          button
+            [ type_ "submit"
+            , class (submitButtonClass model)
+            , disabled (not (isFormValid model) || model.isSubmitting)
+            ]
+            [ if model.isSubmitting then
+                text "Creating Organization..."
+
+              else
+                text "Continue"
             ]
         ]
 
@@ -563,22 +574,20 @@ isFormValid : Model -> Bool
 isFormValid model =
     let
         isEmailValid =
-            String.contains "@" model.adminEmail
+            not (String.isEmpty (String.trim model.adminEmail))
+                && String.contains "@" model.adminEmail
                 && String.contains "." model.adminEmail
                 && model.emailStatus
                 == EmailValid
 
         isOrgValid =
-            String.length model.organizationName
-                > 0
+            not (String.isEmpty (String.trim model.organizationName))
                 && model.orgNameStatus
                 == Valid
 
         areNamesValid =
-            String.length model.adminFirstName
-                > 0
-                && String.length model.adminLastName
-                > 0
+            not (String.isEmpty (String.trim model.adminFirstName))
+                && not (String.isEmpty (String.trim model.adminLastName))
     in
     isEmailValid && isOrgValid && areNamesValid
 
@@ -589,12 +598,12 @@ isFormValid model =
 
 submitButtonClass : Model -> String
 submitButtonClass model =
-    "w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium "
+    "w-full flex justify-center py-2.5 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium transition-colors "
         ++ (if isFormValid model then
-                "text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+                "text-white bg-[#03045e] hover:bg-[#03045e]/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#03045e]"
 
             else
-                "text-white bg-purple-300 cursor-not-allowed"
+                "text-white bg-[#03045e]/60 cursor-not-allowed"
            )
 
 

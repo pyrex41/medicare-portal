@@ -27,7 +27,7 @@ export class Database {
         sql,
         args
       })
-      return result.rows
+      return result
     } catch (error) {
       logger.error(`Database execute error: ${error}`)
       throw error
@@ -66,6 +66,57 @@ export class Database {
       return obj as T
     } catch (error) {
       logger.error(`Database fetchOne error: ${error}`)
+      throw error
+    }
+  }
+
+  // Compatibility method for old query interface
+  async query<T = any>(sql: string, args: any[] = []): Promise<T[]> {
+    try {
+      const result = await this.client.execute({
+        sql,
+        args
+      })
+      return result.rows || []
+    } catch (error) {
+      logger.error(`Database query error: ${error}`)
+      throw error
+    }
+  }
+
+  // Transaction support with function overloads
+  async transaction<T>(callback: (tx: Database) => Promise<T>): Promise<T>;
+  async transaction<T>(mode: 'read' | 'write', callback: (tx: Database) => Promise<T>): Promise<T>;
+  async transaction<T>(
+    callbackOrMode: ((tx: Database) => Promise<T>) | 'read' | 'write',
+    callback?: (tx: Database) => Promise<T>
+  ): Promise<T> {
+    let mode: 'read' | 'write' = 'write'
+    let fn: ((tx: Database) => Promise<T>) | null = null
+
+    if (typeof callbackOrMode === 'string') {
+      mode = callbackOrMode
+      fn = callback || null
+    } else {
+      fn = callbackOrMode
+    }
+    
+    if (!fn) {
+      throw new Error('Transaction callback is required')
+    }
+
+    const tx = await this.client.transaction(mode)
+    try {
+      // Create a Database-like wrapper around the transaction
+      const txWrapper = new Database()
+      // Override the client with the transaction
+      txWrapper.client = tx
+      
+      const result = await fn(txWrapper)
+      await tx.commit()
+      return result
+    } catch (error) {
+      await tx.rollback()
       throw error
     }
   }

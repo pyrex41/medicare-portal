@@ -261,24 +261,21 @@ changeRouteTo url model =
                             )
 
                         LoginRoute ->
-                            -- Always verify session when hitting login page
                             case model.session of
-                                Unknown ->
-                                    -- If session state unknown, verify first but don't change page yet
-                                    ( model, verifySession )
+                                Verified _ ->
+                                    -- If already verified, replace URL with dashboard
+                                    ( model
+                                    , Nav.replaceUrl model.key "/dashboard"
+                                    )
 
-                                Verified session ->
-                                    -- Already verified, show logged-in view
-                                    let
-                                        ( pageModel, pageCmd ) =
-                                            Login.init True
-                                    in
-                                    ( { model | page = LoginPage pageModel }
-                                    , Cmd.map LoginMsg pageCmd
+                                Unknown ->
+                                    -- Show loading while we verify
+                                    ( { model | page = LoadingPage }
+                                    , verifySession
                                     )
 
                                 NoSession ->
-                                    -- No valid session, show login form
+                                    -- Show login form
                                     let
                                         ( pageModel, pageCmd ) =
                                             Login.init False
@@ -288,11 +285,7 @@ changeRouteTo url model =
                                     )
 
                         SignupRoute ->
-                            -- Always allow access to signup, regardless of session state
                             let
-                                _ =
-                                    Debug.log "Signing up"
-
                                 ( signupModel, signupCmd ) =
                                     Signup.init
                             in
@@ -301,7 +294,6 @@ changeRouteTo url model =
                             )
 
                         VerifyRoute orgSlug token ->
-                            -- Keep current page while verifying
                             ( model
                             , Http.get
                                 { url = "/api/auth/verify/" ++ orgSlug ++ "/" ++ token
@@ -314,7 +306,7 @@ changeRouteTo url model =
                         Unknown ->
                             ( model, verifySession )
 
-                        Verified session ->
+                        Verified _ ->
                             showProtectedRoute protectedRoute model
 
                         NoSession ->
@@ -415,9 +407,27 @@ update msg model =
         LinkClicked urlRequest ->
             case urlRequest of
                 Browser.Internal url ->
-                    ( model
-                    , Nav.pushUrl model.key (Url.toString url)
-                    )
+                    case Parser.parse routeParser url of
+                        Just (Public _) ->
+                            -- For public routes, just navigate directly
+                            ( model
+                            , Nav.pushUrl model.key (Url.toString url)
+                            )
+
+                        _ ->
+                            -- For protected routes, verify session first if needed
+                            if model.session == Unknown then
+                                ( { model | page = LoadingPage }
+                                , Cmd.batch
+                                    [ verifySession
+                                    , Nav.replaceUrl model.key (Url.toString url)
+                                    ]
+                                )
+
+                            else
+                                ( model
+                                , Nav.pushUrl model.key (Url.toString url)
+                                )
 
                 Browser.External href ->
                     ( model
@@ -425,52 +435,19 @@ update msg model =
                     )
 
         UrlChanged url ->
-            let
-                newRoute =
-                    Parser.parse routeParser url
+            case Parser.parse routeParser url of
+                Just (Public _) ->
+                    -- Don't verify session for public routes
+                    changeRouteTo url model
 
-                authorized =
-                    case newRoute of
-                        Nothing ->
-                            False
+                _ ->
+                    if model.session == Unknown then
+                        ( { model | url = url }
+                        , verifySession
+                        )
 
-                        Just route ->
-                            case getRouteAccess route of
-                                PublicOnly ->
-                                    True
-
-                                RequiresAuth ->
-                                    model.currentUser /= Nothing
-
-                                AdminRouteOnly ->
-                                    case model.currentUser of
-                                        Just user ->
-                                            user.role == AdminOnly
-
-                                        Nothing ->
-                                            False
-
-                                SetupOnly ->
-                                    model.isSetup && model.currentUser /= Nothing
-            in
-            if authorized then
-                -- Handle normal route change
-                changeRouteTo url model
-
-            else
-                -- Redirect to appropriate page
-                ( model
-                , Nav.pushUrl model.key
-                    (if model.currentUser == Nothing then
-                        "/login"
-
-                     else if model.isSetup then
-                        "/settings/setup"
-
-                     else
-                        "/dashboard"
-                    )
-                )
+                    else
+                        changeRouteTo url model
 
         LoginMsg subMsg ->
             case model.page of
@@ -639,15 +616,14 @@ update msg model =
                                     , isSetup = model.isSetup
                                 }
                         in
-                        -- If we're on the login page and have a valid session, redirect to dashboard
-                        case model.page of
-                            LoginPage _ ->
-                                ( newModel
-                                , Nav.pushUrl model.key "/dashboard"
-                                )
+                        -- If we're verifying from login attempt, replace URL with dashboard
+                        if model.page == LoadingPage then
+                            ( newModel
+                            , Nav.replaceUrl model.key "/dashboard"
+                            )
 
-                            _ ->
-                                changeRouteTo model.url newModel
+                        else
+                            changeRouteTo model.url newModel
 
                     else
                         let
@@ -707,11 +683,13 @@ update msg model =
         HomeMsg subMsg ->
             case model.page of
                 HomePage pageModel ->
-                    case subMsg of
-                        Home.NavigateTo path ->
-                            ( model
-                            , Nav.pushUrl model.key path
-                            )
+                    let
+                        ( newPageModel, newCmd ) =
+                            Home.update subMsg pageModel
+                    in
+                    ( { model | page = HomePage newPageModel }
+                    , Cmd.map HomeMsg newCmd
+                    )
 
                 _ ->
                     ( model, Cmd.none )
