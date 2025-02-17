@@ -1,14 +1,16 @@
 module Main exposing (main)
 
 import AddAgent
+import BrandSettings
 import Browser exposing (Document)
 import Browser.Navigation as Nav
 import ChoosePlan
 import Dashboard
 import Debug
 import Home
-import Html exposing (Html, div, h1, p, text)
-import Html.Attributes exposing (class, href)
+import Html exposing (Html, button, div, h1, img, nav, p, text)
+import Html.Attributes exposing (alt, class, href, src)
+import Html.Events exposing (onClick)
 import Http
 import Json.Decode as Decode exposing (Decoder)
 import Login
@@ -85,6 +87,7 @@ type alias Model =
     , session : SessionState
     , currentUser : Maybe User
     , isSetup : Bool
+    , intendedDestination : Maybe String
     }
 
 
@@ -102,6 +105,7 @@ type Page
     | SettingsPage Settings.Model
     | Signup Signup.Model
     | ChoosePlanPage ChoosePlan.Model
+    | BrandSettingsPage BrandSettings.Model
     | AddAgentsPage AddAgent.Model
     | ProfilePage Profile.Model
     | LoadingPage
@@ -110,6 +114,7 @@ type Page
 
 type Msg
     = LinkClicked Browser.UrlRequest
+    | InternalLinkClicked String
     | UrlChanged Url
     | LoginMsg Login.Msg
     | DashboardMsg Dashboard.Msg
@@ -117,6 +122,7 @@ type Msg
     | SettingsMsg Settings.Msg
     | SignupMsg Signup.Msg
     | ChoosePlanMsg ChoosePlan.Msg
+    | BrandSettingsMsg BrandSettings.Msg
     | AddAgentsMsg AddAgent.Msg
     | GotVerification (Result Http.Error VerificationResponse)
     | GotSession (Result Http.Error SessionResponse)
@@ -158,247 +164,47 @@ init flags url key =
             , session = initialSession
             , currentUser = Nothing
             , isSetup = False
+            , intendedDestination = Nothing
             }
-
-        route =
-            Parser.parse routeParser url
     in
-    case route of
-        Just (Public _) ->
-            -- Don't verify session for public routes
-            changeRouteTo url model
-
-        _ ->
-            -- Verify session for protected routes or unknown routes
-            ( model
-            , verifySession
-            )
-
-
-verifySession : Cmd Msg
-verifySession =
-    Http.riskyRequest
-        { method = "GET"
-        , headers = []
-        , url = "/api/auth/session"
-        , body = Http.emptyBody
-        , expect = Http.expectJson GotSession sessionDecoder
-        , timeout = Nothing
-        , tracker = Nothing
-        }
+    ( model, Cmd.none )
+        |> updatePage url
 
 
 type Route
-    = Public PublicRoute
-    | Protected ProtectedRoute
-    | NotFound
-
-
-type PublicRoute
-    = LoginRoute
-    | VerifyRoute String String -- orgSlug token
-    | SignupRoute
-    | HomeRoute
-
-
-type ProtectedRoute
-    = TempLandingRoute
+    = HomeRoute
+    | LoginRoute
     | DashboardRoute
-    | SettingsRoute Bool
-    | ChoosePlanRoute
-    | AddAgentsRoute Bool -- Add setup flag like Settings
+    | SettingsRoute
     | ProfileRoute
+    | BrandSettingsRoute
+    | SignupRoute
+    | ChoosePlanRoute
+    | AddAgentsRoute
+    | TempLandingRoute
+    | NotFoundRoute
+
+
+type RouteTypes
+    = Protected
+    | Public
+    | Setup
 
 
 routeParser : Parser (Route -> a) a
 routeParser =
     oneOf
-        [ map (Public HomeRoute) top
-        , -- Public routes
-          map (Public LoginRoute) (s "login")
-        , map (\slug token -> Public (VerifyRoute slug token))
-            (s "auth" </> s "verify" </> string </> string)
-        , map (Public SignupRoute) (s "signup")
-
-        -- Protected routes
-        , map (Protected TempLandingRoute) (s "templanding")
-        , map (Protected DashboardRoute) (s "dashboard")
-        , map (Protected (SettingsRoute False)) (s "settings")
-        , map (Protected (SettingsRoute True)) (s "settings" </> s "setup")
-        , map (Protected ChoosePlanRoute) (s "choose-plan")
-        , map (Protected (AddAgentsRoute False)) (s "add-agents")
-        , map (Protected (AddAgentsRoute True)) (s "add-agents" </> s "setup")
-        , map (Protected ProfileRoute) (s "profile")
+        [ map HomeRoute top
+        , map LoginRoute (s "login")
+        , map DashboardRoute (s "dashboard")
+        , map SettingsRoute (s "settings")
+        , map ProfileRoute (s "profile")
+        , map BrandSettingsRoute (s "brand-settings")
+        , map SignupRoute (s "signup")
+        , map ChoosePlanRoute (s "choose-plan")
+        , map AddAgentsRoute (s "add-agents")
+        , map TempLandingRoute (s "templanding")
         ]
-
-
-changeRouteTo : Url -> Model -> ( Model, Cmd Msg )
-changeRouteTo url model =
-    let
-        _ =
-            Debug.log "Changing route to" (Url.toString url)
-
-        _ =
-            Debug.log "Session state" model.session
-    in
-    case Parser.parse routeParser url of
-        Nothing ->
-            ( { model | page = NotFoundPage }
-            , Cmd.none
-            )
-
-        Just route ->
-            case route of
-                Public publicRoute ->
-                    case publicRoute of
-                        HomeRoute ->
-                            let
-                                ( homeModel, homeCmd ) =
-                                    Home.init ()
-                            in
-                            ( { model | page = HomePage homeModel }
-                            , Cmd.map HomeMsg homeCmd
-                            )
-
-                        LoginRoute ->
-                            case model.session of
-                                Verified _ ->
-                                    -- If already verified, replace URL with dashboard
-                                    ( model
-                                    , Nav.replaceUrl model.key "/dashboard"
-                                    )
-
-                                Unknown ->
-                                    -- Show loading while we verify
-                                    ( { model | page = LoadingPage }
-                                    , verifySession
-                                    )
-
-                                NoSession ->
-                                    -- Show login form
-                                    let
-                                        ( pageModel, pageCmd ) =
-                                            Login.init False
-                                    in
-                                    ( { model | page = LoginPage pageModel }
-                                    , Cmd.map LoginMsg pageCmd
-                                    )
-
-                        SignupRoute ->
-                            let
-                                ( signupModel, signupCmd ) =
-                                    Signup.init
-                            in
-                            ( { model | page = Signup signupModel }
-                            , Cmd.map SignupMsg signupCmd
-                            )
-
-                        VerifyRoute orgSlug token ->
-                            ( model
-                            , Http.get
-                                { url = "/api/auth/verify/" ++ orgSlug ++ "/" ++ token
-                                , expect = Http.expectJson GotVerification verificationDecoder
-                                }
-                            )
-
-                Protected protectedRoute ->
-                    case model.session of
-                        Unknown ->
-                            ( model, verifySession )
-
-                        Verified _ ->
-                            showProtectedRoute protectedRoute model
-
-                        NoSession ->
-                            ( model, Nav.replaceUrl model.key "/login" )
-
-                NotFound ->
-                    ( { model | page = NotFoundPage }
-                    , Cmd.none
-                    )
-
-
-showProtectedRoute : ProtectedRoute -> Model -> ( Model, Cmd Msg )
-showProtectedRoute route model =
-    case route of
-        TempLandingRoute ->
-            let
-                ( pageModel, pageCmd ) =
-                    TempLanding.init ()
-            in
-            ( { model | page = TempLandingPage pageModel }
-            , Cmd.map TempLandingMsg pageCmd
-            )
-
-        DashboardRoute ->
-            let
-                ( pageModel, pageCmd ) =
-                    Dashboard.init
-            in
-            ( { model | page = DashboardPage pageModel }
-            , Cmd.map DashboardMsg pageCmd
-            )
-
-        SettingsRoute isSetup ->
-            let
-                ( pageModel, pageCmd ) =
-                    Settings.init
-                        { isSetup = isSetup
-                        , key = model.key
-                        , currentUser =
-                            model.currentUser
-                                |> Maybe.map
-                                    (\user ->
-                                        { id = user.id
-                                        , email = user.email
-                                        , role = roleToString user.role
-                                        }
-                                    )
-                        }
-            in
-            ( { model | page = SettingsPage pageModel }
-            , Cmd.map SettingsMsg pageCmd
-            )
-
-        ChoosePlanRoute ->
-            case ( model.session, model.currentUser ) of
-                ( Verified session, Just user ) ->
-                    let
-                        ( pageModel, pageCmd ) =
-                            ChoosePlan.init user.organizationSlug session model.key
-                    in
-                    ( { model | page = ChoosePlanPage pageModel }
-                    , Cmd.map ChoosePlanMsg pageCmd
-                    )
-
-                _ ->
-                    ( model, Nav.pushUrl model.key "/login" )
-
-        AddAgentsRoute isSetup ->
-            case model.session of
-                Verified session ->
-                    let
-                        ( pageModel, pageCmd ) =
-                            AddAgent.init
-                                { isSetup = isSetup
-                                , key = model.key
-                                }
-                    in
-                    ( { model | page = AddAgentsPage pageModel }
-                    , Cmd.map AddAgentsMsg pageCmd
-                    )
-
-                _ ->
-                    ( model, Nav.pushUrl model.key "/login" )
-
-        ProfileRoute ->
-            let
-                ( pageModel, pageCmd ) =
-                    Profile.init ()
-            in
-            ( { model | page = ProfilePage pageModel }
-            , Cmd.map ProfileMsg pageCmd
-            )
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -407,47 +213,23 @@ update msg model =
         LinkClicked urlRequest ->
             case urlRequest of
                 Browser.Internal url ->
-                    case Parser.parse routeParser url of
-                        Just (Public _) ->
-                            -- For public routes, just navigate directly
-                            ( model
-                            , Nav.pushUrl model.key (Url.toString url)
-                            )
-
-                        _ ->
-                            -- For protected routes, verify session first if needed
-                            if model.session == Unknown then
-                                ( { model | page = LoadingPage }
-                                , Cmd.batch
-                                    [ verifySession
-                                    , Nav.replaceUrl model.key (Url.toString url)
-                                    ]
-                                )
-
-                            else
-                                ( model
-                                , Nav.pushUrl model.key (Url.toString url)
-                                )
+                    ( model
+                    , Nav.pushUrl model.key (Url.toString url)
+                    )
 
                 Browser.External href ->
                     ( model
                     , Nav.load href
                     )
 
+        InternalLinkClicked frag ->
+            ( model, Nav.pushUrl model.key frag )
+
         UrlChanged url ->
-            case Parser.parse routeParser url of
-                Just (Public _) ->
-                    -- Don't verify session for public routes
-                    changeRouteTo url model
-
-                _ ->
-                    if model.session == Unknown then
-                        ( { model | url = url }
-                        , verifySession
-                        )
-
-                    else
-                        changeRouteTo url model
+            ( { model | url = url }
+            , Cmd.none
+            )
+                |> updatePage url
 
         LoginMsg subMsg ->
             case model.page of
@@ -464,22 +246,14 @@ update msg model =
                     ( model, Cmd.none )
 
         DashboardMsg subMsg ->
-            case ( model.page, subMsg ) of
-                ( DashboardPage pageModel, dashboardMsg ) ->
+            case model.page of
+                DashboardPage pageModel ->
                     let
                         ( newPageModel, newCmd ) =
-                            Dashboard.update dashboardMsg pageModel
+                            Dashboard.update subMsg pageModel
                     in
                     ( { model | page = DashboardPage newPageModel }
-                    , case dashboardMsg of
-                        Dashboard.ViewProfile ->
-                            Nav.pushUrl model.key "/profile"
-
-                        Dashboard.ViewSettings ->
-                            Nav.pushUrl model.key "/settings"
-
-                        _ ->
-                            Cmd.map DashboardMsg newCmd
+                    , Cmd.map DashboardMsg newCmd
                     )
 
                 _ ->
@@ -598,9 +372,6 @@ update msg model =
                 Ok response ->
                     if response.valid then
                         let
-                            _ =
-                                Debug.log "Session verified" response
-
                             newModel =
                                 { model
                                     | session = Verified response.session
@@ -616,50 +387,21 @@ update msg model =
                                     , isSetup = model.isSetup
                                 }
                         in
-                        -- If we're verifying from login attempt, replace URL with dashboard
-                        if model.page == LoadingPage then
-                            ( newModel
-                            , Nav.replaceUrl model.key "/dashboard"
-                            )
-
-                        else
-                            changeRouteTo model.url newModel
+                        updatePage model.url ( newModel, Cmd.none )
 
                     else
                         let
-                            _ =
-                                Debug.log "Session invalid" response
-
                             newModel =
                                 { model | session = NoSession }
                         in
-                        -- For public routes, don't redirect on invalid session
-                        case Parser.parse routeParser model.url of
-                            Just (Public _) ->
-                                changeRouteTo model.url newModel
-
-                            _ ->
-                                ( newModel
-                                , Nav.replaceUrl model.key "/login"
-                                )
+                        updatePage model.url ( newModel, Cmd.none )
 
                 Err error ->
                     let
-                        _ =
-                            Debug.log "Session verification error" error
-
                         newModel =
                             { model | session = NoSession }
                     in
-                    -- For public routes, don't redirect on session error
-                    case Parser.parse routeParser model.url of
-                        Just (Public _) ->
-                            changeRouteTo model.url newModel
-
-                        _ ->
-                            ( newModel
-                            , Nav.replaceUrl model.key "/login"
-                            )
+                    updatePage model.url ( newModel, Cmd.none )
 
         ProfileMsg subMsg ->
             case model.page of
@@ -694,75 +436,211 @@ update msg model =
                 _ ->
                     ( model, Cmd.none )
 
+        BrandSettingsMsg subMsg ->
+            case model.page of
+                BrandSettingsPage pageModel ->
+                    let
+                        ( newPageModel, newCmd ) =
+                            BrandSettings.update subMsg pageModel
+                    in
+                    ( { model | page = BrandSettingsPage newPageModel }
+                    , Cmd.map BrandSettingsMsg newCmd
+                    )
 
-view : Model -> Document Msg
+                _ ->
+                    ( model, Cmd.none )
+
+
+view : Model -> Browser.Document Msg
 view model =
-    case model.page of
-        LoadingPage ->
-            { title = "Loading..."
-            , body =
-                [ div [ class "min-h-screen bg-gray-50 flex items-center justify-center" ]
-                    [ div [ class "animate-spin rounded-full h-12 w-12 border-4 border-blue-500 border-t-transparent" ] []
-                    ]
-                ]
-            }
+    let
+        viewPage =
+            case model.page of
+                NotFoundPage ->
+                    viewNotFound
 
-        NotFoundPage ->
-            { title = "Not Found"
-            , body =
-                [ div [ class "min-h-screen bg-gray-50 flex flex-col justify-center" ]
-                    [ div [ class "text-center" ]
-                        [ h1 [ class "text-4xl font-bold text-gray-900" ]
-                            [ text "Page not found" ]
+                LoginPage loginModel ->
+                    let
+                        loginView =
+                            Login.view loginModel
+                    in
+                    { title = loginView.title
+                    , body = List.map (Html.map LoginMsg) loginView.body
+                    }
+
+                DashboardPage dashboardModel ->
+                    { title = "Dashboard"
+                    , body = [ viewWithNav model (Html.map DashboardMsg (Dashboard.view dashboardModel)) ]
+                    }
+
+                TempLandingPage landingModel ->
+                    let
+                        landingView =
+                            TempLanding.view landingModel
+                    in
+                    { title = landingView.title
+                    , body = [ viewWithNav model (Html.map TempLandingMsg (div [] landingView.body)) ]
+                    }
+
+                SettingsPage settingsModel ->
+                    let
+                        settingsView =
+                            Settings.view settingsModel
+                    in
+                    { title = settingsView.title
+                    , body = [ viewWithNav model (Html.map SettingsMsg (div [] settingsView.body)) ]
+                    }
+
+                Signup signupModel ->
+                    let
+                        signupView =
+                            Signup.view signupModel
+                    in
+                    { title = signupView.title
+                    , body = List.map (Html.map SignupMsg) signupView.body
+                    }
+
+                ChoosePlanPage choosePlanModel ->
+                    let
+                        choosePlanView =
+                            ChoosePlan.view choosePlanModel
+                    in
+                    { title = choosePlanView.title
+                    , body = [ viewWithNav model (Html.map ChoosePlanMsg (div [] choosePlanView.body)) ]
+                    }
+
+                BrandSettingsPage brandSettingsModel ->
+                    let
+                        brandSettingsView =
+                            BrandSettings.view brandSettingsModel
+                    in
+                    { title = brandSettingsView.title
+                    , body = [ viewWithNav model (Html.map BrandSettingsMsg (div [] brandSettingsView.body)) ]
+                    }
+
+                AddAgentsPage addAgentModel ->
+                    let
+                        addAgentView =
+                            AddAgent.view addAgentModel
+                    in
+                    { title = addAgentView.title
+                    , body = [ viewWithNav model (Html.map AddAgentsMsg (div [] addAgentView.body)) ]
+                    }
+
+                ProfilePage profileModel ->
+                    let
+                        profileView =
+                            Profile.view profileModel
+                    in
+                    { title = profileView.title
+                    , body = [ viewWithNav model (Html.map ProfileMsg (div [] profileView.body)) ]
+                    }
+
+                LoadingPage ->
+                    { title = "Loading..."
+                    , body = [ viewLoading ]
+                    }
+
+                HomePage homeModel ->
+                    let
+                        homeView =
+                            Home.view homeModel
+                    in
+                    { title = homeView.title
+                    , body = List.map (Html.map HomeMsg) homeView.body
+                    }
+    in
+    viewPage
+
+
+viewWithNav : Model -> Html Msg -> Html Msg
+viewWithNav model content =
+    div []
+        [ viewNavHeader model
+        , content
+        ]
+
+
+viewNavHeader : Model -> Html Msg
+viewNavHeader model =
+    nav [ class "bg-white border-b border-gray-200" ]
+        [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8" ]
+            [ div [ class "flex justify-between h-16" ]
+                [ div [ class "flex" ]
+                    [ div [ class "shrink-0 flex items-center" ]
+                        [ button
+                            [ onClick (InternalLinkClicked "/") ]
+                            [ img
+                                [ src "/images/medicare-max-logo.png"
+                                , class "h-8 w-auto"
+                                , alt "Medicare Max logo"
+                                ]
+                                []
+                            ]
                         ]
                     ]
+                , div [ class "flex items-center space-x-4" ]
+                    [ button
+                        [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:text-purple-600 transition-colors duration-200"
+                        , onClick (InternalLinkClicked "/dashboard")
+                        ]
+                        [ text "Dashboard" ]
+                    , button
+                        [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:text-purple-600 transition-colors duration-200"
+                        , onClick (InternalLinkClicked "/brand-settings")
+                        ]
+                        [ text "Brand Settings" ]
+                    , button
+                        [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:text-purple-600 transition-colors duration-200"
+                        , onClick (InternalLinkClicked "/profile")
+                        ]
+                        [ text "Profile" ]
+                    , --if isAdminOrAdminAgent model.currentUser then
+                      div [ class "flex items-center space-x-4" ]
+                        [ button
+                            [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:text-purple-600 transition-colors duration-200"
+                            , onClick (InternalLinkClicked "/settings")
+                            ]
+                            [ text "Organization Settings" ]
+                        ]
+
+                    -- else
+                    -- text ""
+                    ]
                 ]
-            }
+            ]
+        ]
 
-        LoginPage pageModel ->
-            { title = "Login"
-            , body = List.map (Html.map LoginMsg) (Login.view pageModel).body
-            }
 
-        DashboardPage pageModel ->
-            { title = "Dashboard"
-            , body = [ Html.map DashboardMsg (Dashboard.view pageModel) ]
-            }
+isAdminOrAdminAgent : Maybe User -> Bool
+isAdminOrAdminAgent maybeUser =
+    case maybeUser of
+        Just user ->
+            user.role == AdminOnly || user.role == AdminAgent
 
-        TempLandingPage pageModel ->
-            { title = "Welcome"
-            , body = List.map (Html.map TempLandingMsg) (TempLanding.view pageModel).body
-            }
+        Nothing ->
+            False
 
-        SettingsPage pageModel ->
-            { title = "Settings"
-            , body = List.map (Html.map SettingsMsg) (Settings.view pageModel).body
-            }
 
-        Signup signupModel ->
-            { title = "Create Organization"
-            , body = List.map (Html.map SignupMsg) (Signup.view signupModel).body
-            }
+viewNotFound : Browser.Document msg
+viewNotFound =
+    { title = "Not Found"
+    , body =
+        [ div [ class "min-h-screen bg-gray-50 flex flex-col items-center justify-center" ]
+            [ h1 [ class "text-4xl font-bold text-gray-900 mb-4" ]
+                [ text "404 - Page Not Found" ]
+            , p [ class "text-gray-600" ]
+                [ text "The page you're looking for doesn't exist." ]
+            ]
+        ]
+    }
 
-        ChoosePlanPage pageModel ->
-            { title = "Choose Plan - Medicare Max"
-            , body = List.map (Html.map ChoosePlanMsg) (ChoosePlan.view pageModel).body
-            }
 
-        AddAgentsPage pageModel ->
-            { title = "Add Agent"
-            , body = List.map (Html.map AddAgentsMsg) (AddAgent.view pageModel).body
-            }
-
-        ProfilePage pageModel ->
-            { title = "Profile"
-            , body = List.map (Html.map ProfileMsg) (Profile.view pageModel).body
-            }
-
-        HomePage pageModel ->
-            { title = "Medicare Max"
-            , body = List.map (Html.map HomeMsg) (Home.view pageModel).body
-            }
+viewLoading : Html msg
+viewLoading =
+    div [ class "min-h-screen bg-gray-50 flex items-center justify-center" ]
+        [ div [ class "animate-spin rounded-full h-8 w-8 border-2 border-purple-500 border-t-transparent" ] []
+        ]
 
 
 subscriptions : Model -> Sub Msg
@@ -798,6 +676,9 @@ subscriptions model =
         HomePage pageModel ->
             Sub.map HomeMsg (Home.subscriptions pageModel)
 
+        BrandSettingsPage pageModel ->
+            Sub.map BrandSettingsMsg (BrandSettings.subscriptions pageModel)
+
         NotFoundPage ->
             Sub.none
 
@@ -812,43 +693,37 @@ type RouteAccess
 getRouteAccess : Route -> RouteAccess
 getRouteAccess route =
     case route of
-        Public LoginRoute ->
+        HomeRoute ->
             PublicOnly
 
-        Public (VerifyRoute _ _) ->
+        LoginRoute ->
             PublicOnly
 
-        Public SignupRoute ->
-            PublicOnly
-
-        Public HomeRoute ->
-            PublicOnly
-
-        Protected TempLandingRoute ->
-            PublicOnly
-
-        Protected DashboardRoute ->
+        DashboardRoute ->
             RequiresAuth
 
-        Protected (SettingsRoute False) ->
+        SettingsRoute ->
             RequiresAuth
 
-        Protected (SettingsRoute True) ->
-            SetupOnly
+        ProfileRoute ->
+            RequiresAuth
 
-        Protected ChoosePlanRoute ->
-            SetupOnly
+        BrandSettingsRoute ->
+            RequiresAuth
 
-        Protected (AddAgentsRoute False) ->
+        SignupRoute ->
+            PublicOnly
+
+        ChoosePlanRoute ->
+            RequiresAuth
+
+        AddAgentsRoute ->
             AdminRouteOnly
 
-        Protected (AddAgentsRoute True) ->
-            SetupOnly
+        TempLandingRoute ->
+            PublicOnly
 
-        Protected ProfileRoute ->
-            RequiresAuth
-
-        NotFound ->
+        NotFoundRoute ->
             PublicOnly
 
 
@@ -894,3 +769,121 @@ userDecoder =
         (Decode.field "organization_name" Decode.string)
         (Decode.field "first_name" Decode.string)
         (Decode.field "last_name" Decode.string)
+
+
+updatePage : Url -> ( Model, Cmd Msg ) -> ( Model, Cmd Msg )
+updatePage url ( model, cmd ) =
+    case Parser.parse routeParser url of
+        Just route ->
+            case route of
+                HomeRoute ->
+                    let
+                        ( homeModel, homeCmd ) =
+                            Home.init ()
+                    in
+                    ( { model | page = HomePage homeModel }
+                    , Cmd.batch [ cmd, Cmd.map HomeMsg homeCmd ]
+                    )
+
+                LoginRoute ->
+                    let
+                        ( loginModel, loginCmd ) =
+                            Login.init False
+                    in
+                    ( { model | page = LoginPage loginModel }
+                    , Cmd.batch [ cmd, Cmd.map LoginMsg loginCmd ]
+                    )
+
+                DashboardRoute ->
+                    let
+                        ( dashboardModel, dashboardCmd ) =
+                            Dashboard.init
+                    in
+                    ( { model | page = DashboardPage dashboardModel }
+                    , Cmd.batch [ cmd, Cmd.map DashboardMsg dashboardCmd ]
+                    )
+
+                SettingsRoute ->
+                    let
+                        ( settingsModel, settingsCmd ) =
+                            Settings.init
+                                { isSetup = False
+                                , key = model.key
+                                , currentUser = Nothing
+                                }
+                    in
+                    ( { model | page = SettingsPage settingsModel }
+                    , Cmd.batch [ cmd, Cmd.map SettingsMsg settingsCmd ]
+                    )
+
+                ProfileRoute ->
+                    let
+                        ( profileModel, profileCmd ) =
+                            Profile.init ()
+                    in
+                    ( { model | page = ProfilePage profileModel }
+                    , Cmd.batch [ cmd, Cmd.map ProfileMsg profileCmd ]
+                    )
+
+                BrandSettingsRoute ->
+                    let
+                        ( brandSettingsModel, brandSettingsCmd ) =
+                            BrandSettings.init
+                                { key = model.key
+                                , session = ""
+                                , orgSlug = ""
+                                , isSetup = False
+                                }
+                    in
+                    ( { model | page = BrandSettingsPage brandSettingsModel }
+                    , Cmd.batch [ cmd, Cmd.map BrandSettingsMsg brandSettingsCmd ]
+                    )
+
+                SignupRoute ->
+                    let
+                        ( signupModel, signupCmd ) =
+                            Signup.init
+                    in
+                    ( { model | page = Signup signupModel }
+                    , Cmd.batch [ cmd, Cmd.map SignupMsg signupCmd ]
+                    )
+
+                ChoosePlanRoute ->
+                    let
+                        ( choosePlanModel, choosePlanCmd ) =
+                            ChoosePlan.init "" "" model.key
+                    in
+                    ( { model | page = ChoosePlanPage choosePlanModel }
+                    , Cmd.batch [ cmd, Cmd.map ChoosePlanMsg choosePlanCmd ]
+                    )
+
+                AddAgentsRoute ->
+                    let
+                        ( addAgentsModel, addAgentsCmd ) =
+                            AddAgent.init
+                                { isSetup = False
+                                , key = model.key
+                                }
+                    in
+                    ( { model | page = AddAgentsPage addAgentsModel }
+                    , Cmd.batch [ cmd, Cmd.map AddAgentsMsg addAgentsCmd ]
+                    )
+
+                TempLandingRoute ->
+                    let
+                        ( tempLandingModel, tempLandingCmd ) =
+                            TempLanding.init ()
+                    in
+                    ( { model | page = TempLandingPage tempLandingModel }
+                    , Cmd.batch [ cmd, Cmd.map TempLandingMsg tempLandingCmd ]
+                    )
+
+                NotFoundRoute ->
+                    ( { model | page = NotFoundPage }
+                    , cmd
+                    )
+
+        Nothing ->
+            ( { model | page = NotFoundPage }
+            , cmd
+            )

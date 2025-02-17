@@ -285,11 +285,7 @@ type Msg
     | DeleteSelectedContacts
     | ContactsDeleted (Result Http.Error DeleteResponse)
     | ToggleOverwriteDuplicates Bool
-    | ToggleProfileMenu
-    | CloseProfileMenu
     | GotCurrentUser (Result Http.Error User)
-    | ViewProfile
-    | ViewSettings
 
 
 type ContactFormField
@@ -824,26 +820,10 @@ update msg model =
                 _ ->
                     ( model, Cmd.none )
 
-        ToggleProfileMenu ->
-            ( { model | showProfileMenu = not model.showProfileMenu }
-            , Cmd.none
-            )
-
-        CloseProfileMenu ->
-            ( { model | showProfileMenu = False }
-            , Cmd.none
-            )
-
         GotCurrentUser (Ok user) ->
             ( { model | currentUser = Just user }, Cmd.none )
 
         GotCurrentUser (Err _) ->
-            ( model, Cmd.none )
-
-        ViewProfile ->
-            ( model, Cmd.none )
-
-        ViewSettings ->
             ( model, Cmd.none )
 
 
@@ -856,43 +836,10 @@ update msg model =
 view : Model -> Html Msg
 view model =
     div [ class "min-h-screen bg-gray-50" ]
-        [ viewNavHeader model
-        , div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" ]
+        [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" ]
             [ viewActionBar model
             , viewContactsTable model
             , viewModals model
-            ]
-        ]
-
-
-viewNavHeader : Model -> Html Msg
-viewNavHeader model =
-    nav [ class "bg-white border-b border-gray-200" ]
-        [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8" ]
-            [ div [ class "flex justify-between h-16" ]
-                [ div [ class "flex" ]
-                    [ div [ class "shrink-0 flex items-center" ]
-                        [ h1 [ class "text-xl font-semibold text-purple-600" ]
-                            [ text "Medicare Max" ]
-                        ]
-                    ]
-                , div [ class "flex items-center space-x-4" ]
-                    [ button
-                        [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:text-purple-600 transition-colors duration-200"
-                        , onClick ViewProfile
-                        ]
-                        [ text "Profile" ]
-                    , if isAdminOrAdminAgent model.currentUser then
-                        button
-                            [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:text-purple-600 transition-colors duration-200"
-                            , onClick ViewSettings
-                            ]
-                            [ text "Organization Settings" ]
-
-                      else
-                        text ""
-                    ]
-                ]
             ]
         ]
 
@@ -1690,11 +1637,6 @@ subscriptions model =
 
             Nothing ->
                 Sub.none
-        , if model.showProfileMenu then
-            Browser.Events.onMouseDown (Decode.succeed CloseProfileMenu)
-
-          else
-            Sub.none
         ]
 
 

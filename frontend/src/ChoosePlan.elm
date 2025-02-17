@@ -48,6 +48,7 @@ type Msg
     | GotTiers (Result Http.Error (List SubscriptionTier))
     | SubscriptionSaved (Result Http.Error ())
     | NavigateToTempLanding
+    | GotSaveResponse (Result Http.Error ())
 
 
 init : String -> String -> Nav.Key -> ( Model, Cmd Msg )
@@ -108,7 +109,7 @@ update msg model =
             case result of
                 Ok _ ->
                     ( { model | error = Nothing }
-                    , Nav.pushUrl model.key "/settings/setup"
+                    , Nav.pushUrl model.key "/brand-settings"
                     )
 
                 Err error ->
@@ -176,6 +177,21 @@ update msg model =
                             Debug.log "Failed to load tiers" error
                     in
                     ( { model | error = Just "Failed to load subscription tiers", isLoading = False }
+                    , Cmd.none
+                    )
+
+        GotSaveResponse result ->
+            case result of
+                Ok _ ->
+                    ( { model | error = Nothing }
+                    , Nav.pushUrl model.key "/brand-settings"
+                    )
+
+                Err error ->
+                    ( { model
+                        | error = Just "Failed to save subscription. Please try again."
+                        , isLoading = False
+                      }
                     , Cmd.none
                     )
 
