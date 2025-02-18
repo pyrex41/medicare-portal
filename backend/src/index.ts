@@ -267,21 +267,7 @@ const startServer = async () => {
           }
 
           // First update the contact
-          const updateQuery = contact.agent_id === null ? `
-            UPDATE contacts SET 
-              first_name = ?,
-              last_name = ?,
-              email = ?,
-              current_carrier = ?,
-              plan_type = ?,
-              effective_date = ?,
-              birth_date = ?,
-              tobacco_user = ?,
-              gender = ?,
-              state = ?,
-              zip_code = ?
-            WHERE id = ?
-          ` : `
+          const updateQuery = /* sql */ `
             UPDATE contacts SET 
               first_name = ?,
               last_name = ?,
@@ -298,7 +284,7 @@ const startServer = async () => {
             WHERE id = ?
           `
 
-          const updateParams = contact.agent_id === null ? [
+          const updateParams = [
             contact.first_name,
             contact.last_name,
             contact.email,
@@ -310,20 +296,7 @@ const startServer = async () => {
             contact.gender,
             zipInfo.state, // Use state from ZIP code
             contact.zip_code,
-            id
-          ] : [
-            contact.first_name,
-            contact.last_name,
-            contact.email,
-            contact.current_carrier,
-            contact.plan_type,
-            contact.effective_date,
-            contact.birth_date,
-            contact.tobacco_user ? 1 : 0,
-            contact.gender,
-            zipInfo.state, // Use state from ZIP code
-            contact.zip_code,
-            contact.agent_id,
+            contact.agent_id || null,
             id
           ]
 
@@ -564,7 +537,7 @@ const startServer = async () => {
             if (overwriteDuplicates) {
               logger.info('Using update/insert logic for duplicates')
               // First update existing records
-              const updateQuery = `
+              const updateQuery = /* sql */ `
                 UPDATE contacts SET 
                   first_name = ?,
                   last_name = ?,
