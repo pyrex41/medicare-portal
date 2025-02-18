@@ -120,6 +120,7 @@ type alias User =
     , firstName : String
     , lastName : String
     , role : String
+    , phone : String
     }
 
 
@@ -225,7 +226,7 @@ view model =
     , body =
         [ if model.isSetup then
             SetupLayout.view SetupLayout.AgentSetup
-                [ div [ class "max-w-3xl mx-auto" ]
+                [ div [ class "max-w-3xl mx-auto pb-24" ]
                     [ viewSetupHeader model
                     , viewAgentsList model
                     , if model.showAddForm then
@@ -238,12 +239,13 @@ view model =
                       else
                         viewAddAgentButton
                     ]
+                , viewBottomBar model
                 ]
 
           else
             div [ class "min-h-screen bg-gray-50" ]
                 [ viewHeader
-                , div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" ]
+                , div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 pb-24" ]
                     [ viewAgentsList model
                     , if model.showAddForm then
                         div [ class "bg-white shadow rounded-lg p-6 space-y-6 mt-6" ]
@@ -255,6 +257,7 @@ view model =
                       else
                         viewAddAgentButton
                     ]
+                , viewBottomBar model
                 ]
         ]
     }
@@ -575,23 +578,30 @@ viewAgentsList : Model -> Html Msg
 viewAgentsList model =
     div [ class "space-y-8" ]
         [ div [ class "flow-root" ]
-            [ ul [ class "-my-5 divide-y divide-gray-200" ]
-                (let
-                    -- Show admin/admin_agent first, but only once
-                    adminAgents =
-                        List.filter
-                            (\agent ->
-                                (agent.role == "admin" || agent.role == "admin_agent")
-                                    && not (List.any (\a -> a.id == agent.id && a /= agent) model.agents)
-                            )
-                            model.agents
+            [ if List.isEmpty model.agents && model.error /= Nothing then
+                div [ class "text-center py-4" ]
+                    [ p [ class "text-red-600" ]
+                        [ text (Maybe.withDefault "Failed to load agents" model.error) ]
+                    ]
 
-                    -- Then show regular agents
-                    regularAgents =
-                        List.filter (\agent -> agent.role == "agent") model.agents
-                 in
-                 List.map (viewAgentItem model) adminAgents ++ List.map (viewAgentItem model) regularAgents
-                )
+              else
+                ul [ class "-my-5 divide-y divide-gray-200" ]
+                    (let
+                        -- Show admin/admin_agent first, but only once
+                        adminAgents =
+                            List.filter
+                                (\agent ->
+                                    (agent.isAdmin || agent.role == "admin_agent")
+                                        && not (List.any (\a -> a.id == agent.id && a /= agent) model.agents)
+                                )
+                                model.agents
+
+                        -- Then show regular agents
+                        regularAgents =
+                            List.filter (\agent -> not agent.isAdmin && agent.isAgent) model.agents
+                     in
+                     List.map (viewAgentItem model) adminAgents ++ List.map (viewAgentItem model) regularAgents
+                    )
             ]
         ]
 
@@ -1011,85 +1021,44 @@ viewBottomBar model =
                 && isValidEmail model.email
                 && isValidPhone model.displayPhone
                 && (model.isAdmin || model.showAddForm)
-
-        -- Allow adding if admin or if in add form (which defaults to agent)
     in
-    div [ class "fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 px-4 py-4 sm:px-6" ]
-        [ div
-            [ class
-                (if model.isSetup then
-                    "ml-[280px]"
+    div [ class "fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 px-4 py-4 sm:px-6 z-10" ]
+        [ div [ class "max-w-3xl mx-auto" ]
+            [ if model.error /= Nothing then
+                div [ class "mb-4" ]
+                    [ p [ class "text-red-600" ]
+                        [ text (Maybe.withDefault "" model.error) ]
+                    ]
 
-                 else
-                    ""
-                )
-            ]
-            [ div [ class "max-w-3xl mx-auto" ]
-                [ if model.error /= Nothing then
-                    div [ class "mb-4" ]
-                        [ p [ class "text-red-600" ]
-                            [ text (Maybe.withDefault "" model.error) ]
+              else
+                text ""
+            , if model.showAddForm then
+                div [ class "flex items-center justify-end space-x-4" ]
+                    [ button
+                        [ class "px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                        , onClick CancelAddAgent
                         ]
-
-                  else
-                    text ""
-                , if model.showAddForm then
-                    div [ class "flex flex-col space-y-4" ]
-                        [ div [ class "flex items-center justify-between" ]
-                            [ button
-                                [ class "w-full inline-flex justify-center items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                                , onClick LoadFromOrg
-                                , disabled model.isLoading
-                                ]
-                                [ if model.isLoading then
-                                    div [ class "flex items-center" ]
-                                        [ div [ class "animate-spin -ml-1 mr-3 h-5 w-5 text-gray-700" ]
-                                            [ svg
-                                                [ Svg.Attributes.class "h-5 w-5"
-                                                , viewBox "0 0 24 24"
-                                                ]
-                                                [ path
-                                                    [ d "M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                                                    , fill "currentColor"
-                                                    ]
-                                                    []
-                                                ]
-                                            ]
-                                        , text "Loading..."
-                                        ]
-
-                                  else
-                                    text "Load from Organization Settings"
-                                ]
-                            ]
-                        , div [ class "flex items-center justify-end space-x-4" ]
-                            [ button
-                                [ class "px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
-                                , onClick CancelAddAgent
-                                ]
-                                [ text "Cancel" ]
-                            , button
-                                [ class "px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                                , onClick SaveAgent
-                                , disabled (not canAdd)
-                                ]
-                                [ text "Add Agent" ]
-                            ]
+                        [ text "Cancel" ]
+                    , button
+                        [ class "px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                        , onClick SaveAgent
+                        , disabled (not canAdd)
                         ]
+                        [ text "Add Agent" ]
+                    ]
 
-                  else if model.isSetup then
-                    div [ class "flex justify-end" ]
-                        [ button
-                            [ class "px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                            , onClick FinishSetup
-                            , disabled (not allAgentsValid || List.isEmpty model.agents)
-                            ]
-                            [ text "Continue to Dashboard" ]
+              else if model.isSetup then
+                div [ class "flex justify-end" ]
+                    [ button
+                        [ class "px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                        , onClick FinishSetup
+                        , disabled (not allAgentsValid || List.isEmpty model.agents)
                         ]
+                        [ text "Continue to Dashboard" ]
+                    ]
 
-                  else
-                    text ""
-                ]
+              else
+                text ""
             ]
         ]
 
@@ -1275,53 +1244,82 @@ update msg model =
         FetchAgents ->
             ( model, fetchAgents )
 
-        GotAgents (Ok agents) ->
-            let
-                _ =
-                    Debug.log "Successfully decoded agents" agents
-            in
-            ( { model | agents = agents }, Cmd.none )
+        GotAgents result ->
+            case result of
+                Ok agents ->
+                    let
+                        _ =
+                            Debug.log "Successfully decoded agents" agents
+                    in
+                    ( { model | agents = agents }, Cmd.none )
 
-        GotAgents (Err error) ->
-            let
-                errorMessage =
+                Err error ->
                     case error of
-                        Http.BadBody message ->
-                            Debug.log "Decoder error" message
+                        Http.BadStatus 403 ->
+                            -- For 403, we'll just continue with the current user as an agent
+                            -- Don't show an error since this is expected for non-admin users
+                            ( model, Cmd.none )
 
-                        Http.BadUrl url ->
-                            Debug.log "Bad URL" url
+                        _ ->
+                            let
+                                errorMessage =
+                                    case error of
+                                        Http.BadUrl url ->
+                                            "Invalid URL: " ++ url
 
-                        Http.Timeout ->
-                            Debug.log "Request timeout" "Request timed out"
+                                        Http.Timeout ->
+                                            "Request timed out"
 
-                        Http.NetworkError ->
-                            Debug.log "Network error" "Network error occurred"
+                                        Http.NetworkError ->
+                                            "Network error occurred"
 
-                        Http.BadStatus status ->
-                            Debug.log "Bad status" ("Bad status: " ++ String.fromInt status)
-            in
-            ( { model | error = Just ("Failed to fetch agents: " ++ errorMessage) }, Cmd.none )
+                                        Http.BadStatus status ->
+                                            "Server error: " ++ String.fromInt status
+
+                                        Http.BadBody message ->
+                                            "Data error: " ++ message
+                            in
+                            ( { model | error = Just errorMessage }, Cmd.none )
 
         GotCurrentUser result ->
             case result of
                 Ok response ->
-                    let
-                        _ =
-                            Debug.log "GotCurrentUser success response" response
-                    in
-                    ( { model
-                        | currentUser = response.user
-                        , isAdmin =
-                            case response.user of
-                                Just user ->
-                                    user.role == "admin" || user.role == "admin_agent"
+                    case response.user of
+                        Just user ->
+                            let
+                                isAdminAgent =
+                                    user.role == "admin_agent"
 
-                                Nothing ->
-                                    False
-                      }
-                    , Cmd.none
-                    )
+                                -- For admin_agent, they should be both admin and agent by default
+                                initialAgent =
+                                    if model.isSetup then
+                                        [ { id = user.id
+                                          , firstName = user.firstName
+                                          , lastName = user.lastName
+                                          , email = user.email
+                                          , phone = user.phone
+                                          , role = user.role
+                                          , carriers = []
+                                          , stateLicenses = []
+                                          , isExpanded = False
+                                          , isAdmin = isAdminAgent || user.role == "admin"
+                                          , isAgent = isAdminAgent || user.role == "agent"
+                                          }
+                                        ]
+
+                                    else
+                                        []
+                            in
+                            ( { model
+                                | currentUser = Just user
+                                , agents = initialAgent
+                                , error = Nothing -- Clear any previous errors
+                              }
+                            , Cmd.none
+                            )
+
+                        Nothing ->
+                            ( { model | currentUser = Nothing }, Cmd.none )
 
                 Err error ->
                     let
@@ -1955,12 +1953,17 @@ userDecoder =
                 , Decode.field "id" (Decode.map String.fromInt Decode.int)
                 ]
     in
-    Decode.map5 User
+    Decode.map6 User
         idDecoder
         (Decode.field "email" (Debug.log "email field" Decode.string))
         (Decode.field "firstName" (Debug.log "firstName field" Decode.string))
         (Decode.field "lastName" (Debug.log "lastName field" Decode.string))
         (Decode.field "role" (Debug.log "role field" Decode.string))
+        (Decode.oneOf
+            [ Decode.field "phone" Decode.string
+            , Decode.succeed ""
+            ]
+        )
 
 
 saveAgentDetails : Agent -> Cmd Msg
@@ -2019,7 +2022,12 @@ saveAgentDetails agent =
                                 _ =
                                     Debug.log "Bad status response" { status = metadata.statusCode, body = body }
                             in
-                            Err (Http.BadStatus metadata.statusCode)
+                            if metadata.statusCode == 403 then
+                                -- Special handling for 403 - we'll continue with setup even if we can't save
+                                Ok ()
+
+                            else
+                                Err (Http.BadStatus metadata.statusCode)
 
                         Http.GoodStatus_ metadata body ->
                             let

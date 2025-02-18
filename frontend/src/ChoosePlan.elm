@@ -109,23 +109,16 @@ update msg model =
             case result of
                 Ok _ ->
                     ( { model | error = Nothing }
-                    , Nav.pushUrl model.key "/brand-settings"
+                    , case model.selectedPlan of
+                        Just planId ->
+                            Nav.pushUrl model.key ("/setup/settings?plan=" ++ planId)
+
+                        Nothing ->
+                            Nav.pushUrl model.key "/setup/settings"
                     )
 
                 Err error ->
-                    let
-                        errorMessage =
-                            case error of
-                                Http.BadStatus 403 ->
-                                    "You don't have permission to update this organization"
-
-                                Http.BadStatus 404 ->
-                                    "Organization not found"
-
-                                _ ->
-                                    "Failed to update subscription. Please try again."
-                    in
-                    ( { model | error = Just errorMessage }
+                    ( { model | error = Just "Failed to save subscription" }
                     , Cmd.none
                     )
 
@@ -227,9 +220,9 @@ viewPlanSelection : Model -> Html Msg
 viewPlanSelection model =
     div [ class "space-y-8" ]
         [ div [ class "mb-8" ]
-            [ h1 [ class "text-2xl font-semibold text-white" ]
+            [ h1 [ class "text-2xl font-semibold text-gray-900" ]
                 [ text "Choose your plan" ]
-            , p [ class "text-[#8B8B8B] mt-2" ]
+            , p [ class "text-gray-600 mt-2" ]
                 [ text "Select a plan that best fits your organization's needs" ]
             ]
         , div [ class "grid grid-cols-1 md:grid-cols-3 gap-4" ]
@@ -257,7 +250,7 @@ viewPlanSelection model =
                 [ class
                     ("px-6 py-3 rounded-lg transition-colors duration-200 "
                         ++ (if model.selectedPlan == Nothing then
-                                "bg-[#2563EB]/50 cursor-not-allowed text-white/70"
+                                "bg-[#2563EB]/50 cursor-not-allowed text-white"
 
                             else
                                 "bg-[#2563EB] hover:bg-[#1D4ED8] text-white"
@@ -280,28 +273,28 @@ viewPlanOption id name price features agentLimit contactLimit selectedPlan =
                         "bg-[#2563EB]/10 ring-2 ring-[#2563EB]"
 
                     else
-                        "bg-white/5 hover:bg-black/10"
+                        "bg-gray-50 hover:bg-gray-100"
                    )
             )
         , onClick (SelectPlan id)
         ]
         [ div [ class "space-y-4" ]
             [ div []
-                [ h3 [ class "text-xl font-semibold text-white" ] [ text name ]
-                , p [ class "text-3xl font-bold text-white mt-2" ] [ text price ]
+                [ h3 [ class "text-xl font-semibold text-gray-900" ] [ text name ]
+                , p [ class "text-3xl font-bold text-gray-900 mt-2" ] [ text price ]
                 ]
-            , div [ class "space-y-2 py-4 border-t border-b border-white/10" ]
-                [ div [ class "text-[#8B8B8B]" ]
+            , div [ class "space-y-2 py-4 border-t border-b border-gray-200" ]
+                [ div [ class "text-gray-600" ]
                     [ text ("Up to " ++ String.fromInt agentLimit ++ " agents") ]
-                , div [ class "text-[#8B8B8B]" ]
+                , div [ class "text-gray-600" ]
                     [ text ("Up to " ++ String.fromInt contactLimit ++ " contacts") ]
                 ]
             , div [ class "mt-4" ]
-                [ p [ class "text-sm font-medium text-white mb-2" ] [ text "Features:" ]
+                [ p [ class "text-sm font-medium text-gray-900 mb-2" ] [ text "Features:" ]
                 , ul [ class "space-y-2" ]
                     (List.map
                         (\feature ->
-                            li [ class "flex items-center text-sm text-[#8B8B8B]" ]
+                            li [ class "flex items-center text-sm text-gray-600" ]
                                 [ span [ class "text-[#059669] mr-2" ] [ text "✓" ]
                                 , text feature
                                 ]

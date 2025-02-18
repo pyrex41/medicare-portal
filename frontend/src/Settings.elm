@@ -550,9 +550,17 @@ update msg model =
             updateSettings model (\s -> { s | allowAgentSettings = value })
 
         FinishSetup ->
-            ( model
-            , Nav.pushUrl model.key "/add-agents/setup"
-            )
+            case model.currentUser of
+                Just user ->
+                    ( model
+                    , Nav.pushUrl model.key
+                        ("/setup/brand-settings?plan=" ++ user.id ++ "&org=complete")
+                    )
+
+                Nothing ->
+                    ( model
+                    , Nav.pushUrl model.key "/setup/brand-settings"
+                    )
 
         SelectCommonStates region ->
             updateSettings model

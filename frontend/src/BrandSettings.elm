@@ -83,6 +83,7 @@ type Msg
     | LogoUploaded (Result Http.Error String)
     | SaveSettings
     | SettingsSaved (Result Http.Error ())
+    | FinishSetup
     | NoOp
 
 
@@ -154,9 +155,16 @@ update msg model =
             )
 
         SettingsSaved (Ok ()) ->
-            ( { model | isSaving = False, error = Nothing }
-            , Cmd.none
-            )
+            if model.isSetup then
+                ( { model | isSaving = False, error = Nothing }
+                , Nav.pushUrl model.key
+                    ("/setup/add-agents?plan=" ++ model.orgSlug ++ "&org=complete&brand=complete")
+                )
+
+            else
+                ( { model | isSaving = False, error = Nothing }
+                , Cmd.none
+                )
 
         SettingsSaved (Err _) ->
             ( { model
@@ -164,6 +172,12 @@ update msg model =
                 , error = Just "Failed to save settings"
               }
             , Cmd.none
+            )
+
+        FinishSetup ->
+            ( model
+            , Nav.pushUrl model.key
+                ("/setup/add-agents?plan=" ++ model.orgSlug ++ "&org=complete&brand=complete")
             )
 
         NoOp ->

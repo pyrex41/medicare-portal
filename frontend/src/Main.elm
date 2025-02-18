@@ -19,7 +19,8 @@ import Settings
 import Signup
 import TempLanding
 import Url exposing (Url)
-import Url.Parser as Parser exposing ((</>), Parser, map, oneOf, s, string, top)
+import Url.Parser as Parser exposing ((</>), (<?>), Parser, map, oneOf, s, string, top)
+import Url.Parser.Query as Query
 
 
 type alias VerificationResponse =
@@ -220,16 +221,42 @@ type ProtectedPage
 
 
 type SetupPage
-    = ChoosePlanRoute
-    | SetupSettingsRoute
-    | SetupBrandSettingsRoute
-    | AddAgentsRoute
+    = ChoosePlanRoute (Maybe SetupProgress)
+    | SetupSettingsRoute (Maybe SetupProgress)
+    | SetupBrandSettingsRoute (Maybe SetupProgress)
+    | AddAgentsRoute (Maybe SetupProgress)
+
+
+type alias SetupProgress =
+    { plan : Maybe String
+    , orgSettings : Bool
+    , brandSettings : Bool
+    }
 
 
 type RouteAccess
     = Public -- No auth needed (login, home)
     | Protected -- Requires valid session
     | Setup -- Special setup flow routes
+
+
+setupProgressDecoder : Query.Parser (Maybe SetupProgress)
+setupProgressDecoder =
+    Query.map2
+        (\plan org ->
+            case ( plan, org ) of
+                ( Just p, Just o ) ->
+                    Just
+                        { plan = Just p
+                        , orgSettings = o == "complete"
+                        , brandSettings = False
+                        }
+
+                _ ->
+                    Nothing
+        )
+        (Query.string "plan")
+        (Query.string "org")
 
 
 routeParser : Parser (Route -> a) a
@@ -245,10 +272,14 @@ routeParser =
         , map (ProtectedRoute ProfileRoute) (s "profile")
         , map (ProtectedRoute BrandSettingsRoute) (s "brand-settings")
         , map (ProtectedRoute TempLandingRoute) (s "templanding")
-        , map (SetupRoute ChoosePlanRoute) (s "choose-plan")
-        , map (SetupRoute SetupSettingsRoute) (s "setup" </> s "settings")
-        , map (SetupRoute SetupBrandSettingsRoute) (s "setup" </> s "brand-settings")
-        , map (SetupRoute AddAgentsRoute) (s "setup" </> s "add-agents")
+        , map (\progress -> SetupRoute (ChoosePlanRoute progress))
+            (s "choose-plan" <?> setupProgressDecoder)
+        , map (\progress -> SetupRoute (SetupSettingsRoute progress))
+            (s "setup" </> s "settings" <?> setupProgressDecoder)
+        , map (\progress -> SetupRoute (SetupBrandSettingsRoute progress))
+            (s "setup" </> s "brand-settings" <?> setupProgressDecoder)
+        , map (\progress -> SetupRoute (AddAgentsRoute progress))
+            (s "setup" </> s "add-agents" <?> setupProgressDecoder)
         ]
 
 
@@ -886,13 +917,37 @@ redirectToSetupStep model =
             ( model, Nav.pushUrl model.key "/choose-plan" )
 
         OrganizationSetup ->
-            ( model, Nav.pushUrl model.key "/setup/settings" )
+            case model.currentUser of
+                Just user ->
+                    ( model
+                    , Nav.pushUrl model.key
+                        ("/setup/settings?plan=" ++ user.organizationSlug)
+                    )
+
+                Nothing ->
+                    ( model, Nav.pushUrl model.key "/setup/settings" )
 
         BrandSetup ->
-            ( model, Nav.pushUrl model.key "/setup/brand-settings" )
+            case model.currentUser of
+                Just user ->
+                    ( model
+                    , Nav.pushUrl model.key
+                        ("/setup/brand-settings?plan=" ++ user.organizationSlug ++ "&org=complete")
+                    )
+
+                Nothing ->
+                    ( model, Nav.pushUrl model.key "/setup/brand-settings" )
 
         AgentSetup ->
-            ( model, Nav.pushUrl model.key "/setup/add-agents" )
+            case model.currentUser of
+                Just user ->
+                    ( model
+                    , Nav.pushUrl model.key
+                        ("/setup/add-agents?plan=" ++ user.organizationSlug ++ "&org=complete&brand=complete")
+                    )
+
+                Nothing ->
+                    ( model, Nav.pushUrl model.key "/setup/add-agents" )
 
         Complete ->
             ( model, Nav.pushUrl model.key "/dashboard" )
@@ -1025,9 +1080,19 @@ updatePage url ( model, cmd ) =
                                 let
                                     ( settingsModel, settingsCmd ) =
                                         Settings.init
-                                            { isSetup = False
+                                            { isSetup = True
                                             , key = model.key
-                                            , currentUser = Nothing
+                                            , currentUser =
+                                                case model.currentUser of
+                                                    Just user ->
+                                                        Just
+                                                            { id = user.id
+                                                            , email = user.email
+                                                            , role = roleToString user.role
+                                                            }
+
+                                                    Nothing ->
+                                                        Nothing
                                             }
                                 in
                                 ( { model | page = SettingsPage settingsModel }
@@ -1082,29 +1147,54 @@ updatePage url ( model, cmd ) =
                                 , Cmd.batch [ cmd, Cmd.map TempLandingMsg tempLandingCmd ]
                                 )
 
-                            SetupRoute ChoosePlanRoute ->
+                            SetupRoute (ChoosePlanRoute progress) ->
                                 let
                                     ( choosePlanModel, choosePlanCmd ) =
-                                        ChoosePlan.init "" "" model.key
+                                        case model.currentUser of
+                                            Just user ->
+                                                ChoosePlan.init
+                                                    user.organizationSlug
+                                                    (case model.session of
+                                                        Verified s ->
+                                                            s
+
+                                                        _ ->
+                                                            ""
+                                                    )
+                                                    model.key
+
+                                            Nothing ->
+                                                -- This case should not happen as we check for auth before
+                                                ChoosePlan.init "" "" model.key
                                 in
                                 ( { model | page = ChoosePlanPage choosePlanModel }
                                 , Cmd.batch [ cmd, Cmd.map ChoosePlanMsg choosePlanCmd ]
                                 )
 
-                            SetupRoute SetupSettingsRoute ->
+                            SetupRoute (SetupSettingsRoute progress) ->
                                 let
                                     ( settingsModel, settingsCmd ) =
                                         Settings.init
                                             { isSetup = True
                                             , key = model.key
-                                            , currentUser = Nothing
+                                            , currentUser =
+                                                case model.currentUser of
+                                                    Just user ->
+                                                        Just
+                                                            { id = user.id
+                                                            , email = user.email
+                                                            , role = roleToString user.role
+                                                            }
+
+                                                    Nothing ->
+                                                        Nothing
                                             }
                                 in
                                 ( { model | page = SettingsPage settingsModel }
                                 , Cmd.batch [ cmd, Cmd.map SettingsMsg settingsCmd ]
                                 )
 
-                            SetupRoute SetupBrandSettingsRoute ->
+                            SetupRoute (SetupBrandSettingsRoute progress) ->
                                 let
                                     ( brandSettingsModel, brandSettingsCmd ) =
                                         case model.currentUser of
@@ -1134,7 +1224,7 @@ updatePage url ( model, cmd ) =
                                 , Cmd.batch [ cmd, Cmd.map BrandSettingsMsg brandSettingsCmd ]
                                 )
 
-                            SetupRoute AddAgentsRoute ->
+                            SetupRoute (AddAgentsRoute progress) ->
                                 let
                                     ( addAgentsModel, addAgentsCmd ) =
                                         AddAgent.init
