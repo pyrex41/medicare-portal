@@ -149,61 +149,106 @@ main =
 init : Flags -> Url.Url -> Nav.Key -> ( Model, Cmd Msg )
 init flags url key =
     let
+        _ =
+            Debug.log "Init flags" flags
+
         initialSession =
             case flags.initialSession of
                 Just session ->
+                    let
+                        _ =
+                            Debug.log "Found initial session" session
+                    in
                     Verified session
 
                 Nothing ->
+                    let
+                        _ =
+                            Debug.log "No initial session found" ()
+                    in
                     Unknown
 
         model =
             { key = key
             , url = url
-            , page = LoadingPage
+            , page = LoadingPage -- Start with loading page while we check session
             , session = initialSession
             , currentUser = Nothing
             , isSetup = False
             , intendedDestination = Nothing
             }
+
+        _ =
+            Debug.log "Checking session at URL" (Url.toString url)
+
+        checkSession =
+            Http.get
+                { url = "/api/auth/session"
+                , expect = Http.expectJson GotSession sessionDecoder
+                }
     in
-    ( model, Cmd.none )
-        |> updatePage url
+    ( model
+      -- Don't call updatePage here, wait for session response
+    , checkSession
+    )
 
 
 type Route
+    = PublicRoute PublicPage
+    | ProtectedRoute ProtectedPage
+    | SetupRoute SetupPage
+    | NotFound
+
+
+type VerifyParams
+    = VerifyParams String String
+
+
+type PublicPage
     = HomeRoute
     | LoginRoute
-    | DashboardRoute
+    | SignupRoute
+    | VerifyRoute VerifyParams
+
+
+type ProtectedPage
+    = DashboardRoute
     | SettingsRoute
     | ProfileRoute
     | BrandSettingsRoute
-    | SignupRoute
-    | ChoosePlanRoute
-    | AddAgentsRoute
     | TempLandingRoute
-    | NotFoundRoute
 
 
-type RouteTypes
-    = Protected
-    | Public
-    | Setup
+type SetupPage
+    = ChoosePlanRoute
+    | SetupSettingsRoute
+    | SetupBrandSettingsRoute
+    | AddAgentsRoute
+
+
+type RouteAccess
+    = Public -- No auth needed (login, home)
+    | Protected -- Requires valid session
+    | Setup -- Special setup flow routes
 
 
 routeParser : Parser (Route -> a) a
 routeParser =
     oneOf
-        [ map HomeRoute top
-        , map LoginRoute (s "login")
-        , map DashboardRoute (s "dashboard")
-        , map SettingsRoute (s "settings")
-        , map ProfileRoute (s "profile")
-        , map BrandSettingsRoute (s "brand-settings")
-        , map SignupRoute (s "signup")
-        , map ChoosePlanRoute (s "choose-plan")
-        , map AddAgentsRoute (s "add-agents")
-        , map TempLandingRoute (s "templanding")
+        [ map (PublicRoute HomeRoute) top
+        , map (PublicRoute LoginRoute) (s "login")
+        , map (PublicRoute SignupRoute) (s "signup")
+        , map (\orgSlug -> \token -> PublicRoute (VerifyRoute (VerifyParams orgSlug token)))
+            (s "auth" </> s "verify" </> string </> string)
+        , map (ProtectedRoute DashboardRoute) (s "dashboard")
+        , map (ProtectedRoute SettingsRoute) (s "settings")
+        , map (ProtectedRoute ProfileRoute) (s "profile")
+        , map (ProtectedRoute BrandSettingsRoute) (s "brand-settings")
+        , map (ProtectedRoute TempLandingRoute) (s "templanding")
+        , map (SetupRoute ChoosePlanRoute) (s "choose-plan")
+        , map (SetupRoute SetupSettingsRoute) (s "setup" </> s "settings")
+        , map (SetupRoute SetupBrandSettingsRoute) (s "setup" </> s "brand-settings")
+        , map (SetupRoute AddAgentsRoute) (s "setup" </> s "add-agents")
         ]
 
 
@@ -341,7 +386,6 @@ update msg model =
                             newModel =
                                 { model
                                     | session = Verified response.session
-                                    , page = ChoosePlanPage choosePlanModel
                                     , currentUser =
                                         Just
                                             { id = ""
@@ -355,10 +399,18 @@ update msg model =
                                 }
                         in
                         ( newModel
-                        , Cmd.batch
-                            [ Nav.replaceUrl model.key response.redirectUrl
-                            , Cmd.map ChoosePlanMsg choosePlanCmd
-                            ]
+                        , case model.intendedDestination of
+                            Just destination ->
+                                Cmd.batch
+                                    [ Nav.replaceUrl model.key destination
+                                    , Cmd.map ChoosePlanMsg choosePlanCmd
+                                    ]
+
+                            Nothing ->
+                                Cmd.batch
+                                    [ Nav.replaceUrl model.key response.redirectUrl
+                                    , Cmd.map ChoosePlanMsg choosePlanCmd
+                                    ]
                         )
 
                     else
@@ -368,39 +420,70 @@ update msg model =
                     ( model, Nav.pushUrl model.key "/login" )
 
         GotSession result ->
+            let
+                _ =
+                    Debug.log "Got session response" result
+            in
             case result of
                 Ok response ->
+                    let
+                        _ =
+                            Debug.log "Session response details" response
+                    in
                     if response.valid then
                         let
+                            _ =
+                                Debug.log "Session is valid" response.session
+
+                            -- Create the user first so we can check setup state
+                            user =
+                                { id = response.id
+                                , email = response.email
+                                , role = AdminOnly -- TODO: Parse role from response
+                                , organizationSlug = response.organizationSlug
+                                , firstName = response.firstName
+                                , lastName = response.lastName
+                                }
+
+                            -- Only set isSetup to True if we're in the middle of setup
+                            isInSetup =
+                                case Parser.parse routeParser model.url of
+                                    Just (SetupRoute _) ->
+                                        True
+
+                                    _ ->
+                                        False
+
                             newModel =
                                 { model
                                     | session = Verified response.session
-                                    , currentUser =
-                                        Just
-                                            { id = response.id
-                                            , email = response.email
-                                            , role = AdminOnly
-                                            , organizationSlug = response.organizationSlug
-                                            , firstName = response.firstName
-                                            , lastName = response.lastName
-                                            }
-                                    , isSetup = model.isSetup
+                                    , currentUser = Just user
+                                    , isSetup = isInSetup
                                 }
                         in
+                        -- Now that we have session info, update the page
                         updatePage model.url ( newModel, Cmd.none )
 
                     else
                         let
+                            _ =
+                                Debug.log "Session is invalid" ()
+
                             newModel =
                                 { model | session = NoSession }
                         in
+                        -- For invalid session, update page which will handle redirects
                         updatePage model.url ( newModel, Cmd.none )
 
                 Err error ->
                     let
+                        _ =
+                            Debug.log "Session check error" error
+
                         newModel =
                             { model | session = NoSession }
                     in
+                    -- For session error, update page which will handle redirects
                     updatePage model.url ( newModel, Cmd.none )
 
         ProfileMsg subMsg ->
@@ -683,48 +766,20 @@ subscriptions model =
             Sub.none
 
 
-type RouteAccess
-    = PublicOnly -- Login, etc
-    | RequiresAuth -- Dashboard etc
-    | AdminRouteOnly -- Agents, certain settings
-    | SetupOnly -- Special setup flow
-
-
 getRouteAccess : Route -> RouteAccess
 getRouteAccess route =
     case route of
-        HomeRoute ->
-            PublicOnly
+        PublicRoute _ ->
+            Public
 
-        LoginRoute ->
-            PublicOnly
+        ProtectedRoute _ ->
+            Protected
 
-        DashboardRoute ->
-            RequiresAuth
+        SetupRoute _ ->
+            Setup
 
-        SettingsRoute ->
-            RequiresAuth
-
-        ProfileRoute ->
-            RequiresAuth
-
-        BrandSettingsRoute ->
-            RequiresAuth
-
-        SignupRoute ->
-            PublicOnly
-
-        ChoosePlanRoute ->
-            RequiresAuth
-
-        AddAgentsRoute ->
-            AdminRouteOnly
-
-        TempLandingRoute ->
-            PublicOnly
-
-        NotFoundRoute ->
-            PublicOnly
+        NotFound ->
+            Public
 
 
 roleDecoder : Decoder Role
@@ -771,119 +826,332 @@ userDecoder =
         (Decode.field "last_name" Decode.string)
 
 
+type SetupStep
+    = NotStarted
+    | PlanSelection
+    | OrganizationSetup
+    | BrandSetup
+    | AgentSetup
+    | Complete
+
+
+getSetupStep : Model -> SetupStep
+getSetupStep model =
+    case model.currentUser of
+        Nothing ->
+            NotStarted
+
+        Just user ->
+            if not model.isSetup then
+                PlanSelection
+
+            else if not (hasOrganizationSettings user) then
+                OrganizationSetup
+
+            else if not (hasBrandSettings user) then
+                BrandSetup
+
+            else if not (hasAgents user) then
+                AgentSetup
+
+            else
+                Complete
+
+
+hasOrganizationSettings : User -> Bool
+hasOrganizationSettings user =
+    -- TODO: Add actual check for organization settings
+    True
+
+
+hasBrandSettings : User -> Bool
+hasBrandSettings user =
+    -- TODO: Add actual check for brand settings
+    True
+
+
+hasAgents : User -> Bool
+hasAgents user =
+    -- TODO: Add actual check for agents
+    True
+
+
+redirectToSetupStep : Model -> ( Model, Cmd Msg )
+redirectToSetupStep model =
+    case getSetupStep model of
+        NotStarted ->
+            ( model, Nav.pushUrl model.key "/login" )
+
+        PlanSelection ->
+            ( model, Nav.pushUrl model.key "/choose-plan" )
+
+        OrganizationSetup ->
+            ( model, Nav.pushUrl model.key "/setup/settings" )
+
+        BrandSetup ->
+            ( model, Nav.pushUrl model.key "/setup/brand-settings" )
+
+        AgentSetup ->
+            ( model, Nav.pushUrl model.key "/setup/add-agents" )
+
+        Complete ->
+            ( model, Nav.pushUrl model.key "/dashboard" )
+
+
+shouldRedirectToLogin : Route -> Model -> Bool
+shouldRedirectToLogin route model =
+    case route of
+        PublicRoute _ ->
+            False
+
+        NotFound ->
+            False
+
+        _ ->
+            case model.session of
+                Verified _ ->
+                    False
+
+                _ ->
+                    True
+
+
+shouldRedirectToSetup : Route -> Model -> Bool
+shouldRedirectToSetup route model =
+    -- Only check setup state if we're in setup mode
+    if model.isSetup then
+        case route of
+            SetupRoute _ ->
+                False
+
+            PublicRoute _ ->
+                False
+
+            NotFound ->
+                False
+
+            ProtectedRoute _ ->
+                getSetupStep model /= Complete
+
+    else
+        False
+
+
+
+-- Not in setup mode, no need to redirect
+
+
 updatePage : Url -> ( Model, Cmd Msg ) -> ( Model, Cmd Msg )
 updatePage url ( model, cmd ) =
-    case Parser.parse routeParser url of
-        Just route ->
-            case route of
-                HomeRoute ->
-                    let
-                        ( homeModel, homeCmd ) =
-                            Home.init ()
-                    in
-                    ( { model | page = HomePage homeModel }
-                    , Cmd.batch [ cmd, Cmd.map HomeMsg homeCmd ]
-                    )
+    case model.session of
+        Unknown ->
+            -- If we don't know session state yet, stay on loading page
+            ( { model | page = LoadingPage }
+            , cmd
+            )
 
-                LoginRoute ->
-                    let
-                        ( loginModel, loginCmd ) =
-                            Login.init False
-                    in
-                    ( { model | page = LoginPage loginModel }
-                    , Cmd.batch [ cmd, Cmd.map LoginMsg loginCmd ]
-                    )
+        _ ->
+            -- Only process route after we know session state
+            case Parser.parse routeParser url of
+                Just route ->
+                    if shouldRedirectToLogin route model then
+                        ( { model
+                            | intendedDestination = Just (Url.toString url)
+                            , page = LoginPage (Login.init model.key False |> Tuple.first)
+                          }
+                        , Nav.pushUrl model.key "/login"
+                        )
 
-                DashboardRoute ->
-                    let
-                        ( dashboardModel, dashboardCmd ) =
-                            Dashboard.init
-                    in
-                    ( { model | page = DashboardPage dashboardModel }
-                    , Cmd.batch [ cmd, Cmd.map DashboardMsg dashboardCmd ]
-                    )
+                    else if shouldRedirectToSetup route model then
+                        redirectToSetupStep model
 
-                SettingsRoute ->
-                    let
-                        ( settingsModel, settingsCmd ) =
-                            Settings.init
-                                { isSetup = False
-                                , key = model.key
-                                , currentUser = Nothing
-                                }
-                    in
-                    ( { model | page = SettingsPage settingsModel }
-                    , Cmd.batch [ cmd, Cmd.map SettingsMsg settingsCmd ]
-                    )
+                    else
+                        case route of
+                            PublicRoute HomeRoute ->
+                                let
+                                    ( homeModel, homeCmd ) =
+                                        Home.init ()
+                                in
+                                ( { model | page = HomePage homeModel }
+                                , Cmd.batch [ cmd, Cmd.map HomeMsg homeCmd ]
+                                )
 
-                ProfileRoute ->
-                    let
-                        ( profileModel, profileCmd ) =
-                            Profile.init ()
-                    in
-                    ( { model | page = ProfilePage profileModel }
-                    , Cmd.batch [ cmd, Cmd.map ProfileMsg profileCmd ]
-                    )
+                            PublicRoute LoginRoute ->
+                                let
+                                    ( loginModel, loginCmd ) =
+                                        Login.init model.key False
+                                in
+                                ( { model | page = LoginPage loginModel }
+                                , Cmd.batch [ cmd, Cmd.map LoginMsg loginCmd ]
+                                )
 
-                BrandSettingsRoute ->
-                    let
-                        ( brandSettingsModel, brandSettingsCmd ) =
-                            BrandSettings.init
-                                { key = model.key
-                                , session = ""
-                                , orgSlug = ""
-                                , isSetup = False
-                                }
-                    in
-                    ( { model | page = BrandSettingsPage brandSettingsModel }
-                    , Cmd.batch [ cmd, Cmd.map BrandSettingsMsg brandSettingsCmd ]
-                    )
+                            PublicRoute (VerifyRoute (VerifyParams orgSlug token)) ->
+                                let
+                                    _ =
+                                        Debug.log "Verifying magic link" ( orgSlug, token )
 
-                SignupRoute ->
-                    let
-                        ( signupModel, signupCmd ) =
-                            Signup.init
-                    in
-                    ( { model | page = Signup signupModel }
-                    , Cmd.batch [ cmd, Cmd.map SignupMsg signupCmd ]
-                    )
+                                    verifyUrl =
+                                        "/api/auth/verify/" ++ orgSlug ++ "/" ++ token
 
-                ChoosePlanRoute ->
-                    let
-                        ( choosePlanModel, choosePlanCmd ) =
-                            ChoosePlan.init "" "" model.key
-                    in
-                    ( { model | page = ChoosePlanPage choosePlanModel }
-                    , Cmd.batch [ cmd, Cmd.map ChoosePlanMsg choosePlanCmd ]
-                    )
+                                    verifyRequest =
+                                        Http.get
+                                            { url = verifyUrl
+                                            , expect = Http.expectJson GotVerification verificationDecoder
+                                            }
+                                in
+                                ( model
+                                , Cmd.batch [ cmd, verifyRequest ]
+                                )
 
-                AddAgentsRoute ->
-                    let
-                        ( addAgentsModel, addAgentsCmd ) =
-                            AddAgent.init
-                                { isSetup = False
-                                , key = model.key
-                                }
-                    in
-                    ( { model | page = AddAgentsPage addAgentsModel }
-                    , Cmd.batch [ cmd, Cmd.map AddAgentsMsg addAgentsCmd ]
-                    )
+                            PublicRoute SignupRoute ->
+                                let
+                                    ( signupModel, signupCmd ) =
+                                        Signup.init
+                                in
+                                ( { model | page = Signup signupModel }
+                                , Cmd.batch [ cmd, Cmd.map SignupMsg signupCmd ]
+                                )
 
-                TempLandingRoute ->
-                    let
-                        ( tempLandingModel, tempLandingCmd ) =
-                            TempLanding.init ()
-                    in
-                    ( { model | page = TempLandingPage tempLandingModel }
-                    , Cmd.batch [ cmd, Cmd.map TempLandingMsg tempLandingCmd ]
-                    )
+                            ProtectedRoute DashboardRoute ->
+                                let
+                                    ( dashboardModel, dashboardCmd ) =
+                                        Dashboard.init
+                                in
+                                ( { model | page = DashboardPage dashboardModel }
+                                , Cmd.batch [ cmd, Cmd.map DashboardMsg dashboardCmd ]
+                                )
 
-                NotFoundRoute ->
+                            ProtectedRoute SettingsRoute ->
+                                let
+                                    ( settingsModel, settingsCmd ) =
+                                        Settings.init
+                                            { isSetup = False
+                                            , key = model.key
+                                            , currentUser = Nothing
+                                            }
+                                in
+                                ( { model | page = SettingsPage settingsModel }
+                                , Cmd.batch [ cmd, Cmd.map SettingsMsg settingsCmd ]
+                                )
+
+                            ProtectedRoute ProfileRoute ->
+                                let
+                                    ( profileModel, profileCmd ) =
+                                        Profile.init ()
+                                in
+                                ( { model | page = ProfilePage profileModel }
+                                , Cmd.batch [ cmd, Cmd.map ProfileMsg profileCmd ]
+                                )
+
+                            ProtectedRoute BrandSettingsRoute ->
+                                let
+                                    ( brandSettingsModel, brandSettingsCmd ) =
+                                        case model.currentUser of
+                                            Just user ->
+                                                BrandSettings.init
+                                                    { key = model.key
+                                                    , session =
+                                                        case model.session of
+                                                            Verified session ->
+                                                                session
+
+                                                            _ ->
+                                                                ""
+                                                    , orgSlug = user.organizationSlug
+                                                    , isSetup = True
+                                                    }
+
+                                            Nothing ->
+                                                BrandSettings.init
+                                                    { key = model.key
+                                                    , session = ""
+                                                    , orgSlug = ""
+                                                    , isSetup = True
+                                                    }
+                                in
+                                ( { model | page = BrandSettingsPage brandSettingsModel }
+                                , Cmd.batch [ cmd, Cmd.map BrandSettingsMsg brandSettingsCmd ]
+                                )
+
+                            ProtectedRoute TempLandingRoute ->
+                                let
+                                    ( tempLandingModel, tempLandingCmd ) =
+                                        TempLanding.init ()
+                                in
+                                ( { model | page = TempLandingPage tempLandingModel }
+                                , Cmd.batch [ cmd, Cmd.map TempLandingMsg tempLandingCmd ]
+                                )
+
+                            SetupRoute ChoosePlanRoute ->
+                                let
+                                    ( choosePlanModel, choosePlanCmd ) =
+                                        ChoosePlan.init "" "" model.key
+                                in
+                                ( { model | page = ChoosePlanPage choosePlanModel }
+                                , Cmd.batch [ cmd, Cmd.map ChoosePlanMsg choosePlanCmd ]
+                                )
+
+                            SetupRoute SetupSettingsRoute ->
+                                let
+                                    ( settingsModel, settingsCmd ) =
+                                        Settings.init
+                                            { isSetup = True
+                                            , key = model.key
+                                            , currentUser = Nothing
+                                            }
+                                in
+                                ( { model | page = SettingsPage settingsModel }
+                                , Cmd.batch [ cmd, Cmd.map SettingsMsg settingsCmd ]
+                                )
+
+                            SetupRoute SetupBrandSettingsRoute ->
+                                let
+                                    ( brandSettingsModel, brandSettingsCmd ) =
+                                        case model.currentUser of
+                                            Just user ->
+                                                BrandSettings.init
+                                                    { key = model.key
+                                                    , session =
+                                                        case model.session of
+                                                            Verified session ->
+                                                                session
+
+                                                            _ ->
+                                                                ""
+                                                    , orgSlug = user.organizationSlug
+                                                    , isSetup = True
+                                                    }
+
+                                            Nothing ->
+                                                BrandSettings.init
+                                                    { key = model.key
+                                                    , session = ""
+                                                    , orgSlug = ""
+                                                    , isSetup = True
+                                                    }
+                                in
+                                ( { model | page = BrandSettingsPage brandSettingsModel }
+                                , Cmd.batch [ cmd, Cmd.map BrandSettingsMsg brandSettingsCmd ]
+                                )
+
+                            SetupRoute AddAgentsRoute ->
+                                let
+                                    ( addAgentsModel, addAgentsCmd ) =
+                                        AddAgent.init
+                                            { isSetup = True
+                                            , key = model.key
+                                            }
+                                in
+                                ( { model | page = AddAgentsPage addAgentsModel }
+                                , Cmd.batch [ cmd, Cmd.map AddAgentsMsg addAgentsCmd ]
+                                )
+
+                            NotFound ->
+                                ( { model | page = NotFoundPage }
+                                , cmd
+                                )
+
+                Nothing ->
                     ( { model | page = NotFoundPage }
                     , cmd
                     )
-
-        Nothing ->
-            ( { model | page = NotFoundPage }
-            , cmd
-            )

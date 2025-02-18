@@ -7,71 +7,62 @@ import { randomBytes } from 'crypto';
 import { config } from '../config';
 import crypto from 'crypto';
 import { db } from '../database';
+import { Database } from '../database';
+import { getUserFromSession } from '../services/auth';
+import type { User } from '../types';
+
+const dbInstance = new Database();
 
 export function createAuthRoutes() {
   const auth = new AuthService(
     process.env.NODE_ENV === 'development' 
       ? 'http://localhost:5173'  // Frontend URL in development
-      : (process.env.PUBLIC_URL || 'http://localhost:3000')
+      : (process.env.BASE_URL || 'http://localhost:3000')
   );
-  const email = new EmailService();
+  const emailService = new EmailService();
 
   return new Elysia()
     .use(cookie())
-    .post('/api/auth/login', async ({ body }) => {
-      const { email: userEmail } = body as { email: string };
-
+    .post('/api/auth/login', async ({ body, set }) => {
       try {
-        // Look up the user and their organization
-        const userOrg = await db.fetchOne<{
-          userId: number,
-          orgSlug: string,
-          isActive: number  // Change this to number since SQLite uses 0/1
-        }>(
-          `SELECT 
-            u.id as userId,
-            o.slug as orgSlug,
-            u.is_active as isActive
-          FROM users u
-          JOIN organizations o ON u.organization_id = o.id
-          WHERE LOWER(u.email) = LOWER(?)`,
-          [userEmail]
+        const { email } = body as { email: string };
+        logger.info(`Login request for email: ${email}`);
+
+        // Check if user exists
+        const client = dbInstance.getClient();
+        const userResult = await client.execute({
+          sql: 'SELECT id, email FROM users WHERE email = ? AND is_active = 1',
+          args: [email]
+        });
+
+        if (userResult.rows.length === 0) {
+          // Don't reveal if user exists or not
+          logger.info(`No active user found for email: ${email}`);
+          return { success: true };
+        }
+
+        // Generate and send magic link
+        const magicLink = await auth.createMagicLink(
+          email,
+          'default', // Default organization for now
+          { redirectUrl: '/dashboard' }
         );
 
-        // Check isActive as 1 since SQLite uses 0/1 for booleans
-        if (!userOrg || userOrg.isActive !== 1) {
-          logger.warn(`Login attempt by non-user or inactive user: ${userEmail}`);
-          logger.info(`User found: ${JSON.stringify(userOrg)}`);  // Add this for debugging
-          return {
-            success: true,
-            message: "If this email is registered, you'll receive a login link shortly."
-          };
-        }
-
-        const magicLink = await auth.createMagicLink(userEmail, userOrg.orgSlug);
-
-        // In development, log the magic link
         if (process.env.NODE_ENV === 'development') {
-          logger.info('=======================================');
-          logger.info('Magic Link for Development:');
-          logger.info(magicLink);
-          logger.info('=======================================');
-          
-          return { success: true, message: 'Magic link generated - check server logs' };
+          logger.info(`Development mode - Magic link: ${magicLink}`);
+        } else {
+          // In production, send email with magic link
+          await emailService.sendLoginLink(email, magicLink);
         }
 
-        // In production, send email
-        await email.sendMagicLink(userEmail, magicLink, userOrg.orgSlug);
-        return {
-          success: true,
-          message: "If this email is registered, you'll receive a login link shortly."
-        };
+        return { success: true };
 
-      } catch (error) {
-        logger.error(`Login failed: ${error}`);
+      } catch (e) {
+        logger.error(`Login error: ${e}`);
+        set.status = 500;
         return { 
-          success: false, 
-          error: 'Failed to process login request' 
+          success: false,
+          error: 'Internal server error'
         };
       }
     })
@@ -100,16 +91,17 @@ export function createAuthRoutes() {
         const sessionId = crypto.randomBytes(32).toString('hex');
         logger.info(`Created session ID: ${sessionId}`);
 
-        // Get user info
+        // First find user by email
         const user = await db.fetchOne<User>(
-          `SELECT u.* FROM users u 
+          `SELECT u.*, o.slug as organization_slug 
+           FROM users u 
            JOIN organizations o ON u.organization_id = o.id 
-           WHERE LOWER(u.email) = LOWER(?) AND o.slug = ?`,
-          [result.email, organizationSlug]
+           WHERE LOWER(u.email) = LOWER(?) AND u.is_active = 1`,
+          [result.email]
         );
 
         if (!user) {
-          logger.error('User not found after magic link verification');
+          logger.error(`No active user found for email: ${result.email}`);
           return {
             success: false,
             redirectUrl: "/login",
@@ -117,6 +109,8 @@ export function createAuthRoutes() {
             email: ""
           };
         }
+
+        logger.info(`Found user: ${JSON.stringify(user)}`);
 
         // Create session in database
         const expiresAt = new Date();
@@ -143,7 +137,7 @@ export function createAuthRoutes() {
           redirectUrl: result.redirectUrl || '/dashboard',
           session: sessionId,
           email: result.email,
-          orgSlug: organizationSlug
+          orgSlug: user.organization_slug
         };
         logger.info(`Sending verification response: ${JSON.stringify(verificationResult)}`);
         return verificationResult;
@@ -165,8 +159,10 @@ export function createAuthRoutes() {
 
     .get('/api/auth/session', async ({ cookie }) => {
       const sessionId = cookie.session;
+      logger.info(`Session check - Cookie session ID: ${sessionId}`);
       
       if (!sessionId) {
+        logger.info('No session cookie found');
         return { 
           valid: false,
           session: "",
@@ -180,7 +176,14 @@ export function createAuthRoutes() {
 
       try {
         // Get user and organization info from session
-        const sessionUser = await db.fetchOne(
+        logger.info(`Looking up session in database: ${sessionId}`);
+        const sessionUser = await db.fetchOne<{
+          id: number;
+          email: string;
+          first_name: string;
+          last_name: string;
+          organization_slug: string;
+        }>(
           `SELECT u.id, u.email, u.first_name, u.last_name, o.slug as organization_slug
            FROM sessions s
            JOIN users u ON s.user_id = u.id
@@ -190,6 +193,7 @@ export function createAuthRoutes() {
         );
 
         if (!sessionUser) {
+          logger.info(`No session found in database for ID: ${sessionId}`);
           return { 
             valid: false,
             session: "",
@@ -201,6 +205,9 @@ export function createAuthRoutes() {
           };
         }
 
+        logger.info(`Found valid session for user: ${sessionUser.email}`);
+        logger.info(`Session details: ${JSON.stringify(sessionUser, null, 2)}`);
+
         return { 
           valid: true,
           session: sessionId,
@@ -211,7 +218,11 @@ export function createAuthRoutes() {
           id: sessionUser.id
         };
       } catch (error) {
-        logger.error('Error getting session info:', error);
+        logger.error(`Error getting session info: ${error}`);
+        if (error instanceof Error) {
+          logger.error(`Error details: ${error.message}`);
+          logger.error(`Stack trace: ${error.stack}`);
+        }
         return { 
           valid: false,
           session: "",
@@ -224,15 +235,8 @@ export function createAuthRoutes() {
       }
     })
 
-    .post('/api/auth/logout', async ({ setCookie }) => {
-        // Clear the session cookie
-        setCookie('session', '', {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            maxAge: 0, // Expire immediately
-            path: '/'
-        });
-
-        return { success: true };
+    .post('/api/auth/logout', async ({ set }) => {
+      set.headers['Set-Cookie'] = 'session=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT';
+      return { success: true };
     });
 } 

@@ -11,6 +11,7 @@ import { Buffer } from 'buffer'
 import { createAuthRoutes } from './routes/auth'
 import { settingsRoutes } from './routes/settings'
 import { organizationRoutes } from './routes/organizations'
+import { createBrandRoutes } from './routes/brand'
 import { errorHandler } from './middleware/error'
 import { getUserFromSession } from './services/auth'
 
@@ -623,6 +624,8 @@ const startServer = async () => {
       .use(settingsRoutes)
       // Add organization routes
       .use(organizationRoutes)
+      // Add brand routes
+      .use(createBrandRoutes())
       // In production, serve the frontend static files
       .use(process.env.NODE_ENV === 'production' 
         ? async (app) => {

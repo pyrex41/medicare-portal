@@ -2,7 +2,7 @@ module ChoosePlan exposing (Model, Msg(..), init, subscriptions, update, view)
 
 import Browser exposing (Document)
 import Browser.Navigation as Nav
-import Components.ProgressIndicator
+import Components.SetupLayout as SetupLayout
 import Debug
 import Html exposing (Html, button, div, h1, h2, h3, input, label, li, p, span, text, ul)
 import Html.Attributes exposing (class, type_, value)
@@ -199,72 +199,19 @@ update msg model =
             ( model, Cmd.none )
 
 
-view : Model -> Document Msg
+view : Model -> Browser.Document Msg
 view model =
     { title = "Choose Plan - Medicare Max"
     , body =
-        [ div [ class "flex min-h-screen bg-[#0D1117]" ]
-            [ Components.ProgressIndicator.view
-                [ { icon = "1"
-                  , title = "Choose Plan"
-                  , description = "Select your subscription"
-                  , isCompleted = False
-                  , isActive = True
-                  }
-                , { icon = "2"
-                  , title = "Organization Settings"
-                  , description = "Configure your organization"
-                  , isCompleted = False
-                  , isActive = False
-                  }
-                , { icon = "3"
-                  , title = "Add Team Members"
-                  , description = "Invite your team"
-                  , isCompleted = False
-                  , isActive = False
-                  }
-                ]
-            , div [ class "flex-1 p-8" ]
-                [ div [ class "max-w-4xl mx-auto" ]
-                    [ viewStep model ]
-                ]
+        [ SetupLayout.view SetupLayout.PlanSelection
+            [ if model.isLoading then
+                viewLoading
+
+              else
+                viewPlanSelection model
             ]
         ]
     }
-
-
-viewStep : Model -> Html Msg
-viewStep model =
-    case model.currentStep of
-        PlanSelection ->
-            if model.isLoading then
-                viewLoading
-
-            else
-                viewPlanSelection model
-
-        Payment ->
-            div []
-                [ h2 [ class "text-2xl font-bold text-gray-900 mb-6" ]
-                    [ text "Payment details" ]
-                , div [ class "mt-4" ]
-                    [ button
-                        [ class "w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                        , onClick NextStep
-                        ]
-                        [ text "Complete setup" ]
-                    ]
-                ]
-
-        Complete ->
-            div [ class "text-center" ]
-                [ div [ class "rounded-full h-12 w-12 bg-green-100 flex items-center justify-center mx-auto" ]
-                    [ span [ class "text-green-600 text-xl" ] [ text "✓" ] ]
-                , h2 [ class "mt-4 text-2xl font-bold text-gray-900" ]
-                    [ text "Setup complete!" ]
-                , p [ class "mt-2 text-gray-600" ]
-                    [ text "You're all set to start using your organization." ]
-                ]
 
 
 viewLoading : Html Msg

@@ -3,6 +3,7 @@ module AddAgent exposing (Model, Msg, init, subscriptions, update, view)
 import Browser
 import Browser.Navigation as Nav
 import Components.ProgressIndicator
+import Components.SetupLayout as SetupLayout
 import Debug
 import Html exposing (..)
 import Html.Attributes exposing (..)
@@ -222,58 +223,39 @@ view model =
         else
             "Manage Agents"
     , body =
-        [ div [ class "min-h-screen bg-gray-50 flex" ]
-            [ if model.isSetup then
-                div [ class "flex w-full" ]
-                    [ Components.ProgressIndicator.view
-                        [ { icon = "1"
-                          , title = "Choose Plan"
-                          , description = "Select your subscription"
-                          , isCompleted = True
-                          , isActive = False
-                          }
-                        , { icon = "2"
-                          , title = "Organization Settings"
-                          , description = "Configure your organization"
-                          , isCompleted = True
-                          , isActive = False
-                          }
-                        , { icon = "3"
-                          , title = "Add Team Members"
-                          , description = "Invite your team"
-                          , isCompleted = False
-                          , isActive = True
-                          }
-                        ]
-                    , div [ class "flex-1 ml-[280px] pb-24" ]
-                        [ div [ class "max-w-3xl mx-auto py-6 px-4 sm:px-6 lg:px-8" ]
-                            [ viewSetupHeader model
-                            , viewAgentsList model
-                            , if model.showAddForm then
-                                div [ class "bg-white shadow rounded-lg p-6 space-y-6 mt-6" ]
-                                    [ viewBasicInfo model
-                                    , viewWritingNumbers model
-                                    , viewStateLicenses model
-                                    ]
-
-                              else
-                                viewAddAgentButton
+        [ if model.isSetup then
+            SetupLayout.view SetupLayout.AgentSetup
+                [ div [ class "max-w-3xl mx-auto" ]
+                    [ viewSetupHeader model
+                    , viewAgentsList model
+                    , if model.showAddForm then
+                        div [ class "bg-white shadow rounded-lg p-6 space-y-6 mt-6" ]
+                            [ viewBasicInfo model
+                            , viewWritingNumbers model
+                            , viewStateLicenses model
                             ]
-                        ]
-                    , viewBottomBar model
-                    ]
 
-              else
-                div [ class "max-w-3xl mx-auto py-12 pb-24" ]
-                    [ viewNormalHeader
-                    , div [ class "bg-white shadow rounded-lg p-6 space-y-6" ]
-                        [ viewBasicInfo model
-                        , viewWritingNumbers model
-                        , viewStateLicenses model
-                        ]
-                    , viewBottomBar model
+                      else
+                        viewAddAgentButton
                     ]
-            ]
+                ]
+
+          else
+            div [ class "min-h-screen bg-gray-50" ]
+                [ viewHeader
+                , div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" ]
+                    [ viewAgentsList model
+                    , if model.showAddForm then
+                        div [ class "bg-white shadow rounded-lg p-6 space-y-6 mt-6" ]
+                            [ viewBasicInfo model
+                            , viewWritingNumbers model
+                            , viewStateLicenses model
+                            ]
+
+                      else
+                        viewAddAgentButton
+                    ]
+                ]
         ]
     }
 
@@ -292,6 +274,22 @@ viewNormalHeader : Html Msg
 viewNormalHeader =
     h1 [ class "text-2xl font-semibold text-gray-900 mb-6" ]
         [ text "Add Agent" ]
+
+
+viewHeader : Html msg
+viewHeader =
+    nav [ class "bg-white border-b border-gray-200" ]
+        [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8" ]
+            [ div [ class "flex justify-between h-16" ]
+                [ div [ class "flex" ]
+                    [ div [ class "flex-shrink-0 flex items-center" ]
+                        [ h1 [ class "text-xl font-semibold text-purple-600" ]
+                            [ text "Manage Agents" ]
+                        ]
+                    ]
+                ]
+            ]
+        ]
 
 
 viewBasicInfo : Model -> Html Msg
@@ -601,7 +599,7 @@ viewAgentsList model =
 viewAgentItem : Model -> Agent -> Html Msg
 viewAgentItem model agent =
     let
-        isCurrentUser =
+        isCurrentUserAgent =
             case model.currentUser of
                 Just user ->
                     user.id == agent.id
@@ -630,14 +628,14 @@ viewAgentItem model agent =
                         [ type_ "checkbox"
                         , class "rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
                         , checked agent.isAdmin
-                        , disabled isCurrentUser
+                        , disabled isCurrentUserAgent
                         , onClick (ToggleAgentRole agent.id "admin")
                         , stopPropagationOn "click" (Decode.succeed ( ToggleAgentRole agent.id "admin", True ))
                         ]
                         []
                     , span
                         [ class
-                            (if isCurrentUser then
+                            (if isCurrentUserAgent then
                                 "ml-2 text-sm text-gray-400"
 
                              else
@@ -696,7 +694,7 @@ viewAgentItem model agent =
                         ]
                     , div [ class "flex items-center space-x-4" ]
                         [ roleCheckboxes
-                        , if not isCurrentUser then
+                        , if not isCurrentUserAgent then
                             button
                                 [ class "text-sm text-red-600 hover:text-red-900"
                                 , stopPropagationOn "click" (Decode.succeed ( RemoveAgent agent.id, True ))
@@ -758,7 +756,7 @@ viewAgentDetails model agent =
             else
                 text ""
 
-        isCurrentUser =
+        isCurrentUserAgent =
             case model.currentUser of
                 Just user ->
                     user.id == agent.id
@@ -2033,3 +2031,13 @@ saveAgentDetails agent =
         , timeout = Nothing
         , tracker = Nothing
         }
+
+
+isCurrentUser : Maybe User -> String -> Bool
+isCurrentUser maybeUser agentId =
+    case maybeUser of
+        Just user ->
+            user.id == agentId
+
+        Nothing ->
+            False

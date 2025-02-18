@@ -9,6 +9,10 @@ module BrandSettings exposing
 
 import Browser
 import Browser.Navigation as Nav
+import Components.SetupLayout as SetupLayout
+import Debug
+import File exposing (File)
+import File.Select as Select
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (..)
@@ -16,6 +20,7 @@ import Http
 import Json.Decode as Decode exposing (Decoder)
 import Json.Decode.Pipeline as Pipeline
 import Json.Encode as Encode
+import Task
 
 
 
@@ -73,6 +78,8 @@ type Msg
     | UpdatePrimaryColor String
     | UpdateSecondaryColor String
     | UploadLogo
+    | GotLogo File
+    | GotLogoUrl String
     | LogoUploaded (Result Http.Error String)
     | SaveSettings
     | SettingsSaved (Result Http.Error ())
@@ -118,8 +125,17 @@ update msg model =
 
         UploadLogo ->
             ( model
+            , Select.file [ "image/png", "image/jpeg" ] GotLogo
+            )
+
+        GotLogo file ->
+            ( model
+            , Task.perform GotLogoUrl (File.toUrl file)
+            )
+
+        GotLogoUrl url ->
+            ( { model | logo = Just url }
             , Cmd.none
-              -- TODO: Implement file upload
             )
 
         LogoUploaded (Ok url) ->
@@ -162,16 +178,26 @@ view : Model -> Browser.Document Msg
 view model =
     { title = "Brand Settings"
     , body =
-        [ div [ class "min-h-screen bg-gray-50" ]
-            [ viewHeader
-            , div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" ]
+        [ if model.isSetup then
+            SetupLayout.view SetupLayout.BrandSetup
                 [ if model.isLoading then
                     viewLoading
 
                   else
                     viewSettings model
                 ]
-            ]
+
+          else
+            div [ class "min-h-screen bg-gray-50" ]
+                [ viewHeader
+                , div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" ]
+                    [ if model.isLoading then
+                        viewLoading
+
+                      else
+                        viewSettings model
+                    ]
+                ]
         ]
     }
 
@@ -274,7 +300,7 @@ viewSettings model =
                                 [ text "Upload Logo" ]
                     ]
                 )
-            , div [ class "flex justify-end" ]
+            , div [ class "flex justify-center mt-8" ]
                 [ button
                     [ class "px-6 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 disabled:opacity-50"
                     , onClick SaveSettings
@@ -293,8 +319,8 @@ viewSettings model =
 
 viewFormGroup : String -> Html Msg -> Html Msg
 viewFormGroup labelText content =
-    div []
-        [ label [ class "block text-sm font-medium text-gray-700 mb-1" ]
+    div [ class "mb-4" ]
+        [ label [ class "block text-sm font-medium text-gray-700 mb-2" ]
             [ text labelText ]
         , content
         ]

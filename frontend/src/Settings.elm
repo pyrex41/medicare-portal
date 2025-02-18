@@ -3,6 +3,7 @@ module Settings exposing (Model, Msg, init, subscriptions, update, view)
 import Browser
 import Browser.Navigation as Nav
 import Components.ProgressIndicator
+import Components.SetupLayout as SetupLayout
 import Debug
 import Html exposing (..)
 import Html.Attributes exposing (..)
@@ -131,6 +132,7 @@ type alias Model =
     , isSetup : Bool
     , key : Nav.Key
     , currentUser : Maybe User
+    , isLoading : Bool
     }
 
 
@@ -199,6 +201,7 @@ init flags =
       , isSetup = flags.isSetup
       , key = flags.key
       , currentUser = flags.currentUser
+      , isLoading = True
       }
     , Cmd.batch
         [ fetchSettings
@@ -237,7 +240,7 @@ update msg model =
         GotSettings result ->
             case result of
                 Ok response ->
-                    ( { model | orgSettings = Just response.orgSettings, status = Loaded }
+                    ( { model | orgSettings = Just response.orgSettings, status = Loaded, isLoading = False }
                     , Cmd.none
                     )
 
@@ -264,7 +267,7 @@ update msg model =
                                     in
                                     "Bad body: " ++ message
                     in
-                    ( { model | status = Error errorMsg }
+                    ( { model | status = Error errorMsg, isLoading = False }
                     , Cmd.none
                     )
 
@@ -620,51 +623,26 @@ view model =
         else
             "Settings"
     , body =
-        [ div [ class "min-h-screen bg-gray-50 flex" ]
-            [ if model.isSetup then
-                div [ class "flex w-full" ]
-                    [ div [ class "w-64 bg-[#111827] fixed h-screen" ]
-                        [ div [ class "p-6" ]
-                            [ div [ class "text-white text-xl font-bold mb-8" ]
-                                [ text "Medicare Max" ]
-                            , Components.ProgressIndicator.view
-                                [ { icon = "1"
-                                  , title = "Choose Plan"
-                                  , description = "Select your subscription"
-                                  , isCompleted = True
-                                  , isActive = False
-                                  }
-                                , { icon = "2"
-                                  , title = "Organization Settings"
-                                  , description = "Configure your organization"
-                                  , isCompleted = False
-                                  , isActive = True
-                                  }
-                                , { icon = "3"
-                                  , title = "Add Team Members"
-                                  , description = "Invite your team"
-                                  , isCompleted = False
-                                  , isActive = False
-                                  }
-                                ]
-                            ]
-                        ]
-                    , div [ class "flex-1 ml-64" ]
-                        [ div [ class "max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8 min-h-screen overflow-y-auto" ]
-                            [ viewSetupHeader
-                            , viewSettingsContent model.orgSettings True model.expandedSections
-                            , viewBottomBar model
-                            ]
-                        ]
-                    ]
+        [ if model.isSetup then
+            SetupLayout.view SetupLayout.OrganizationSetup
+                [ if model.isLoading then
+                    viewLoading
 
-              else
-                div [ class "max-w-7xl mx-auto py-6 sm:px-6 lg:px-8" ]
-                    [ viewNormalHeader
-                    , viewSettingsContent model.orgSettings True model.expandedSections
-                    , viewBottomBar model
+                  else
+                    viewSettings model
+                ]
+
+          else
+            div [ class "min-h-screen bg-gray-50" ]
+                [ viewHeader
+                , div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" ]
+                    [ if model.isLoading then
+                        viewLoading
+
+                      else
+                        viewSettings model
                     ]
-            ]
+                ]
         ]
     }
 
@@ -1207,4 +1185,35 @@ viewNavigation model =
 
             Nothing ->
                 text ""
+        ]
+
+
+viewLoading : Html msg
+viewLoading =
+    div [ class "flex justify-center items-center h-64" ]
+        [ div [ class "animate-spin rounded-full h-12 w-12 border-4 border-purple-500 border-t-transparent" ] []
+        ]
+
+
+viewHeader : Html msg
+viewHeader =
+    nav [ class "bg-white border-b border-gray-200" ]
+        [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8" ]
+            [ div [ class "flex justify-between h-16" ]
+                [ div [ class "flex" ]
+                    [ div [ class "flex-shrink-0 flex items-center" ]
+                        [ h1 [ class "text-xl font-semibold text-purple-600" ]
+                            [ text "Organization Settings" ]
+                        ]
+                    ]
+                ]
+            ]
+        ]
+
+
+viewSettings : Model -> Html Msg
+viewSettings model =
+    div [ class "space-y-8" ]
+        [ viewSettingsContent model.orgSettings True model.expandedSections
+        , viewBottomBar model
         ]
