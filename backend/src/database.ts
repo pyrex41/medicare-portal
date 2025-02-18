@@ -4,17 +4,46 @@ import { logger } from './logger'
 
 export class Database {
   private client: any
+  private url: string
 
-  constructor() {
-    if (!config.TURSO_DATABASE_URL || !config.TURSO_AUTH_TOKEN) {
+  constructor(dbUrl?: string, authToken?: string) {
+    const url = dbUrl || config.TURSO_DATABASE_URL
+    const token = authToken || config.TURSO_AUTH_TOKEN
+
+    if (!url || !token) {
       logger.error('Missing database credentials')
-      throw new Error('Missing database credentials in .env file')
+      throw new Error('Missing database credentials')
     }
 
+    this.url = url
     this.client = createClient({
-      url: config.TURSO_DATABASE_URL,
-      authToken: config.TURSO_AUTH_TOKEN,
+      url: url,
+      authToken: token,
     })
+    
+    logger.info(`Database connected to: ${this.url}`)
+  }
+
+  static async getOrgDb(orgId: string): Promise<Database> {
+    try {
+      // Use main DB to get org's Turso credentials
+      const mainDb = new Database()
+      const org = await mainDb.fetchOne<{turso_db_url: string, turso_auth_token: string}>(
+        'SELECT turso_db_url, turso_auth_token FROM organizations WHERE id = ?',
+        [orgId]
+      )
+
+      if (!org?.turso_db_url || !org?.turso_auth_token) {
+        logger.error(`No Turso credentials found for org ${orgId}`)
+        throw new Error('Organization database not configured')
+      }
+
+      logger.info(`Creating client for org ${orgId} database: ${org.turso_db_url}`)
+      return new Database(org.turso_db_url, org.turso_auth_token)
+    } catch (error) {
+      logger.error(`Failed to get org database: ${error}`)
+      throw error
+    }
   }
 
   getClient() {

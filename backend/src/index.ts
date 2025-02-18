@@ -61,6 +61,24 @@ interface DbRow {
   settings: string | null;
 }
 
+// Add at the top with other interfaces
+interface ContactRow {
+  id: number;
+  first_name: string;
+  last_name: string;
+  email: string;
+  current_carrier: string;
+  plan_type: string;
+  effective_date: string;
+  birth_date: string;
+  tobacco_user: number;
+  gender: string;
+  state: string;
+  zip_code: string;
+  agent_id: number | null;
+  last_emailed: string | null;
+}
+
 const startServer = async () => {
   try {
     const db = new Database()
@@ -119,11 +137,20 @@ const startServer = async () => {
       })
       // Add health check endpoint
       .get('/health', () => ({ status: 'OK' }))
-      .get('/api/contacts', async () => {
+      .get('/api/contacts', async ({ request }) => {
         try {
-          logger.info('GET /api/contacts - Attempting to fetch contacts')
-          const contacts = await db.fetchAll(
-            'SELECT * FROM contacts ORDER BY created_at DESC'
+          const user = await getUserFromSession(request)
+          if (!user?.organization_id) {
+            throw new Error('No organization ID found in session')
+          }
+
+          logger.info(`GET /api/contacts - Attempting to fetch contacts for org ${user.organization_id}`)
+          
+          // Get org-specific database
+          const orgDb = await Database.getOrgDb(user.organization_id.toString())
+          
+          const contacts = await orgDb.fetchAll(
+            'SELECT * FROM contacts ORDER BY id DESC'
           )
 
           if (!contacts || !Array.isArray(contacts)) {
@@ -131,7 +158,7 @@ const startServer = async () => {
             return []
           }
 
-          logger.info(`GET /api/contacts - Successfully fetched ${contacts.length} contacts`)
+          logger.info(`GET /api/contacts - Successfully fetched ${contacts.length} contacts from org database`)
 
           const mappedContacts = contacts.map(contact => ({
             id: contact[0],
@@ -146,8 +173,8 @@ const startServer = async () => {
             gender: contact[9],
             state: contact[10],
             zip_code: contact[11],
-            last_emailed: contact[12],
-            created_at: contact[13],
+            agent_id: contact[12],
+            last_emailed: contact[13]
           }))
 
           logger.info(`GET /api/contacts - Returning ${mappedContacts.length} contacts`)
@@ -157,10 +184,18 @@ const startServer = async () => {
           throw new Error(String(e))
         }
       })
-      .post('/api/contacts', async ({ body }: { body: ContactCreate }) => {
+      .post('/api/contacts', async ({ body, request }: { body: ContactCreate, request: Request }) => {
         try {
+          const user = await getUserFromSession(request)
+          if (!user?.organization_id) {
+            throw new Error('No organization ID found in session')
+          }
+
           const contact = body
-          logger.info(`Attempting to create contact: ${contact.first_name} ${contact.last_name}`)
+          logger.info(`Attempting to create contact for org ${user.organization_id}: ${contact.first_name} ${contact.last_name}`)
+          
+          // Get org-specific database
+          const orgDb = await Database.getOrgDb(user.organization_id.toString())
           
           const query = `
             INSERT INTO contacts (
@@ -186,10 +221,10 @@ const startServer = async () => {
             contact.agent_id
           ]
 
-          const result = await db.execute(query, params)
+          const result = await orgDb.execute(query, params)
           const row = result[0]
 
-          // Match Python response format
+          // Match response format to schema
           return {
             id: row[0],
             first_name: row[1],
@@ -204,21 +239,35 @@ const startServer = async () => {
             state: row[10],
             zip_code: row[11],
             agent_id: row[12],
-            last_emailed_date: row[13],
-            created_at: row[14],
+            last_emailed: row[13]
           }
         } catch (e) {
           logger.error(`Error creating contact: ${e}`)
           throw new Error(String(e))
         }
       })
-      .put('/api/contacts/:id', async ({ params: { id }, body }) => {
+      .put('/api/contacts/:id', async ({ params: { id }, body, request }) => {
         try {
-          const contact = body as ContactCreate
-          logger.info(`PUT /api/contacts/${id} - Updating contact`)
+          // Get user and org info
+          const user = await getUserFromSession(request)
+          if (!user?.organization_id) {
+            throw new Error('No organization ID found in session')
+          }
 
-          // Match Python's conditional query based on agent_id
-          const query = contact.agent_id === null ? `
+          // Get org-specific database
+          const orgDb = await Database.getOrgDb(user.organization_id.toString())
+
+          const contact = body as ContactCreate
+          logger.info(`PUT /api/contacts/${id} - Updating contact for org ${user.organization_id}`)
+
+          // Get state from ZIP code
+          const zipInfo = ZIP_DATA[contact.zip_code]
+          if (!zipInfo) {
+            throw new Error(`Invalid ZIP code: ${contact.zip_code}`)
+          }
+
+          // First update the contact
+          const updateQuery = contact.agent_id === null ? `
             UPDATE contacts SET 
               first_name = ?,
               last_name = ?,
@@ -232,7 +281,6 @@ const startServer = async () => {
               state = ?,
               zip_code = ?
             WHERE id = ?
-            RETURNING *
           ` : `
             UPDATE contacts SET 
               first_name = ?,
@@ -248,10 +296,9 @@ const startServer = async () => {
               zip_code = ?,
               agent_id = ?
             WHERE id = ?
-            RETURNING *
           `
 
-          const queryParams = contact.agent_id === null ? [
+          const updateParams = contact.agent_id === null ? [
             contact.first_name,
             contact.last_name,
             contact.email,
@@ -261,7 +308,7 @@ const startServer = async () => {
             contact.birth_date,
             contact.tobacco_user ? 1 : 0,
             contact.gender,
-            contact.state,
+            zipInfo.state, // Use state from ZIP code
             contact.zip_code,
             id
           ] : [
@@ -274,31 +321,43 @@ const startServer = async () => {
             contact.birth_date,
             contact.tobacco_user ? 1 : 0,
             contact.gender,
-            contact.state,
+            zipInfo.state, // Use state from ZIP code
             contact.zip_code,
             contact.agent_id,
             id
           ]
 
-          const result = await db.execute(query, queryParams)
-          const row = result[0]
+          // Execute the update
+          await orgDb.execute(updateQuery, updateParams)
 
+          // Then fetch the updated contact
+          const result = await orgDb.fetchOne<ContactRow>(
+            'SELECT * FROM contacts WHERE id = ?',
+            [id]
+          )
+
+          if (!result) {
+            throw new Error(`Contact ${id} not found after update`)
+          }
+
+          logger.info(`Successfully updated contact ${id} in org ${user.organization_id}`)
+
+          // Return the updated contact
           return {
-            id: row[0],
-            first_name: row[1],
-            last_name: row[2],
-            email: row[3],
-            current_carrier: row[4],
-            plan_type: row[5],
-            effective_date: row[6],
-            birth_date: row[7],
-            tobacco_user: Boolean(row[8]),
-            gender: row[9],
-            state: row[10],
-            zip_code: row[11],
-            agent_id: row[12],
-            last_emailed_date: row[13],
-            created_at: row[14],
+            id: result.id,
+            first_name: result.first_name,
+            last_name: result.last_name,
+            email: result.email,
+            current_carrier: result.current_carrier,
+            plan_type: result.plan_type,
+            effective_date: result.effective_date,
+            birth_date: result.birth_date,
+            tobacco_user: Boolean(result.tobacco_user),
+            gender: result.gender,
+            state: result.state,
+            zip_code: result.zip_code,
+            agent_id: result.agent_id,
+            last_emailed: result.last_emailed
           }
         } catch (e) {
           logger.error(`Error updating contact: ${e}`)
@@ -336,8 +395,17 @@ const startServer = async () => {
         }
       })
       // Add file upload endpoint
-      .post('/api/contacts/upload', async ({ body }) => {
+      .post('/api/contacts/upload', async ({ body, request }) => {
         try {
+          // Get user and org info
+          const user = await getUserFromSession(request)
+          if (!user?.organization_id) {
+            throw new Error('No organization ID found in session')
+          }
+
+          // Get org-specific database
+          const orgDb = await Database.getOrgDb(user.organization_id.toString())
+
           // Extract file and overwrite flag from form data
           const formData = body as { file: File, overwrite_duplicates: boolean | string }
           const file = formData.file
@@ -395,7 +463,7 @@ const startServer = async () => {
 
           // Get existing emails for duplicate checking
           let existingEmails = new Set<string>()
-          const emailResults = await db.fetchAll("SELECT email FROM contacts")
+          const emailResults = await orgDb.fetchAll("SELECT email FROM contacts")
           existingEmails = new Set(emailResults.map((row: any[]) => row[0].trim().toLowerCase()))
 
           logger.info(`Found ${existingEmails.size} existing emails in database`)
@@ -514,7 +582,7 @@ const startServer = async () => {
               for (const params of paramsList) {
                 const email = params[2].toLowerCase()
                 // Check if email exists
-                const existingContact = await db.fetchAll(
+                const existingContact = await orgDb.fetchAll(
                   'SELECT 1 FROM contacts WHERE LOWER(email) = ?',
                   [email]
                 )
@@ -534,10 +602,10 @@ const startServer = async () => {
                     params[10], // zip_code
                     email     // for WHERE clause
                   ]
-                  await db.execute(updateQuery, updateParams)
+                  await orgDb.execute(updateQuery, updateParams)
                 } else {
                   // Insert new contact
-                  await db.execute(
+                  await orgDb.execute(
                     `INSERT INTO contacts (
                       first_name, last_name, email, current_carrier, plan_type,
                       effective_date, birth_date, tobacco_user, gender,
@@ -554,14 +622,14 @@ const startServer = async () => {
               for (const params of paramsList) {
                 const email = params[2].toLowerCase()
                 // Check if email exists
-                const existingContact = await db.fetchAll(
+                const existingContact = await orgDb.fetchAll(
                   'SELECT 1 FROM contacts WHERE LOWER(email) = ?',
                   [email]
                 )
 
                 if (existingContact.length === 0) {
                   // Only insert if email doesn't exist
-                  await db.execute(
+                  await orgDb.execute(
                     `INSERT INTO contacts (
                       first_name, last_name, email, current_carrier, plan_type,
                       effective_date, birth_date, tobacco_user, gender,
