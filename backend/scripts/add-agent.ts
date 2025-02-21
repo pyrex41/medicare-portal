@@ -97,9 +97,9 @@ async function main() {
 
       // Insert into users table
       await db.execute(
-        `INSERT INTO users (email, organization_id, role, is_active)
-         VALUES (?, ?, 'agent', true)`,
-        [agentData.email, agentData.organization_id]
+        `INSERT INTO users (email, organization_id, is_admin, is_agent, is_active)
+         VALUES (?, ?, ?, ?, true)`,
+        [agentData.email, agentData.organization_id, false, true]
       );
 
       // Commit the transaction

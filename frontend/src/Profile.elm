@@ -7,7 +7,10 @@ import Html.Attributes exposing (..)
 import Html.Events exposing (..)
 import Http
 import Json.Decode as Decode exposing (Decoder)
+import Json.Decode.Pipeline as Pipeline
 import Json.Encode as Encode
+import Svg exposing (path, svg)
+import Svg.Attributes as SvgAttr
 import Time
 
 
@@ -25,12 +28,13 @@ type alias Model =
 
 
 type alias User =
-    { id : String
+    { id : Int
     , email : String
     , firstName : String
     , lastName : String
-    , role : String
     , phone : String
+    , isAdmin : Bool
+    , isAgent : Bool
     , carriers : List String
     , stateLicenses : List String
     }
@@ -180,8 +184,8 @@ viewContent model =
             Just user ->
                 div [ class "bg-white shadow rounded-lg p-6 space-y-6" ]
                     [ viewBasicInfo user
-                    , if isAgent user.role then
-                        div []
+                    , if isAgent user then
+                        div [ class "space-y-6" ]
                             [ viewCarriers user
                             , viewStateLicenses user
                             ]
@@ -209,7 +213,7 @@ viewBasicInfo user =
             , viewField "Email" "email" user.email "email"
             , viewField "Phone" "tel" user.phone "phone"
             ]
-        , viewRoleInfo user.role
+        , viewRoleInfo user
         ]
 
 
@@ -235,54 +239,71 @@ viewField label inputType value field =
         ]
 
 
-viewRoleInfo : String -> Html Msg
-viewRoleInfo role =
-    div [ class "mt-4" ]
+viewRoleInfo : User -> Html Msg
+viewRoleInfo user =
+    div [ class "mb-6" ]
         [ label [ class "block text-sm font-medium text-gray-700 mb-2" ]
             [ text "Role" ]
-        , div [ class "mt-1 flex items-center space-x-2" ]
-            [ div [ class "text-sm text-gray-900" ]
-                [ text (formatRole role) ]
-            , if role == "admin" || role == "admin_agent" then
-                button
-                    [ class "text-sm text-blue-600 hover:text-blue-700"
-                    , onClick (NavigateTo "/settings")
-                    ]
-                    [ text "(change)" ]
+        , div [ class "text-gray-900" ]
+            [ text (formatRole user) ]
+        , if user.isAdmin then
+            div [ class "mt-2 text-sm text-gray-500" ]
+                [ text "You have administrator privileges" ]
 
-              else
-                text ""
-            ]
+          else
+            text ""
         ]
 
 
 viewCarriers : User -> Html Msg
 viewCarriers user =
-    div [ class "mt-8 space-y-4" ]
-        [ h3 [ class "text-lg font-medium text-gray-900" ]
-            [ text "Carriers" ]
-        , div [ class "grid grid-cols-3 gap-4" ]
-            (List.map
-                (\carrier ->
-                    div [ class "text-sm text-gray-600" ] [ text carrier ]
+    div [ class "space-y-4" ]
+        [ div [ class "border-b border-gray-200 pb-4" ]
+            [ h2 [ class "text-lg font-medium text-gray-900" ]
+                [ text "Activated Carriers" ]
+            ]
+        , if List.isEmpty user.carriers then
+            div [ class "text-sm text-gray-500 italic" ]
+                [ text "No carriers activated" ]
+
+          else
+            div [ class "grid grid-cols-3 gap-4" ]
+                (List.map
+                    (\carrier ->
+                        div [ class "flex items-center space-x-2 text-sm text-gray-600" ]
+                            [ svg [ SvgAttr.class "h-5 w-5 text-green-500", SvgAttr.viewBox "0 0 20 20", SvgAttr.fill "currentColor" ]
+                                [ path [ SvgAttr.d "M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z", SvgAttr.fillRule "evenodd", SvgAttr.clipRule "evenodd" ] [] ]
+                            , span [] [ text carrier ]
+                            ]
+                    )
+                    user.carriers
                 )
-                user.carriers
-            )
         ]
 
 
 viewStateLicenses : User -> Html Msg
 viewStateLicenses user =
-    div [ class "mt-8 space-y-4" ]
-        [ h3 [ class "text-lg font-medium text-gray-900" ]
-            [ text "State Licenses" ]
-        , div [ class "grid grid-cols-6 gap-4" ]
-            (List.map
-                (\state ->
-                    div [ class "text-sm text-gray-600" ] [ text state ]
+    div [ class "space-y-4" ]
+        [ div [ class "border-b border-gray-200 pb-4" ]
+            [ h2 [ class "text-lg font-medium text-gray-900" ]
+                [ text "Activated State Licenses" ]
+            ]
+        , if List.isEmpty user.stateLicenses then
+            div [ class "text-sm text-gray-500 italic" ]
+                [ text "No state licenses activated" ]
+
+          else
+            div [ class "grid grid-cols-6 gap-4" ]
+                (List.map
+                    (\state ->
+                        div [ class "flex items-center space-x-2 text-sm text-gray-600" ]
+                            [ svg [ SvgAttr.class "h-5 w-5 text-green-500", SvgAttr.viewBox "0 0 20 20", SvgAttr.fill "currentColor" ]
+                                [ path [ SvgAttr.d "M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z", SvgAttr.fillRule "evenodd", SvgAttr.clipRule "evenodd" ] [] ]
+                            , span [] [ text state ]
+                            ]
+                    )
+                    user.stateLicenses
                 )
-                user.stateLicenses
-            )
         ]
 
 
@@ -325,7 +346,7 @@ saveProfile user =
     Http.request
         { method = "PUT"
         , headers = []
-        , url = "/api/agents/" ++ user.id
+        , url = "/api/agents/" ++ String.fromInt user.id
         , body = Http.jsonBody (encodeUser user)
         , expect = Http.expectWhatever ProfileSaved
         , timeout = Nothing
@@ -346,35 +367,16 @@ currentUserResponseDecoder =
 
 userDecoder : Decoder User
 userDecoder =
-    Decode.map8 User
-        (Decode.field "id" (Decode.oneOf [ Decode.string, Decode.map String.fromInt Decode.int ]))
-        (Decode.field "email" Decode.string)
-        (Decode.oneOf
-            [ Decode.field "firstName" Decode.string
-            , Decode.field "first_name" Decode.string
-            ]
-        )
-        (Decode.oneOf
-            [ Decode.field "lastName" Decode.string
-            , Decode.field "last_name" Decode.string
-            ]
-        )
-        (Decode.field "role" Decode.string)
-        (Decode.oneOf
-            [ Decode.field "phone" Decode.string
-            , Decode.succeed "" -- Default to empty string if phone field is missing
-            ]
-        )
-        (Decode.oneOf
-            [ Decode.at [ "agentSettings", "carrierContracts" ] (Decode.list Decode.string)
-            , Decode.succeed []
-            ]
-        )
-        (Decode.oneOf
-            [ Decode.at [ "agentSettings", "stateLicenses" ] (Decode.list Decode.string)
-            , Decode.succeed []
-            ]
-        )
+    Decode.succeed User
+        |> Pipeline.required "id" Decode.int
+        |> Pipeline.required "email" Decode.string
+        |> Pipeline.required "firstName" Decode.string
+        |> Pipeline.required "lastName" Decode.string
+        |> Pipeline.required "phone" Decode.string
+        |> Pipeline.required "is_admin" Decode.bool
+        |> Pipeline.required "is_agent" Decode.bool
+        |> Pipeline.optional "carriers" (Decode.list Decode.string) []
+        |> Pipeline.optional "stateLicenses" (Decode.list Decode.string) []
 
 
 
@@ -425,25 +427,24 @@ formatPhoneNumber phone =
             ++ String.dropLeft 6 digits
 
 
-formatRole : String -> String
-formatRole role =
-    case role of
-        "admin" ->
-            "Administrator"
+formatRole : User -> String
+formatRole user =
+    if user.isAdmin && user.isAgent then
+        "Admin Agent"
 
-        "agent" ->
-            "Agent"
+    else if user.isAdmin then
+        "Administrator"
 
-        "admin_agent" ->
-            "Administrator & Agent"
+    else if user.isAgent then
+        "Agent"
 
-        _ ->
-            role
+    else
+        "User"
 
 
-isAgent : String -> Bool
-isAgent role =
-    role == "agent" || role == "admin_agent"
+isAgent : User -> Bool
+isAgent user =
+    user.isAgent
 
 
 

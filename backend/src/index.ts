@@ -35,7 +35,8 @@ type NewAgentRequest = {
   lastName: string
   email: string
   phone: string
-  isAdmin: boolean
+  is_admin: boolean
+  is_agent: boolean
   carriers: string[]
   stateLicenses: string[]
 }
@@ -45,8 +46,8 @@ type AgentUpdate = {
   lastName: string
   email: string
   phone: string
-  isAdmin: boolean
-  isAgent: boolean
+  is_admin: boolean
+  is_agent: boolean
   carriers: string[]
   stateLicenses: string[]
 }
@@ -57,7 +58,8 @@ interface DbRow {
   last_name: string;
   email: string;
   phone: string | null;
-  role: 'admin' | 'agent' | 'admin_agent';
+  is_admin: number;
+  is_agent: number;
   settings: string | null;
 }
 
@@ -77,6 +79,7 @@ interface ContactRow {
   zip_code: string;
   agent_id: number | null;
   last_emailed: string | null;
+  phone_number: string;
 }
 
 const startServer = async () => {
@@ -149,13 +152,69 @@ const startServer = async () => {
           // Get org-specific database
           const orgDb = await Database.getOrgDb(user.organization_id.toString())
           
-          const contacts = await orgDb.fetchAll(
-            'SELECT * FROM contacts ORDER BY id DESC'
-          )
+          // First get all unique carriers and states for filter options
+          const [carrierResults, stateResults] = await Promise.all([
+            orgDb.fetchAll('SELECT DISTINCT current_carrier FROM contacts WHERE current_carrier IS NOT NULL ORDER BY current_carrier'),
+            orgDb.fetchAll('SELECT DISTINCT state FROM contacts WHERE state IS NOT NULL ORDER BY state')
+          ])
+
+          const allCarriers = carrierResults.map(row => row[0])
+          const allStates = stateResults.map(row => row[0])
+          
+          // Get search query and filters from URL params
+          const url = new URL(request.url)
+          const searchQuery = url.searchParams.get('search') || ''
+          const carriers = (url.searchParams.get('carriers') || '').split(',').filter(Boolean)
+          const states = (url.searchParams.get('states') || '').split(',').filter(Boolean)
+          
+          // Build the SQL query with search and filter conditions
+          let conditions = []
+          let params = []
+
+          // Add search condition if search query exists
+          if (searchQuery) {
+            conditions.push(`(
+              LOWER(first_name) LIKE ? OR 
+              LOWER(last_name) LIKE ? OR 
+              LOWER(email) LIKE ? OR
+              LOWER(current_carrier) LIKE ? OR
+              LOWER(state) LIKE ?
+            )`)
+            const searchTerm = `%${searchQuery.toLowerCase()}%`
+            params.push(searchTerm, searchTerm, searchTerm, searchTerm, searchTerm)
+          }
+
+          // Add carrier filter if carriers are specified
+          if (carriers.length > 0) {
+            conditions.push(`current_carrier IN (${carriers.map(() => '?').join(',')})`)
+            params.push(...carriers)
+          }
+
+          // Add state filter if states are specified
+          if (states.length > 0) {
+            conditions.push(`state IN (${states.map(() => '?').join(',')})`)
+            params.push(...states)
+          }
+
+          // Construct the final query
+          const query = `
+            SELECT * FROM contacts 
+            ${conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : ''}
+            ORDER BY id DESC
+          `
+          
+          // Execute query with params
+          const contacts = await orgDb.fetchAll(query, params)
 
           if (!contacts || !Array.isArray(contacts)) {
             logger.warn('GET /api/contacts - No contacts found or invalid response')
-            return []
+            return {
+              contacts: [],
+              filterOptions: {
+                carriers: allCarriers,
+                states: allStates
+              }
+            }
           }
 
           logger.info(`GET /api/contacts - Successfully fetched ${contacts.length} contacts from org database`)
@@ -174,11 +233,18 @@ const startServer = async () => {
             state: contact[10],
             zip_code: contact[11],
             agent_id: contact[12],
-            last_emailed: contact[13]
+            last_emailed: contact[13],
+            phone_number: contact[14] || ''
           }))
 
-          logger.info(`GET /api/contacts - Returning ${mappedContacts.length} contacts`)
-          return mappedContacts
+          logger.info(`GET /api/contacts - Returning ${mappedContacts.length} contacts with ${allCarriers.length} carriers and ${allStates.length} states`)
+          return {
+            contacts: mappedContacts,
+            filterOptions: {
+              carriers: allCarriers,
+              states: allStates
+            }
+          }
         } catch (e) {
           logger.error(`Error in GET /api/contacts: ${e}`)
           throw new Error(String(e))
@@ -201,8 +267,8 @@ const startServer = async () => {
             INSERT INTO contacts (
               first_name, last_name, email, current_carrier, plan_type,
               effective_date, birth_date, tobacco_user, gender,
-              state, zip_code, agent_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              state, zip_code, agent_id, phone_number
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             RETURNING *
           `
           
@@ -218,7 +284,8 @@ const startServer = async () => {
             contact.gender,
             contact.state,
             contact.zip_code,
-            contact.agent_id
+            contact.agent_id,
+            contact.phone_number || ''
           ]
 
           const result = await orgDb.execute(query, params)
@@ -239,7 +306,8 @@ const startServer = async () => {
             state: row[10],
             zip_code: row[11],
             agent_id: row[12],
-            last_emailed: row[13]
+            last_emailed: row[13],
+            phone_number: row[14] || ''
           }
         } catch (e) {
           logger.error(`Error creating contact: ${e}`)
@@ -280,7 +348,8 @@ const startServer = async () => {
               gender = ?,
               state = ?,
               zip_code = ?,
-              agent_id = ?
+              agent_id = ?,
+              phone_number = ?
             WHERE id = ?
           `
 
@@ -297,6 +366,7 @@ const startServer = async () => {
             zipInfo.state, // Use state from ZIP code
             contact.zip_code,
             contact.agent_id || null,
+            contact.phone_number || '',
             id
           ]
 
@@ -330,7 +400,8 @@ const startServer = async () => {
             state: result.state,
             zip_code: result.zip_code,
             agent_id: result.agent_id,
-            last_emailed: result.last_emailed
+            last_emailed: result.last_emailed,
+            phone_number: result.phone_number
           }
         } catch (e) {
           logger.error(`Error updating contact: ${e}`)
@@ -409,7 +480,8 @@ const startServer = async () => {
             'Birth Date',
             'Tobacco User',
             'Gender',
-            'ZIP Code'
+            'ZIP Code',
+            'Phone Number'
           ]
 
           // Validate headers
@@ -517,7 +589,8 @@ const startServer = async () => {
                 tobaccoUser ? 1 : 0,
                 gender,
                 zipInfo.state,
-                zipCode
+                zipCode,
+                row['Phone Number'].trim()
               ])
               validRows.push(row)
             } catch (e) {
@@ -582,8 +655,8 @@ const startServer = async () => {
                     `INSERT INTO contacts (
                       first_name, last_name, email, current_carrier, plan_type,
                       effective_date, birth_date, tobacco_user, gender,
-                      state, zip_code
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                      state, zip_code, phone_number
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                     params
                   )
                 }
@@ -606,8 +679,8 @@ const startServer = async () => {
                     `INSERT INTO contacts (
                       first_name, last_name, email, current_carrier, plan_type,
                       effective_date, birth_date, tobacco_user, gender,
-                      state, zip_code
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                      state, zip_code, phone_number
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                     params
                   )
                   insertedCount++
@@ -692,7 +765,7 @@ const startServer = async () => {
           }
 
           // Check if user is an admin
-          if (currentUser.role !== 'admin') {
+          if (!currentUser.is_admin) {
             set.status = 403
             return {
               success: false,
@@ -714,9 +787,10 @@ const startServer = async () => {
               last_name, 
               phone,
               organization_id,
-              role,
+              is_admin,
+              is_agent,
               is_active
-            ) VALUES (?, ?, ?, ?, ?, ?, 1)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 1)
             RETURNING id`,
             args: [
               newAgent.email,
@@ -724,7 +798,8 @@ const startServer = async () => {
               newAgent.lastName,
               newAgent.phone,
               currentUser.organization_id,
-              newAgent.isAdmin ? 'admin_agent' : 'agent'
+              newAgent.is_admin ? 1 : 0,
+              newAgent.is_agent ? 1 : 0
             ]
           })
 
@@ -781,7 +856,7 @@ const startServer = async () => {
           }
 
           // Add admin check
-          if (currentUser.role !== 'admin' && !request.url.includes('/setup')) {
+          if (!currentUser.is_admin && !request.url.includes('/setup')) {
             set.status = 403
             return {
               success: false,
@@ -801,7 +876,8 @@ const startServer = async () => {
                 u.last_name,
                 u.email,
                 u.phone,
-                u.role,
+                u.is_admin,
+                u.is_agent,
                 a.settings
               FROM users u
               LEFT JOIN agent_settings a ON u.id = a.agent_id
@@ -826,7 +902,8 @@ const startServer = async () => {
               lastName: row.last_name,
               email: row.email,
               phone: row.phone || '',
-              role: row.role,
+              is_admin: Boolean(row.is_admin),
+              is_agent: Boolean(row.is_agent),
               carriers: settings.carrierContracts || [],
               stateLicenses: settings.stateLicenses || []
             }
@@ -844,7 +921,7 @@ const startServer = async () => {
         }
       })
       // Update PUT endpoint for updating agent details - moved here to be with other agent endpoints
-      .put('/api/agents/:id',  async ({ params, body, request, set }: { 
+      .put('/api/agents/:id', async ({ params, body, request, set }: { 
         params: { id: string }, 
         body: AgentUpdate,
         request: Request,
@@ -866,7 +943,7 @@ const startServer = async () => {
           }
 
           // Check if user is an admin
-          if (currentUser.role !== 'admin') {
+          if (!currentUser.is_admin) {
             logger.error(`Authorization failed: User ${currentUser.id} is not an admin`)
             set.status = 403
             return {
@@ -881,21 +958,6 @@ const startServer = async () => {
           // Get the libSQL client
           const client = db.getClient()
 
-          const role = agent.isAdmin && agent.isAgent ? 'admin_agent' : agent.isAdmin ? 'admin' : 'agent'
-          logger.info(`Calculated role: ${role}`)
-          
-          // Log the query parameters
-          const userUpdateParams = [
-            agent.firstName,
-            agent.lastName,
-            agent.email,
-            agent.phone,
-            role,
-            params.id,
-            currentUser.organization_id
-          ]
-          logger.info(`User update parameters: ${JSON.stringify(userUpdateParams, null, 2)}`)
-
           // Update user details
           const userUpdateResult = await client.execute({
             sql: `UPDATE users 
@@ -903,10 +965,20 @@ const startServer = async () => {
                       last_name = ?, 
                       email = ?, 
                       phone = ?,
-                      role = ?
+                      is_admin = ?,
+                      is_agent = ?
                   WHERE id = ? AND organization_id = ?
                   RETURNING *`,
-            args: userUpdateParams
+            args: [
+              agent.firstName,
+              agent.lastName,
+              agent.email,
+              agent.phone,
+              agent.is_admin ? 1 : 0,
+              agent.is_agent ? 1 : 0,
+              params.id,
+              currentUser.organization_id
+            ]
           })
 
           logger.info(`User update result: ${JSON.stringify(userUpdateResult.rows, null, 2)}`)
@@ -966,11 +1038,10 @@ const startServer = async () => {
               lastName: updatedUser.last_name,
               email: updatedUser.email,
               phone: updatedUser.phone || '',
-              role: updatedUser.role,
+              is_admin: Boolean(updatedUser.is_admin),
+              is_agent: Boolean(updatedUser.is_agent),
               carriers: updatedSettings.carrierContracts,
-              stateLicenses: updatedSettings.stateLicenses,
-              isAdmin: updatedUser.role === 'admin' || updatedUser.role === 'admin_agent',
-              isAgent: updatedUser.role === 'agent' || updatedUser.role === 'admin_agent'
+              stateLicenses: updatedSettings.stateLicenses
             }
           }
 
@@ -1007,7 +1078,8 @@ const startServer = async () => {
                 u.email,
                 u.first_name as firstName,
                 u.last_name as lastName,
-                u.role,
+                u.is_admin,
+                u.is_agent,
                 u.phone,
                 a.settings as agentSettings
               FROM users u
@@ -1035,7 +1107,8 @@ const startServer = async () => {
               email: user.email,
               firstName: user.firstName,
               lastName: user.lastName,
-              role: user.role,
+              is_admin: Boolean(user.is_admin),
+              is_agent: Boolean(user.is_agent),
               phone: user.phone || '',
               agentSettings: user.agentSettings ? JSON.parse(user.agentSettings) : null
             }

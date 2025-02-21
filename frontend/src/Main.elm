@@ -74,7 +74,8 @@ type Role
 type alias User =
     { id : String
     , email : String
-    , role : Role
+    , isAdmin : Bool
+    , isAgent : Bool
     , organizationSlug : String
     , firstName : String
     , lastName : String
@@ -218,6 +219,7 @@ type ProtectedPage
     | ProfileRoute
     | BrandSettingsRoute
     | TempLandingRoute
+    | AgentsRoute
 
 
 type SetupPage
@@ -272,6 +274,7 @@ routeParser =
         , map (ProtectedRoute ProfileRoute) (s "profile")
         , map (ProtectedRoute BrandSettingsRoute) (s "brand-settings")
         , map (ProtectedRoute TempLandingRoute) (s "templanding")
+        , map (ProtectedRoute AgentsRoute) (s "add-agents")
         , map (\progress -> SetupRoute (ChoosePlanRoute progress))
             (s "choose-plan" <?> setupProgressDecoder)
         , map (\progress -> SetupRoute (SetupSettingsRoute progress))
@@ -421,7 +424,8 @@ update msg model =
                                         Just
                                             { id = ""
                                             , email = response.email
-                                            , role = AdminOnly
+                                            , isAdmin = False
+                                            , isAgent = False
                                             , organizationSlug = response.orgSlug
                                             , firstName = ""
                                             , lastName = ""
@@ -470,7 +474,8 @@ update msg model =
                             user =
                                 { id = response.id
                                 , email = response.email
-                                , role = AdminOnly -- TODO: Parse role from response
+                                , isAdmin = False
+                                , isAgent = False
                                 , organizationSlug = response.organizationSlug
                                 , firstName = response.firstName
                                 , lastName = response.lastName
@@ -704,22 +709,29 @@ viewNavHeader model =
                         , onClick (InternalLinkClicked "/brand-settings")
                         ]
                         [ text "Brand Settings" ]
+                    , if isAdminOrAdminAgent model.currentUser then
+                        button
+                            [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:text-purple-600 transition-colors duration-200"
+                            , onClick (InternalLinkClicked "/add-agents")
+                            ]
+                            [ text "Manage Agents" ]
+
+                      else
+                        text ""
                     , button
                         [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:text-purple-600 transition-colors duration-200"
                         , onClick (InternalLinkClicked "/profile")
                         ]
                         [ text "Profile" ]
-                    , --if isAdminOrAdminAgent model.currentUser then
-                      div [ class "flex items-center space-x-4" ]
-                        [ button
+                    , if isAdminOrAdminAgent model.currentUser then
+                        button
                             [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:text-purple-600 transition-colors duration-200"
                             , onClick (InternalLinkClicked "/settings")
                             ]
                             [ text "Organization Settings" ]
-                        ]
 
-                    -- else
-                    -- text ""
+                      else
+                        text ""
                     ]
                 ]
             ]
@@ -730,7 +742,7 @@ isAdminOrAdminAgent : Maybe User -> Bool
 isAdminOrAdminAgent maybeUser =
     case maybeUser of
         Just user ->
-            user.role == AdminOnly || user.role == AdminAgent
+            user.isAdmin
 
         Nothing ->
             False
@@ -813,45 +825,13 @@ getRouteAccess route =
             Public
 
 
-roleDecoder : Decoder Role
-roleDecoder =
-    Decode.string
-        |> Decode.andThen
-            (\str ->
-                case str of
-                    "admin" ->
-                        Decode.succeed AdminOnly
-
-                    "admin_agent" ->
-                        Decode.succeed AdminAgent
-
-                    "agent" ->
-                        Decode.succeed AgentOnly
-
-                    _ ->
-                        Decode.fail ("Invalid role: " ++ str)
-            )
-
-
-roleToString : Role -> String
-roleToString role =
-    case role of
-        AdminOnly ->
-            "admin"
-
-        AdminAgent ->
-            "admin_agent"
-
-        AgentOnly ->
-            "agent"
-
-
 userDecoder : Decoder User
 userDecoder =
-    Decode.map6 User
+    Decode.map7 User
         (Decode.field "id" (Decode.map String.fromInt Decode.int))
         (Decode.field "email" Decode.string)
-        (Decode.field "role" roleDecoder)
+        (Decode.field "is_admin" Decode.bool)
+        (Decode.field "is_agent" Decode.bool)
         (Decode.field "organization_name" Decode.string)
         (Decode.field "first_name" Decode.string)
         (Decode.field "last_name" Decode.string)
@@ -1088,7 +1068,8 @@ updatePage url ( model, cmd ) =
                                                         Just
                                                             { id = user.id
                                                             , email = user.email
-                                                            , role = roleToString user.role
+                                                            , isAdmin = user.isAdmin
+                                                            , isAgent = user.isAgent
                                                             }
 
                                                     Nothing ->
@@ -1147,6 +1128,18 @@ updatePage url ( model, cmd ) =
                                 , Cmd.batch [ cmd, Cmd.map TempLandingMsg tempLandingCmd ]
                                 )
 
+                            ProtectedRoute AgentsRoute ->
+                                let
+                                    ( addAgentsModel, addAgentsCmd ) =
+                                        AddAgent.init
+                                            { isSetup = False
+                                            , key = model.key
+                                            }
+                                in
+                                ( { model | page = AddAgentsPage addAgentsModel }
+                                , Cmd.batch [ cmd, Cmd.map AddAgentsMsg addAgentsCmd ]
+                                )
+
                             SetupRoute (ChoosePlanRoute progress) ->
                                 let
                                     ( choosePlanModel, choosePlanCmd ) =
@@ -1183,7 +1176,8 @@ updatePage url ( model, cmd ) =
                                                         Just
                                                             { id = user.id
                                                             , email = user.email
-                                                            , role = roleToString user.role
+                                                            , isAdmin = user.isAdmin
+                                                            , isAgent = user.isAgent
                                                             }
 
                                                     Nothing ->

@@ -137,17 +137,19 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
           `INSERT INTO users (
             email,
             organization_id,
-            role,
+            is_admin,
+            is_agent,
             is_active,
             first_name,
             last_name,
             created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             data.adminEmail,
             orgId,
-            'admin',
-            1,
+            1, // is_admin
+            0, // is_agent
+            1, // is_active
             data.adminFirstName,
             data.adminLastName,
             new Date().toISOString()

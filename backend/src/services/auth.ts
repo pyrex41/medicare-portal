@@ -172,12 +172,22 @@ export async function validateSession(sessionId: string): Promise<User | null> {
     return null;
   }
 
-  // Get the user associated with this session
+  // Get the user associated with this session with updated columns
   const user = await db.fetchOne<User>(
-    `SELECT users.*, organizations.name as organization_name 
-     FROM users 
-     JOIN organizations ON users.organization_id = organizations.id 
-     WHERE users.id = ?`,
+    `SELECT 
+      u.id,
+      u.email,
+      u.organization_id,
+      u.is_admin,
+      u.is_agent,
+      u.first_name,
+      u.last_name,
+      u.is_active,
+      u.phone,
+      o.name as organization_name 
+     FROM users u
+     JOIN organizations o ON u.organization_id = o.id 
+     WHERE u.id = ?`,
     [session.user_id]
   );
 
@@ -216,21 +226,22 @@ export async function getUserFromSession(request: Request) {
 
     const userId = sessionResult[0][0];
 
-    // Get user data
+    // Updated query to use is_admin and is_agent
     const userResult = await db.fetchAll(
       `SELECT 
-        users.id,
-        users.email,
-        users.organization_id,
-        users.role,
-        users.first_name,
-        users.last_name,
-        users.is_active,
-        users.phone,
-        organizations.name as organization_name
-       FROM users 
-       JOIN organizations ON users.organization_id = organizations.id 
-       WHERE users.id = ?`,
+        u.id,
+        u.email,
+        u.organization_id,
+        u.is_admin,
+        u.is_agent,
+        u.first_name,
+        u.last_name,
+        u.is_active,
+        u.phone,
+        o.name as organization_name
+       FROM users u
+       JOIN organizations o ON u.organization_id = o.id 
+       WHERE u.id = ?`,
       [userId]
     );
 
@@ -243,12 +254,13 @@ export async function getUserFromSession(request: Request) {
       id: userResult[0][0],
       email: userResult[0][1],
       organization_id: userResult[0][2],
-      role: userResult[0][3],
-      first_name: userResult[0][4],
-      last_name: userResult[0][5],
-      is_active: userResult[0][6],
-      phone: userResult[0][7],
-      organization_name: userResult[0][8]
+      is_admin: Boolean(userResult[0][3]),
+      is_agent: Boolean(userResult[0][4]),
+      first_name: userResult[0][5],
+      last_name: userResult[0][6],
+      is_active: userResult[0][7],
+      phone: userResult[0][8],
+      organization_name: userResult[0][9]
     };
 
     return user;

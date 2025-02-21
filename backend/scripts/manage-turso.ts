@@ -121,16 +121,17 @@ async function main() {
 
 async function listDatabasesAndOrgs(db: Database, turso: TursoManager) {
   const databases = await turso.listDatabases();
-  const orgs = await db.execute<Organization>(
+  const result = await db.execute(
     'SELECT id, name, turso_db_url FROM organizations WHERE turso_db_url IS NOT NULL'
   );
+  const orgs = result.rows || [];
 
   const mappedDatabases = databases.map(database => {
-    const org = orgs.find(o => o.turso_db_url && o.turso_db_url.toString().includes(database.hostname));
+    const org = orgs.find((o: any) => o[2] && o[2].toString().includes(database.hostname));
     return {
       name: database.name,
       hostname: database.hostname,
-      organization: org ? org.name : 'Not associated with any organization'
+      organization: org ? org[1] : 'Not associated with any organization'
     };
   });
 
@@ -207,9 +208,10 @@ async function updateGroupConfig(turso: TursoManager) {
 
 async function deleteCustomerDatabase(db: Database, turso: TursoManager) {
   const databases = await turso.listDatabases();
-  const orgs = await db.execute<Organization>(
+  const result = await db.execute(
     'SELECT id, name, turso_db_url FROM organizations WHERE turso_db_url IS NOT NULL'
   );
+  const orgs = result.rows || [];
 
   if (databases.length === 0) {
     p.note('No databases found to delete', 'Empty');
@@ -217,25 +219,36 @@ async function deleteCustomerDatabase(db: Database, turso: TursoManager) {
   }
 
   const options = databases.map(database => {
-    const org = orgs.find(o => o.turso_db_url && o.turso_db_url.toString().includes(database.hostname));
+    const org = orgs.find((o: any) => o[2] && o[2].toString().includes(database.hostname));
     return {
       value: database.name,
-      label: `${database.name} (${org ? org.name : 'Unassociated'})`,
+      label: `${database.name} (${org ? org[1] : 'Unassociated'})`,
     };
   });
 
-  const selection = await p.select({
-    message: 'Select database to delete:',
+  const selections = await p.multiselect({
+    message: 'Select databases to delete (space to select, enter to confirm):',
     options,
+    required: true
   });
 
-  if (p.isCancel(selection)) {
+  if (p.isCancel(selections)) {
     p.note(chalk.yellow('Operation cancelled'));
     return;
   }
 
+  const selectedDbs = selections as string[];
+  if (selectedDbs.length === 0) {
+    p.note(chalk.yellow('No databases selected'));
+    return;
+  }
+
   const confirm = await p.confirm({
-    message: chalk.red(`Are you sure you want to delete database "${selection}"?\nThis action cannot be undone!`),
+    message: chalk.red(
+      `Are you sure you want to delete the following databases?\n` +
+      selectedDbs.map(db => `  - ${db}`).join('\n') +
+      `\nThis action cannot be undone!`
+    ),
   });
 
   if (p.isCancel(confirm) || !confirm) {
@@ -243,27 +256,36 @@ async function deleteCustomerDatabase(db: Database, turso: TursoManager) {
     return;
   }
 
-  await turso.deleteDatabase(selection as string);
+  for (const dbName of selectedDbs) {
+    try {
+      await turso.deleteDatabase(dbName);
 
-  // Update organization record
-  const org = orgs.find(o => 
-    o.turso_db_url && 
-    o.turso_db_url.toString().includes(
-      databases.find(d => d.name === selection)?.hostname || ''
-    )
-  );
+      // Update organization record
+      const org = orgs.find((o: any) => 
+        o[2] && 
+        o[2].toString().includes(
+          databases.find(d => d.name === dbName)?.hostname || ''
+        )
+      );
 
-  if (org) {
-    await db.execute(
-      'UPDATE organizations SET turso_db_url = NULL, turso_auth_token = NULL WHERE id = ?',
-      [org.id]
-    );
+      if (org) {
+        await db.execute(
+          'UPDATE organizations SET turso_db_url = NULL, turso_auth_token = NULL WHERE id = ?',
+          [org[0]]
+        );
+      }
+
+      p.note(
+        chalk.green(`Successfully deleted database "${dbName}"`),
+        'Success'
+      );
+    } catch (error) {
+      p.note(
+        chalk.red(`Failed to delete database "${dbName}": ${error}`),
+        'Error'
+      );
+    }
   }
-
-  p.note(
-    chalk.green(`Successfully deleted database "${selection}"`),
-    'Success'
-  );
 }
 
 main().catch((error) => {

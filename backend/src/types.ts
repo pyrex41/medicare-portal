@@ -11,6 +11,7 @@ export interface ContactCreate {
   state: string
   zip_code: string
   agent_id?: number | null
+  phone_number: string
 }
 
 export interface AgentCreate {
@@ -24,9 +25,11 @@ export interface User {
   id: number;
   email: string;
   organization_id: number;
-  role: 'admin' | 'agent' | 'admin_agent';
+  is_admin: boolean;
+  is_agent: boolean;
   is_active: boolean;
-  last_login: string | null;
-  created_at: string;
+  first_name: string;
+  last_name: string;
+  phone: string;
   organization_name?: string;
 } 

@@ -113,14 +113,15 @@ type GISelectionMode
 type alias InitFlags =
     { isSetup : Bool
     , key : Nav.Key
-    , currentUser : Maybe User
+    , currentUser : Maybe CurrentUser
     }
 
 
-type alias User =
+type alias CurrentUser =
     { id : String
     , email : String
-    , role : String -- "admin" or "agent"
+    , isAdmin : Bool
+    , isAgent : Bool
     }
 
 
@@ -131,7 +132,7 @@ type alias Model =
     , recommendedGICombos : List StateCarrierSetting
     , isSetup : Bool
     , key : Nav.Key
-    , currentUser : Maybe User
+    , currentUser : Maybe CurrentUser
     , isLoading : Bool
     }
 
@@ -1185,7 +1186,7 @@ viewNavigation model =
     nav []
         [ case model.currentUser of
             Just user ->
-                if user.role == "admin" then
+                if user.isAdmin then
                     viewNavLink "Manage Agents" "/agents"
 
                 else

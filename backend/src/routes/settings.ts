@@ -120,7 +120,7 @@ export const settingsRoutes = new Elysia()
             }
         }
 
-        const canEditOrgSettings = user.role === 'admin';
+        const canEditOrgSettings = user.is_admin;
 
         const response = {
             success: true,
@@ -164,7 +164,7 @@ export const settingsRoutes = new Elysia()
     try {
         if (scope === 'org') {
             // Verify admin role for org settings
-            if (user.role !== 'admin') {
+            if (!user.is_admin) {
                 logger.warn(`User ${user.id} attempted to modify org settings but is not an admin`);
                 return { success: false, error: 'Only admins can modify organization settings' };
             }

@@ -10,6 +10,7 @@ import Html.Attributes exposing (..)
 import Html.Events exposing (..)
 import Http
 import Json.Decode as Decode exposing (Decoder)
+import Json.Decode.Pipeline as Pipeline
 import Json.Encode as Encode
 import Parser exposing ((|.), (|=), Parser, chompIf, chompWhile, end, succeed, symbol)
 import StateRegions exposing (Region(..), getRegionStates, regionToString)
@@ -119,7 +120,8 @@ type alias User =
     , email : String
     , firstName : String
     , lastName : String
-    , role : String
+    , isAdmin : Bool
+    , isAgent : Bool
     , phone : String
     }
 
@@ -130,27 +132,34 @@ type alias Agent =
     , lastName : String
     , email : String
     , phone : String
-    , role : String
-    , carriers : List String
-    , stateLicenses : List String
-    , isExpanded : Bool
     , isAdmin : Bool
     , isAgent : Bool
+    , carriers : List String
+    , stateLicenses : List String
+    , expanded : Bool
     }
 
 
 type Msg
-    = UpdateEmail String
+    = NoOp
+    | UpdateEmail String
     | UpdateFirstName String
     | UpdateLastName String
     | UpdatePhone String
-    | ToggleAdmin
-    | ToggleAdminAgent
-    | SelectCarrier String Bool
-    | SelectState String Bool
-    | SelectAllStates Bool
+    | ToggleAdmin String
+    | ToggleAgent String
+    | UpdateField String String
     | SaveAgent
     | AgentSaved (Result Http.Error ())
+    | NavigateTo String
+    | CloseModal
+    | ShowModal
+    | ToggleCarrier String Bool
+    | ToggleState String Bool
+    | SelectAllCarriers Bool
+    | SelectAllStates Bool
+    | DeleteAgent String
+    | AgentDeleted (Result Http.Error ())
     | FinishSetup
     | SelectCommonStates Region
     | LoadFromOrg
@@ -395,10 +404,11 @@ viewBasicInfo model =
                         [ text "Phone" ]
                     , input
                         [ type_ "tel"
-                        , class "mt-1 px-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                        , class "mt-1 px-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-500"
                         , value model.displayPhone
                         , onInput UpdatePhone
                         , placeholder "(555) 555-5555"
+                        , disabled (not (isAdminBecomingAgent model))
                         ]
                         []
                     ]
@@ -412,7 +422,8 @@ viewBasicInfo model =
                             [ type_ "checkbox"
                             , class "rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                             , checked model.isAdmin
-                            , onClick ToggleAdmin
+                            , onClick (ToggleAdmin "")
+                            , disabled (not (isAdminBecomingAgent model))
                             ]
                             []
                         , span [ class "ml-2 text-sm text-gray-700" ]
@@ -429,7 +440,8 @@ viewBasicInfo model =
                                  else
                                     model.isAgent
                                 )
-                            , onClick ToggleAdminAgent
+                            , onClick (ToggleAgent "")
+                            , disabled (not (isAdminBecomingAgent model))
                             ]
                             []
                         , span [ class "ml-2 text-sm text-gray-700" ]
@@ -459,44 +471,21 @@ viewWritingNumbers model =
                         [ text "Batch Select" ]
                     , div [ class "flex gap-2" ]
                         [ button
-                            [ class "px-3 py-1 text-sm border rounded-md hover:bg-gray-50 min-w-[70px]"
-                            , onClick (SelectCarrier "" True)
+                            [ class "px-3 py-1 text-sm border rounded-md hover:bg-gray-50 min-w-[70px] disabled:opacity-50 disabled:cursor-not-allowed"
+                            , onClick (SelectAllCarriers True)
+                            , disabled (not (isAdminBecomingAgent model))
                             ]
                             [ text "Select All" ]
                         , button
-                            [ class "px-3 py-1 text-sm border rounded-md hover:bg-gray-50 min-w-[70px]"
-                            , onClick (SelectCarrier "" False)
+                            [ class "px-3 py-1 text-sm border rounded-md hover:bg-gray-50 min-w-[70px] disabled:opacity-50 disabled:cursor-not-allowed"
+                            , onClick (SelectAllCarriers False)
+                            , disabled (not (isAdminBecomingAgent model))
                             ]
                             [ text "Clear All" ]
                         ]
                     ]
                 ]
             ]
-        , div [ class "grid grid-cols-3 gap-4" ]
-            (List.map
-                (\carrier ->
-                    let
-                        isEnabled =
-                            List.member carrier orgCarriers
-                    in
-                    label
-                        [ class "inline-flex items-center"
-                        , classList [ ( "opacity-50 cursor-not-allowed", not isEnabled ) ]
-                        ]
-                        [ input
-                            [ type_ "checkbox"
-                            , class "rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                            , checked (List.member carrier model.carriers)
-                            , onCheck (\isChecked -> SelectCarrier carrier isChecked)
-                            , disabled (not isEnabled)
-                            ]
-                            []
-                        , span [ class "ml-2 text-sm text-gray-700" ]
-                            [ text carrier ]
-                        ]
-                )
-                allCarriers
-            )
         ]
 
 
@@ -518,13 +507,15 @@ viewStateLicenses model =
                         [ text "Batch Select" ]
                     , div [ class "flex gap-2" ]
                         [ button
-                            [ class "px-3 py-1 text-sm border rounded-md hover:bg-gray-50 min-w-[70px]"
+                            [ class "px-3 py-1 text-sm border rounded-md hover:bg-gray-50 min-w-[70px] disabled:opacity-50 disabled:cursor-not-allowed"
                             , onClick (SelectAllStates True)
+                            , disabled (not (isAdminBecomingAgent model))
                             ]
                             [ text "Select All" ]
                         , button
-                            [ class "px-3 py-1 text-sm border rounded-md hover:bg-gray-50 min-w-[70px]"
+                            [ class "px-3 py-1 text-sm border rounded-md hover:bg-gray-50 min-w-[70px] disabled:opacity-50 disabled:cursor-not-allowed"
                             , onClick (SelectAllStates False)
+                            , disabled (not (isAdminBecomingAgent model))
                             ]
                             [ text "Clear All" ]
                         ]
@@ -536,8 +527,9 @@ viewStateLicenses model =
                         (List.map
                             (\region ->
                                 button
-                                    [ class "px-3 py-1 text-sm border rounded-md hover:bg-gray-50"
+                                    [ class "px-3 py-1 text-sm border rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
                                     , onClick (SelectCommonStates region)
+                                    , disabled (not (isAdminBecomingAgent model))
                                     ]
                                     [ text (regionToString region) ]
                             )
@@ -555,14 +547,14 @@ viewStateLicenses model =
                     in
                     label
                         [ class "inline-flex items-center"
-                        , classList [ ( "opacity-50 cursor-not-allowed", not isEnabled ) ]
+                        , classList [ ( "opacity-50 cursor-not-allowed", not isEnabled || not (isAdminBecomingAgent model) ) ]
                         ]
                         [ input
                             [ type_ "checkbox"
                             , class "rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                             , checked (List.member state model.stateLicenses)
-                            , onCheck (\isChecked -> SelectState state isChecked)
-                            , disabled (not isEnabled)
+                            , onCheck (\isChecked -> ToggleState state isChecked)
+                            , disabled (not isEnabled || not (isAdminBecomingAgent model))
                             ]
                             []
                         , span [ class "ml-2 text-sm text-gray-700" ]
@@ -591,7 +583,7 @@ viewAgentsList model =
                         adminAgents =
                             List.filter
                                 (\agent ->
-                                    (agent.isAdmin || agent.role == "admin_agent")
+                                    (agent.isAdmin || agent.isAgent)
                                         && not (List.any (\a -> a.id == agent.id && a /= agent) model.agents)
                                 )
                                 model.agents
@@ -631,52 +623,6 @@ viewAgentItem model agent =
             else
                 text ""
 
-        roleCheckboxes =
-            div [ class "flex items-center space-x-6" ]
-                [ label [ class "inline-flex items-center" ]
-                    [ input
-                        [ type_ "checkbox"
-                        , class "rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
-                        , checked agent.isAdmin
-                        , disabled isCurrentUserAgent
-                        , onClick (ToggleAgentRole agent.id "admin")
-                        , stopPropagationOn "click" (Decode.succeed ( ToggleAgentRole agent.id "admin", True ))
-                        ]
-                        []
-                    , span
-                        [ class
-                            (if isCurrentUserAgent then
-                                "ml-2 text-sm text-gray-400"
-
-                             else
-                                "ml-2 text-sm text-gray-700"
-                            )
-                        ]
-                        [ text "Admin" ]
-                    ]
-                , div
-                    [ class "inline-flex items-center cursor-pointer select-none"
-                    , onClick (ToggleAgentRole agent.id "agent")
-                    , stopPropagationOn "click" (Decode.succeed ( ToggleAgentRole agent.id "agent", True ))
-                    ]
-                    [ div
-                        [ class "w-4 h-4 border rounded flex items-center justify-center mr-2"
-                        , classList
-                            [ ( "bg-blue-600 border-blue-600", agent.isAgent )
-                            , ( "border-gray-300", not agent.isAgent )
-                            ]
-                        ]
-                        [ if agent.isAgent then
-                            span [ class "text-white text-xs" ] [ text "✓" ]
-
-                          else
-                            text ""
-                        ]
-                    , span [ class "text-sm text-gray-700" ]
-                        [ text "Agent" ]
-                    ]
-                ]
-
         formattedPhone =
             formatPhoneNumber (String.filter Char.isDigit agent.phone)
     in
@@ -702,21 +648,9 @@ viewAgentItem model agent =
                                 [ text formattedPhone ]
                             ]
                         ]
-                    , div [ class "flex items-center space-x-4" ]
-                        [ roleCheckboxes
-                        , if not isCurrentUserAgent then
-                            button
-                                [ class "text-sm text-red-600 hover:text-red-900"
-                                , stopPropagationOn "click" (Decode.succeed ( RemoveAgent agent.id, True ))
-                                ]
-                                [ text "Remove" ]
-
-                          else
-                            text ""
-                        ]
                     ]
                 ]
-            , if agent.isExpanded then
+            , if agent.expanded then
                 div [ class "border-t border-gray-200 p-4 bg-gray-50" ]
                     [ viewAgentDetails model agent ]
 
@@ -753,9 +687,6 @@ viewAgentDetails model agent =
                 "email" ->
                     String.isEmpty agent.email
 
-                "role" ->
-                    not (agent.isAdmin || agent.isAgent)
-
                 _ ->
                     False
 
@@ -779,6 +710,23 @@ viewAgentDetails model agent =
 
         isLoading =
             model.isLoadingForAgent == Just agent.id
+
+        canEdit =
+            canModifySettings model agent.id
+
+        hasChanges =
+            model.pendingSave == Just agent.id
+
+        isSaving =
+            model.isLoadingForAgent == Just agent.id
+
+        onFieldInput : String -> String -> Msg
+        onFieldInput field value =
+            UpdateAgentField agent.id field value
+
+        onSelectAllCarriers : Bool -> Msg
+        onSelectAllCarriers isSelected =
+            SelectAllCarriersForAgent agent.id isSelected
     in
     div [ class "space-y-6" ]
         [ div [ class "space-y-4" ]
@@ -790,9 +738,10 @@ viewAgentDetails model agent =
                         ]
                     , input
                         [ type_ "text"
-                        , class "mt-1 px-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                        , class "mt-1 px-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-500"
                         , value agent.firstName
-                        , onInput (UpdateAgentField agent.id "firstName")
+                        , onInput (onFieldInput "firstName")
+                        , disabled (not canEdit)
                         ]
                         []
                     ]
@@ -803,9 +752,10 @@ viewAgentDetails model agent =
                         ]
                     , input
                         [ type_ "text"
-                        , class "mt-1 px-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                        , class "mt-1 px-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-500"
                         , value agent.lastName
-                        , onInput (UpdateAgentField agent.id "lastName")
+                        , onInput (onFieldInput "lastName")
+                        , disabled (not canEdit)
                         ]
                         []
                     ]
@@ -818,9 +768,10 @@ viewAgentDetails model agent =
                         ]
                     , input
                         [ type_ "email"
-                        , class "mt-1 px-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                        , class "mt-1 px-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-500"
                         , value agent.email
-                        , onInput (UpdateAgentField agent.id "email")
+                        , onInput (onFieldInput "email")
+                        , disabled (not canEdit)
                         ]
                         []
                     ]
@@ -831,10 +782,11 @@ viewAgentDetails model agent =
                         ]
                     , input
                         [ type_ "tel"
-                        , class "mt-1 px-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                        , class "mt-1 px-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-500"
                         , value formattedPhone
-                        , onInput (UpdateAgentField agent.id "phone")
+                        , onInput (onFieldInput "phone")
                         , placeholder "(555) 555-5555"
+                        , disabled (not canEdit)
                         ]
                         []
                     ]
@@ -846,6 +798,7 @@ viewAgentDetails model agent =
                     [ button
                         [ class "w-full inline-flex justify-center items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
                         , onClick (LoadFromOrgForAgent agent.id)
+                        , disabled (not canEdit)
                         ]
                         [ if isLoading then
                             div [ class "flex items-center" ]
@@ -878,108 +831,21 @@ viewAgentDetails model agent =
                                     [ text "Batch Select" ]
                                 , div [ class "flex gap-2" ]
                                     [ button
-                                        [ class "px-3 py-1 text-sm border rounded-md hover:bg-gray-50 min-w-[70px]"
-                                        , onClick (SelectAllCarriersForAgent agent.id True)
+                                        [ class "px-3 py-1 text-sm border rounded-md hover:bg-gray-50 min-w-[70px] disabled:opacity-50 disabled:cursor-not-allowed"
+                                        , onClick (onSelectAllCarriers True)
+                                        , disabled (not canEdit)
                                         ]
                                         [ text "Select All" ]
                                     , button
-                                        [ class "px-3 py-1 text-sm border rounded-md hover:bg-gray-50 min-w-[70px]"
-                                        , onClick (SelectAllCarriersForAgent agent.id False)
+                                        [ class "px-3 py-1 text-sm border rounded-md hover:bg-gray-50 min-w-[70px] disabled:opacity-50 disabled:cursor-not-allowed"
+                                        , onClick (onSelectAllCarriers False)
+                                        , disabled (not canEdit)
                                         ]
                                         [ text "Clear All" ]
                                     ]
                                 ]
                             ]
                         ]
-                    , div [ class "grid grid-cols-3 gap-4" ]
-                        (List.map
-                            (\carrier ->
-                                let
-                                    isEnabled =
-                                        List.member carrier orgCarriers
-                                in
-                                label
-                                    [ class "inline-flex items-center"
-                                    , classList [ ( "opacity-50 cursor-not-allowed", not isEnabled ) ]
-                                    ]
-                                    [ input
-                                        [ type_ "checkbox"
-                                        , class "rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                                        , checked (List.member carrier agent.carriers)
-                                        , onCheck (\isChecked -> UpdateAgentCarrier agent.id carrier isChecked)
-                                        , disabled (not isEnabled)
-                                        ]
-                                        []
-                                    , span [ class "ml-2 text-sm text-gray-700" ]
-                                        [ text carrier ]
-                                    ]
-                            )
-                            allCarriers
-                        )
-                    ]
-                , div [ class "space-y-4" ]
-                    [ h3 [ class "text-lg font-medium text-gray-900" ]
-                        [ text "State Licenses" ]
-                    , div [ class "mb-4 space-y-2" ]
-                        [ div [ class "space-y-4" ]
-                            [ div []
-                                [ div [ class "text-sm font-medium text-gray-700 mb-2" ]
-                                    [ text "Batch Select" ]
-                                , div [ class "flex gap-2" ]
-                                    [ button
-                                        [ class "px-3 py-1 text-sm border rounded-md hover:bg-gray-50 min-w-[70px]"
-                                        , onClick (SelectAllStatesForAgent agent.id True)
-                                        ]
-                                        [ text "Select All" ]
-                                    , button
-                                        [ class "px-3 py-1 text-sm border rounded-md hover:bg-gray-50 min-w-[70px]"
-                                        , onClick (SelectAllStatesForAgent agent.id False)
-                                        ]
-                                        [ text "Clear All" ]
-                                    ]
-                                ]
-                            , div []
-                                [ div [ class "text-sm font-medium text-gray-700 mb-2" ]
-                                    [ text "By Region:" ]
-                                , div [ class "flex gap-2" ]
-                                    (List.map
-                                        (\region ->
-                                            button
-                                                [ class "px-3 py-1 text-sm border rounded-md hover:bg-gray-50"
-                                                , onClick (SelectCommonStatesForAgent agent.id region)
-                                                ]
-                                                [ text (regionToString region) ]
-                                        )
-                                        StateRegions.allRegions
-                                    )
-                                ]
-                            ]
-                        ]
-                    , div [ class "grid grid-cols-6 gap-4" ]
-                        (List.map
-                            (\state ->
-                                let
-                                    isEnabled =
-                                        List.member state orgStates
-                                in
-                                label
-                                    [ class "inline-flex items-center"
-                                    , classList [ ( "opacity-50 cursor-not-allowed", not isEnabled ) ]
-                                    ]
-                                    [ input
-                                        [ type_ "checkbox"
-                                        , class "rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                                        , checked (List.member state agent.stateLicenses)
-                                        , onCheck (\isChecked -> UpdateAgentState agent.id state isChecked)
-                                        , disabled (not isEnabled)
-                                        ]
-                                        []
-                                    , span [ class "ml-2 text-sm text-gray-700" ]
-                                        [ text state ]
-                                    ]
-                            )
-                            allStates
-                        )
                     ]
                 ]
 
@@ -1066,6 +932,9 @@ viewBottomBar model =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+        NoOp ->
+            ( model, Cmd.none )
+
         UpdateEmail email ->
             ( { model | email = email }, Cmd.none )
 
@@ -1095,68 +964,97 @@ update msg model =
             , Cmd.none
             )
 
-        ToggleAdminAgent ->
-            ( { model | isAdmin = not model.isAdmin }, Cmd.none )
+        ToggleAdmin agentId ->
+            let
+                updatedAgents =
+                    List.map
+                        (\agent ->
+                            if agent.id == agentId then
+                                { agent | isAdmin = not agent.isAdmin }
 
-        ToggleAdmin ->
+                            else
+                                agent
+                        )
+                        model.agents
+            in
+            ( { model | agents = updatedAgents }
+            , case List.head (List.filter (\a -> a.id == agentId) updatedAgents) of
+                Just agent ->
+                    saveAgentDetails agent
+
+                Nothing ->
+                    Cmd.none
+            )
+
+        ToggleAgent agentId ->
+            let
+                updatedAgents =
+                    List.map
+                        (\agent ->
+                            if agent.id == agentId then
+                                { agent | isAgent = not agent.isAgent }
+
+                            else
+                                agent
+                        )
+                        model.agents
+            in
+            ( { model | agents = updatedAgents }
+            , case List.head (List.filter (\a -> a.id == agentId) updatedAgents) of
+                Just agent ->
+                    saveAgentDetails agent
+
+                Nothing ->
+                    Cmd.none
+            )
+
+        UpdateField field value ->
             case model.currentUser of
                 Just user ->
                     let
-                        existingAgent =
-                            List.filter (\agent -> agent.email == user.email) model.agents
-                                |> List.head
+                        updatedUser =
+                            case field of
+                                "firstName" ->
+                                    { user | firstName = value }
+
+                                "lastName" ->
+                                    { user | lastName = value }
+
+                                "phone" ->
+                                    { user | phone = String.filter Char.isDigit value }
+
+                                _ ->
+                                    user
                     in
-                    ( { model | isAdmin = not model.isAdmin }
+                    ( { model | currentUser = Just updatedUser }
                     , Cmd.none
                     )
 
                 Nothing ->
-                    ( { model | isAdmin = not model.isAdmin }, Cmd.none )
-
-        SelectCarrier carrier isSelected ->
-            ( { model
-                | carriers =
-                    if isSelected then
-                        carrier :: model.carriers
-
-                    else
-                        List.filter ((/=) carrier) model.carriers
-              }
-            , Cmd.none
-            )
-
-        SelectState state isSelected ->
-            ( { model
-                | stateLicenses =
-                    if isSelected then
-                        state :: model.stateLicenses
-
-                    else
-                        List.filter ((/=) state) model.stateLicenses
-              }
-            , Cmd.none
-            )
-
-        SelectAllStates isSelected ->
-            ( { model
-                | stateLicenses =
-                    if isSelected then
-                        allStates
-
-                    else
-                        []
-              }
-            , Cmd.none
-            )
-
-        SelectCommonStates region ->
-            ( { model | stateLicenses = model.stateLicenses ++ getRegionStates region }
-            , Cmd.none
-            )
+                    ( model, Cmd.none )
 
         SaveAgent ->
             ( model
-            , saveAgent model
+            , case model.currentUser of
+                Just user ->
+                    let
+                        agent =
+                            { id = user.id
+                            , firstName = user.firstName
+                            , lastName = user.lastName
+                            , email = user.email
+                            , phone = user.phone
+                            , isAdmin = user.isAdmin
+                            , isAgent = user.isAgent
+                            , carriers = []
+                            , stateLicenses = []
+                            , expanded = False
+                            }
+                    in
+                    saveAgentDetails agent
+
+                Nothing ->
+                    Cmd.none
             )
 
         AgentSaved (Ok ()) ->
@@ -1256,7 +1154,7 @@ update msg model =
                 Err error ->
                     case error of
                         Http.BadStatus 403 ->
-                            -- For 403, we'll just continue with the current user as an agent
+                            -- For 403, keep the current user in the agents list
                             -- Don't show an error since this is expected for non-admin users
                             ( model, Cmd.none )
 
@@ -1288,31 +1186,30 @@ update msg model =
                         Just user ->
                             let
                                 isAdminAgent =
-                                    user.role == "admin_agent"
+                                    user.isAdmin && user.isAgent
 
-                                -- For admin_agent, they should be both admin and agent by default
+                                -- Always create an initial agent for the current user in non-setup mode
                                 initialAgent =
-                                    if model.isSetup then
-                                        [ { id = user.id
-                                          , firstName = user.firstName
-                                          , lastName = user.lastName
-                                          , email = user.email
-                                          , phone = user.phone
-                                          , role = user.role
-                                          , carriers = []
-                                          , stateLicenses = []
-                                          , isExpanded = False
-                                          , isAdmin = isAdminAgent || user.role == "admin"
-                                          , isAgent = isAdminAgent || user.role == "agent"
-                                          }
-                                        ]
-
-                                    else
-                                        []
+                                    { id = user.id
+                                    , firstName = user.firstName
+                                    , lastName = user.lastName
+                                    , email = user.email
+                                    , phone = user.phone
+                                    , isAdmin = isAdminAgent || user.isAdmin
+                                    , isAgent = isAdminAgent || user.isAgent
+                                    , carriers = []
+                                    , stateLicenses = []
+                                    , expanded = False
+                                    }
                             in
                             ( { model
                                 | currentUser = Just user
-                                , agents = initialAgent
+                                , agents =
+                                    if model.isSetup then
+                                        [ initialAgent ]
+
+                                    else
+                                        initialAgent :: model.agents
                                 , error = Nothing -- Clear any previous errors
                               }
                             , Cmd.none
@@ -1385,7 +1282,7 @@ update msg model =
             let
                 updateAgent agent =
                     if agent.id == agentId then
-                        { agent | isExpanded = not agent.isExpanded }
+                        { agent | expanded = not agent.expanded }
 
                     else
                         agent
@@ -1399,7 +1296,7 @@ update msg model =
                         { agent
                             | carriers =
                                 if isSelected then
-                                    carrier :: agent.carriers
+                                    agent.carriers ++ [ carrier ]
 
                                 else
                                     List.filter ((/=) carrier) agent.carriers
@@ -1422,7 +1319,7 @@ update msg model =
                         { agent
                             | stateLicenses =
                                 if isSelected then
-                                    state :: agent.stateLicenses
+                                    agent.stateLicenses ++ [ state ]
 
                                 else
                                     List.filter ((/=) state) agent.stateLicenses
@@ -1514,6 +1411,97 @@ update msg model =
             , Cmd.none
             )
 
+        SelectAllCarriers isSelected ->
+            ( { model
+                | carriers =
+                    if isSelected then
+                        allCarriers
+
+                    else
+                        []
+              }
+            , Cmd.none
+            )
+
+        SelectAllStates isSelected ->
+            ( { model
+                | stateLicenses =
+                    if isSelected then
+                        allStates
+
+                    else
+                        []
+              }
+            , Cmd.none
+            )
+
+        DeleteAgent agentId ->
+            ( { model | agents = List.filter (\a -> a.id /= agentId) model.agents }
+            , Cmd.none
+            )
+
+        AgentDeleted result ->
+            case result of
+                Ok _ ->
+                    ( model, fetchAgents )
+
+                Err _ ->
+                    ( { model | error = Just "Failed to delete agent" }, Cmd.none )
+
+        SelectCommonStates region ->
+            ( { model | stateLicenses = model.stateLicenses ++ getRegionStates region }
+            , Cmd.none
+            )
+
+        NavigateTo path ->
+            ( model, Nav.pushUrl model.key path )
+
+        ShowModal ->
+            ( { model | showAddForm = True }, Cmd.none )
+
+        CloseModal ->
+            ( { model | showAddForm = False }, Cmd.none )
+
+        ToggleCarrier agentId isSelected ->
+            let
+                updateAgent agent =
+                    if agent.id == agentId then
+                        { agent
+                            | carriers =
+                                if isSelected then
+                                    agent.carriers ++ [ agentId ]
+
+                                else
+                                    List.filter ((/=) agentId) agent.carriers
+                        }
+
+                    else
+                        agent
+            in
+            ( { model | agents = List.map updateAgent model.agents }
+            , Cmd.none
+            )
+
+        ToggleState agentId isSelected ->
+            let
+                updateAgent agent =
+                    if agent.id == agentId then
+                        { agent
+                            | stateLicenses =
+                                if isSelected then
+                                    agent.stateLicenses ++ [ agentId ]
+
+                                else
+                                    List.filter ((/=) agentId) agent.stateLicenses
+                        }
+
+                    else
+                        agent
+            in
+            ( { model | agents = List.map updateAgent model.agents }
+            , Cmd.none
+            )
+
         SelectAllCarriersForAgent agentId isSelected ->
             let
                 updateAgent agent =
@@ -1538,7 +1526,10 @@ update msg model =
             )
 
         SaveAgentDetails agentId ->
-            ( { model | pendingSave = Nothing }
+            ( { model
+                | pendingSave = Nothing
+                , isLoadingForAgent = Just agentId
+              }
             , case List.filter (\a -> a.id == agentId) model.agents of
                 agent :: _ ->
                     saveAgentDetails agent
@@ -1547,22 +1538,58 @@ update msg model =
                     Cmd.none
             )
 
-        AgentDetailsSaved agentId (Ok _) ->
-            ( model, Cmd.none )
+        AgentDetailsSaved agentId result ->
+            case result of
+                Ok _ ->
+                    let
+                        updateAgent agent =
+                            if agent.id == agentId then
+                                { agent | expanded = False }
 
-        AgentDetailsSaved agentId (Err _) ->
-            ( { model | error = Just "Failed to save agent details" }, Cmd.none )
+                            else
+                                agent
+                    in
+                    ( { model
+                        | agents = List.map updateAgent model.agents
+                        , isLoadingForAgent = Nothing
+                        , error = Nothing
+                      }
+                    , Cmd.none
+                    )
+
+                Err _ ->
+                    ( { model
+                        | error = Just "Failed to save agent details"
+                        , isLoadingForAgent = Nothing
+                      }
+                    , Cmd.none
+                    )
 
         DebounceSaveAgent agentId ->
-            let
-                _ =
-                    Debug.log "Debounced save triggered for agent" agentId
-            in
             if agentId == "main" then
                 -- Handle main agent save
-                ( { model | pendingSave = Nothing }
-                , saveAgent model
-                )
+                case model.currentUser of
+                    Just user ->
+                        let
+                            agent =
+                                { id = user.id
+                                , firstName = user.firstName
+                                , lastName = user.lastName
+                                , email = user.email
+                                , phone = user.phone
+                                , isAdmin = user.isAdmin
+                                , isAgent = user.isAgent
+                                , carriers = []
+                                , stateLicenses = []
+                                , expanded = False
+                                }
+                        in
+                        ( { model | pendingSave = Nothing }
+                        , saveAgentDetails agent
+                        )
+
+                    Nothing ->
+                        ( model, Cmd.none )
 
             else
                 -- Handle sub-agent save
@@ -1608,66 +1635,27 @@ formatPhoneNumber rawPhone =
             ++ String.dropLeft 6 digits
 
 
-saveAgent : Model -> Cmd Msg
-saveAgent model =
+saveAgent : User -> Cmd Msg
+saveAgent user =
     let
-        _ =
-            Debug.log "Saving main agent" { email = model.email, phone = model.rawPhone }
+        agent =
+            { id = user.id
+            , firstName = user.firstName
+            , lastName = user.lastName
+            , email = user.email
+            , phone = user.phone
+            , isAdmin = user.isAdmin
+            , isAgent = user.isAgent
+            , carriers = []
+            , stateLicenses = []
+            , expanded = False
+            }
     in
-    case model.currentUser of
-        Just user ->
-            let
-                role =
-                    if model.isAdmin && model.isAgent then
-                        "admin_agent"
-
-                    else if model.isAdmin then
-                        "admin"
-
-                    else
-                        "agent"
-            in
-            if user.role == "admin" && model.isAdmin then
-                -- Admin becoming agent - use PUT endpoint
-                Http.request
-                    { method = "PUT"
-                    , headers = []
-                    , url = "/api/agents/" ++ user.id ++ "/role"
-                    , body =
-                        Http.jsonBody
-                            (Encode.object
-                                [ ( "role", Encode.string role )
-                                , ( "carriers", Encode.list Encode.string model.carriers )
-                                , ( "stateLicenses", Encode.list Encode.string model.stateLicenses )
-                                , ( "phone", Encode.string model.rawPhone )
-                                ]
-                            )
-                    , expect = Http.expectWhatever AgentSaved
-                    , timeout = Nothing
-                    , tracker = Nothing
-                    }
-
-            else
-                -- Creating new agent - use POST endpoint
-                Http.post
-                    { url = "/api/agents"
-                    , body =
-                        Http.jsonBody
-                            (Encode.object
-                                [ ( "firstName", Encode.string model.firstName )
-                                , ( "lastName", Encode.string model.lastName )
-                                , ( "email", Encode.string model.email )
-                                , ( "phone", Encode.string model.rawPhone )
-                                , ( "role", Encode.string role )
-                                , ( "carriers", Encode.list Encode.string model.carriers )
-                                , ( "stateLicenses", Encode.list Encode.string model.stateLicenses )
-                                ]
-                            )
-                    , expect = Http.expectWhatever AgentSaved
-                    }
-
-        Nothing ->
-            Cmd.none
+    Http.post
+        { url = "/api/agents"
+        , body = Http.jsonBody (encodeAgent agent)
+        , expect = Http.expectWhatever AgentSaved
+        }
 
 
 settingsDecoder : Decoder SettingsResponse
@@ -1842,59 +1830,35 @@ fetchAgents =
 
 agentDecoder : Decoder Agent
 agentDecoder =
-    let
-        buildAgent id firstName lastName email phone role carriers stateLicenses =
-            { id = id
-            , firstName = firstName
-            , lastName = lastName
-            , email = email
-            , phone = phone
-            , role = role
-            , carriers = carriers
-            , stateLicenses = stateLicenses
-            , isExpanded = False
-            , isAdmin = role == "admin" || role == "admin_agent"
-            , isAgent = role == "agent" || role == "admin_agent"
-            }
-    in
-    Decode.succeed buildAgent
-        |> Decode.andThen
-            (\build ->
-                Decode.map build
-                    (Decode.oneOf
-                        [ Decode.field "id" Decode.string
-                        , Decode.field "id" (Decode.map String.fromInt Decode.int)
-                        ]
-                    )
-            )
-        |> Decode.andThen
-            (\build ->
-                Decode.map build (Decode.field "firstName" Decode.string)
-            )
-        |> Decode.andThen
-            (\build ->
-                Decode.map build (Decode.field "lastName" Decode.string)
-            )
-        |> Decode.andThen
-            (\build ->
-                Decode.map build (Decode.field "email" Decode.string)
-            )
-        |> Decode.andThen
-            (\build ->
-                Decode.map build (Decode.field "phone" Decode.string)
-            )
-        |> Decode.andThen
-            (\build ->
-                Decode.map build (Decode.field "role" Decode.string)
-            )
-        |> Decode.andThen
-            (\build ->
-                Decode.map build (Decode.field "carriers" (Decode.list Decode.string))
-            )
-        |> Decode.andThen
-            (\build ->
-                Decode.map build (Decode.field "stateLicenses" (Decode.list Decode.string))
-            )
+    Decode.succeed Agent
+        |> Pipeline.required "id" Decode.string
+        |> Pipeline.required "firstName" Decode.string
+        |> Pipeline.required "lastName" Decode.string
+        |> Pipeline.required "email" Decode.string
+        |> Pipeline.required "phone" Decode.string
+        |> Pipeline.required "is_admin" Decode.bool
+        |> Pipeline.required "is_agent" Decode.bool
+        |> Pipeline.optional "carriers" (Decode.list Decode.string) []
+        |> Pipeline.optional "stateLicenses" (Decode.list Decode.string) []
+        |> Pipeline.hardcoded False
+
+
+
+-- expanded field
+
+
+encodeAgent : Agent -> Encode.Value
+encodeAgent agent =
+    Encode.object
+        [ ( "firstName", Encode.string agent.firstName )
+        , ( "lastName", Encode.string agent.lastName )
+        , ( "email", Encode.string agent.email )
+        , ( "phone", Encode.string agent.phone )
+        , ( "is_admin", Encode.bool agent.isAdmin )
+        , ( "is_agent", Encode.bool agent.isAgent )
+        , ( "carriers", Encode.list Encode.string agent.carriers )
+        , ( "stateLicenses", Encode.list Encode.string agent.stateLicenses )
+        ]
 
 
 
@@ -1905,7 +1869,7 @@ isAdminBecomingAgent : Model -> Bool
 isAdminBecomingAgent model =
     case model.currentUser of
         Just user ->
-            model.isAdmin && user.role == "admin"
+            model.isAdmin && user.isAdmin
 
         Nothing ->
             False
@@ -1944,21 +1908,19 @@ currentUserResponseDecoder =
 userDecoder : Decoder User
 userDecoder =
     let
-        _ =
-            Debug.log "Running userDecoder" ()
-
         idDecoder =
             Decode.oneOf
                 [ Decode.field "id" Decode.string
                 , Decode.field "id" (Decode.map String.fromInt Decode.int)
                 ]
     in
-    Decode.map6 User
+    Decode.map7 User
         idDecoder
         (Decode.field "email" (Debug.log "email field" Decode.string))
         (Decode.field "firstName" (Debug.log "firstName field" Decode.string))
         (Decode.field "lastName" (Debug.log "lastName field" Decode.string))
-        (Decode.field "role" (Debug.log "role field" Decode.string))
+        (Decode.field "is_admin" (Debug.log "is_admin field" Decode.bool))
+        (Decode.field "is_agent" (Debug.log "is_agent field" Decode.bool))
         (Decode.oneOf
             [ Decode.field "phone" Decode.string
             , Decode.succeed ""
@@ -1968,74 +1930,12 @@ userDecoder =
 
 saveAgentDetails : Agent -> Cmd Msg
 saveAgentDetails agent =
-    let
-        _ =
-            Debug.log "Saving agent details" { id = agent.id, email = agent.email, phone = agent.phone }
-
-        rawPhone =
-            String.filter Char.isDigit agent.phone
-    in
     Http.request
         { method = "PUT"
         , headers = []
         , url = "/api/agents/" ++ agent.id
-        , body =
-            Http.jsonBody
-                (Encode.object
-                    [ ( "firstName", Encode.string agent.firstName )
-                    , ( "lastName", Encode.string agent.lastName )
-                    , ( "email", Encode.string agent.email )
-                    , ( "phone", Encode.string rawPhone )
-                    , ( "isAdmin", Encode.bool agent.isAdmin )
-                    , ( "isAgent", Encode.bool agent.isAgent )
-                    , ( "carriers", Encode.list Encode.string agent.carriers )
-                    , ( "stateLicenses", Encode.list Encode.string agent.stateLicenses )
-                    ]
-                )
-        , expect =
-            Http.expectStringResponse (AgentDetailsSaved agent.id)
-                (\response ->
-                    case response of
-                        Http.BadUrl_ url ->
-                            let
-                                _ =
-                                    Debug.log "Bad URL error" url
-                            in
-                            Err (Http.BadUrl url)
-
-                        Http.Timeout_ ->
-                            let
-                                _ =
-                                    Debug.log "Request timeout" "Request timed out"
-                            in
-                            Err Http.Timeout
-
-                        Http.NetworkError_ ->
-                            let
-                                _ =
-                                    Debug.log "Network error" "Network error occurred"
-                            in
-                            Err Http.NetworkError
-
-                        Http.BadStatus_ metadata body ->
-                            let
-                                _ =
-                                    Debug.log "Bad status response" { status = metadata.statusCode, body = body }
-                            in
-                            if metadata.statusCode == 403 then
-                                -- Special handling for 403 - we'll continue with setup even if we can't save
-                                Ok ()
-
-                            else
-                                Err (Http.BadStatus metadata.statusCode)
-
-                        Http.GoodStatus_ metadata body ->
-                            let
-                                _ =
-                                    Debug.log "Successful response" { status = metadata.statusCode, body = body }
-                            in
-                            Ok ()
-                )
+        , body = Http.jsonBody (encodeAgent agent)
+        , expect = Http.expectWhatever (AgentDetailsSaved agent.id)
         , timeout = Nothing
         , tracker = Nothing
         }
@@ -2048,4 +1948,18 @@ isCurrentUser maybeUser agentId =
             user.id == agentId
 
         Nothing ->
+            False
+
+
+canModifySettings : Model -> String -> Bool
+canModifySettings model agentId =
+    case ( model.currentUser, model.orgSettings ) of
+        ( Just user, Just settings ) ->
+            -- Admin and admin_agent can always modify settings
+            user.isAdmin
+                || user.isAgent
+                || -- Regular agents can modify if allowed and it's their own settings
+                   (settings.allowAgentSettings && user.id == agentId)
+
+        _ ->
             False
