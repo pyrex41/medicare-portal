@@ -13,7 +13,7 @@ import Browser.Navigation as Nav
 import File exposing (File)
 import File.Download
 import File.Select as Select
-import Html exposing (Html, button, col, colgroup, div, h1, h2, h3, input, label, nav, option, select, span, table, tbody, td, text, th, thead, tr)
+import Html exposing (Html, button, col, colgroup, div, h1, h2, h3, input, label, nav, option, p, select, span, table, tbody, td, text, th, thead, tr)
 import Html.Attributes exposing (attribute, checked, class, placeholder, required, title, type_, value)
 import Html.Events exposing (on, onClick, onInput, onSubmit, preventDefaultOn, stopPropagationOn)
 import Http
@@ -25,6 +25,7 @@ import Svg exposing (path, svg)
 import Svg.Attributes exposing (d, fill, stroke, viewBox)
 import Task
 import Time
+import Url exposing (Url)
 import Url.Builder as Url
 
 
@@ -34,11 +35,13 @@ import Url.Builder as Url
 
 main : Program () Model Msg
 main =
-    Browser.element
-        { init = \_ -> init
+    Browser.application
+        { init = \flags url key -> init key
+        , view = \model -> { title = "Dashboard", body = [ view model ] }
         , update = update
-        , view = view
         , subscriptions = subscriptions
+        , onUrlChange = \_ -> NoOp
+        , onUrlRequest = \_ -> NoOp
         }
 
 
@@ -70,6 +73,7 @@ type alias Contact =
 
 type Modal
     = NoModal
+    | ContactChoiceModal
     | AddModal
     | EditModal Contact
     | CsvUploadModal UploadState
@@ -91,12 +95,17 @@ type alias Model =
     , isUploadingCsv : Bool
     , isDeletingContacts : Bool
     , isSubmittingForm : Bool
+    , isCheckingEmail : Bool
+    , emailExists : Bool
     , currentUser : Maybe User
     , showProfileMenu : Bool
     , error : Maybe String
     , saveOnUpdate : Bool
     , expandedContactId : Maybe Int
     , availableFilters : AvailableFilters
+    , carriers : List String
+    , agents : List User
+    , key : Nav.Key
     }
 
 
@@ -197,8 +206,8 @@ type alias ContactsResponse =
     }
 
 
-init : ( Model, Cmd Msg )
-init =
+init : Nav.Key -> ( Model, Cmd Msg )
+init key =
     let
         initialModel =
             { contacts = []
@@ -216,12 +225,17 @@ init =
             , isUploadingCsv = False
             , isDeletingContacts = False
             , isSubmittingForm = False
+            , isCheckingEmail = False
+            , emailExists = False
             , currentUser = Nothing
             , showProfileMenu = False
             , error = Nothing
             , saveOnUpdate = False
             , expandedContactId = Nothing
             , availableFilters = { carriers = [], states = [] }
+            , carriers = []
+            , agents = []
+            , key = key
             }
     in
     ( initialModel
@@ -229,6 +243,8 @@ init =
         [ fetchContacts initialModel
         , fetchCurrentUser
         , Task.perform GotCurrentTime Time.now
+        , fetchCarriers
+        , fetchAgents
         ]
     )
 
@@ -277,6 +293,9 @@ emptyUploadState =
 
 type Msg
     = NoOp
+    | ShowContactChoiceModal
+    | ChooseSingleContact
+    | ChooseMultipleContacts
     | ShowAddModal
     | ShowEditModal Contact
     | CloseModal
@@ -285,6 +304,8 @@ type Msg
     | UpdateEditForm ContactFormField String
     | SubmitAddForm
     | SubmitEditForm
+    | CheckEmail String
+    | EmailChecked (Result Http.Error { exists : Bool })
     | GotContacts (Result Http.Error ContactsResponse)
     | ContactAdded (Result Http.Error Contact)
     | ContactUpdated (Result Http.Error Contact)
@@ -318,7 +339,9 @@ type Msg
     | ContactsDeleted (Result Http.Error DeleteResponse)
     | ToggleOverwriteDuplicates Bool
     | GotCurrentUser (Result Http.Error User)
-    | ToggleExpansion Int
+    | NavigateToContact Int
+    | GotCarriers (Result Http.Error (List String))
+    | GotAgents (Result Http.Error (List User))
 
 
 type ContactFormField
@@ -334,6 +357,7 @@ type ContactFormField
     | TobaccoUser
     | Gender
     | ZipCode
+    | PlanType
 
 
 type FilterType
@@ -347,6 +371,15 @@ update msg model =
     case msg of
         NoOp ->
             ( model, Cmd.none )
+
+        ShowContactChoiceModal ->
+            ( { model | showModal = ContactChoiceModal }, Cmd.none )
+
+        ChooseSingleContact ->
+            ( { model | showModal = AddModal }, Cmd.none )
+
+        ChooseMultipleContacts ->
+            ( { model | showModal = CsvUploadModal emptyUploadState }, Cmd.none )
 
         ShowAddModal ->
             ( { model | showModal = AddModal }, Cmd.none )
@@ -375,7 +408,17 @@ update msg model =
             )
 
         CloseModal ->
-            ( { model | showModal = NoModal }, Cmd.none )
+            ( { model
+                | showModal = NoModal
+                , addForm = emptyForm
+                , editForm = emptyForm
+                , isCheckingEmail = False
+                , emailExists = False
+                , error = Nothing
+                , isSubmittingForm = False
+              }
+            , Cmd.none
+            )
 
         UpdateSearchQuery query ->
             let
@@ -401,7 +444,7 @@ update msg model =
                             { form | email = value }
 
                         PhoneNumber ->
-                            { form | phoneNumber = value }
+                            { form | phoneNumber = String.filter Char.isDigit value |> String.left 10 }
 
                         State ->
                             { form | state = value }
@@ -427,14 +470,27 @@ update msg model =
                         ZipCode ->
                             { form | zipCode = value }
 
+                        PlanType ->
+                            { form | planType = value }
+
                 cmd =
                     if field == ZipCode && String.length value == 5 then
                         submitEditFormWithFlag updatedForm True
 
+                    else if field == Email && String.length value > 0 then
+                        checkEmail value
+
                     else
                         Cmd.none
             in
-            ( { model | addForm = updatedForm }, cmd )
+            ( { model
+                | addForm = updatedForm
+                , isCheckingEmail = field == Email && String.length value > 0
+                , emailExists = False
+                , error = Nothing
+              }
+            , cmd
+            )
 
         UpdateEditForm field value ->
             let
@@ -453,7 +509,7 @@ update msg model =
                             { form | email = value }
 
                         PhoneNumber ->
-                            { form | phoneNumber = value }
+                            { form | phoneNumber = String.filter Char.isDigit value |> String.left 10 }
 
                         State ->
                             { form | state = value }
@@ -478,6 +534,9 @@ update msg model =
 
                         ZipCode ->
                             { form | zipCode = value }
+
+                        PlanType ->
+                            { form | planType = value }
 
                 cmd =
                     if field == ZipCode && String.length value == 5 then
@@ -499,6 +558,33 @@ update msg model =
                 , saveOnUpdate = True
               }
             , submitEditFormWithFlag model.editForm False
+            )
+
+        CheckEmail email ->
+            ( { model | isCheckingEmail = True }
+            , checkEmail email
+            )
+
+        EmailChecked (Ok response) ->
+            ( { model
+                | isCheckingEmail = False
+                , emailExists = response.exists
+                , error =
+                    if response.exists then
+                        Just "A contact with this email already exists"
+
+                    else
+                        Nothing
+              }
+            , Cmd.none
+            )
+
+        EmailChecked (Err _) ->
+            ( { model
+                | isCheckingEmail = False
+                , error = Just "Failed to check email. Please try again."
+              }
+            , Cmd.none
             )
 
         GotContacts (Ok response) ->
@@ -637,6 +723,9 @@ update msg model =
                     { form | state = zipInfo.state }
             in
             case model.showModal of
+                ContactChoiceModal ->
+                    ( model, Cmd.none )
+
                 AddModal ->
                     ( { model | addForm = updateForm model.addForm }, Cmd.none )
 
@@ -784,6 +873,13 @@ update msg model =
                     ( model, Cmd.none )
 
         FileDrop file ->
+            let
+                _ =
+                    Debug.log "File dropped"
+                        { fileName = File.name file
+                        , fileSize = File.size file
+                        }
+            in
             case model.showModal of
                 CsvUploadModal state ->
                     ( { model | showModal = CsvUploadModal { state | file = Just file, dragOver = False } }
@@ -828,6 +924,24 @@ update msg model =
 
         CsvUploaded (Ok response) ->
             let
+                _ =
+                    Debug.log "CSV Upload Response" response
+
+                errorMessage =
+                    if String.startsWith "Missing required columns:" response.message then
+                        let
+                            missingColumns =
+                                String.dropLeft (String.length "Missing required columns:") response.message
+                                    |> String.trim
+                                    |> String.split ","
+                                    |> List.map String.trim
+                                    |> String.join ", "
+                        in
+                        "Your CSV is missing the following required columns: " ++ missingColumns ++ ". Please add these columns and try again."
+
+                    else
+                        response.message
+
                 currentModal =
                     case model.showModal of
                         CsvUploadModal state ->
@@ -837,7 +951,7 @@ update msg model =
                             else
                                 CsvUploadModal
                                     { state
-                                        | error = Just response.message
+                                        | error = Just errorMessage
                                         , errorCsv = response.errorCsv
                                         , stats =
                                             Just
@@ -865,18 +979,30 @@ update msg model =
             )
 
         CsvUploaded (Err httpError) ->
+            let
+                _ =
+                    Debug.log "CSV Upload Error" httpError
+
+                errorMessage =
+                    case httpError of
+                        Http.BadStatus 400 ->
+                            "The CSV format is invalid. Please check that all required columns are present and data is in the correct format."
+
+                        Http.NetworkError ->
+                            "Network error. Please check your connection and try again."
+
+                        Http.Timeout ->
+                            "The upload timed out. Please try again."
+
+                        _ ->
+                            "An unexpected error occurred while uploading the CSV. Please try again."
+            in
             case model.showModal of
                 CsvUploadModal state ->
-                    let
-                        errorMessage =
-                            case httpError |> Debug.log "HTTP Error" of
-                                Http.BadStatus 400 ->
-                                    "Invalid CSV format. Please check the required columns and data."
-
-                                _ ->
-                                    "Failed to upload CSV. Please try again."
-                    in
-                    ( { model | showModal = CsvUploadModal { state | error = Just errorMessage } }
+                    ( { model
+                        | showModal = CsvUploadModal { state | error = Just errorMessage }
+                        , isUploadingCsv = False
+                      }
                     , Cmd.none
                     )
 
@@ -933,17 +1059,22 @@ update msg model =
         GotCurrentUser (Err _) ->
             ( model, Cmd.none )
 
-        ToggleExpansion id ->
-            ( { model
-                | expandedContactId =
-                    if model.expandedContactId == Just id then
-                        Nothing
+        NavigateToContact id ->
+            ( model, Nav.pushUrl model.key ("/contact/" ++ String.fromInt id) )
 
-                    else
-                        Just id
-              }
+        GotCarriers (Ok carriers) ->
+            ( { model | carriers = carriers }
             , Cmd.none
             )
+
+        GotCarriers (Err _) ->
+            ( model, Cmd.none )
+
+        GotAgents (Ok agents) ->
+            ( { model | agents = agents }, Cmd.none )
+
+        GotAgents (Err _) ->
+            ( model, Cmd.none )
 
 
 
@@ -1010,7 +1141,7 @@ view model =
                         ]
                     , button
                         [ class "px-4 py-2 bg-black text-white rounded-lg text-sm hover:bg-gray-800 transition-colors"
-                        , onClick ShowAddModal
+                        , onClick ShowContactChoiceModal
                         ]
                         [ text "+ Add Contact" ]
                     ]
@@ -1028,6 +1159,7 @@ view model =
                         , col [ class "w-32" ] [] -- Contact Owner (optional)
                         , col [ class "w-32" ] [] -- Current Carrier
                         , col [ class "w-28" ] [] -- Effective Date
+                        , col [ class "w-20" ] [] -- Actions
                         ]
                     , thead [ class "bg-gray-50" ]
                         [ tr []
@@ -1058,6 +1190,7 @@ view model =
                                 text ""
                             , tableHeader "Current Carrier"
                             , tableHeader "Effective Date"
+                            , tableHeader "Actions"
                             ]
                         ]
                     , tbody [ class "bg-white" ]
@@ -1091,6 +1224,7 @@ view model =
                     ]
                 ]
             ]
+        , viewModals model
         ]
 
 
@@ -1111,25 +1245,13 @@ tableHeader headerText =
 viewTableRow : Model -> Contact -> List (Html Msg)
 viewTableRow model contact =
     let
-        isExpanded =
-            model.expandedContactId == Just contact.id
-
-        rowClass =
-            "hover:bg-gray-50 cursor-pointer transition-colors duration-200"
-                ++ (if isExpanded then
-                        " bg-gray-50"
-
-                    else
-                        ""
-                   )
+        cellClass =
+            "px-3 py-2 text-sm border-t border-gray-200"
 
         initials =
             String.left 1 contact.firstName ++ String.left 1 contact.lastName
-
-        cellClass =
-            "px-3 py-2 text-sm border-t border-gray-200"
     in
-    [ tr [ class rowClass ]
+    [ tr [ class "hover:bg-gray-50 transition-colors duration-200" ]
         [ td
             [ class (cellClass ++ " text-center")
             , stopPropagationOn "click" (Decode.succeed ( ToggleSelectContact contact.id, True ))
@@ -1168,21 +1290,15 @@ viewTableRow model contact =
             [ text contact.currentCarrier ]
         , td [ class cellClass ]
             [ text contact.effectiveDate ]
+        , td [ class cellClass ]
+            [ button
+                [ class "text-purple-600 hover:text-purple-800 transition-colors duration-200"
+                , onClick (NavigateToContact contact.id)
+                ]
+                [ viewIcon "M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" ]
+            ]
         ]
     ]
-        ++ (if isExpanded then
-                [ tr []
-                    [ td
-                        [ class "px-3 py-2 bg-gray-50 border-t border-gray-200"
-                        , attribute "colspan" "9"
-                        ]
-                        [ viewExpandedContent contact ]
-                    ]
-                ]
-
-            else
-                []
-           )
 
 
 viewStatus : String -> Html Msg
@@ -1334,7 +1450,7 @@ encodeContactForm form =
         [ ( "first_name", Encode.string form.firstName )
         , ( "last_name", Encode.string form.lastName )
         , ( "email", Encode.string form.email )
-        , ( "phone_number", Encode.string form.phoneNumber )
+        , ( "phone_number", Encode.string (String.filter Char.isDigit form.phoneNumber |> String.left 10) )
         , ( "state", Encode.string form.state )
         , ( "contact_owner_id", Maybe.map Encode.int form.contactOwnerId |> Maybe.withDefault Encode.null )
         , ( "current_carrier", Encode.string form.currentCarrier )
@@ -1353,6 +1469,9 @@ viewModals model =
         NoModal ->
             text ""
 
+        ContactChoiceModal ->
+            viewContactChoiceModal
+
         AddModal ->
             viewAddModal model model.isSubmittingForm
 
@@ -1361,6 +1480,51 @@ viewModals model =
 
         CsvUploadModal state ->
             viewCsvUploadModal state model.isUploadingCsv
+
+
+viewContactChoiceModal : Html Msg
+viewContactChoiceModal =
+    div [ class "fixed inset-0 bg-gray-500/75 flex items-center justify-center p-8" ]
+        [ div [ class "bg-white rounded-xl p-10 max-w-2xl w-full mx-4 shadow-xl relative" ]
+            [ button
+                [ class "absolute top-4 right-4 text-gray-400 hover:text-gray-600 transition-colors duration-200"
+                , onClick CloseModal
+                ]
+                [ viewIcon "M6 18L18 6M6 6l12 12" ]
+            , h2 [ class "text-2xl font-semibold text-gray-900 mb-8" ]
+                [ text "Add Contacts" ]
+            , div [ class "text-sm text-gray-600 mb-8" ]
+                [ text "Select how you want to add your new contacts." ]
+            , div [ class "grid grid-cols-2 gap-6" ]
+                [ div
+                    [ class "p-6 border-2 border-gray-200 rounded-lg hover:border-purple-400 cursor-pointer transition-colors"
+                    , onClick ChooseSingleContact
+                    ]
+                    [ div [ class "flex items-center mb-4" ]
+                        [ div [ class "h-8 w-8 rounded-full bg-purple-100 flex items-center justify-center text-sm text-purple-700 font-medium" ]
+                            [ viewIcon "M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" ]
+                        ]
+                    , h3 [ class "text-lg font-medium text-gray-900 mb-2" ]
+                        [ text "Single Contact" ]
+                    , p [ class "text-sm text-gray-600" ]
+                        [ text "Individual Form" ]
+                    ]
+                , div
+                    [ class "p-6 border-2 border-gray-200 rounded-lg hover:border-purple-400 cursor-pointer transition-colors"
+                    , onClick ChooseMultipleContacts
+                    ]
+                    [ div [ class "flex items-center mb-4" ]
+                        [ div [ class "h-8 w-8 rounded-full bg-purple-100 flex items-center justify-center text-sm text-purple-700 font-medium" ]
+                            [ viewIcon "M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" ]
+                        ]
+                    , h3 [ class "text-lg font-medium text-gray-900 mb-2" ]
+                        [ text "Multiple Contacts" ]
+                    , p [ class "text-sm text-gray-600" ]
+                        [ text "CSV Upload" ]
+                    ]
+                ]
+            ]
+        ]
 
 
 viewAddModal : Model -> Bool -> Html Msg
@@ -1415,6 +1579,44 @@ viewCsvUploadModal state isUploading =
                     ]
                     [ text "Download example CSV file" ]
                 ]
+            , if state.error /= Nothing then
+                div [ class "mb-6 p-4 bg-red-50 border border-red-200 rounded-lg" ]
+                    [ div [ class "flex items-start" ]
+                        [ div [ class "flex-shrink-0" ]
+                            [ viewIcon "M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" ]
+                        , div [ class "ml-3" ]
+                            [ h3 [ class "text-sm font-medium text-red-800" ]
+                                [ text "Error uploading CSV" ]
+                            , div [ class "mt-2 text-sm text-red-700" ]
+                                [ text (Maybe.withDefault "" state.error)
+                                , case state.stats of
+                                    Just stats ->
+                                        if stats.errorRows > 0 then
+                                            div [ class "mt-2" ]
+                                                [ case state.errorCsv of
+                                                    Just csvContent ->
+                                                        button
+                                                            [ class "text-purple-600 hover:text-purple-800 hover:underline"
+                                                            , onClick (DownloadErrorCsv csvContent)
+                                                            ]
+                                                            [ text "Download and Fix Errors" ]
+
+                                                    Nothing ->
+                                                        text ""
+                                                ]
+
+                                        else
+                                            text ""
+
+                                    Nothing ->
+                                        text ""
+                                ]
+                            ]
+                        ]
+                    ]
+
+              else
+                text ""
             , div [ class "mb-4 flex items-center space-x-2" ]
                 [ input
                     [ type_ "checkbox"
@@ -1458,34 +1660,6 @@ viewCsvUploadModal state isUploading =
                     Nothing ->
                         text ""
                 ]
-            , case state.stats of
-                Just stats ->
-                    div [ class "mt-4 space-y-2" ]
-                        [ div [ class "text-sm text-gray-600" ]
-                            [ text <| "Total rows: " ++ String.fromInt stats.totalRows ]
-                        , div [ class "text-sm text-gray-600" ]
-                            [ text <| "Valid rows: " ++ String.fromInt stats.validRows ]
-                        , if stats.errorRows > 0 then
-                            div [ class "text-sm text-red-600" ]
-                                [ text <| "Error rows: " ++ String.fromInt stats.errorRows
-                                , case state.errorCsv of
-                                    Just csvContent ->
-                                        button
-                                            [ class "ml-2 text-purple-600 hover:text-purple-800 hover:underline"
-                                            , onClick (DownloadErrorCsv csvContent)
-                                            ]
-                                            [ text "Download and Fix Errors" ]
-
-                                    Nothing ->
-                                        text ""
-                                ]
-
-                          else
-                            text ""
-                        ]
-
-                Nothing ->
-                    text ""
             , div [ class "mt-8 flex justify-end space-x-4" ]
                 [ button
                     [ class "px-6 py-3 bg-white text-gray-700 text-sm font-medium rounded-lg border-2 border-gray-200 hover:border-gray-300 hover:bg-gray-50 transition-colors duration-200 focus:ring-4 focus:ring-purple-100"
@@ -1518,6 +1692,13 @@ dropDecoder toMsg =
 uploadCsv : File -> Bool -> Cmd Msg
 uploadCsv file overwriteDuplicates =
     let
+        _ =
+            Debug.log "Uploading CSV"
+                { fileName = File.name file
+                , fileSize = File.size file
+                , overwriteDuplicates = overwriteDuplicates
+                }
+
         body =
             Http.multipartBody
                 [ Http.filePart "file" file
@@ -1563,6 +1744,23 @@ type alias UploadResponse =
     , errorRows : Int
     , validRows : Int
     }
+
+
+formatUploadError : String -> String
+formatUploadError message =
+    if String.startsWith "Missing required columns:" message then
+        let
+            missingColumns =
+                String.dropLeft (String.length "Missing required columns:") message
+                    |> String.trim
+                    |> String.split ","
+                    |> List.map String.trim
+                    |> String.join ", "
+        in
+        "Your CSV is missing the following required columns: " ++ missingColumns ++ ". Please add these columns and try again."
+
+    else
+        message
 
 
 
@@ -1773,18 +1971,74 @@ filterByList getter selectedValues contacts =
 
 viewContactForm : Model -> ContactForm -> (ContactFormField -> String -> Msg) -> Msg -> String -> Bool -> Html Msg
 viewContactForm model form updateMsg submitMsg buttonText isSubmitting =
+    let
+        carrierOptions =
+            ( "", "Select a carrier" ) :: List.map (\c -> ( c, c )) (model.carriers ++ [ "Other" ])
+
+        planTypeOptions =
+            [ ( "", "Select a plan type" ), ( "Plan N", "Plan N" ), ( "Plan G", "Plan G" ), ( "Other", "Other" ) ]
+
+        agentOptions =
+            ( "", "Default" ) :: List.map (\agent -> ( String.fromInt agent.id, agent.firstName ++ " " ++ agent.lastName )) model.agents
+
+        emailField =
+            div [ class "form-group relative" ]
+                [ Html.label [ class "block text-sm font-medium text-gray-700 mb-2" ]
+                    [ text "Email" ]
+                , div [ class "relative" ]
+                    [ Html.input
+                        [ type_ "email"
+                        , class
+                            ("w-full px-4 py-3 bg-white border-[2.5px] rounded-lg text-gray-700 placeholder-gray-400 shadow-sm transition-all duration-200 "
+                                ++ (if model.emailExists then
+                                        "border-red-300 hover:border-red-400 focus:border-red-500 focus:ring-2 focus:ring-red-200"
+
+                                    else
+                                        "border-purple-300 hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200"
+                                   )
+                            )
+                        , value form.email
+                        , onInput (updateMsg Email)
+                        , required True
+                        ]
+                        []
+                    , if model.isCheckingEmail then
+                        div [ class "absolute right-3 top-3" ]
+                            [ viewSpinner ]
+
+                      else if model.emailExists then
+                        div
+                            [ class "absolute right-3 top-3 text-red-500" ]
+                            [ viewIcon "M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" ]
+
+                      else if String.length form.email > 0 then
+                        div
+                            [ class "absolute right-3 top-3 text-green-500" ]
+                            [ viewIcon "M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" ]
+
+                      else
+                        text ""
+                    ]
+                , if model.emailExists then
+                    div [ class "mt-2 text-sm text-red-600" ]
+                        [ text "A contact with this email already exists" ]
+
+                  else
+                    text ""
+                ]
+    in
     Html.form [ onSubmit submitMsg ]
         [ div [ class "grid grid-cols-2 gap-x-8 gap-y-6" ]
             [ viewFormInput "First Name" "text" form.firstName FirstName updateMsg True
             , viewFormInput "Last Name" "text" form.lastName LastName updateMsg True
-            , viewFormInput "Email" "email" form.email Email updateMsg True
+            , emailField
             , viewFormInput "Phone Number" "text" form.phoneNumber PhoneNumber updateMsg True
-            , viewFormInput "State" "text" form.state State updateMsg True
-            , viewFormInput "Current Carrier" "text" form.currentCarrier CurrentCarrier updateMsg True
+            , viewFormSelect "Current Carrier" form.currentCarrier CurrentCarrier updateMsg carrierOptions
+            , viewFormSelect "Plan Type" form.planType PlanType updateMsg planTypeOptions
+            , viewFormSelect "Contact Owner" (Maybe.map String.fromInt form.contactOwnerId |> Maybe.withDefault "") ContactOwnerId updateMsg agentOptions
             , viewFormInput "Effective Date" "date" form.effectiveDate EffectiveDate updateMsg True
             , viewFormInput "Birth Date" "date" form.birthDate BirthDate updateMsg True
-            , viewFormInput "Tobacco User"
-                "text"
+            , viewFormRadioGroup "Tobacco User"
                 (if form.tobaccoUser then
                     "true"
 
@@ -1793,22 +2047,15 @@ viewContactForm model form updateMsg submitMsg buttonText isSubmitting =
                 )
                 TobaccoUser
                 updateMsg
-                True
-            , viewFormSelect "Gender"
-                form.gender
-                Gender
-                updateMsg
-                [ ( "M", "Male" )
-                , ( "F", "Female" )
-                ]
+                [ ( "true", "Yes" ), ( "false", "No" ) ]
+            , viewFormRadioGroup "Gender" form.gender Gender updateMsg [ ( "M", "Male" ), ( "F", "Female" ) ]
             , div [ class "col-span-2 grid grid-cols-2 gap-x-8" ]
                 [ viewZipCodeField model form
                 , viewStateField form
                 ]
             ]
-        , if model.error /= Nothing then
-            div [ class "mt-4 text-red-600 text-sm" ]
-                [ text (Maybe.withDefault "" model.error) ]
+        , if model.error /= Nothing && not model.emailExists then
+            div [ class "mt-4 text-red-600 text-sm" ] [ text (Maybe.withDefault "" model.error) ]
 
           else
             text ""
@@ -1820,13 +2067,25 @@ viewContactForm model form updateMsg submitMsg buttonText isSubmitting =
                 ]
                 [ text "Cancel" ]
             , if isSubmitting then
-                div [ class "px-6 py-3 flex items-center space-x-2" ]
-                    [ viewSpinner ]
+                div [ class "px-6 py-3 flex items-center space-x-2" ] [ viewSpinner ]
 
               else
+                let
+                    isValid =
+                        isContactFormValid form && not model.emailExists && not model.isCheckingEmail
+                in
                 button
                     [ type_ "submit"
-                    , class "px-6 py-3 bg-purple-500 text-white text-sm font-medium rounded-lg hover:bg-purple-600 transition-colors duration-200 focus:ring-4 focus:ring-purple-200"
+                    , class
+                        ("px-6 py-3 text-white text-sm font-medium rounded-lg transition-colors duration-200 focus:ring-4 focus:ring-purple-200 "
+                            ++ (if isValid then
+                                    "bg-purple-500 hover:bg-purple-600"
+
+                                else
+                                    "bg-gray-300 cursor-not-allowed"
+                               )
+                        )
+                    , Html.Attributes.disabled (not isValid)
                     ]
                     [ text buttonText ]
             ]
@@ -1835,15 +2094,43 @@ viewContactForm model form updateMsg submitMsg buttonText isSubmitting =
 
 viewFormInput : String -> String -> String -> ContactFormField -> (ContactFormField -> String -> Msg) -> Bool -> Html Msg
 viewFormInput labelText inputType inputValue field updateMsg isRequired =
+    let
+        displayValue =
+            if field == PhoneNumber then
+                formatPhoneNumber inputValue
+
+            else
+                inputValue
+
+        inputHandler =
+            if field == PhoneNumber then
+                \val ->
+                    let
+                        digits =
+                            String.filter Char.isDigit val |> String.left 10
+                    in
+                    updateMsg field digits
+
+            else
+                updateMsg field
+
+        placeholderText =
+            if field == PhoneNumber then
+                "(555) 555-5555"
+
+            else
+                ""
+    in
     div [ class "form-group" ]
         [ Html.label [ class "block text-sm font-medium text-gray-700 mb-2" ]
             [ text labelText ]
         , Html.input
             [ type_ inputType
             , class "w-full px-4 py-3 bg-white border-[2.5px] border-purple-300 rounded-lg text-gray-700 placeholder-gray-400 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 focus:bg-white transition-all duration-200"
-            , value inputValue
-            , onInput (updateMsg field)
+            , value displayValue
+            , onInput inputHandler
             , required isRequired
+            , placeholder placeholderText
             ]
             []
         ]
@@ -1854,14 +2141,48 @@ viewFormSelect labelText selectedValue field updateMsg options =
     div [ class "form-group" ]
         [ Html.label [ class "block text-sm font-medium text-gray-700 mb-2" ]
             [ text labelText ]
-        , Html.select
-            [ class "w-full px-4 py-3 bg-white border-[2.5px] border-purple-300 rounded-lg text-gray-700 placeholder-gray-400 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 focus:bg-white transition-all duration-200 appearance-none"
-            , value selectedValue
-            , onInput (updateMsg field)
+        , div [ class "relative" ]
+            [ Html.select
+                [ class "w-full px-4 py-3 bg-white border-[2.5px] border-purple-300 rounded-lg text-gray-700 placeholder-gray-400 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 focus:bg-white transition-all duration-200 appearance-none"
+                , value selectedValue
+                , onInput (updateMsg field)
+                ]
+                (List.map (\( val, txt ) -> option [ value val ] [ text txt ]) options)
+            , div [ class "absolute inset-y-0 right-0 flex items-center px-2 pointer-events-none" ]
+                [ viewIcon "M19 9l-7 7-7-7" ]
             ]
+        ]
+
+
+viewFormRadioGroup : String -> String -> ContactFormField -> (ContactFormField -> String -> Msg) -> List ( String, String ) -> Html Msg
+viewFormRadioGroup labelText selectedValue field updateMsg options =
+    div [ class "form-group" ]
+        [ Html.label [ class "block text-sm font-medium text-gray-700 mb-2" ]
+            [ text labelText ]
+        , div [ class "flex gap-4" ]
             (List.map
                 (\( val, txt ) ->
-                    option [ value val ] [ text txt ]
+                    label
+                        [ class
+                            ("flex items-center px-4 py-2 rounded-lg border-2 cursor-pointer transition-all duration-200 "
+                                ++ (if selectedValue == val then
+                                        "border-purple-500 bg-purple-50 text-purple-700"
+
+                                    else
+                                        "border-gray-200 hover:border-purple-200"
+                                   )
+                            )
+                        ]
+                        [ input
+                            [ type_ "radio"
+                            , value val
+                            , checked (selectedValue == val)
+                            , onInput (\_ -> updateMsg field val)
+                            , class "sr-only" -- Hide the actual radio button
+                            ]
+                            []
+                        , text txt
+                        ]
                 )
                 options
             )
@@ -1879,15 +2200,22 @@ viewZipCodeField model form =
             , value form.zipCode
             , onInput
                 (\zip ->
-                    case model.showModal of
-                        AddModal ->
-                            UpdateAddForm ZipCode zip
+                    Batch
+                        [ case model.showModal of
+                            AddModal ->
+                                UpdateAddForm ZipCode zip
 
-                        EditModal _ ->
-                            UpdateEditForm ZipCode zip
+                            EditModal _ ->
+                                UpdateEditForm ZipCode zip
 
-                        _ ->
+                            _ ->
+                                NoOp
+                        , if String.length zip == 5 then
+                            LookupZipCode zip
+
+                          else
                             NoOp
+                        ]
                 )
             ]
             []
@@ -2048,25 +2376,22 @@ formatPhoneNumber phone =
         let
             digits =
                 String.filter Char.isDigit phone
+                    |> String.left 10
 
             len =
                 String.length digits
         in
-        if len >= 10 then
-            let
-                area =
-                    String.slice 0 3 digits
+        if len == 0 then
+            ""
 
-                prefix =
-                    String.slice 3 6 digits
+        else if len <= 3 then
+            "(" ++ digits
 
-                line =
-                    String.slice 6 10 digits
-            in
-            "(" ++ area ++ ") " ++ prefix ++ "-" ++ line
+        else if len <= 6 then
+            "(" ++ String.left 3 digits ++ ") " ++ String.dropLeft 3 digits
 
         else
-            phone
+            "(" ++ String.left 3 digits ++ ") " ++ String.slice 3 6 digits ++ "-" ++ String.dropLeft 6 digits
 
 
 viewFilterDropdown : Model -> FilterType -> Html Msg
@@ -2099,7 +2424,7 @@ viewFilterDropdown model filterType =
     in
     div
         [ class "absolute left-0 mt-2 w-48 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-10"
-        , stopPropagationOn "mousedown" (Decode.succeed ( NoOp, True ))
+        , stopPropagationOn "mousedown" (Decode.succeed ( CloseFilterDropdown, True ))
         ]
         [ div [ class "py-1" ]
             [ div [ class "p-2 border-b border-gray-200" ]
@@ -2138,3 +2463,57 @@ viewFilterDropdown model filterType =
                 )
             ]
         ]
+
+
+isContactFormValid : ContactForm -> Bool
+isContactFormValid form =
+    String.length form.firstName
+        > 0
+        && String.length form.lastName
+        > 0
+        && String.length form.email
+        > 0
+        && String.length form.phoneNumber
+        > 0
+        && String.length form.state
+        > 0
+        && String.length form.currentCarrier
+        > 0
+        && String.length form.effectiveDate
+        > 0
+        && String.length form.birthDate
+        > 0
+        && String.length form.zipCode
+        > 0
+        && String.length form.planType
+        > 0
+
+
+fetchCarriers : Cmd Msg
+fetchCarriers =
+    Http.get
+        { url = "/api/settings/carriers"
+        , expect = Http.expectJson GotCarriers (Decode.list (Decode.field "name" Decode.string))
+        }
+
+
+fetchAgents : Cmd Msg
+fetchAgents =
+    Http.get
+        { url = "/api/agents"
+        , expect = Http.expectJson GotAgents (Decode.list userDecoder)
+        }
+
+
+checkEmail : String -> Cmd Msg
+checkEmail email =
+    Http.get
+        { url = "/api/contacts/check-email/" ++ email
+        , expect = Http.expectJson EmailChecked emailCheckDecoder
+        }
+
+
+emailCheckDecoder : Decode.Decoder { exists : Bool }
+emailCheckDecoder =
+    Decode.map (\exists -> { exists = exists })
+        (Decode.field "exists" Decode.bool)

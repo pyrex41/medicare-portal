@@ -82,6 +82,22 @@ interface ContactRow {
   phone_number: string;
 }
 
+// Add this helper function before startServer
+function standardizePhoneNumber(phone: string): { isValid: boolean; standardized: string } {
+  const digits = phone.replace(/\D/g, '').slice(0, 10);
+  return {
+    isValid: digits.length === 10,
+    standardized: digits
+  };
+}
+
+// Add this helper function near the other validation functions
+function validateEmail(email: string): boolean {
+  // RFC 5322 compliant email regex
+  const emailRegex = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
+  return emailRegex.test(email.trim());
+}
+
 const startServer = async () => {
   try {
     const db = new Database()
@@ -158,8 +174,8 @@ const startServer = async () => {
             orgDb.fetchAll('SELECT DISTINCT state FROM contacts WHERE state IS NOT NULL ORDER BY state')
           ])
 
-          const allCarriers = carrierResults.map(row => row[0])
-          const allStates = stateResults.map(row => row[0])
+          const allCarriers = carrierResults.map((row: any[]) => row[0])
+          const allStates = stateResults.map((row: any[]) => row[0])
           
           // Get search query and filters from URL params
           const url = new URL(request.url)
@@ -250,6 +266,73 @@ const startServer = async () => {
           throw new Error(String(e))
         }
       })
+      .get('/api/contacts/check-email/:email', async ({ params: { email }, request }) => {
+        try {
+          const user = await getUserFromSession(request)
+          if (!user?.organization_id) {
+            throw new Error('No organization ID found in session')
+          }
+
+          const orgDb = await Database.getOrgDb(user.organization_id.toString())
+          
+          const result = await orgDb.fetchOne(
+            'SELECT 1 FROM contacts WHERE LOWER(TRIM(email)) = LOWER(TRIM(?))',
+            [email]
+          )
+
+          return {
+            exists: result !== null
+          }
+        } catch (e) {
+          logger.error(`Error checking email existence: ${e}`)
+          throw new Error(String(e))
+        }
+      })
+      .get('/api/contacts/:id', async ({ params: { id }, request }) => {
+        try {
+          const user = await getUserFromSession(request)
+          if (!user?.organization_id) {
+            throw new Error('No organization ID found in session')
+          }
+
+          logger.info(`GET /api/contacts/${id} - Fetching contact for org ${user.organization_id}`)
+          
+          // Get org-specific database
+          const orgDb = await Database.getOrgDb(user.organization_id.toString())
+          
+          // Fetch the contact
+          const result = await orgDb.fetchOne<ContactRow>(
+            'SELECT * FROM contacts WHERE id = ?',
+            [id]
+          )
+
+          if (!result) {
+            throw new Error(`Contact ${id} not found`)
+          }
+
+          // Return the contact with mapped fields
+          return {
+            id: result.id,
+            first_name: result.first_name,
+            last_name: result.last_name,
+            email: result.email,
+            current_carrier: result.current_carrier,
+            plan_type: result.plan_type,
+            effective_date: result.effective_date,
+            birth_date: result.birth_date,
+            tobacco_user: Boolean(result.tobacco_user),
+            gender: result.gender,
+            state: result.state,
+            zip_code: result.zip_code,
+            agent_id: result.agent_id,
+            last_emailed: result.last_emailed,
+            phone_number: result.phone_number || ''
+          }
+        } catch (e) {
+          logger.error(`Error fetching contact: ${e}`)
+          throw new Error(String(e))
+        }
+      })
       .post('/api/contacts', async ({ body, request }: { body: ContactCreate, request: Request }) => {
         try {
           const user = await getUserFromSession(request)
@@ -262,6 +345,16 @@ const startServer = async () => {
           
           // Get org-specific database
           const orgDb = await Database.getOrgDb(user.organization_id.toString())
+
+          // Check for existing email
+          const existingContact = await orgDb.fetchOne(
+            'SELECT 1 FROM contacts WHERE LOWER(TRIM(email)) = LOWER(TRIM(?))',
+            [contact.email]
+          )
+
+          if (existingContact) {
+            throw new Error('A contact with this email already exists')
+          }
           
           const query = `
             INSERT INTO contacts (
@@ -269,7 +362,6 @@ const startServer = async () => {
               effective_date, birth_date, tobacco_user, gender,
               state, zip_code, agent_id, phone_number
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            RETURNING *
           `
           
           const params = [
@@ -280,34 +372,44 @@ const startServer = async () => {
             contact.plan_type,
             contact.effective_date,
             contact.birth_date,
-            contact.tobacco_user ? 1 : 0,
+            contact.tobacco_user,
             contact.gender,
             contact.state,
             contact.zip_code,
-            contact.agent_id,
+            contact.agent_id || null,
             contact.phone_number || ''
           ]
 
-          const result = await orgDb.execute(query, params)
-          const row = result[0]
+          logger.info(`Executing query with params: ${JSON.stringify(params)}`)
+          await orgDb.execute(query, params)
+
+          // Fetch the newly created contact
+          const result = await orgDb.fetchOne<ContactRow>(
+            'SELECT * FROM contacts WHERE email = ? ORDER BY id DESC LIMIT 1',
+            [contact.email]
+          )
+
+          if (!result) {
+            throw new Error('Failed to fetch created contact')
+          }
 
           // Match response format to schema
           return {
-            id: row[0],
-            first_name: row[1],
-            last_name: row[2],
-            email: row[3],
-            current_carrier: row[4],
-            plan_type: row[5],
-            effective_date: row[6],
-            birth_date: row[7],
-            tobacco_user: Boolean(row[8]),
-            gender: row[9],
-            state: row[10],
-            zip_code: row[11],
-            agent_id: row[12],
-            last_emailed: row[13],
-            phone_number: row[14] || ''
+            id: result.id,
+            first_name: result.first_name,
+            last_name: result.last_name,
+            email: result.email,
+            current_carrier: result.current_carrier,
+            plan_type: result.plan_type,
+            effective_date: result.effective_date,
+            birth_date: result.birth_date,
+            tobacco_user: Boolean(result.tobacco_user),
+            gender: result.gender,
+            state: result.state,
+            zip_code: result.zip_code,
+            agent_id: result.agent_id,
+            last_emailed: result.last_emailed,
+            phone_number: result.phone_number || ''
           }
         } catch (e) {
           logger.error(`Error creating contact: ${e}`)
@@ -361,7 +463,7 @@ const startServer = async () => {
             contact.plan_type,
             contact.effective_date,
             contact.birth_date,
-            contact.tobacco_user ? 1 : 0,
+            contact.tobacco_user,
             contact.gender,
             zipInfo.state, // Use state from ZIP code
             contact.zip_code,
@@ -528,6 +630,28 @@ const startServer = async () => {
               continue
             }
 
+            // Validate email format
+            const email = row['Email'].trim().toLowerCase()
+            if (!validateEmail(email)) {
+              errorRows.push({
+                Row: rowNum,
+                ...row,
+                Error: `Invalid email format: ${row['Email']}`
+              })
+              continue
+            }
+
+            // Validate phone number
+            const phoneResult = standardizePhoneNumber(row['Phone Number']);
+            if (!phoneResult.isValid) {
+              errorRows.push({
+                Row: rowNum,
+                ...row,
+                Error: `Invalid phone number: ${row['Phone Number']}. Must be exactly 10 digits.`
+              })
+              continue
+            }
+
             // Validate ZIP code
             const zipCode = row['ZIP Code'].trim()
             const zipInfo = ZIP_DATA[zipCode]
@@ -552,7 +676,6 @@ const startServer = async () => {
             }
 
             // Check for duplicate email
-            const email = row['Email'].trim().toLowerCase()
             logger.info(`Checking row ${rowNum} email: ${email}`)
             logger.info(`Overwrite duplicates is set to: ${overwriteDuplicates}`)
             if (existingEmails.has(email)) {
@@ -586,11 +709,11 @@ const startServer = async () => {
                 row['Plan Type'].trim(),
                 effectiveDate.toISOString().split('T')[0],
                 birthDate.toISOString().split('T')[0],
-                tobaccoUser ? 1 : 0,
+                tobaccoUser,
                 gender,
                 zipInfo.state,
                 zipCode,
-                row['Phone Number'].trim()
+                phoneResult.standardized // Use standardized phone number
               ])
               validRows.push(row)
             } catch (e) {
@@ -1207,6 +1330,28 @@ const startServer = async () => {
           logger.error(`Error in dev session endpoint: ${e}`)
           set.status = 500
           return { error: String(e) }
+        }
+      })
+      // Add ZIP lookup endpoint
+      .get('/api/zip-lookup/:zipCode', ({ params: { zipCode } }) => {
+        try {
+          const zipInfo = ZIP_DATA[zipCode]
+          if (!zipInfo) {
+            return {
+              success: false,
+              error: `Invalid ZIP code: ${zipCode}`
+            }
+          }
+          return {
+            success: true,
+            ...zipInfo
+          }
+        } catch (e) {
+          logger.error(`Error looking up ZIP code ${zipCode}: ${e}`)
+          return {
+            success: false,
+            error: String(e)
+          }
         }
       })
       .listen(8000)

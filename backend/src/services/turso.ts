@@ -65,7 +65,9 @@ export class TursoService {
         state TEXT NOT NULL,
         zip_code TEXT NOT NULL,
         agent_id INTEGER,
-        last_emailed_date TEXT
+        last_emailed TEXT,
+        phone_number TEXT NOT NULL DEFAULT '',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
       )
     `);
 

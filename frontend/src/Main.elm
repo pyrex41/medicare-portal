@@ -5,6 +5,7 @@ import BrandSettings
 import Browser exposing (Document)
 import Browser.Navigation as Nav
 import ChoosePlan
+import Contact
 import Dashboard
 import Debug
 import Home
@@ -112,6 +113,7 @@ type Page
     | ProfilePage Profile.Model
     | LoadingPage
     | HomePage Home.Model
+    | ContactPage Contact.Model
 
 
 type Msg
@@ -130,6 +132,7 @@ type Msg
     | GotSession (Result Http.Error SessionResponse)
     | ProfileMsg Profile.Msg
     | HomeMsg Home.Msg
+    | ContactMsg Contact.Msg
 
 
 type alias Flags =
@@ -220,6 +223,7 @@ type ProtectedPage
     | BrandSettingsRoute
     | TempLandingRoute
     | AgentsRoute
+    | ContactRoute String
 
 
 type SetupPage
@@ -275,6 +279,7 @@ routeParser =
         , map (ProtectedRoute BrandSettingsRoute) (s "brand-settings")
         , map (ProtectedRoute TempLandingRoute) (s "templanding")
         , map (ProtectedRoute AgentsRoute) (s "add-agents")
+        , map (\id -> ProtectedRoute (ContactRoute id)) (s "contact" </> string)
         , map (\progress -> SetupRoute (ChoosePlanRoute progress))
             (s "choose-plan" <?> setupProgressDecoder)
         , map (\progress -> SetupRoute (SetupSettingsRoute progress))
@@ -569,6 +574,20 @@ update msg model =
                 _ ->
                     ( model, Cmd.none )
 
+        ContactMsg subMsg ->
+            case model.page of
+                ContactPage pageModel ->
+                    let
+                        ( newPageModel, newCmd ) =
+                            Contact.update subMsg pageModel
+                    in
+                    ( { model | page = ContactPage newPageModel }
+                    , Cmd.map ContactMsg newCmd
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
+
 
 view : Model -> Browser.Document Msg
 view model =
@@ -667,6 +686,15 @@ view model =
                     in
                     { title = homeView.title
                     , body = List.map (Html.map HomeMsg) homeView.body
+                    }
+
+                ContactPage contactModel ->
+                    let
+                        contactView =
+                            Contact.view contactModel
+                    in
+                    { title = contactView.title
+                    , body = [ viewWithNav model (Html.map ContactMsg (div [] contactView.body)) ]
                     }
     in
     viewPage
@@ -804,6 +832,9 @@ subscriptions model =
 
         BrandSettingsPage pageModel ->
             Sub.map BrandSettingsMsg (BrandSettings.subscriptions pageModel)
+
+        ContactPage pageModel ->
+            Sub.map ContactMsg (Contact.subscriptions pageModel)
 
         NotFoundPage ->
             Sub.none
@@ -1050,7 +1081,7 @@ updatePage url ( model, cmd ) =
                             ProtectedRoute DashboardRoute ->
                                 let
                                     ( dashboardModel, dashboardCmd ) =
-                                        Dashboard.init
+                                        Dashboard.init model.key
                                 in
                                 ( { model | page = DashboardPage dashboardModel }
                                 , Cmd.batch [ cmd, Cmd.map DashboardMsg dashboardCmd ]
@@ -1138,6 +1169,18 @@ updatePage url ( model, cmd ) =
                                 in
                                 ( { model | page = AddAgentsPage addAgentsModel }
                                 , Cmd.batch [ cmd, Cmd.map AddAgentsMsg addAgentsCmd ]
+                                )
+
+                            ProtectedRoute (ContactRoute id) ->
+                                let
+                                    _ =
+                                        Debug.log "Handling contact route with ID" id
+
+                                    ( contactModel, contactCmd ) =
+                                        Contact.init model.key id
+                                in
+                                ( { model | page = ContactPage contactModel }
+                                , Cmd.batch [ cmd, Cmd.map ContactMsg contactCmd ]
                                 )
 
                             SetupRoute (ChoosePlanRoute progress) ->
