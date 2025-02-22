@@ -1,4 +1,4 @@
-module Dashboard exposing
+module Contacts exposing
     ( Model
     , Msg(..)
     , init
@@ -77,6 +77,7 @@ type Modal
     | AddModal
     | EditModal Contact
     | CsvUploadModal UploadState
+    | DeleteConfirmModal
 
 
 type alias Model =
@@ -340,6 +341,7 @@ type Msg
     | CsvUploaded (Result Http.Error UploadResponse)
     | DownloadErrorCsv String
     | DownloadCarrierConversionsCsv String
+    | ShowDeleteConfirmModal
     | DeleteSelectedContacts
     | ContactsDeleted (Result Http.Error DeleteResponse)
     | ToggleOverwriteDuplicates Bool
@@ -488,14 +490,31 @@ update msg model =
                     else
                         Cmd.none
             in
-            ( { model
-                | addForm = updatedForm
-                , isCheckingEmail = field == Email && String.length value > 0
-                , emailExists = False
-                , error = Nothing
-              }
-            , cmd
-            )
+            case model.showModal of
+                ContactChoiceModal ->
+                    ( model, Cmd.none )
+
+                AddModal ->
+                    ( { model
+                        | addForm = updatedForm
+                        , isCheckingEmail = field == Email && String.length value > 0
+                        , emailExists = False
+                        , error = Nothing
+                      }
+                    , cmd
+                    )
+
+                EditModal _ ->
+                    ( { model | editForm = updatedForm }, cmd )
+
+                NoModal ->
+                    ( model, Cmd.none )
+
+                CsvUploadModal _ ->
+                    ( model, Cmd.none )
+
+                DeleteConfirmModal ->
+                    ( model, Cmd.none )
 
         UpdateEditForm field value ->
             let
@@ -545,12 +564,34 @@ update msg model =
 
                 cmd =
                     if field == ZipCode && String.length value == 5 then
-                        submitEditFormWithFlag updatedForm True
+                        LookupZipCode value
+                            |> Task.succeed
+                            |> Task.perform identity
+
+                    else if field == Email && String.length value > 0 then
+                        checkEmail value
 
                     else
                         Cmd.none
             in
-            ( { model | editForm = updatedForm }, cmd )
+            case model.showModal of
+                ContactChoiceModal ->
+                    ( model, Cmd.none )
+
+                AddModal ->
+                    ( { model | addForm = updatedForm }, cmd )
+
+                EditModal _ ->
+                    ( { model | editForm = updatedForm }, cmd )
+
+                NoModal ->
+                    ( model, Cmd.none )
+
+                CsvUploadModal _ ->
+                    ( model, Cmd.none )
+
+                DeleteConfirmModal ->
+                    ( model, Cmd.none )
 
         SubmitAddForm ->
             ( { model | isSubmittingForm = True }
@@ -741,6 +782,9 @@ update msg model =
                     ( model, Cmd.none )
 
                 CsvUploadModal _ ->
+                    ( model, Cmd.none )
+
+                DeleteConfirmModal ->
                     ( model, Cmd.none )
 
         GotZipLookup (Err _) ->
@@ -1027,8 +1071,11 @@ update msg model =
             , File.Download.string "carrier_conversions.csv" "text/csv" csvContent
             )
 
+        ShowDeleteConfirmModal ->
+            ( { model | showModal = DeleteConfirmModal }, Cmd.none )
+
         DeleteSelectedContacts ->
-            ( { model | isDeletingContacts = True }
+            ( { model | isDeletingContacts = True, showModal = NoModal }
             , if List.isEmpty model.selectedContacts then
                 Cmd.none
 
@@ -1115,7 +1162,21 @@ view model =
                         [ text ("(" ++ String.fromInt (List.length model.contacts) ++ ")") ]
                     ]
                 , div [ class "flex items-center gap-3" ]
-                    [ div [ class "relative" ]
+                    [ if not (List.isEmpty model.selectedContacts) then
+                        button
+                            [ class "px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 transition-colors duration-200 flex items-center gap-2"
+                            , onClick ShowDeleteConfirmModal
+                            ]
+                            [ if model.isDeletingContacts then
+                                viewSpinner
+
+                              else
+                                text ("Delete " ++ String.fromInt (List.length model.selectedContacts) ++ " Selected")
+                            ]
+
+                      else
+                        text ""
+                    , div [ class "relative" ]
                         [ button
                             [ class "inline-flex items-center gap-2 px-3 py-2 border rounded-lg text-sm text-gray-700 hover:bg-gray-50"
                             , onClick (ToggleFilterDropdown CarrierFilter)
@@ -1180,9 +1241,9 @@ view model =
                                 [ input
                                     [ type_ "checkbox"
                                     , class "rounded border-gray-300 text-purple-600 focus:ring-purple-500"
-                                    , checked (not (List.isEmpty model.contacts) && List.all (\c -> List.member c.id model.selectedContacts) model.contacts)
+                                    , checked (not (List.isEmpty model.contacts) && List.length model.selectedContacts == List.length model.contacts)
                                     , onClick
-                                        (if not (List.isEmpty model.contacts) && List.all (\c -> List.member c.id model.selectedContacts) model.contacts then
+                                        (if not (List.isEmpty model.contacts) && List.length model.selectedContacts == List.length model.contacts then
                                             DeselectAllContacts
 
                                          else
@@ -1238,6 +1299,43 @@ view model =
                 ]
             ]
         , viewModals model
+        , if not (List.isEmpty model.selectedContacts) then
+            viewBulkActionBar model
+
+          else
+            text ""
+        ]
+
+
+viewBulkActionBar : Model -> Html Msg
+viewBulkActionBar model =
+    div
+        [ class "fixed bottom-0 inset-x-0 bg-white border-t border-gray-200 shadow-lg transform transition-all duration-200" ]
+        [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4" ]
+            [ div [ class "flex justify-between items-center" ]
+                [ div [ class "flex items-center gap-4" ]
+                    [ span [ class "text-sm text-gray-600" ]
+                        [ text (String.fromInt (List.length model.selectedContacts) ++ " contacts selected") ]
+                    ]
+                , div [ class "flex items-center gap-3" ]
+                    [ button
+                        [ class "px-4 py-2 text-sm font-medium text-gray-700 hover:text-gray-900"
+                        , onClick DeselectAllContacts
+                        ]
+                        [ text "Cancel" ]
+                    , button
+                        [ class "px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 transition-colors duration-200"
+                        , onClick DeleteSelectedContacts
+                        ]
+                        [ if model.isDeletingContacts then
+                            viewSpinner
+
+                          else
+                            text "Delete Selected"
+                        ]
+                    ]
+                ]
+            ]
         ]
 
 
@@ -1267,7 +1365,6 @@ viewTableRow model contact =
     [ tr [ class "hover:bg-gray-50 transition-colors duration-200" ]
         [ td
             [ class (cellClass ++ " text-center")
-            , stopPropagationOn "click" (Decode.succeed ( ToggleSelectContact contact.id, True ))
             ]
             [ input
                 [ type_ "checkbox"
@@ -1493,6 +1590,9 @@ viewModals model =
 
         CsvUploadModal state ->
             viewCsvUploadModal state model.isUploadingCsv
+
+        DeleteConfirmModal ->
+            viewDeleteConfirmModal model
 
 
 viewContactChoiceModal : Html Msg
@@ -1871,7 +1971,19 @@ subscriptions model =
             NoModal ->
                 Sub.none
 
-            _ ->
+            ContactChoiceModal ->
+                Browser.Events.onKeyDown (Decode.map HandleKeyDown (Decode.field "key" Decode.string))
+
+            AddModal ->
+                Browser.Events.onKeyDown (Decode.map HandleKeyDown (Decode.field "key" Decode.string))
+
+            EditModal _ ->
+                Browser.Events.onKeyDown (Decode.map HandleKeyDown (Decode.field "key" Decode.string))
+
+            CsvUploadModal _ ->
+                Browser.Events.onKeyDown (Decode.map HandleKeyDown (Decode.field "key" Decode.string))
+
+            DeleteConfirmModal ->
                 Browser.Events.onKeyDown (Decode.map HandleKeyDown (Decode.field "key" Decode.string))
         , case model.openFilter of
             Just _ ->
@@ -2621,3 +2733,37 @@ carrierDecoder =
     Decode.succeed (\name aliases -> { name = name, aliases = aliases })
         |> Pipeline.required "name" Decode.string
         |> Pipeline.required "aliases" (Decode.list Decode.string)
+
+
+viewDeleteConfirmModal : Model -> Html Msg
+viewDeleteConfirmModal model =
+    div [ class "fixed inset-0 bg-gray-500/75 flex items-center justify-center p-8" ]
+        [ div [ class "bg-white rounded-xl p-8 max-w-md w-full mx-4 shadow-xl relative" ]
+            [ button
+                [ class "absolute top-4 right-4 text-gray-400 hover:text-gray-600 transition-colors duration-200"
+                , onClick CloseModal
+                ]
+                [ text "×" ]
+            , h2 [ class "text-xl font-semibold text-gray-900 mb-4" ]
+                [ text "Delete Contacts" ]
+            , p [ class "text-sm text-gray-600 mb-6" ]
+                [ text ("Are you sure you want to delete " ++ String.fromInt (List.length model.selectedContacts) ++ " contacts? This action cannot be undone.") ]
+            , div [ class "flex justify-end space-x-4" ]
+                [ button
+                    [ class "px-4 py-2 text-gray-700 text-sm font-medium rounded-lg border-2 border-gray-200 hover:border-gray-300 hover:bg-gray-50 transition-colors duration-200"
+                    , onClick CloseModal
+                    ]
+                    [ text "Cancel" ]
+                , if model.isDeletingContacts then
+                    div [ class "px-4 py-2 flex items-center" ]
+                        [ viewSpinner ]
+
+                  else
+                    button
+                        [ class "px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 transition-colors duration-200"
+                        , onClick DeleteSelectedContacts
+                        ]
+                        [ text "Delete" ]
+                ]
+            ]
+        ]

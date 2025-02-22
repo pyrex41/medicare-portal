@@ -6,7 +6,7 @@ import Browser exposing (Document)
 import Browser.Navigation as Nav
 import ChoosePlan
 import Contact
-import Dashboard
+import Contacts
 import Debug
 import Home
 import Html exposing (Html, button, div, h1, img, nav, p, text)
@@ -103,7 +103,7 @@ type SessionState
 type Page
     = NotFoundPage
     | LoginPage Login.Model
-    | DashboardPage Dashboard.Model
+    | ContactsPage Contacts.Model
     | TempLandingPage TempLanding.Model
     | SettingsPage Settings.Model
     | Signup Signup.Model
@@ -121,7 +121,7 @@ type Msg
     | InternalLinkClicked String
     | UrlChanged Url
     | LoginMsg Login.Msg
-    | DashboardMsg Dashboard.Msg
+    | ContactsMsg Contacts.Msg
     | TempLandingMsg TempLanding.Msg
     | SettingsMsg Settings.Msg
     | SignupMsg Signup.Msg
@@ -217,7 +217,7 @@ type PublicPage
 
 
 type ProtectedPage
-    = DashboardRoute
+    = ContactsRoute
     | SettingsRoute
     | ProfileRoute
     | BrandSettingsRoute
@@ -273,7 +273,7 @@ routeParser =
         , map (PublicRoute SignupRoute) (s "signup")
         , map (\orgSlug -> \token -> PublicRoute (VerifyRoute (VerifyParams orgSlug token)))
             (s "auth" </> s "verify" </> string </> string)
-        , map (ProtectedRoute DashboardRoute) (s "dashboard")
+        , map (ProtectedRoute ContactsRoute) (s "contacts")
         , map (ProtectedRoute SettingsRoute) (s "settings")
         , map (ProtectedRoute ProfileRoute) (s "profile")
         , map (ProtectedRoute BrandSettingsRoute) (s "brand-settings")
@@ -329,15 +329,15 @@ update msg model =
                 _ ->
                     ( model, Cmd.none )
 
-        DashboardMsg subMsg ->
+        ContactsMsg subMsg ->
             case model.page of
-                DashboardPage pageModel ->
+                ContactsPage pageModel ->
                     let
                         ( newPageModel, newCmd ) =
-                            Dashboard.update subMsg pageModel
+                            Contacts.update subMsg pageModel
                     in
-                    ( { model | page = DashboardPage newPageModel }
-                    , Cmd.map DashboardMsg newCmd
+                    ( { model | page = ContactsPage newPageModel }
+                    , Cmd.map ContactsMsg newCmd
                     )
 
                 _ ->
@@ -606,9 +606,9 @@ view model =
                     , body = List.map (Html.map LoginMsg) loginView.body
                     }
 
-                DashboardPage dashboardModel ->
-                    { title = "Dashboard"
-                    , body = [ viewWithNav model (Html.map DashboardMsg (Dashboard.view dashboardModel)) ]
+                ContactsPage contactsModel ->
+                    { title = "Contacts"
+                    , body = [ viewWithNav model (Html.map ContactsMsg (Contacts.view contactsModel)) ]
                     }
 
                 TempLandingPage landingModel ->
@@ -729,9 +729,9 @@ viewNavHeader model =
                 , div [ class "flex items-center space-x-4" ]
                     [ button
                         [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:text-purple-600 transition-colors duration-200"
-                        , onClick (InternalLinkClicked "/dashboard")
+                        , onClick (InternalLinkClicked "/contacts")
                         ]
-                        [ text "Dashboard" ]
+                        [ text "Contacts" ]
                     , button
                         [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:text-purple-600 transition-colors duration-200"
                         , onClick (InternalLinkClicked "/brand-settings")
@@ -806,8 +806,8 @@ subscriptions model =
         LoginPage pageModel ->
             Sub.map LoginMsg (Login.subscriptions pageModel)
 
-        DashboardPage pageModel ->
-            Sub.map DashboardMsg (Dashboard.subscriptions pageModel)
+        ContactsPage pageModel ->
+            Sub.map ContactsMsg (Contacts.subscriptions pageModel)
 
         TempLandingPage pageModel ->
             Sub.map TempLandingMsg (TempLanding.subscriptions pageModel)
@@ -961,7 +961,7 @@ redirectToSetupStep model =
                     ( model, Nav.pushUrl model.key "/setup/add-agents" )
 
         Complete ->
-            ( model, Nav.pushUrl model.key "/dashboard" )
+            ( model, Nav.pushUrl model.key "/contacts" )
 
 
 shouldRedirectToLogin : Route -> Model -> Bool
@@ -1078,13 +1078,13 @@ updatePage url ( model, cmd ) =
                                 , Cmd.batch [ cmd, Cmd.map SignupMsg signupCmd ]
                                 )
 
-                            ProtectedRoute DashboardRoute ->
+                            ProtectedRoute ContactsRoute ->
                                 let
-                                    ( dashboardModel, dashboardCmd ) =
-                                        Dashboard.init model.key
+                                    ( contactsModel, contactsCmd ) =
+                                        Contacts.init model.key
                                 in
-                                ( { model | page = DashboardPage dashboardModel }
-                                , Cmd.batch [ cmd, Cmd.map DashboardMsg dashboardCmd ]
+                                ( { model | page = ContactsPage contactsModel }
+                                , Cmd.batch [ cmd, Cmd.map ContactsMsg contactsCmd ]
                                 )
 
                             ProtectedRoute SettingsRoute ->

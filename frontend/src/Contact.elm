@@ -11,6 +11,7 @@ import Http
 import Json.Decode as Decode exposing (Decoder)
 import Json.Decode.Pipeline as Pipeline
 import Json.Encode as Encode
+import Task
 import Time
 
 
@@ -109,16 +110,23 @@ type ActivityStatus
     | EmailSent Int -- Int represents which email number (1, 2, etc.)
 
 
+type Modal
+    = NoModal
+    | EditModal
+    | DeleteConfirmModal
+
+
 type alias Model =
     { key : Nav.Key
     , contact : Maybe Contact
-    , showEditModal : Bool
+    , showModal : Modal
     , editForm : ContactForm
     , isSubmittingForm : Bool
     , error : Maybe String
     , activities : List Activity
     , isCheckingEmail : Bool
     , emailExists : Bool
+    , isDeletingContact : Bool
     }
 
 
@@ -182,7 +190,7 @@ init key contactId =
     in
     ( { key = key
       , contact = Nothing
-      , showEditModal = False
+      , showModal = NoModal
       , editForm = emptyForm
       , isSubmittingForm = False
       , error = Nothing
@@ -208,6 +216,7 @@ init key contactId =
             ]
       , isCheckingEmail = False
       , emailExists = False
+      , isDeletingContact = False
       }
     , Http.get
         { url = "/api/contacts/" ++ contactId
@@ -224,8 +233,8 @@ type Msg
     = NoOp
     | GotContact (Result Http.Error Contact)
     | ShowEditModal
-    | CloseEditModal
-    | BackToDashboard
+    | CloseModal
+    | BackToContacts
     | UpdateEditForm ContactFormField String
     | SubmitEditForm
     | ContactUpdated (Result Http.Error Contact)
@@ -233,6 +242,9 @@ type Msg
     | EmailChecked (Result Http.Error { exists : Bool })
     | LookupZipCode String
     | GotZipLookup (Result Http.Error ZipInfo)
+    | ShowDeleteConfirmModal
+    | DeleteContact
+    | ContactDeleted (Result Http.Error DeleteResponse)
 
 
 type ContactFormField
@@ -275,7 +287,7 @@ update msg model =
             case model.contact of
                 Just contact ->
                     ( { model
-                        | showEditModal = True
+                        | showModal = EditModal
                         , editForm =
                             { id = Just contact.id
                             , firstName = contact.firstName
@@ -299,11 +311,11 @@ update msg model =
                 Nothing ->
                     ( model, Cmd.none )
 
-        CloseEditModal ->
-            ( { model | showEditModal = False }, Cmd.none )
+        CloseModal ->
+            ( { model | showModal = NoModal }, Cmd.none )
 
-        BackToDashboard ->
-            ( model, Nav.pushUrl model.key "/dashboard" )
+        BackToContacts ->
+            ( model, Nav.pushUrl model.key "/contacts" )
 
         UpdateEditForm field value ->
             let
@@ -353,19 +365,12 @@ update msg model =
 
                 cmd =
                     if field == ZipCode && String.length value == 5 then
-                        lookupZipCode value
+                        LookupZipCode value
+                            |> Task.succeed
+                            |> Task.perform identity
 
                     else if field == Email && String.length value > 0 then
-                        case model.contact of
-                            Just contact ->
-                                if contact.email /= value then
-                                    checkEmail value
-
-                                else
-                                    Cmd.none
-
-                            Nothing ->
-                                checkEmail value
+                        checkEmail value
 
                     else
                         Cmd.none
@@ -400,7 +405,7 @@ update msg model =
         ContactUpdated (Ok contact) ->
             ( { model
                 | contact = Just contact
-                , showEditModal = False
+                , showModal = NoModal
                 , isSubmittingForm = False
                 , error = Nothing
               }
@@ -465,6 +470,29 @@ update msg model =
         GotZipLookup (Err _) ->
             ( model, Cmd.none )
 
+        ShowDeleteConfirmModal ->
+            ( { model | showModal = DeleteConfirmModal }, Cmd.none )
+
+        DeleteContact ->
+            case model.contact of
+                Just contact ->
+                    ( { model | isDeletingContact = True }
+                    , deleteContact contact.id
+                    )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        ContactDeleted (Ok response) ->
+            if response.success then
+                ( model, Nav.pushUrl model.key "/contacts" )
+
+            else
+                ( { model | isDeletingContact = False, error = Just "Failed to delete contact" }, Cmd.none )
+
+        ContactDeleted (Err _) ->
+            ( { model | isDeletingContact = False, error = Just "Failed to delete contact" }, Cmd.none )
+
 
 
 -- VIEW
@@ -489,11 +517,7 @@ view model =
                         viewLoading
                 ]
             ]
-        , if model.showEditModal then
-            viewEditModal model
-
-          else
-            text ""
+        , viewModals model
         ]
     }
 
@@ -502,7 +526,7 @@ viewBackButton : Html Msg
 viewBackButton =
     button
         [ class "mb-6 inline-flex items-center text-sm text-gray-600 hover:text-gray-900"
-        , onClick BackToDashboard
+        , onClick BackToContacts
         ]
         [ span [ class "mr-2" ] [ text "←" ]
         , text "Back to Contacts"
@@ -519,10 +543,15 @@ viewHeader contact =
             ]
         , div [ class "flex gap-2" ]
             [ button
-                [ class "p-2 text-gray-600 hover:text-purple-600 transition-colors"
+                [ class "px-4 py-2 text-sm font-medium text-purple-600 hover:text-purple-700 bg-purple-50 hover:bg-purple-100 rounded-lg transition-colors duration-200 flex items-center gap-2"
                 , onClick ShowEditModal
                 ]
-                [ text "✎" ]
+                [ text "Edit" ]
+            , button
+                [ class "px-4 py-2 text-sm font-medium text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 rounded-lg transition-colors duration-200 flex items-center gap-2"
+                , onClick ShowDeleteConfirmModal
+                ]
+                [ text "Delete" ]
             ]
         ]
 
@@ -534,7 +563,7 @@ viewContactSummary contact =
         , div [ class "grid grid-cols-2 gap-x-8 gap-y-6" ]
             [ viewField "Date of Birth" contact.birthDate
             , viewField "Contact Owner" (Maybe.map .firstName contact.contactOwner |> Maybe.withDefault "Default")
-            , viewField "Phone Number" contact.phoneNumber
+            , viewField "Phone Number" (formatPhoneNumber contact.phoneNumber)
             , viewField "Email" contact.email
             , viewField "Gender" contact.gender
             , viewField "Tobacco Use"
@@ -544,10 +573,10 @@ viewContactSummary contact =
                  else
                     "No"
                 )
-            , viewField "County" "Richards"
+            , viewField "State" contact.state
             , viewField "Zip Code" contact.zipCode
-            , viewField "Created Date" contact.effectiveDate
-            , viewField "Last Updated" (Maybe.withDefault "-" contact.lastEmailed)
+            , viewField "Effective Date" contact.effectiveDate
+            , viewField "Plan Type" contact.planType
             ]
         ]
 
@@ -642,13 +671,26 @@ viewStatus status =
         [ text status ]
 
 
+viewModals : Model -> Html Msg
+viewModals model =
+    case model.showModal of
+        NoModal ->
+            text ""
+
+        EditModal ->
+            viewEditModal model
+
+        DeleteConfirmModal ->
+            viewDeleteConfirmModal model
+
+
 viewEditModal : Model -> Html Msg
 viewEditModal model =
     div [ class "fixed inset-0 bg-gray-500/75 flex items-center justify-center p-8" ]
         [ div [ class "bg-white rounded-xl p-10 max-w-5xl w-full mx-4 shadow-xl relative" ]
             [ button
                 [ class "absolute top-4 right-4 text-gray-400 hover:text-gray-600 transition-colors duration-200"
-                , onClick CloseEditModal
+                , onClick CloseModal
                 ]
                 [ text "×" ]
             , h2 [ class "text-2xl font-semibold text-gray-900 mb-8" ]
@@ -688,7 +730,7 @@ viewContactForm form isSubmitting model =
         , div [ class "mt-10 flex justify-end space-x-4" ]
             [ button
                 [ type_ "button"
-                , onClick CloseEditModal
+                , onClick CloseModal
                 , class "px-6 py-3 bg-white text-gray-700 text-sm font-medium rounded-lg border-2 border-gray-200 hover:border-gray-300 hover:bg-gray-50 transition-colors duration-200 focus:ring-4 focus:ring-purple-100"
                 ]
                 [ text "Cancel" ]
@@ -865,12 +907,12 @@ formatPhoneNumber phone =
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
-    if model.showEditModal then
+    if model.showModal /= NoModal then
         Browser.Events.onKeyDown
             (Decode.map
                 (\key ->
                     if key == "Escape" then
-                        CloseEditModal
+                        CloseModal
 
                     else
                         NoOp
@@ -904,3 +946,65 @@ zipInfoDecoder =
         |> Pipeline.required "state" Decode.string
         |> Pipeline.required "counties" (Decode.list Decode.string)
         |> Pipeline.required "cities" (Decode.list Decode.string)
+
+
+deleteContact : Int -> Cmd Msg
+deleteContact contactId =
+    Http.request
+        { method = "DELETE"
+        , headers = []
+        , url = "/api/contacts"
+        , body = Http.jsonBody (Encode.list Encode.int [ contactId ])
+        , expect = Http.expectJson ContactDeleted deleteResponseDecoder
+        , timeout = Nothing
+        , tracker = Nothing
+        }
+
+
+type alias DeleteResponse =
+    { success : Bool
+    , deletedIds : List Int
+    , message : String
+    }
+
+
+deleteResponseDecoder : Decode.Decoder DeleteResponse
+deleteResponseDecoder =
+    Decode.map3 DeleteResponse
+        (Decode.field "success" Decode.bool)
+        (Decode.field "deleted_ids" (Decode.list Decode.int))
+        (Decode.field "message" Decode.string)
+
+
+viewDeleteConfirmModal : Model -> Html Msg
+viewDeleteConfirmModal model =
+    div [ class "fixed inset-0 bg-gray-500/75 flex items-center justify-center p-8" ]
+        [ div [ class "bg-white rounded-xl p-8 max-w-md w-full mx-4 shadow-xl relative" ]
+            [ button
+                [ class "absolute top-4 right-4 text-gray-400 hover:text-gray-600 transition-colors duration-200"
+                , onClick CloseModal
+                ]
+                [ text "×" ]
+            , h2 [ class "text-xl font-semibold text-gray-900 mb-4" ]
+                [ text "Delete Contact" ]
+            , p [ class "text-sm text-gray-600 mb-6" ]
+                [ text "Are you sure you want to delete this contact? This action cannot be undone." ]
+            , div [ class "flex justify-end space-x-4" ]
+                [ button
+                    [ class "px-4 py-2 text-gray-700 text-sm font-medium rounded-lg border-2 border-gray-200 hover:border-gray-300 hover:bg-gray-50 transition-colors duration-200"
+                    , onClick CloseModal
+                    ]
+                    [ text "Cancel" ]
+                , if model.isDeletingContact then
+                    div [ class "px-4 py-2 flex items-center" ]
+                        [ viewSpinner ]
+
+                  else
+                    button
+                        [ class "px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 transition-colors duration-200"
+                        , onClick DeleteContact
+                        ]
+                        [ text "Delete" ]
+                ]
+            ]
+        ]

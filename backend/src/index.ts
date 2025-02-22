@@ -590,10 +590,18 @@ const startServer = async () => {
         }
       })
       // Add DELETE endpoint for contacts
-      .delete('/api/contacts', async ({ body }) => {
+      .delete('/api/contacts', async ({ body, request }) => {
         try {
+          const user = await getUserFromSession(request)
+          if (!user?.organization_id) {
+            throw new Error('No organization ID found in session')
+          }
+
           const contactIds = body as number[]
-          logger.info(`DELETE /api/contacts - Attempting to delete contacts with IDs: ${contactIds}`)
+          logger.info(`DELETE /api/contacts - Attempting to delete contacts with IDs: ${contactIds} for org ${user.organization_id}`)
+          
+          // Get org-specific database
+          const orgDb = await Database.getOrgDb(user.organization_id.toString())
 
           // Create placeholders for SQL IN clause
           const placeholders = contactIds.map(() => '?').join(',')
@@ -604,10 +612,10 @@ const startServer = async () => {
             RETURNING id
           `
 
-          const result = await db.execute(query, contactIds)
-          const deletedIds = result.map((row: any[]) => row[0])
+          const result = await orgDb.execute(query, contactIds)
+          const deletedIds = result.rows?.map(row => row.id) || []
 
-          logger.info(`DELETE /api/contacts - Successfully deleted ${deletedIds.length} contacts`)
+          logger.info(`DELETE /api/contacts - Successfully deleted ${deletedIds.length} contacts from org ${user.organization_id}`)
 
           return {
             success: true,
