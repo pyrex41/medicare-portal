@@ -306,4 +306,30 @@ export const settingsRoutes = new Elysia()
       logger.error('Error fetching carriers:', error);
       return { success: false, error: 'Failed to fetch carriers' };
     }
+  })
+
+  .get('/api/settings/carriers-with-aliases', async ({ cookie }) => {
+    const user = await validateSession(cookie.session);
+    if (!user?.id) {
+      return { success: false, error: 'No authenticated user' };
+    }
+
+    const db = new Database();
+
+    try {
+      const carriers = await db.fetchAll<{ name: string, aliases: string | null }>(
+        `SELECT name, aliases
+         FROM carriers
+         ORDER BY name`
+      );
+
+      return carriers.map(carrier => ({
+        name: carrier.name,
+        aliases: carrier.aliases ? JSON.parse(carrier.aliases) : []
+      }));
+
+    } catch (error) {
+      logger.error('Error fetching carriers with aliases:', error);
+      return { success: false, error: 'Failed to fetch carriers with aliases' };
+    }
   }); 

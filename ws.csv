@@ -1,11 +1,13 @@
 First Name,Last Name,Email,Current Carrier,Plan Type,Effective Date,Birth Date,Tobacco User,Gender,ZIP Code,Phone Number
 John,Smith,john.smith@email.com,Humana,G,2023-01-01,1955-03-15,No,M,33401,(555) 123-4567
-Mary,Johnson,mary.j@email.com,UnitedHealthcare,N,2023-02-15,1948-07-22,No,F,75001,(555) 234-5678
+Mary,Johnson,mary.j@email.com,UHC,N,02-15-2023,1948-07-22,No,F,75001,(555) 234-5678
 Robert,Williams,rob.w@email.com,Aetna,G,2023-03-01,1952-11-30,Yes,M,85001,(555) 345-6789
 Patricia,Brown,pat.brown@email.com,Cigna,N,2023-01-15,1950-04-18,No,F,90001,(555) 456-7890
 James,Davis,james.demail.com,Anthem,G,2023-02-01,1953-09-05,No,M,10001,(555) 567-8901
 Linda,Miller,linda.m@email.com,Humana,N,2023-03-15,1951-06-12,No,F,60601,(555) 678-9012
-Michael,Wilson,mike.w@email.com,UnitedHealthcare,G,2023-01-01,1954-08-25,Yes,M,30301,(555) 789-0123
+Michael,Wilson,mike.w@email.com,United Healthcare,G,2023-01-01,1954-08-25,Yes,M,30301,(555) 789-0123
 Barbara,Moore,barb.moore@email.com,Aetna,N,2023-02-15,1949-12-03,No,F,27601,(55) 890-1234
 William,Taylor,will.t@email.com,Cigna,G,2023-03-01,1956-02-28,No,M,43201,555-901-2345
 Elizabeth,Anderson,liz.a@email.com,Anthem,N,2023-01-15,1947-10-14,No,F,48201,5550123456
+Carl,Weathers,cweathers@email.com,UnitegHealthcare,G,2023-01-01,1955-03-15,No,M,33401,(555) 123-4567
+Melinda,Craft,mcraft@email.com,UHC,N,02-35-2023,1948-07-22,No,F,75001,(555) 234-5678

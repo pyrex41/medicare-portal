@@ -82,6 +82,11 @@ interface ContactRow {
   phone_number: string;
 }
 
+interface CarrierRow {
+  name: string;
+  aliases: string | null;
+}
+
 // Add this helper function before startServer
 function standardizePhoneNumber(phone: string): { isValid: boolean; standardized: string } {
   const digits = phone.replace(/\D/g, '').slice(0, 10);
@@ -96,6 +101,80 @@ function validateEmail(email: string): boolean {
   // RFC 5322 compliant email regex
   const emailRegex = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
   return emailRegex.test(email.trim());
+}
+
+// Add this helper function near the other validation functions
+function validateISODate(dateStr: string): { isValid: boolean; isoDate: string | null } {
+  try {
+    const trimmed = dateStr.trim();
+    
+    // Try to parse the date - will throw if invalid
+    const date = new Date(trimmed);
+    
+    // Check if date is invalid
+    if (isNaN(date.getTime())) {
+      return { isValid: false, isoDate: null };
+    }
+    
+    // Convert to ISO format (YYYY-MM-DD)
+    const isoDate = date.toISOString().split('T')[0];
+    
+    // Verify the date is not in the future
+    if (date > new Date()) {
+      return { isValid: false, isoDate: null };
+    }
+    
+    return { isValid: true, isoDate };
+  } catch (e) {
+    return { isValid: false, isoDate: null };
+  }
+}
+
+// Add this helper function near the other validation functions
+async function validateCarrier(carrier: string, db: Database): Promise<{ isValid: boolean; standardizedName: string; wasConverted: boolean }> {
+  try {
+    // Trim and standardize input
+    const trimmedCarrier = carrier.trim();
+    logger.info(`Validating carrier: "${trimmedCarrier}"`);
+    
+    // Create a new instance of the central database
+    const centralDb = new Database();
+    
+    // Get all carriers with their aliases from the central database
+    const result = await centralDb.execute<CarrierRow>(
+      'SELECT name, aliases FROM carriers'
+    );
+    
+    logger.info(`Found ${result.rows.length} carriers in database`);
+    
+    // Check each carrier and its aliases
+    for (const row of result.rows) {
+      logger.info(`Checking against carrier: "${row.name}", aliases: ${row.aliases || '[]'}`);
+      
+      // Check exact name match (case insensitive)
+      if (row.name.toLowerCase() === trimmedCarrier.toLowerCase()) {
+        logger.info(`Found exact match with carrier: ${row.name}`);
+        return { isValid: true, standardizedName: row.name, wasConverted: false };
+      }
+      
+      // Check aliases if they exist
+      if (row.aliases) {
+        const aliases = JSON.parse(row.aliases);
+        logger.info(`Checking aliases for ${row.name}: ${JSON.stringify(aliases)}`);
+        if (Array.isArray(aliases) && aliases.some(alias => alias.toLowerCase() === trimmedCarrier.toLowerCase())) {
+          logger.info(`Found match in aliases for carrier: ${row.name}`);
+          return { isValid: true, standardizedName: row.name, wasConverted: false };
+        }
+      }
+    }
+    
+    // If no match found, keep the original carrier name but mark as converted
+    logger.info(`No matching carrier found for: "${trimmedCarrier}", keeping original name`);
+    return { isValid: true, standardizedName: trimmedCarrier, wasConverted: true };
+  } catch (e) {
+    logger.error(`Error validating carrier: ${e}`);
+    return { isValid: true, standardizedName: carrier.trim(), wasConverted: true };
+  }
 }
 
 const startServer = async () => {
@@ -607,6 +686,7 @@ const startServer = async () => {
           const validRows: any[] = []
           const errorRows: any[] = []
           const paramsList: any[] = []
+          const convertedCarrierRows: any[] = []
 
           // Get existing emails for duplicate checking
           let existingEmails = new Set<string>()
@@ -695,32 +775,66 @@ const startServer = async () => {
               logger.info(`Allowing duplicate email since overwrite is enabled`)
             }
 
+            // Add carrier validation
+            const carrierResult = await validateCarrier(row['Current Carrier'], orgDb);
+            let carrierNote = null;
+            if (carrierResult.wasConverted) {
+              carrierNote = {
+                Row: rowNum,
+                ...row,
+                OriginalCarrier: row['Current Carrier']
+              };
+            }
+
             try {
-              // Validate dates
-              const effectiveDate = new Date(row['Effective Date'].trim())
-              const birthDate = new Date(row['Birth Date'].trim())
+              // Validate dates with better error messages
+              const effectiveDateResult = validateISODate(row['Effective Date']);
+              if (!effectiveDateResult.isValid) {
+                errorRows.push({
+                  Row: rowNum,
+                  ...row,
+                  Error: `Invalid effective date format: ${row['Effective Date']}. Please use YYYY-MM-DD or MM-DD-YYYY format.`
+                });
+                continue;
+              }
+
+              const birthDateResult = validateISODate(row['Birth Date']);
+              if (!birthDateResult.isValid) {
+                errorRows.push({
+                  Row: rowNum,
+                  ...row,
+                  Error: `Invalid birth date format: ${row['Birth Date']}. Please use YYYY-MM-DD or MM-DD-YYYY format.`
+                });
+                continue;
+              }
+
               const tobaccoUser = ['yes', 'true', '1', 'y'].includes(row['Tobacco User'].trim().toLowerCase())
 
               paramsList.push([
                 row['First Name'].trim(),
                 row['Last Name'].trim(),
                 email,
-                row['Current Carrier'].trim(),
+                carrierResult.standardizedName,
                 row['Plan Type'].trim(),
-                effectiveDate.toISOString().split('T')[0],
-                birthDate.toISOString().split('T')[0],
+                effectiveDateResult.isoDate,
+                birthDateResult.isoDate,
                 tobaccoUser,
                 gender,
                 zipInfo.state,
                 zipCode,
-                phoneResult.standardized // Use standardized phone number
+                phoneResult.standardized
               ])
               validRows.push(row)
+              
+              // If this row had a carrier conversion, track it
+              if (carrierNote) {
+                convertedCarrierRows.push(carrierNote)
+              }
             } catch (e) {
               errorRows.push({
                 Row: rowNum,
                 ...row,
-                Error: 'Invalid date format. Dates should be YYYY-MM-DD'
+                Error: 'Unexpected error processing dates. Please ensure dates are in YYYY-MM-DD format.'
               })
             }
           }
@@ -827,15 +941,69 @@ const startServer = async () => {
             ].join('\n')
           }
 
+          // Generate converted carriers CSV if needed
+          let convertedCarriersCsv = null;
+          if (convertedCarrierRows.length > 0) {
+            convertedCarriersCsv = [
+              ['Row', ...requiredFields, 'Original Carrier'].join(','),
+              ...convertedCarrierRows.map((row: { Row: number; [key: string]: any }) => {
+                return [
+                  row.Row,
+                  ...requiredFields.map(field => `"${row[field] || ''}"`),
+                  `"${row.OriginalCarrier}"`
+                ].join(',')
+              })
+            ].join('\n');
+          }
+
+          // Get list of supported carriers and their aliases
+          const centralDb = new Database();
+          const carriersResult = await centralDb.execute(
+            'SELECT name, aliases FROM carriers ORDER BY name'
+          );
+          
+          const supportedCarriers = carriersResult.rows.map(row => ({
+            name: row.name,
+            aliases: row.aliases ? JSON.parse(row.aliases) : []
+          }));
+
+          // Create carrier info message
+          const carrierInfoMessage = `Supported carriers: ${supportedCarriers.map((c: { name: string; aliases: string[] }) => 
+            `${c.name}${c.aliases.length > 0 ? ` (also accepts: ${c.aliases.join(', ')})` : ''}`
+          ).join(', ')}`;
+
+          // Create messages array for different types of feedback
+          const messages = [];
+          
+          // Add error message if there are errors
+          if (errorRows.length > 0) {
+            messages.push(`Found ${errorRows.length} rows with errors. Successfully imported ${insertedCount} rows.`);
+          } else {
+            messages.push(`Successfully imported ${insertedCount} rows.`);
+          }
+
+          // Add carrier conversion message if there were conversions
+          if (convertedCarrierRows.length > 0) {
+            messages.push(
+              `${convertedCarrierRows.length} rows had unrecognized carriers and were marked as "Other". ` +
+              `This is normal if these are carriers we don't support. However, please review the carrier conversion CSV ` +
+              `to ensure there are no typos or misspellings of supported carriers.`
+            );
+          }
+
+          // Add supported carriers message
+          messages.push(carrierInfoMessage);
+
           return {
             success: true,
-            message: errorRows.length > 0
-              ? `Found ${errorRows.length} rows with errors. Successfully imported ${insertedCount} rows.`
-              : `Successfully imported ${insertedCount} rows`,
+            message: messages.join('\n\n'),
             error_csv: errorCsv,
+            converted_carriers_csv: convertedCarriersCsv,
             total_rows: validRows.length + errorRows.length,
             error_rows: errorRows.length,
-            valid_rows: insertedCount
+            valid_rows: insertedCount,
+            converted_carrier_rows: convertedCarrierRows.length,
+            supported_carriers: supportedCarriers
           }
 
         } catch (e) {
@@ -844,9 +1012,12 @@ const startServer = async () => {
             success: false,
             message: String(e),
             error_csv: null,
+            converted_carriers_csv: null,
             total_rows: 0,
             error_rows: 0,
-            valid_rows: 0
+            valid_rows: 0,
+            converted_carrier_rows: 0,
+            supported_carriers: []
           }
         }
       })

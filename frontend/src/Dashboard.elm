@@ -13,7 +13,7 @@ import Browser.Navigation as Nav
 import File exposing (File)
 import File.Download
 import File.Select as Select
-import Html exposing (Html, button, col, colgroup, div, h1, h2, h3, input, label, nav, option, p, select, span, table, tbody, td, text, th, thead, tr)
+import Html exposing (Html, button, col, colgroup, details, div, h1, h2, h3, input, label, nav, option, p, select, span, summary, table, tbody, td, text, th, thead, tr)
 import Html.Attributes exposing (attribute, checked, class, placeholder, required, title, type_, value)
 import Html.Events exposing (on, onClick, onInput, onSubmit, preventDefaultOn, stopPropagationOn)
 import Http
@@ -162,6 +162,7 @@ type alias UploadState =
     , file : Maybe File
     , error : Maybe String
     , errorCsv : Maybe String
+    , converted_carriers_csv : Maybe String
     , stats : Maybe UploadStats
     , overwriteDuplicates : Bool
     }
@@ -171,6 +172,8 @@ type alias UploadStats =
     { totalRows : Int
     , errorRows : Int
     , validRows : Int
+    , converted_carrier_rows : Int
+    , supported_carriers : List { name : String, aliases : List String }
     }
 
 
@@ -282,6 +285,7 @@ emptyUploadState =
     , file = Nothing
     , error = Nothing
     , errorCsv = Nothing
+    , converted_carriers_csv = Nothing
     , stats = Nothing
     , overwriteDuplicates = True
     }
@@ -335,6 +339,7 @@ type Msg
     | UploadCsv
     | CsvUploaded (Result Http.Error UploadResponse)
     | DownloadErrorCsv String
+    | DownloadCarrierConversionsCsv String
     | DeleteSelectedContacts
     | ContactsDeleted (Result Http.Error DeleteResponse)
     | ToggleOverwriteDuplicates Bool
@@ -953,11 +958,14 @@ update msg model =
                                     { state
                                         | error = Just errorMessage
                                         , errorCsv = response.errorCsv
+                                        , converted_carriers_csv = response.converted_carriers_csv
                                         , stats =
                                             Just
                                                 { totalRows = response.totalRows
                                                 , errorRows = response.errorRows
                                                 , validRows = response.validRows
+                                                , converted_carrier_rows = response.converted_carrier_rows
+                                                , supported_carriers = response.supported_carriers
                                                 }
                                     }
 
@@ -1012,6 +1020,11 @@ update msg model =
         DownloadErrorCsv csvContent ->
             ( model
             , File.Download.string "upload_errors.csv" "text/csv" csvContent
+            )
+
+        DownloadCarrierConversionsCsv csvContent ->
+            ( model
+            , File.Download.string "carrier_conversions.csv" "text/csv" csvContent
             )
 
         DeleteSelectedContacts ->
@@ -1580,39 +1593,117 @@ viewCsvUploadModal state isUploading =
                     [ text "Download example CSV file" ]
                 ]
             , if state.error /= Nothing then
-                div [ class "mb-6 p-4 bg-red-50 border border-red-200 rounded-lg" ]
-                    [ div [ class "flex items-start" ]
-                        [ div [ class "flex-shrink-0" ]
-                            [ viewIcon "M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" ]
-                        , div [ class "ml-3" ]
-                            [ h3 [ class "text-sm font-medium text-red-800" ]
-                                [ text "Error uploading CSV" ]
-                            , div [ class "mt-2 text-sm text-red-700" ]
-                                [ text (Maybe.withDefault "" state.error)
-                                , case state.stats of
-                                    Just stats ->
-                                        if stats.errorRows > 0 then
-                                            div [ class "mt-2" ]
-                                                [ case state.errorCsv of
+                div [ class "mb-6" ]
+                    [ if state.stats /= Nothing then
+                        let
+                            stats =
+                                Maybe.withDefault
+                                    { totalRows = 0
+                                    , errorRows = 0
+                                    , validRows = 0
+                                    , converted_carrier_rows = 0
+                                    , supported_carriers = []
+                                    }
+                                    state.stats
+                        in
+                        div []
+                            [ if stats.errorRows > 0 then
+                                div [ class "p-4 mb-4 bg-red-50 border border-red-200 rounded-lg" ]
+                                    [ div [ class "flex items-start" ]
+                                        [ div [ class "flex-shrink-0" ]
+                                            [ viewIcon "M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" ]
+                                        , div [ class "ml-3" ]
+                                            [ h3 [ class "text-sm font-medium text-red-800" ]
+                                                [ text "Upload Errors" ]
+                                            , div [ class "mt-2 text-sm text-red-700" ]
+                                                [ text ("Found " ++ String.fromInt stats.errorRows ++ " rows with errors. Successfully imported " ++ String.fromInt stats.validRows ++ " rows.")
+                                                , case state.errorCsv of
                                                     Just csvContent ->
-                                                        button
-                                                            [ class "text-purple-600 hover:text-purple-800 hover:underline"
-                                                            , onClick (DownloadErrorCsv csvContent)
+                                                        div [ class "mt-2 font-medium" ]
+                                                            [ button
+                                                                [ class "text-purple-600 hover:text-purple-800 hover:underline"
+                                                                , onClick (DownloadErrorCsv csvContent)
+                                                                ]
+                                                                [ text "Download and Fix Error Rows" ]
                                                             ]
-                                                            [ text "Download and Fix Errors" ]
 
                                                     Nothing ->
                                                         text ""
                                                 ]
+                                            ]
+                                        ]
+                                    ]
 
-                                        else
-                                            text ""
+                              else
+                                text ""
+                            , if stats.converted_carrier_rows > 0 then
+                                div [ class "p-4 bg-yellow-50 border border-yellow-200 rounded-lg" ]
+                                    [ div [ class "flex items-start" ]
+                                        [ div [ class "flex-shrink-0" ]
+                                            [ viewIcon "M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" ]
+                                        , div [ class "ml-3" ]
+                                            [ h3 [ class "text-sm font-medium text-yellow-800 mb-3" ]
+                                                [ text "Carrier Conversions" ]
+                                            , div [ class "space-y-4 text-sm text-yellow-700" ]
+                                                [ p []
+                                                    [ text (String.fromInt stats.converted_carrier_rows ++ " rows had carriers we do not currently recognize/support. This is normal and expected.") ]
+                                                , p []
+                                                    [ text "However, this can also happen if there is a misspelling of a supported carrier. Please review to ensure the data is correct." ]
+                                                , case state.converted_carriers_csv of
+                                                    Just csvContent ->
+                                                        div [ class "pt-1" ]
+                                                            [ button
+                                                                [ class "text-purple-600 hover:text-purple-800 hover:underline font-medium"
+                                                                , onClick (DownloadCarrierConversionsCsv csvContent)
+                                                                ]
+                                                                [ text "Download Unrecognized Carrier Rows" ]
+                                                            ]
 
-                                    Nothing ->
-                                        text ""
+                                                    Nothing ->
+                                                        text ""
+                                                , div [ class "pt-2 border-t border-yellow-200" ]
+                                                    [ details [ class "text-sm" ]
+                                                        [ summary [ class "cursor-pointer text-purple-600 hover:text-purple-800 font-medium" ]
+                                                            [ text "Click to see supported carriers" ]
+                                                        , div [ class "mt-3 pl-4 space-y-2" ]
+                                                            (List.map
+                                                                (\carrier ->
+                                                                    div [ class "flex items-baseline" ]
+                                                                        [ span [ class "font-medium" ] [ text carrier.name ]
+                                                                        , if not (List.isEmpty carrier.aliases) then
+                                                                            span [ class "ml-4 text-yellow-800" ]
+                                                                                [ text ("Also accepts: " ++ String.join ", " carrier.aliases) ]
+
+                                                                          else
+                                                                            text ""
+                                                                        ]
+                                                                )
+                                                                stats.supported_carriers
+                                                            )
+                                                        ]
+                                                    ]
+                                                ]
+                                            ]
+                                        ]
+                                    ]
+
+                              else
+                                text ""
+                            ]
+
+                      else
+                        div [ class "p-4 bg-red-50 border border-red-200 rounded-lg" ]
+                            [ div [ class "flex items-start" ]
+                                [ div [ class "flex-shrink-0" ]
+                                    [ viewIcon "M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" ]
+                                , div [ class "ml-3" ]
+                                    [ h3 [ class "text-sm font-medium text-red-800" ]
+                                        [ text "Error uploading CSV" ]
+                                    , div [ class "mt-2 text-sm text-red-700" ]
+                                        [ text (Maybe.withDefault "" state.error) ]
+                                    ]
                                 ]
                             ]
-                        ]
                     ]
 
               else
@@ -1731,18 +1822,24 @@ uploadResponseDecoder =
         |> Pipeline.required "success" Decode.bool
         |> Pipeline.required "message" Decode.string
         |> Pipeline.required "error_csv" errorCsvDecoder
+        |> Pipeline.required "converted_carriers_csv" errorCsvDecoder
         |> Pipeline.required "total_rows" Decode.int
         |> Pipeline.required "error_rows" Decode.int
         |> Pipeline.required "valid_rows" Decode.int
+        |> Pipeline.required "converted_carrier_rows" Decode.int
+        |> Pipeline.required "supported_carriers" (Decode.list carrierDecoder)
 
 
 type alias UploadResponse =
     { success : Bool
     , message : String
     , errorCsv : Maybe String
+    , converted_carriers_csv : Maybe String
     , totalRows : Int
     , errorRows : Int
     , validRows : Int
+    , converted_carrier_rows : Int
+    , supported_carriers : List { name : String, aliases : List String }
     }
 
 
@@ -2517,3 +2614,10 @@ emailCheckDecoder : Decode.Decoder { exists : Bool }
 emailCheckDecoder =
     Decode.map (\exists -> { exists = exists })
         (Decode.field "exists" Decode.bool)
+
+
+carrierDecoder : Decode.Decoder { name : String, aliases : List String }
+carrierDecoder =
+    Decode.succeed (\name aliases -> { name = name, aliases = aliases })
+        |> Pipeline.required "name" Decode.string
+        |> Pipeline.required "aliases" (Decode.list Decode.string)
