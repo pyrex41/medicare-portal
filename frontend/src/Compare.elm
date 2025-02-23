@@ -2,6 +2,7 @@ module Compare exposing (Model, Msg(..), init, subscriptions, update, view)
 
 import Browser
 import Browser.Navigation as Nav
+import CarrierNaic exposing (carrierToString, naicToCarrier)
 import Debug
 import Html exposing (..)
 import Html.Attributes exposing (..)
@@ -263,6 +264,16 @@ groupQuotesByPlan responses model =
 
         convertToPlan : QuoteResponse -> QuoteData -> Plan
         convertToPlan response quote =
+            let
+                carrierImagePath =
+                    case naicToCarrier response.naic of
+                        Just carrier ->
+                            "/images/" ++ carrierToString carrier ++ ".svg"
+
+                        Nothing ->
+                            -- Fallback to png if we can't match the carrier
+                            "/images/medicare-max-logo.png"
+            in
             { price = quote.rate / 100
             , priceDiscount = quote.discountRate / 100
             , flag = quote.discountCategory
@@ -270,7 +281,7 @@ groupQuotesByPlan responses model =
             , description = ""
             , gender = quote.gender
             , id = 0
-            , image = "/images/carriers/" ++ response.naic ++ ".png"
+            , image = carrierImagePath
             , naic = response.naic
             , name = response.companyName
             , planType = quote.plan
@@ -526,7 +537,7 @@ view : Model -> Browser.Document Msg
 view model =
     { title = "Compare Medicare Plans - Medicare Max"
     , body =
-        [ div [ class "container mx-auto px-4" ]
+        [ div [ class "container mx-auto px-4 py-8" ]
             [ if model.isLoading then
                 viewLoading
 
@@ -536,15 +547,13 @@ view model =
                         viewError error
 
                     Nothing ->
-                        div [ class "flex flex-col gap-6 text-center mx-auto max-w-7xl pt-10" ]
-                            [ div [ class "flex flex-col gap-4 text-center" ]
-                                [ h1 [ class "text-center text-2xl font-semibold mb-2" ]
-                                    [ text "Most Affordable Medicare Supplement Options:" ]
-                                , div [ class "flex justify-center" ]
-                                    [ viewPillButton "Learn About Plan G vs. Plan N" True OpenGvsNVideo ]
-                                ]
-                            , div [ class "mt-4" ]
+                        div [ class "flex flex-col gap-6 text-center mx-auto max-w-3xl" ]
+                            [ h1 [ class "text-2xl font-semibold text-[#1A1A1A] mb-2" ]
+                                [ text "Select a Plan from these recommendations" ]
+                            , div [ class "mt-6" ]
                                 [ viewPlanToggle model ]
+                            , div [ class "flex justify-center mt-4" ]
+                                [ viewPillButton "Learn About Plan G vs. Plan N" True OpenGvsNVideo ]
                             , viewCarousel model
                             ]
             ]
@@ -557,16 +566,16 @@ view model =
 
 viewLoading : Html Msg
 viewLoading =
-    div [ class "flex flex-col items-center justify-center gap-4 text-center" ]
-        [ div [ class "animate-spin text-med-green-500 w-8 h-8" ] []
-        , p [ class "text-center text-sm font-medium" ]
-            [ text "Searching plans" ]
+    div [ class "flex flex-col items-center justify-center gap-4 text-center min-h-[400px]" ]
+        [ div [ class "animate-spin text-brand w-10 h-10 border-4 border-current border-t-transparent rounded-full" ] []
+        , p [ class "text-center text-lg font-medium text-neutral-600" ]
+            [ text "Searching plans..." ]
         ]
 
 
 viewError : String -> Html Msg
 viewError error =
-    div [ class "text-center text-xl font-bold text-red-500 mt-8" ]
+    div [ class "text-center text-xl font-bold text-red-600 mt-8 p-4 bg-red-50 rounded-lg" ]
         [ text error ]
 
 
@@ -576,25 +585,25 @@ viewPlanToggle model =
         ( planGClass, planNClass ) =
             case model.selectedPlanType of
                 PlanG ->
-                    ( "font-bold", "text-med-gray-200" )
+                    ( "font-medium text-[#1A1A1A]", "text-[#666666]" )
 
                 PlanN ->
-                    ( "text-med-gray-200", "font-bold" )
+                    ( "text-[#666666]", "font-medium text-[#1A1A1A]" )
     in
-    span [ class "flex justify-center items-center gap-4 text-lg" ]
+    div [ class "flex justify-center items-center gap-3 text-base" ]
         [ span [ class planGClass ] [ text (getPlanGName model) ]
         , button
             [ onClick TogglePlanType
-            , class "w-14 h-8 bg-med-gray-200 rounded-full p-1 duration-300 ease-in-out"
+            , class "w-12 h-6 bg-[#0066FF] rounded-full relative"
             ]
             [ div
-                [ class "bg-white w-6 h-6 rounded-full shadow-md transform duration-300 ease-in-out"
+                [ class "absolute top-0.5 left-0.5 bg-white w-5 h-5 rounded-full shadow-sm transform duration-300 ease-in-out"
                 , class
                     (if model.selectedPlanType == PlanN then
                         "translate-x-6"
 
                      else
-                        ""
+                        "translate-x-0"
                     )
                 ]
                 []
@@ -650,8 +659,8 @@ viewCarousel model =
         totalCards =
             List.length currentPlans
     in
-    div [ class "relative w-full max-w-[360px] sm:max-w-[480px] md:max-w-2xl mx-auto pt-4" ]
-        [ div [ class "absolute left-1/2 transform -translate-x-1/2 -mt-4 z-10" ]
+    div [ class "relative w-full max-w-[640px] mx-auto mt-8" ]
+        [ div [ class "absolute left-1/2 transform -translate-x-1/2 -top-6 z-10" ]
             [ viewCarouselDots model totalCards ]
         , div [ class "overflow-hidden" ]
             [ div
@@ -661,7 +670,7 @@ viewCarousel model =
                 (List.map (viewPlanCard model) currentPlans)
             ]
         , viewCarouselControls model totalCards
-        , div [ class "mt-8 text-center text-sm text-gray-600 max-w-lg mx-auto" ]
+        , div [ class "mt-8 text-center text-sm text-[#666666] max-w-lg mx-auto" ]
             [ p [ class "mb-2" ]
                 [ text "These are the three least expensive plans available. All Medicare Supplement plans of the same letter (G or N) provide identical coverage, as mandated by federal law." ]
             , p []
@@ -677,13 +686,13 @@ viewCarouselDots model totalCards =
             |> List.map
                 (\index ->
                     div
-                        [ class "w-5 h-5 rounded-full"
+                        [ class "w-3 h-3 rounded-full transition-colors duration-200"
                         , class
                             (if index == model.currentCardIndex then
-                                "bg-black"
+                                "bg-[#0066FF]"
 
                              else
-                                "bg-gray-300"
+                                "bg-[#E5E5E5]"
                             )
                         ]
                         []
@@ -693,15 +702,15 @@ viewCarouselDots model totalCards =
 
 viewCarouselControls : Model -> Int -> Html Msg
 viewCarouselControls model totalCards =
-    div [ class "absolute w-full flex justify-between items-center", style "top" "44%" ]
+    div [ class "absolute w-full flex justify-between items-center", style "top" "50%" ]
         [ button
-            [ class "bg-white p-2 bg-opacity-95 rounded-xl shadow-lg left-0 -ml-4 flex justify-center items-center disabled:text-med-gray-100 transition-opacity duration-300 hover:opacity-100"
+            [ class "bg-[#F5F8FF] w-10 h-10 rounded-lg shadow-sm -ml-5 flex justify-center items-center disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[#E5EFFF] transition-colors"
             , onClick PreviousCard
             , disabled (model.currentCardIndex == 0)
             ]
             [ text "←" ]
         , button
-            [ class "bg-white p-2 bg-opacity-95 rounded-xl shadow-lg right-0 -mr-4 flex justify-center items-center disabled:text-med-gray-100 transition-opacity duration-300 hover:opacity-100"
+            [ class "bg-[#F5F8FF] w-10 h-10 rounded-lg shadow-sm -mr-5 flex justify-center items-center disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[#E5EFFF] transition-colors"
             , onClick NextCard
             , disabled (model.currentCardIndex == totalCards - 1)
             ]
@@ -711,31 +720,33 @@ viewCarouselControls model totalCards =
 
 viewPlanCard : Model -> Plan -> Html Msg
 viewPlanCard model plan =
-    div [ class "flex-shrink-0 w-full px-3 relative" ]
-        [ div [ class "border-2 rounded-lg border-med-green-500 p-5 pt-6 mt-4 bg-white" ]
-            [ div [ class "mb-8 flex justify-center items-center" ]
-                [ img [ src plan.image, alt (plan.name ++ " logo"), class "h-24 max-w-[80%]" ] [] ]
+    div [ class "flex-shrink-0 w-full px-4 relative" ]
+        [ div [ class "bg-white rounded-2xl shadow-sm p-8" ]
+            [ div [ class "mb-8 flex justify-center items-center h-16" ]
+                [ img [ src plan.image, alt (plan.name ++ " logo"), class "h-full object-contain" ] [] ]
             , div [ class "text-center mb-6" ]
-                [ p [ class "text-med-gray-900" ]
-                    [ span [ class "text-5xl font-extrabold" ]
+                [ p [ class "text-[#1A1A1A]" ]
+                    [ span [ class "text-[48px] font-bold leading-none" ]
                         [ text ("$" ++ String.fromFloat plan.price) ]
-                    , span [ class "text-xl" ] [ text " /mo" ]
+                    , span [ class "text-lg text-[#666666] ml-1" ] [ text "/mo" ]
                     ]
                 ]
             , div [ class "mb-6" ]
-                [ label [ class "flex items-center justify-center text-sm text-med-green-500" ]
-                    [ input [ type_ "checkbox", class "mr-2" ] []
+                [ label [ class "flex items-center justify-center text-sm text-[#666666] gap-2" ]
+                    [ input [ type_ "checkbox", class "w-4 h-4 rounded border-gray-300 text-[#0066FF] focus:ring-[#0066FF]" ] []
                     , text ("Apply " ++ calculateDiscount plan ++ "% Household Discount")
                     ]
                 ]
             , button
                 [ onClick (SelectPlan plan)
-                , class "w-full bg-black text-white py-4 px-4 rounded hover:bg-gray-800 mb-8"
+                , class "w-full bg-[#7C3AED] text-white py-4 px-4 rounded-lg hover:bg-[#6D28D9] transition-colors mb-8 font-medium text-base"
                 ]
                 [ text "See If I Qualify" ]
-            , h3 [ class "font-semibold text-center mb-6" ] [ text "What Medicare Gaps are Covered?" ]
-            , ul [ class "space-y-4" ]
-                (List.map viewCoverageItem plan.coverageSummary)
+            , div [ class "border-t border-[#E5E5E5] pt-6" ]
+                [ h3 [ class "font-medium text-base text-[#1A1A1A] text-left mb-4" ] [ text "GAPS Plan G Covers:" ]
+                , ul [ class "space-y-3" ]
+                    (List.map viewCoverageItem plan.coverageSummary)
+                ]
             ]
         ]
 
@@ -753,24 +764,24 @@ viewCoverageItem : CoverageItem -> Html Msg
 viewCoverageItem item =
     li [ class "flex flex-col" ]
         [ div [ class "flex justify-between items-center" ]
-            [ span [ class "text-sm text-left font-medium" ] [ text item.name ]
+            [ span [ class "text-sm text-left font-medium text-neutral-700" ] [ text item.name ]
             , div [ class "flex items-center" ]
                 [ if item.percentageCovered == 0 then
-                    span [ class "bg-red-100 text-red-800 text-xs font-medium px-2 py-1 rounded whitespace-nowrap" ]
+                    span [ class "bg-medicare-danger-light text-medicare-danger text-xs font-medium px-2.5 py-1 rounded-full whitespace-nowrap" ]
                         [ text "NOT COVERED" ]
 
                   else if item.percentageCovered == 100 then
-                    span [ class "bg-green-100 text-green-800 text-xs font-medium px-2 py-1 rounded" ]
+                    span [ class "bg-medicare-success-light text-medicare-success text-xs font-medium px-2.5 py-1 rounded-full" ]
                         [ text "COVERED" ]
 
                   else
-                    span [ class "bg-green-100 text-green-800 text-xs font-medium px-2 py-1 rounded whitespace-nowrap" ]
+                    span [ class "bg-medicare-success-light text-medicare-success text-xs font-medium px-2.5 py-1 rounded-full whitespace-nowrap" ]
                         [ text (String.fromInt item.percentageCovered ++ "% COVERED") ]
                 ]
             ]
         , case item.note of
             Just noteText ->
-                p [ class "text-xs text-gray-600 mt-1 text-right" ] [ text noteText ]
+                p [ class "text-xs text-neutral-500 mt-1 text-right" ] [ text noteText ]
 
             Nothing ->
                 text ""
@@ -780,7 +791,7 @@ viewCoverageItem item =
 viewPillButton : String -> Bool -> Msg -> Html Msg
 viewPillButton label isVideo msg =
     button
-        [ class "mx-auto bg-white text-med-green-500 px-4 py-2 rounded-full border border-med-green-500 hover:bg-med-green-50 flex items-center justify-center gap-2"
+        [ class "mx-auto bg-white text-brand px-4 py-2 rounded-full border border-brand hover:bg-brand/5 transition-colors flex items-center justify-center gap-2"
         , onClick msg
         ]
         [ if isVideo then

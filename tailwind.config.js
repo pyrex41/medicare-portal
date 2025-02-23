@@ -1,3 +1,4 @@
+/** @type {import('tailwindcss').Config} */
 module.exports = {
   darkMode: ["class"],
   content: ["./src/**/*.{html,js,elm}", "*.{js,ts,jsx,tsx,mdx}"],
@@ -18,6 +19,7 @@ module.exports = {
           700: '#344054',
           900: '#101828',
         },
+        // Keep existing shadcn/ui colors
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
@@ -51,11 +53,21 @@ module.exports = {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
+        // Add Medicare-specific colors
+        medicare: {
+          success: "#047857",
+          "success-light": "#eafcf1",
+          danger: "#ef4444",
+          "danger-light": "#fecaca",
+        }
       },
       borderRadius: {
         lg: "var(--radius)",
         md: "calc(var(--radius) - 2px)",
         sm: "calc(var(--radius) - 4px)",
+      },
+      boxShadow: {
+        'card': '0px 4px 6px -2px rgba(0, 0, 0, 0.05), 0px 10px 15px -3px rgba(0, 0, 0, 0.1)',
       },
     },
   },
