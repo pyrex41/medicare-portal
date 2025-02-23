@@ -3,7 +3,9 @@ module Contact exposing (Model, Msg(..), init, subscriptions, update, view)
 import Browser
 import Browser.Events
 import Browser.Navigation as Nav
+import Date exposing (Date)
 import Debug
+import EmailScheduler exposing (EmailSchedule, PlanType(..), ScheduledEmail, getScheduledEmails, init, viewFutureActivity)
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (onBlur, onClick, onInput, onSubmit)
@@ -12,7 +14,7 @@ import Json.Decode as Decode exposing (Decoder)
 import Json.Decode.Pipeline as Pipeline
 import Json.Encode as Encode
 import Task
-import Time
+import Time exposing (Month(..))
 
 
 
@@ -127,6 +129,7 @@ type alias Model =
     , isCheckingEmail : Bool
     , emailExists : Bool
     , isDeletingContact : Bool
+    , emailSchedule : EmailSchedule
     }
 
 
@@ -185,8 +188,16 @@ type alias ZipInfo =
 init : Nav.Key -> String -> ( Model, Cmd Msg )
 init key contactId =
     let
-        _ =
-            Debug.log "Initializing Contact page with ID" contactId
+        initialSchedule =
+            EmailScheduler.init
+                (String.toInt contactId |> Maybe.withDefault 0)
+                (Date.fromCalendarDate 2024 Jan 1)
+                -- Will be updated when contact is loaded
+                (Date.fromCalendarDate 2024 Jan 1)
+                -- Will be updated when contact is loaded
+                (Date.fromCalendarDate 2024 Jan 1)
+                -- Will be updated with current date
+                NoPlan
     in
     ( { key = key
       , contact = Nothing
@@ -217,11 +228,15 @@ init key contactId =
       , isCheckingEmail = False
       , emailExists = False
       , isDeletingContact = False
+      , emailSchedule = initialSchedule
       }
-    , Http.get
-        { url = "/api/contacts/" ++ contactId
-        , expect = Http.expectJson GotContact contactDecoder
-        }
+    , Cmd.batch
+        [ Http.get
+            { url = "/api/contacts/" ++ contactId
+            , expect = Http.expectJson GotContact contactDecoder
+            }
+        , Task.perform GotCurrentTime Date.today
+        ]
     )
 
 
@@ -232,6 +247,7 @@ init key contactId =
 type Msg
     = NoOp
     | GotContact (Result Http.Error Contact)
+    | GotCurrentTime Date
     | ShowEditModal
     | CloseModal
     | BackToContacts
@@ -270,18 +286,75 @@ update msg model =
             ( model, Cmd.none )
 
         GotContact (Ok contact) ->
-            let
-                _ =
-                    Debug.log "Got contact" contact
-            in
-            ( { model | contact = Just contact }, Cmd.none )
+            case Date.fromIsoString contact.effectiveDate of
+                Ok effectiveDate ->
+                    case Date.fromIsoString contact.birthDate of
+                        Ok birthDate ->
+                            let
+                                _ =
+                                    Debug.log "Contact loaded"
+                                        { effectiveDate = Date.toIsoString effectiveDate
+                                        , birthDate = Date.toIsoString birthDate
+                                        , currentDate = Date.toIsoString model.emailSchedule.currentDate
+                                        , planType = contact.planType
+                                        }
 
-        GotContact (Err error) ->
-            let
-                _ =
-                    Debug.log "Error getting contact" error
-            in
+                                planType =
+                                    case contact.planType of
+                                        "Plan N" ->
+                                            PlanN
+
+                                        "N" ->
+                                            PlanN
+
+                                        "Plan G" ->
+                                            PlanG
+
+                                        "G" ->
+                                            PlanG
+
+                                        _ ->
+                                            NoPlan
+
+                                _ =
+                                    Debug.log "Converting plan type"
+                                        { raw = contact.planType
+                                        , converted = Debug.toString planType
+                                        }
+
+                                newSchedule =
+                                    EmailScheduler.init
+                                        contact.id
+                                        effectiveDate
+                                        birthDate
+                                        model.emailSchedule.currentDate
+                                        planType
+                            in
+                            ( { model | contact = Just contact, emailSchedule = newSchedule }, Cmd.none )
+
+                        Err _ ->
+                            ( { model | error = Just "Invalid birth date format" }, Cmd.none )
+
+                Err _ ->
+                    ( { model | error = Just "Invalid effective date format" }, Cmd.none )
+
+        GotContact (Err _) ->
             ( { model | error = Just "Failed to load contact" }, Cmd.none )
+
+        GotCurrentTime today ->
+            let
+                currentSchedule =
+                    model.emailSchedule
+
+                newSchedule =
+                    { currentSchedule | currentDate = today }
+
+                _ =
+                    Debug.log "Current date updated" (Date.toIsoString today)
+            in
+            ( { model | emailSchedule = newSchedule }
+            , Cmd.none
+            )
 
         ShowEditModal ->
             case model.contact of
@@ -510,6 +583,8 @@ view model =
                         div []
                             [ viewHeader contact
                             , viewContactSummary contact
+                            , div [ class "bg-white rounded-lg border border-gray-200 p-6 mb-8" ]
+                                [ viewFutureActivity (getScheduledEmails model.emailSchedule) ]
                             , viewActivity model.activities
                             ]
 
@@ -1008,3 +1083,18 @@ viewDeleteConfirmModal model =
                 ]
             ]
         ]
+
+
+
+-- HELPERS
+
+
+stringToPosix : String -> Date
+stringToPosix dateString =
+    case Date.fromIsoString dateString of
+        Ok date ->
+            date
+
+        Err _ ->
+            -- Default to Unix epoch if invalid date
+            Date.fromCalendarDate 1970 Jan 1

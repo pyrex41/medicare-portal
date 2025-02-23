@@ -5,6 +5,7 @@ import BrandSettings
 import Browser exposing (Document)
 import Browser.Navigation as Nav
 import ChoosePlan
+import Compare
 import Contact
 import Contacts
 import Debug
@@ -114,6 +115,7 @@ type Page
     | LoadingPage
     | HomePage Home.Model
     | ContactPage Contact.Model
+    | ComparePage Compare.Model
 
 
 type Msg
@@ -133,6 +135,7 @@ type Msg
     | ProfileMsg Profile.Msg
     | HomeMsg Home.Msg
     | ContactMsg Contact.Msg
+    | CompareMsg Compare.Msg
 
 
 type alias Flags =
@@ -198,6 +201,17 @@ init flags url key =
     )
 
 
+type alias CompareParams =
+    { state : String
+    , zip : String
+    , county : String
+    , gender : String
+    , tobacco : Bool
+    , age : Int
+    , planType : String
+    }
+
+
 type Route
     = PublicRoute PublicPage
     | ProtectedRoute ProtectedPage
@@ -214,6 +228,7 @@ type PublicPage
     | LoginRoute
     | SignupRoute
     | VerifyRoute VerifyParams
+    | CompareRoute CompareParams
 
 
 type ProtectedPage
@@ -265,6 +280,18 @@ setupProgressDecoder =
         (Query.string "org")
 
 
+compareParamsParser : Query.Parser CompareParams
+compareParamsParser =
+    Query.map7 CompareParams
+        (Query.string "state" |> Query.map (Maybe.withDefault "TX"))
+        (Query.string "zip" |> Query.map (Maybe.withDefault "75201"))
+        (Query.string "county" |> Query.map (Maybe.withDefault "Dallas"))
+        (Query.string "gender" |> Query.map (Maybe.withDefault "Male"))
+        (Query.string "tobacco" |> Query.map (Maybe.map (\t -> t == "yes") >> Maybe.withDefault False))
+        (Query.string "age" |> Query.map (Maybe.andThen String.toInt >> Maybe.withDefault 65))
+        (Query.string "planType" |> Query.map (Maybe.withDefault "G"))
+
+
 routeParser : Parser (Route -> a) a
 routeParser =
     oneOf
@@ -273,6 +300,7 @@ routeParser =
         , map (PublicRoute SignupRoute) (s "signup")
         , map (\orgSlug -> \token -> PublicRoute (VerifyRoute (VerifyParams orgSlug token)))
             (s "auth" </> s "verify" </> string </> string)
+        , map (PublicRoute << CompareRoute) (s "compare" <?> compareParamsParser)
         , map (ProtectedRoute ContactsRoute) (s "contacts")
         , map (ProtectedRoute SettingsRoute) (s "settings")
         , map (ProtectedRoute ProfileRoute) (s "profile")
@@ -588,6 +616,20 @@ update msg model =
                 _ ->
                     ( model, Cmd.none )
 
+        CompareMsg subMsg ->
+            case model.page of
+                ComparePage pageModel ->
+                    let
+                        ( newPageModel, newCmd ) =
+                            Compare.update subMsg pageModel
+                    in
+                    ( { model | page = ComparePage newPageModel }
+                    , Cmd.map CompareMsg newCmd
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
+
 
 view : Model -> Browser.Document Msg
 view model =
@@ -695,6 +737,15 @@ view model =
                     in
                     { title = contactView.title
                     , body = [ viewWithNav model (Html.map ContactMsg (div [] contactView.body)) ]
+                    }
+
+                ComparePage compareModel ->
+                    let
+                        compareView =
+                            Compare.view compareModel
+                    in
+                    { title = compareView.title
+                    , body = [ viewWithNav model (Html.map CompareMsg (div [] compareView.body)) ]
                     }
     in
     viewPage
@@ -835,6 +886,9 @@ subscriptions model =
 
         ContactPage pageModel ->
             Sub.map ContactMsg (Contact.subscriptions pageModel)
+
+        ComparePage pageModel ->
+            Sub.map CompareMsg (Compare.subscriptions pageModel)
 
         NotFoundPage ->
             Sub.none
@@ -1011,13 +1065,11 @@ updatePage : Url -> ( Model, Cmd Msg ) -> ( Model, Cmd Msg )
 updatePage url ( model, cmd ) =
     case model.session of
         Unknown ->
-            -- If we don't know session state yet, stay on loading page
             ( { model | page = LoadingPage }
             , cmd
             )
 
         _ ->
-            -- Only process route after we know session state
             case Parser.parse routeParser url of
                 Just route ->
                     if shouldRedirectToLogin route model then
@@ -1076,6 +1128,15 @@ updatePage url ( model, cmd ) =
                                 in
                                 ( { model | page = Signup signupModel }
                                 , Cmd.batch [ cmd, Cmd.map SignupMsg signupCmd ]
+                                )
+
+                            PublicRoute (CompareRoute params) ->
+                                let
+                                    ( compareModel, compareCmd ) =
+                                        Compare.init params model.key
+                                in
+                                ( { model | page = ComparePage compareModel }
+                                , Cmd.batch [ cmd, Cmd.map CompareMsg compareCmd ]
                                 )
 
                             ProtectedRoute ContactsRoute ->
