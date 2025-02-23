@@ -81,6 +81,7 @@ type alias Model =
     , currentCardIndex : Int
     , showRatesVideo : Bool
     , key : Nav.Key
+    , showDiscount : Bool
     }
 
 
@@ -99,6 +100,7 @@ type Msg
     | PreviousCard
     | CloseRatesVideo
     | NavigateTo String
+    | ToggleDiscount
 
 
 type alias Flags =
@@ -147,6 +149,7 @@ init flags key =
             , currentCardIndex = 0
             , showRatesVideo = False
             , key = key
+            , showDiscount = False
             }
     in
     ( model
@@ -381,6 +384,11 @@ planNCoverageList =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+        ToggleDiscount ->
+            ( { model | showDiscount = not model.showDiscount }
+            , Cmd.none
+            )
+
         GotPlans result ->
             case result of
                 Ok plans ->
@@ -720,6 +728,14 @@ viewCarouselControls model totalCards =
 
 viewPlanCard : Model -> Plan -> Html Msg
 viewPlanCard model plan =
+    let
+        displayPrice =
+            if model.showDiscount then
+                plan.priceDiscount
+
+            else
+                plan.price
+    in
     div [ class "flex-shrink-0 w-full px-4 relative" ]
         [ div [ class "bg-white rounded-2xl shadow-sm p-8" ]
             [ div [ class "mb-8 flex justify-center items-center h-16" ]
@@ -727,13 +743,19 @@ viewPlanCard model plan =
             , div [ class "text-center mb-6" ]
                 [ p [ class "text-[#1A1A1A]" ]
                     [ span [ class "text-[48px] font-bold leading-none" ]
-                        [ text ("$" ++ String.fromFloat plan.price) ]
+                        [ text ("$" ++ String.fromFloat displayPrice) ]
                     , span [ class "text-lg text-[#666666] ml-1" ] [ text "/mo" ]
                     ]
                 ]
             , div [ class "mb-6" ]
                 [ label [ class "flex items-center justify-center text-sm text-[#666666] gap-2" ]
-                    [ input [ type_ "checkbox", class "w-4 h-4 rounded border-gray-300 text-[#0066FF] focus:ring-[#0066FF]" ] []
+                    [ input
+                        [ type_ "checkbox"
+                        , class "w-4 h-4 rounded border-gray-300 text-[#0066FF] focus:ring-[#0066FF]"
+                        , checked model.showDiscount
+                        , onClick ToggleDiscount
+                        ]
+                        []
                     , text ("Apply " ++ calculateDiscount plan ++ "% Household Discount")
                     ]
                 ]
