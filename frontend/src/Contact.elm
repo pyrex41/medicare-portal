@@ -15,7 +15,7 @@ import Json.Decode as Decode exposing (Decoder)
 import Json.Decode.Pipeline as Pipeline
 import Json.Encode as Encode
 import Task
-import Time exposing (Month(..))
+import Time exposing (Month(..), Posix, Zone)
 
 
 
@@ -134,12 +134,22 @@ type alias Model =
     , quoteUrl : Maybe String
     , isGeneratingQuote : Bool
     , healthStatus : Maybe HealthStatus
+    , followUps : List FollowUpRequest
+    , timeZone : Zone
+    , showAllFollowUps : Bool
     }
 
 
 type alias HealthStatus =
     { status : String
     , answers : Maybe (Dict String Bool)
+    }
+
+
+type alias FollowUpRequest =
+    { type_ : String
+    , quoteId : String
+    , createdAt : Posix
     }
 
 
@@ -227,6 +237,9 @@ init key contactId =
       , quoteUrl = Nothing
       , isGeneratingQuote = False
       , healthStatus = Nothing
+      , followUps = []
+      , timeZone = Time.utc
+      , showAllFollowUps = False
       }
     , Cmd.batch
         [ Http.get
@@ -237,7 +250,12 @@ init key contactId =
             { url = "/api/contacts/" ++ contactId ++ "/eligibility"
             , expect = Http.expectJson GotHealthStatus healthStatusDecoder
             }
+        , Http.get
+            { url = "/api/contacts/" ++ contactId ++ "/follow-ups"
+            , expect = Http.expectJson GotFollowUps followUpsDecoder
+            }
         , Task.perform GotCurrentTime Date.today
+        , Task.perform GotTimeZone Time.here
         ]
     )
 
@@ -250,6 +268,7 @@ type Msg
     = NoOp
     | GotContact (Result Http.Error Contact)
     | GotCurrentTime Date
+    | GotTimeZone Zone
     | ShowEditModal
     | CloseModal
     | BackToContacts
@@ -266,6 +285,8 @@ type Msg
     | GenerateQuoteLink
     | GotQuoteLink (Result Http.Error { quoteId : String, redirectUrl : String })
     | GotHealthStatus (Result Http.Error HealthStatus)
+    | GotFollowUps (Result Http.Error (List FollowUpRequest))
+    | ToggleFollowUps
 
 
 type ContactFormField
@@ -351,6 +372,9 @@ update msg model =
             ( { model | emailSchedule = newSchedule }
             , Cmd.none
             )
+
+        GotTimeZone zone ->
+            ( { model | timeZone = zone }, Cmd.none )
 
         ShowEditModal ->
             case model.contact of
@@ -599,6 +623,17 @@ update msg model =
         GotHealthStatus (Err _) ->
             ( model, Cmd.none )
 
+        GotFollowUps (Ok followUps) ->
+            ( { model | followUps = followUps }
+            , Cmd.none
+            )
+
+        GotFollowUps (Err _) ->
+            ( model, Cmd.none )
+
+        ToggleFollowUps ->
+            ( { model | showAllFollowUps = not model.showAllFollowUps }, Cmd.none )
+
 
 
 -- VIEW
@@ -615,7 +650,7 @@ view model =
                     Just contact ->
                         div []
                             [ viewHeader contact
-                            , viewContactSummary contact model.quoteUrl model.isGeneratingQuote model.healthStatus
+                            , viewContactSummary contact model.quoteUrl model.isGeneratingQuote model.healthStatus model.followUps model.timeZone model.showAllFollowUps
                             , div [ class "bg-white rounded-lg border border-gray-200 p-6 mb-8" ]
                                 [ viewFutureActivity (getScheduledEmails model.emailSchedule) ]
                             , viewActivity model.activities
@@ -664,30 +699,72 @@ viewHeader contact =
         ]
 
 
-viewContactSummary : Contact -> Maybe String -> Bool -> Maybe HealthStatus -> Html Msg
-viewContactSummary contact quoteUrl isGeneratingQuote healthStatus =
-    div [ class "bg-white rounded-lg border border-gray-200 p-6 mb-8" ]
-        [ h2 [ class "text-lg font-medium mb-6" ] [ text "Contact Summary" ]
-        , div [ class "grid grid-cols-2 gap-x-8 gap-y-6" ]
-            [ viewField "Date of Birth" contact.birthDate
-            , viewField "Contact Owner" (Maybe.map .firstName contact.contactOwner |> Maybe.withDefault "Default")
-            , viewField "Phone Number" (formatPhoneNumber contact.phoneNumber)
-            , viewField "Email" contact.email
-            , viewField "Gender" contact.gender
-            , viewField "Tobacco Use"
-                (if contact.tobaccoUser then
-                    "Yes"
+viewContactSummary : Contact -> Maybe String -> Bool -> Maybe HealthStatus -> List FollowUpRequest -> Zone -> Bool -> Html Msg
+viewContactSummary contact quoteUrl isGeneratingQuote healthStatus followUps zone showAllFollowUps =
+    div []
+        [ div [ class "bg-white rounded-lg border border-gray-200 p-6 mb-8" ]
+            [ h2 [ class "text-lg font-medium mb-6" ] [ text "Contact Summary" ]
+            , div [ class "grid grid-cols-2 gap-x-8 gap-y-6" ]
+                [ viewField "Date of Birth" contact.birthDate
+                , viewField "Contact Owner" (Maybe.map .firstName contact.contactOwner |> Maybe.withDefault "Default")
+                , viewField "Phone Number" (formatPhoneNumber contact.phoneNumber)
+                , viewField "Email" contact.email
+                , viewField "Current Carrier" contact.currentCarrier
+                , viewField "Gender" contact.gender
+                , viewField "Tobacco Use"
+                    (if contact.tobaccoUser then
+                        "Yes"
 
-                 else
-                    "No"
-                )
-            , viewField "State" contact.state
-            , viewField "Zip Code" contact.zipCode
-            , viewField "Effective Date" contact.effectiveDate
-            , viewField "Plan Type" contact.planType
-            , viewQuoteField quoteUrl isGeneratingQuote
-            , viewHealthStatusField healthStatus
+                     else
+                        "No"
+                    )
+                , viewField "State" contact.state
+                , viewField "Zip Code" contact.zipCode
+                , viewField "Effective Date" contact.effectiveDate
+                , viewField "Plan Type" contact.planType
+                , viewQuoteField quoteUrl isGeneratingQuote
+                , viewHealthStatusField healthStatus
+                ]
             ]
+        , if not (List.isEmpty followUps) then
+            div [ class "bg-white rounded-lg border border-gray-200 p-6 mb-8" ]
+                [ div [ class "flex justify-between items-center mb-6" ]
+                    [ h2 [ class "text-lg font-medium" ] [ text "Follow-up Requests" ] ]
+                , div [ class "space-y-4" ]
+                    (List.take
+                        (if showAllFollowUps then
+                            List.length followUps
+
+                         else
+                            2
+                        )
+                        followUps
+                        |> List.map (viewFollowUpRequest zone)
+                    )
+                , if not showAllFollowUps && List.length followUps > 2 then
+                    div [ class "mt-4 text-center" ]
+                        [ button
+                            [ class "text-sm text-purple-600 hover:text-purple-800"
+                            , onClick ToggleFollowUps
+                            ]
+                            [ text ("Show " ++ String.fromInt (List.length followUps - 2) ++ " More") ]
+                        ]
+
+                  else if showAllFollowUps then
+                    div [ class "mt-4 text-center" ]
+                        [ button
+                            [ class "text-sm text-purple-600 hover:text-purple-800"
+                            , onClick ToggleFollowUps
+                            ]
+                            [ text "Show Less" ]
+                        ]
+
+                  else
+                    text ""
+                ]
+
+          else
+            text ""
         ]
 
 
@@ -1209,6 +1286,222 @@ quoteLinkDecoder =
     Decode.map2 (\id url -> { quoteId = id, redirectUrl = url })
         (Decode.field "quoteId" Decode.string)
         (Decode.field "redirectUrl" Decode.string)
+
+
+followUpsDecoder : Decoder (List FollowUpRequest)
+followUpsDecoder =
+    Decode.list
+        (Decode.map3 FollowUpRequest
+            (Decode.field "type" Decode.string)
+            (Decode.field "quoteId" Decode.string)
+            (Decode.field "createdAt" posixDecoder)
+        )
+
+
+posixDecoder : Decoder Posix
+posixDecoder =
+    Decode.string
+        |> Decode.andThen
+            (\str ->
+                let
+                    parts =
+                        String.split " " str
+
+                    datePart =
+                        List.head parts |> Maybe.withDefault ""
+
+                    timePart =
+                        List.drop 1 parts |> List.head |> Maybe.withDefault ""
+
+                    dateParts =
+                        String.split "-" datePart
+
+                    year =
+                        List.head dateParts |> Maybe.andThen String.toInt |> Maybe.withDefault 1970
+
+                    month =
+                        List.drop 1 dateParts |> List.head |> Maybe.andThen String.toInt |> Maybe.withDefault 1
+
+                    day =
+                        List.drop 2 dateParts |> List.head |> Maybe.andThen String.toInt |> Maybe.withDefault 1
+
+                    timeComponents =
+                        String.split ":" timePart
+
+                    hour =
+                        List.head timeComponents |> Maybe.andThen String.toInt |> Maybe.withDefault 0
+
+                    minute =
+                        List.drop 1 timeComponents |> List.head |> Maybe.andThen String.toInt |> Maybe.withDefault 0
+
+                    second =
+                        List.drop 2 timeComponents |> List.head |> Maybe.andThen (String.split "." >> List.head) |> Maybe.andThen String.toInt |> Maybe.withDefault 0
+
+                    -- Calculate milliseconds since epoch
+                    msPerDay =
+                        86400000
+
+                    msPerHour =
+                        3600000
+
+                    msPerMinute =
+                        60000
+
+                    msPerSecond =
+                        1000
+
+                    -- Start with Unix epoch (1970-01-01) and add days
+                    daysFromEpoch =
+                        (year - 1970)
+                            * 365
+                            + ((year - 1969) // 4)
+                            + (case month of
+                                1 ->
+                                    0
+
+                                2 ->
+                                    31
+
+                                3 ->
+                                    59
+
+                                4 ->
+                                    90
+
+                                5 ->
+                                    120
+
+                                6 ->
+                                    151
+
+                                7 ->
+                                    181
+
+                                8 ->
+                                    212
+
+                                9 ->
+                                    243
+
+                                10 ->
+                                    273
+
+                                11 ->
+                                    304
+
+                                12 ->
+                                    334
+
+                                _ ->
+                                    0
+                              )
+                            + day
+                            - 1
+
+                    timestamp =
+                        daysFromEpoch
+                            * msPerDay
+                            + hour
+                            * msPerHour
+                            + minute
+                            * msPerMinute
+                            + second
+                            * msPerSecond
+                in
+                Decode.succeed (Time.millisToPosix timestamp)
+            )
+
+
+viewFollowUpRequest : Zone -> FollowUpRequest -> Html Msg
+viewFollowUpRequest zone followUp =
+    div [ class "flex items-center justify-between py-3 border-b border-gray-100 last:border-0" ]
+        [ div [ class "flex items-center space-x-4" ]
+            [ div [ class "text-sm text-gray-600" ]
+                [ text (formatDate zone followUp.createdAt) ]
+            , div [ class "text-sm font-medium" ]
+                [ text
+                    (case followUp.type_ of
+                        "accept" ->
+                            "Accepted - Ready to Switch"
+
+                        "decline" ->
+                            "Declined - Looking for Alternatives"
+
+                        _ ->
+                            "General Follow-up Request"
+                    )
+                ]
+            ]
+        ]
+
+
+formatDate : Zone -> Posix -> String
+formatDate zone time =
+    let
+        year =
+            String.fromInt (Time.toYear zone time)
+
+        month =
+            case Time.toMonth zone time of
+                Jan ->
+                    "01"
+
+                Feb ->
+                    "02"
+
+                Mar ->
+                    "03"
+
+                Apr ->
+                    "04"
+
+                May ->
+                    "05"
+
+                Jun ->
+                    "06"
+
+                Jul ->
+                    "07"
+
+                Aug ->
+                    "08"
+
+                Sep ->
+                    "09"
+
+                Oct ->
+                    "10"
+
+                Nov ->
+                    "11"
+
+                Dec ->
+                    "12"
+
+        day =
+            String.padLeft 2 '0' (String.fromInt (Time.toDay zone time))
+
+        hour =
+            Time.toHour zone time
+
+        ( displayHour, amPm ) =
+            if hour == 0 then
+                ( "12", "AM" )
+
+            else if hour < 12 then
+                ( String.fromInt hour, "AM" )
+
+            else if hour == 12 then
+                ( "12", "PM" )
+
+            else
+                ( String.fromInt (hour - 12), "PM" )
+
+        minute =
+            String.padLeft 2 '0' (String.fromInt (Time.toMinute zone time))
+    in
+    year ++ "-" ++ month ++ "-" ++ day ++ " at " ++ displayHour ++ ":" ++ minute ++ " " ++ amPm
 
 
 

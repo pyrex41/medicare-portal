@@ -1645,6 +1645,49 @@ const startServer = async () => {
           throw new Error(String(e))
         }
       })
+      // Add new endpoint to get follow-up requests
+      .get('/api/contacts/:id/follow-ups', async ({ params: { id }, request }) => {
+        try {
+          const user = await getUserFromSession(request)
+          if (!user?.organization_id) {
+            throw new Error('No organization ID found in session')
+          }
+
+          logger.info(`GET /api/contacts/${id}/follow-ups - Fetching follow-up requests`)
+          
+          // Get org-specific database
+          const orgDb = await Database.getOrgDb(user.organization_id.toString())
+          
+          // Get follow-up requests from contact_events table
+          const result = await orgDb.execute(
+            `SELECT 
+              event_type,
+              metadata,
+              created_at
+             FROM contact_events 
+             WHERE contact_id = ? 
+               AND event_type = 'followup_request'
+             ORDER BY created_at DESC`,
+            [id]
+          )
+
+          // Map results to a more friendly format
+          const followUps = result.rows.map(row => {
+            const metadata = JSON.parse(row.metadata)
+            return {
+              type: metadata.requestType,
+              quoteId: metadata.quoteId,
+              createdAt: row.created_at
+            }
+          })
+
+          return followUps
+
+        } catch (e) {
+          logger.error(`Error fetching follow-up requests: ${e}`)
+          throw new Error(String(e))
+        }
+      })
       .post('/api/eligibility-answers', async ({ body, request }) => {
         try {
           const user = await getUserFromSession(request)
