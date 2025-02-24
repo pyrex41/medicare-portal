@@ -834,7 +834,7 @@ viewField label value =
 viewActivity : List Activity -> Html Msg
 viewActivity activities =
     div [ class "bg-white rounded-lg border border-gray-200 p-6" ]
-        [ h2 [ class "text-lg font-medium mb-6" ] [ text "Activity" ]
+        [ h2 [ class "text-lg font-medium mb-6" ] [ text "Past Activity" ]
         , table [ class "min-w-full" ]
             [ thead [ class "bg-gray-50" ]
                 [ tr []

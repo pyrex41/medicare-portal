@@ -1746,7 +1746,7 @@ viewCsvUploadModal state isUploading =
                                                 [ text "Carrier Conversions" ]
                                             , div [ class "space-y-4 text-sm text-yellow-700" ]
                                                 [ p []
-                                                    [ text (String.fromInt stats.converted_carrier_rows ++ " rows had carriers we do not currently recognize/support. This is normal and expected.") ]
+                                                    [ text (String.fromInt stats.converted_carrier_rows ++ " rows had carriers we do not currently recognize or provide quotes for. This is normal and expected -- we will still email these contacts with quotes from supported Carriers.") ]
                                                 , p []
                                                     [ text "However, this can also happen if there is a misspelling of a supported carrier. Please review to ensure the data is correct." ]
                                                 , case state.converted_carriers_csv of

@@ -521,7 +521,6 @@ const startServer = async () => {
             UPDATE contacts SET 
               first_name = ?,
               last_name = ?,
-              email = ?,
               current_carrier = ?,
               plan_type = ?,
               effective_date = ?,
@@ -530,15 +529,13 @@ const startServer = async () => {
               gender = ?,
               state = ?,
               zip_code = ?,
-              agent_id = ?,
               phone_number = ?
-            WHERE id = ?
+            WHERE LOWER(email) = ?
           `
 
           const updateParams = [
             contact.first_name,
             contact.last_name,
-            contact.email,
             contact.current_carrier,
             contact.plan_type,
             contact.effective_date,
@@ -547,9 +544,8 @@ const startServer = async () => {
             contact.gender,
             zipInfo.state, // Use state from ZIP code
             contact.zip_code,
-            contact.agent_id || null,
             contact.phone_number || '',
-            id
+            contact.email.toLowerCase()
           ]
 
           // Execute the update
@@ -867,19 +863,23 @@ const startServer = async () => {
                   tobacco_user = ?,
                   gender = ?,
                   state = ?,
-                  zip_code = ?
+                  zip_code = ?,
+                  phone_number = ?
                 WHERE LOWER(email) = ?
               `
-
+              
               for (const params of paramsList) {
                 const email = params[2].toLowerCase()
+                logger.info(`Processing row with email: ${email}`)
+                
                 // Check if email exists
                 const existingContact = await orgDb.fetchAll(
                   'SELECT 1 FROM contacts WHERE LOWER(email) = ?',
                   [email]
                 )
-
+                
                 if (existingContact.length > 0) {
+                  logger.info(`Updating existing contact with email: ${email}`)
                   // Update existing contact
                   const updateParams = [
                     params[0], // first_name
@@ -892,10 +892,14 @@ const startServer = async () => {
                     params[8], // gender
                     params[9], // state
                     params[10], // zip_code
+                    params[11], // phone_number
                     email     // for WHERE clause
                   ]
+                  logger.info(`Update params: ${JSON.stringify(updateParams)}`)
                   await orgDb.execute(updateQuery, updateParams)
+                  logger.info(`Successfully updated contact with email: ${email}`)
                 } else {
+                  logger.info(`Inserting new contact with email: ${email}`)
                   // Insert new contact
                   await orgDb.execute(
                     `INSERT INTO contacts (
@@ -905,6 +909,7 @@ const startServer = async () => {
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                     params
                   )
+                  logger.info(`Successfully inserted new contact with email: ${email}`)
                 }
               }
               insertedCount = paramsList.length

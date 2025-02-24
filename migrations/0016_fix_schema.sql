@@ -3,6 +3,9 @@ DROP TABLE IF EXISTS agents;
 DROP TABLE IF EXISTS migrations;
 DROP TABLE IF EXISTS verification_tokens;
 
+-- Drop any existing triggers
+DROP TRIGGER IF EXISTS update_contacts_timestamp;
+
 -- Drop and recreate contacts table
 DROP TABLE IF EXISTS contacts;
 CREATE TABLE contacts (
