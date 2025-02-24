@@ -148,21 +148,29 @@ update msg model =
                 -- Fallback if we somehow don't have current date
                 compareUrl =
                     Builder.absolute [ "compare" ]
-                        [ Builder.string "state" "TX"
-                        , Builder.string "zip" model.zipCode
-                        , Builder.string "county" "Dallas" -- We'll need to look this up based on zip
-                        , Builder.string "gender" model.gender
-                        , Builder.string "tobacco"
+                        ([ Builder.string "state" "TX"
+                         , Builder.string "zip" model.zipCode
+                         , Builder.string "county" "Dallas" -- We'll need to look this up based on zip
+                         , Builder.string "gender" model.gender
+                         , Builder.string "tobacco"
                             (if model.tobacco then
                                 "true"
 
                              else
                                 "false"
                             )
-                        , Builder.string "age" age
-                        , Builder.string "planType" "G"
-                        , Builder.string "dateOfBirth" model.dateOfBirth
-                        ]
+                         , Builder.string "age" age
+                         , Builder.string "planType" "G"
+                         , Builder.string "dateOfBirth" model.dateOfBirth
+                         ]
+                            ++ (case model.quoteId of
+                                    Just id ->
+                                        [ Builder.string "id" id ]
+
+                                    Nothing ->
+                                        []
+                               )
+                        )
             in
             ( model
             , Nav.pushUrl model.key compareUrl

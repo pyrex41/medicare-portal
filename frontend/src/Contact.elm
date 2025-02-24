@@ -5,6 +5,7 @@ import Browser.Events
 import Browser.Navigation as Nav
 import Date exposing (Date)
 import Debug
+import Dict exposing (Dict)
 import EmailScheduler exposing (EmailSchedule, PlanType(..), ScheduledEmail, getScheduledEmails, init, viewFutureActivity)
 import Html exposing (..)
 import Html.Attributes exposing (..)
@@ -132,6 +133,13 @@ type alias Model =
     , emailSchedule : EmailSchedule
     , quoteUrl : Maybe String
     , isGeneratingQuote : Bool
+    , healthStatus : Maybe HealthStatus
+    }
+
+
+type alias HealthStatus =
+    { status : String
+    , answers : Maybe (Dict String Bool)
     }
 
 
@@ -176,6 +184,13 @@ userDecoder =
         |> Pipeline.required "phone" Decode.string
 
 
+healthStatusDecoder : Decoder HealthStatus
+healthStatusDecoder =
+    Decode.map2 HealthStatus
+        (Decode.field "status" Decode.string)
+        (Decode.field "answers" (Decode.nullable (Decode.dict Decode.bool)))
+
+
 
 -- INIT
 
@@ -204,37 +219,23 @@ init key contactId =
       , editForm = emptyForm
       , isSubmittingForm = False
       , error = Nothing
-      , activities =
-            [ { submissionDate = "11-24-2024"
-              , status = QuoteCreated
-              , carrierSelected = Just "Allstate"
-              , planSelected = Just "Silver Tsunami xJ5"
-              , quoteAmount = Just 120.0
-              }
-            , { submissionDate = "11-24-2024"
-              , status = EmailOpened
-              , carrierSelected = Nothing
-              , planSelected = Nothing
-              , quoteAmount = Nothing
-              }
-            , { submissionDate = "11-24-2024"
-              , status = EmailSent 1
-              , carrierSelected = Nothing
-              , planSelected = Nothing
-              , quoteAmount = Nothing
-              }
-            ]
+      , activities = []
       , isCheckingEmail = False
       , emailExists = False
       , isDeletingContact = False
       , emailSchedule = initialSchedule
       , quoteUrl = Nothing
       , isGeneratingQuote = False
+      , healthStatus = Nothing
       }
     , Cmd.batch
         [ Http.get
             { url = "/api/contacts/" ++ contactId
             , expect = Http.expectJson GotContact contactDecoder
+            }
+        , Http.get
+            { url = "/api/contacts/" ++ contactId ++ "/eligibility"
+            , expect = Http.expectJson GotHealthStatus healthStatusDecoder
             }
         , Task.perform GotCurrentTime Date.today
         ]
@@ -264,6 +265,7 @@ type Msg
     | ContactDeleted (Result Http.Error DeleteResponse)
     | GenerateQuoteLink
     | GotQuoteLink (Result Http.Error { quoteId : String, redirectUrl : String })
+    | GotHealthStatus (Result Http.Error HealthStatus)
 
 
 type ContactFormField
@@ -589,6 +591,14 @@ update msg model =
             , Cmd.none
             )
 
+        GotHealthStatus (Ok status) ->
+            ( { model | healthStatus = Just status }
+            , Cmd.none
+            )
+
+        GotHealthStatus (Err _) ->
+            ( model, Cmd.none )
+
 
 
 -- VIEW
@@ -605,7 +615,7 @@ view model =
                     Just contact ->
                         div []
                             [ viewHeader contact
-                            , viewContactSummary contact model.quoteUrl model.isGeneratingQuote
+                            , viewContactSummary contact model.quoteUrl model.isGeneratingQuote model.healthStatus
                             , div [ class "bg-white rounded-lg border border-gray-200 p-6 mb-8" ]
                                 [ viewFutureActivity (getScheduledEmails model.emailSchedule) ]
                             , viewActivity model.activities
@@ -654,8 +664,8 @@ viewHeader contact =
         ]
 
 
-viewContactSummary : Contact -> Maybe String -> Bool -> Html Msg
-viewContactSummary contact quoteUrl isGeneratingQuote =
+viewContactSummary : Contact -> Maybe String -> Bool -> Maybe HealthStatus -> Html Msg
+viewContactSummary contact quoteUrl isGeneratingQuote healthStatus =
     div [ class "bg-white rounded-lg border border-gray-200 p-6 mb-8" ]
         [ h2 [ class "text-lg font-medium mb-6" ] [ text "Contact Summary" ]
         , div [ class "grid grid-cols-2 gap-x-8 gap-y-6" ]
@@ -675,27 +685,64 @@ viewContactSummary contact quoteUrl isGeneratingQuote =
             , viewField "Zip Code" contact.zipCode
             , viewField "Effective Date" contact.effectiveDate
             , viewField "Plan Type" contact.planType
+            , viewQuoteField quoteUrl isGeneratingQuote
+            , viewHealthStatusField healthStatus
             ]
-        , case quoteUrl of
-            Just url ->
-                div [ class "mt-6 p-4 bg-blue-50 rounded-lg" ]
-                    [ div [ class "text-sm font-medium text-gray-700 mb-2" ]
-                        [ text "Quote Link" ]
-                    , a
+        ]
+
+
+viewQuoteField : Maybe String -> Bool -> Html Msg
+viewQuoteField quoteUrl isGeneratingQuote =
+    div []
+        [ div [ class "text-sm font-medium text-gray-500" ] [ text "Quote Link" ]
+        , div [ class "mt-1" ]
+            [ case quoteUrl of
+                Just url ->
+                    a
                         [ href url
-                        , class "text-sm text-blue-600 hover:text-blue-800 underline break-all"
+                        , class "text-sm text-blue-600 hover:text-blue-800 underline"
                         , target "_blank"
                         ]
                         [ text "View Quote" ]
-                    ]
 
-            Nothing ->
-                if isGeneratingQuote then
-                    div [ class "mt-6 flex justify-center" ]
-                        [ viewSpinner ]
+                Nothing ->
+                    if isGeneratingQuote then
+                        viewSpinner
 
-                else
-                    text ""
+                    else
+                        text "-"
+            ]
+        ]
+
+
+viewHealthStatusField : Maybe HealthStatus -> Html Msg
+viewHealthStatusField maybeStatus =
+    div []
+        [ div [ class "text-sm font-medium text-gray-500" ] [ text "Health Status" ]
+        , div [ class "mt-1" ]
+            [ case maybeStatus of
+                Just status ->
+                    case status.status of
+                        "pass" ->
+                            div [ class "flex items-center text-green-600 text-sm" ]
+                                [ span [ class "mr-1" ] [ text "✓" ]
+                                , text "Pass"
+                                ]
+
+                        "flagged" ->
+                            div [ class "flex items-center text-red-600 text-sm" ]
+                                [ span [ class "mr-1" ] [ text "✕" ]
+                                , text "Issue Flagged"
+                                ]
+
+                        _ ->
+                            div [ class "text-gray-600 text-sm" ]
+                                [ text "Incomplete" ]
+
+                Nothing ->
+                    div [ class "text-gray-600 text-sm" ]
+                        [ text "Loading..." ]
+            ]
         ]
 
 
@@ -787,6 +834,35 @@ viewStatus status =
     in
     div [ class ("inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium " ++ bgColor ++ " " ++ textColor) ]
         [ text status ]
+
+
+viewHealthStatus : Maybe HealthStatus -> Html Msg
+viewHealthStatus maybeStatus =
+    div [ class "p-4 rounded-lg flex items-center" ]
+        [ div [ class "text-sm font-medium mr-2" ] [ text "Health Status:" ]
+        , case maybeStatus of
+            Just status ->
+                case status.status of
+                    "pass" ->
+                        div [ class "flex items-center text-green-600" ]
+                            [ span [ class "mr-2" ] [ text "✓" ]
+                            , text "Pass"
+                            ]
+
+                    "flagged" ->
+                        div [ class "flex items-center text-red-600" ]
+                            [ span [ class "mr-2" ] [ text "✕" ]
+                            , text "Issue Flagged"
+                            ]
+
+                    _ ->
+                        div [ class "flex items-center text-gray-600" ]
+                            [ text "Incomplete" ]
+
+            Nothing ->
+                div [ class "flex items-center text-gray-600" ]
+                    [ text "Loading..." ]
+        ]
 
 
 viewModals : Model -> Html Msg

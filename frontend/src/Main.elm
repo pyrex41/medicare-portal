@@ -16,9 +16,11 @@ import Html.Attributes exposing (alt, class, href, src)
 import Html.Events exposing (onClick)
 import Http
 import Json.Decode as Decode exposing (Decoder)
+import Json.Encode as E
 import Login
 import Profile
 import Quote
+import Schedule
 import Settings
 import Signup
 import TempLanding
@@ -120,6 +122,7 @@ type Page
     | ComparePage Compare.Model
     | QuotePage Quote.Model
     | EligibilityPage Eligibility.Model
+    | SchedulePage Schedule.Model
 
 
 type Msg
@@ -142,10 +145,26 @@ type Msg
     | CompareMsg Compare.Msg
     | QuoteMsg Quote.Msg
     | EligibilityMsg Eligibility.Msg
+    | ScheduleMsg Schedule.Msg
+    | NoOp
 
 
 type alias Flags =
     { initialSession : Maybe String }
+
+
+type alias CompareFlags =
+    { state : String
+    , zip : String
+    , county : String
+    , gender : String
+    , tobacco : Bool
+    , age : Int
+    , planType : String
+    , currentCarrier : Maybe String
+    , dateOfBirth : String
+    , quoteId : Maybe String
+    }
 
 
 main : Program Flags Model Msg
@@ -217,6 +236,8 @@ type alias CompareParams =
     , planType : String
     , currentCarrier : Maybe String
     , dateOfBirth : String
+    , quoteId : Maybe String
+    , trackingId : Maybe String
     }
 
 
@@ -253,8 +274,9 @@ type PublicPage
     | SignupRoute
     | VerifyRoute VerifyParams
     | CompareRoute CompareParams
-    | QuoteRoute (Maybe String)
-    | EligibilityRoute
+    | QuoteRoute ( Maybe String, Maybe String )
+    | EligibilityRoute ( Maybe String, Maybe String )
+    | ScheduleRoute ( Maybe String, Maybe String, Maybe String )
 
 
 type ProtectedPage
@@ -323,7 +345,7 @@ compareParamsParser =
                 (Query.string "planType" |> Query.map (Maybe.withDefault "G"))
                 (Query.string "currentCarrier")
 
-        combineParams p1 p2 dateOfBirth =
+        combineParams p1 p2 dateOfBirth quoteId trackingId =
             { state = p1.state
             , zip = p1.zip
             , county = p1.county
@@ -333,12 +355,16 @@ compareParamsParser =
             , planType = p2.planType
             , currentCarrier = p2.currentCarrier
             , dateOfBirth = dateOfBirth
+            , quoteId = quoteId
+            , trackingId = trackingId
             }
     in
-    Query.map3 combineParams
+    Query.map5 combineParams
         part1
         part2
         (Query.string "dateOfBirth" |> Query.map (Maybe.withDefault ""))
+        (Query.string "id")
+        (Query.string "tid")
 
 
 routeParser : Parser (Route -> a) a
@@ -350,8 +376,25 @@ routeParser =
         , map (\orgSlug -> \token -> PublicRoute (VerifyRoute (VerifyParams orgSlug token)))
             (s "auth" </> s "verify" </> string </> string)
         , map (PublicRoute << CompareRoute) (s "compare" <?> compareParamsParser)
-        , map (PublicRoute << QuoteRoute) (s "quote" <?> Query.string "id")
-        , map (PublicRoute EligibilityRoute) (s "eligibility")
+        , map (PublicRoute << QuoteRoute)
+            (s "quote"
+                <?> Query.map2 Tuple.pair
+                        (Query.string "id")
+                        (Query.string "tid")
+            )
+        , map (PublicRoute << EligibilityRoute)
+            (s "eligibility"
+                <?> Query.map2 Tuple.pair
+                        (Query.string "id")
+                        (Query.string "tid")
+            )
+        , map (PublicRoute << ScheduleRoute)
+            (s "schedule"
+                <?> Query.map3 (\id status tid -> ( id, status, tid ))
+                        (Query.string "id")
+                        (Query.string "status")
+                        (Query.string "tid")
+            )
         , map (ProtectedRoute ContactsRoute) (s "contacts")
         , map (ProtectedRoute SettingsRoute) (s "settings")
         , map (ProtectedRoute ProfileRoute) (s "profile")
@@ -709,6 +752,23 @@ update msg model =
                 _ ->
                     ( model, Cmd.none )
 
+        ScheduleMsg subMsg ->
+            case model.page of
+                SchedulePage pageModel ->
+                    let
+                        ( newPageModel, newCmd ) =
+                            Schedule.update subMsg pageModel
+                    in
+                    ( { model | page = SchedulePage newPageModel }
+                    , Cmd.map ScheduleMsg newCmd
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        NoOp ->
+            ( model, Cmd.none )
+
 
 view : Model -> Browser.Document Msg
 view model =
@@ -843,6 +903,15 @@ view model =
                     in
                     { title = eligibilityView.title
                     , body = List.map (Html.map EligibilityMsg) eligibilityView.body
+                    }
+
+                SchedulePage scheduleModel ->
+                    let
+                        scheduleView =
+                            Schedule.view scheduleModel
+                    in
+                    { title = scheduleView.title
+                    , body = List.map (Html.map ScheduleMsg) scheduleView.body
                     }
     in
     viewPage
@@ -992,6 +1061,9 @@ subscriptions model =
 
         EligibilityPage pageModel ->
             Sub.map EligibilityMsg (Eligibility.subscriptions pageModel)
+
+        SchedulePage pageModel ->
+            Sub.map ScheduleMsg (Schedule.subscriptions pageModel)
 
         NotFoundPage ->
             Sub.none
@@ -1188,16 +1260,35 @@ updatePage url ( model, cmd ) =
 
                     else
                         case route of
-                            PublicRoute EligibilityRoute ->
+                            PublicRoute (EligibilityRoute ( maybeQuoteId, maybeTrackingId )) ->
                                 let
                                     ( eligibilityModel, eligibilityCmd ) =
-                                        Eligibility.init model.key
+                                        Eligibility.init model.key maybeQuoteId
                                 in
                                 ( { model | page = EligibilityPage eligibilityModel }
-                                , Cmd.batch [ cmd, Cmd.map EligibilityMsg eligibilityCmd ]
+                                , Cmd.batch
+                                    [ cmd
+                                    , Cmd.map EligibilityMsg eligibilityCmd
+                                    , case maybeTrackingId of
+                                        Just tid ->
+                                            Http.post
+                                                { url = "/api/contact-events"
+                                                , body =
+                                                    Http.jsonBody
+                                                        (E.object
+                                                            [ ( "tracking_id", E.string tid )
+                                                            , ( "event_type", E.string "eligibility_opened" )
+                                                            ]
+                                                        )
+                                                , expect = Http.expectWhatever (\_ -> NoOp)
+                                                }
+
+                                        Nothing ->
+                                            Cmd.none
+                                    ]
                                 )
 
-                            PublicRoute (QuoteRoute maybeQuoteId) ->
+                            PublicRoute (QuoteRoute ( maybeQuoteId, maybeTrackingId )) ->
                                 let
                                     initialValues =
                                         { zipCode = Nothing
@@ -1211,7 +1302,59 @@ updatePage url ( model, cmd ) =
                                         Quote.init model.key initialValues
                                 in
                                 ( { model | page = QuotePage quoteModel }
-                                , Cmd.batch [ cmd, Cmd.map QuoteMsg quoteCmd ]
+                                , Cmd.batch
+                                    [ cmd
+                                    , Cmd.map QuoteMsg quoteCmd
+                                    , case maybeTrackingId of
+                                        Just tid ->
+                                            Http.post
+                                                { url = "/api/contact-events"
+                                                , body =
+                                                    Http.jsonBody
+                                                        (E.object
+                                                            [ ( "tracking_id", E.string tid )
+                                                            , ( "event_type", E.string "quote_opened" )
+                                                            ]
+                                                        )
+                                                , expect = Http.expectWhatever (\_ -> NoOp)
+                                                }
+
+                                        Nothing ->
+                                            Cmd.none
+                                    ]
+                                )
+
+                            PublicRoute (ScheduleRoute ( quoteId, status, trackingId )) ->
+                                let
+                                    ( scheduleModel, scheduleCmd ) =
+                                        Schedule.init model.key quoteId status
+                                in
+                                ( { model | page = SchedulePage scheduleModel }
+                                , Cmd.batch
+                                    [ cmd
+                                    , Cmd.map ScheduleMsg scheduleCmd
+                                    , case trackingId of
+                                        Just tid ->
+                                            Http.post
+                                                { url = "/api/contact-events"
+                                                , body =
+                                                    Http.jsonBody
+                                                        (E.object
+                                                            [ ( "tracking_id", E.string tid )
+                                                            , ( "event_type", E.string "followup_requested" )
+                                                            , ( "metadata"
+                                                              , E.object
+                                                                    [ ( "status", E.string (Maybe.withDefault "generic" status) )
+                                                                    ]
+                                                              )
+                                                            ]
+                                                        )
+                                                , expect = Http.expectWhatever (\_ -> NoOp)
+                                                }
+
+                                        Nothing ->
+                                            Cmd.none
+                                    ]
                                 )
 
                             PublicRoute HomeRoute ->
@@ -1261,11 +1404,42 @@ updatePage url ( model, cmd ) =
 
                             PublicRoute (CompareRoute params) ->
                                 let
+                                    flags =
+                                        { state = params.state
+                                        , zip = params.zip
+                                        , county = params.county
+                                        , gender = params.gender
+                                        , tobacco = params.tobacco
+                                        , age = params.age
+                                        , planType = params.planType
+                                        , currentCarrier = params.currentCarrier
+                                        , dateOfBirth = params.dateOfBirth
+                                        , quoteId = params.quoteId
+                                        }
+
                                     ( compareModel, compareCmd ) =
-                                        Compare.init params model.key
+                                        Compare.init flags model.key
+
+                                    trackingCmd =
+                                        case params.trackingId of
+                                            Just tid ->
+                                                Http.post
+                                                    { url = "/api/contact-events"
+                                                    , body =
+                                                        Http.jsonBody
+                                                            (E.object
+                                                                [ ( "tracking_id", E.string tid )
+                                                                , ( "event_type", E.string "compare_opened" )
+                                                                ]
+                                                            )
+                                                    , expect = Http.expectWhatever (\_ -> NoOp)
+                                                    }
+
+                                            Nothing ->
+                                                Cmd.none
                                 in
                                 ( { model | page = ComparePage compareModel }
-                                , Cmd.batch [ cmd, Cmd.map CompareMsg compareCmd ]
+                                , Cmd.batch [ cmd, Cmd.map CompareMsg compareCmd, trackingCmd ]
                                 )
 
                             ProtectedRoute ContactsRoute ->

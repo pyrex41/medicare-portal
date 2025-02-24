@@ -5,6 +5,8 @@ import Browser.Navigation as Nav
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (onClick, onSubmit)
+import Http
+import Json.Encode as E
 import Url.Builder as Builder
 
 
@@ -22,6 +24,7 @@ type alias Question =
 type alias Model =
     { key : Nav.Key
     , questions : List Question
+    , quoteId : Maybe String
     }
 
 
@@ -29,14 +32,15 @@ type Msg
     = AnswerQuestion Int Bool
     | SubmitAnswers
     | SkipQuestions
+    | GotSubmitResponse (Result Http.Error ())
 
 
 
 -- INIT
 
 
-init : Nav.Key -> ( Model, Cmd Msg )
-init key =
+init : Nav.Key -> Maybe String -> ( Model, Cmd Msg )
+init key maybeQuoteId =
     ( { key = key
       , questions =
             [ { id = 1
@@ -52,6 +56,7 @@ init key =
               , answer = Nothing
               }
             ]
+      , quoteId = maybeQuoteId
       }
     , Cmd.none
     )
@@ -66,7 +71,14 @@ update msg model =
     case msg of
         SkipQuestions ->
             ( model
-            , Nav.pushUrl model.key "/quote"
+            , Nav.pushUrl model.key
+                (case model.quoteId of
+                    Just id ->
+                        "/schedule?id=" ++ id
+
+                    Nothing ->
+                        "/schedule"
+                )
             )
 
         AnswerQuestion id answer ->
@@ -85,28 +97,104 @@ update msg model =
             , Cmd.none
             )
 
+        GotSubmitResponse result ->
+            case result of
+                Ok _ ->
+                    let
+                        anyNo =
+                            List.any (\q -> q.answer == Just False) model.questions
+
+                        nextUrl =
+                            case model.quoteId of
+                                Just id ->
+                                    if anyNo then
+                                        "/schedule?id=" ++ id ++ "&status=decline"
+
+                                    else
+                                        "/schedule?id=" ++ id ++ "&status=accept"
+
+                                Nothing ->
+                                    if anyNo then
+                                        "/schedule?status=decline"
+
+                                    else
+                                        "/schedule?status=accept"
+                    in
+                    ( model
+                    , Nav.pushUrl model.key nextUrl
+                    )
+
+                Err _ ->
+                    -- On error, still proceed to next page but don't save answers
+                    let
+                        anyNo =
+                            List.any (\q -> q.answer == Just False) model.questions
+
+                        nextUrl =
+                            case model.quoteId of
+                                Just id ->
+                                    if anyNo then
+                                        "/schedule?id=" ++ id ++ "&status=decline"
+
+                                    else
+                                        "/schedule?id=" ++ id ++ "&status=accept"
+
+                                Nothing ->
+                                    if anyNo then
+                                        "/schedule?status=decline"
+
+                                    else
+                                        "/schedule?status=accept"
+                    in
+                    ( model
+                    , Nav.pushUrl model.key nextUrl
+                    )
+
         SubmitAnswers ->
             let
                 allAnswered =
                     List.all (.answer >> (/=) Nothing) model.questions
 
-                anyYes =
-                    List.any (\q -> q.answer == Just True) model.questions
+                submitAnswers =
+                    case model.quoteId of
+                        Just quoteId ->
+                            Http.post
+                                { url = "/api/eligibility-answers"
+                                , body =
+                                    Http.jsonBody <|
+                                        E.object
+                                            [ ( "quote_id", E.string quoteId )
+                                            , ( "answers"
+                                              , E.object
+                                                    (List.filterMap
+                                                        (\q ->
+                                                            case q.answer of
+                                                                Just ans ->
+                                                                    Just ( String.fromInt q.id, E.bool ans )
 
-                nextUrl =
-                    if allAnswered then
-                        if anyYes then
-                            "/declined"
+                                                                Nothing ->
+                                                                    Nothing
+                                                        )
+                                                        model.questions
+                                                    )
+                                              )
+                                            ]
+                                , expect = Http.expectWhatever GotSubmitResponse
+                                }
 
-                        else
-                            "/apply"
-
-                    else
-                        "/eligibility"
+                        Nothing ->
+                            -- If no quote ID, just proceed without saving
+                            Cmd.none
             in
-            ( model
-            , Nav.pushUrl model.key nextUrl
-            )
+            if allAnswered then
+                ( model
+                , submitAnswers
+                )
+
+            else
+                ( model
+                , Cmd.none
+                )
 
 
 

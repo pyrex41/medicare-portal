@@ -84,6 +84,7 @@ type alias Model =
     , showDiscount : Bool
     , currentCarrier : Maybe String
     , dateOfBirth : String
+    , quoteId : Maybe String
     }
 
 
@@ -115,6 +116,7 @@ type alias Flags =
     , planType : String
     , currentCarrier : Maybe String
     , dateOfBirth : String
+    , quoteId : Maybe String
     }
 
 
@@ -135,6 +137,7 @@ init flags key =
             , planType = "G"
             , currentCarrier = Nothing
             , dateOfBirth = ""
+            , quoteId = Nothing
             }
 
         model =
@@ -158,6 +161,7 @@ init flags key =
             , showDiscount = False
             , currentCarrier = flags.currentCarrier
             , dateOfBirth = flags.dateOfBirth
+            , quoteId = flags.quoteId
             }
     in
     ( model
@@ -433,7 +437,14 @@ update msg model =
 
         SelectPlan plan ->
             ( { model | showQualificationVideo = True }
-            , Nav.pushUrl model.key "/eligibility"
+            , Nav.pushUrl model.key
+                (case model.quoteId of
+                    Just id ->
+                        "/eligibility?id=" ++ id
+
+                    Nothing ->
+                        "/eligibility"
+                )
             )
 
         CloseReviewVideo ->

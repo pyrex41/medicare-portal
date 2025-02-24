@@ -1536,6 +1536,183 @@ const startServer = async () => {
           }
         }
       })
+      .post('/api/contact-request', async ({ body, request }) => {
+        try {
+          const user = await getUserFromSession(request)
+          if (!user?.organization_id) {
+            throw new Error('No organization ID found in session')
+          }
+
+          const { name, email, type, quoteId } = body
+          logger.info(`Processing contact request for ${email} (type: ${type})`)
+          
+          // Get org-specific database
+          const orgDb = await Database.getOrgDb(user.organization_id.toString())
+
+          // Check for existing contact
+          const existingContact = await orgDb.fetchOne<{ id: number }>(
+            'SELECT id FROM contacts WHERE LOWER(TRIM(email)) = LOWER(TRIM(?))',
+            [email]
+          )
+
+          let eventTargetId: number
+          let isLead = false
+
+          if (existingContact) {
+            // Use existing contact
+            logger.info(`Found existing contact with ID ${existingContact.id}`)
+            eventTargetId = existingContact.id
+          } else {
+            // Create new lead
+            logger.info(`No existing contact found, creating lead for ${email}`)
+            const leadResult = await orgDb.execute(
+              `INSERT INTO leads (name, email) VALUES (?, ?) RETURNING id`,
+              [name, email]
+            )
+            
+            if (!leadResult.rows?.[0]?.id) {
+              throw new Error('Failed to create lead')
+            }
+            
+            eventTargetId = leadResult.rows[0].id
+            isLead = true
+          }
+
+          // Record the event
+          const metadata = {
+            quoteId,
+            requestType: type
+          }
+
+          const eventQuery = isLead
+            ? `INSERT INTO contact_events (lead_id, event_type, metadata) VALUES (?, 'followup_request', ?)`
+            : `INSERT INTO contact_events (contact_id, event_type, metadata) VALUES (?, 'followup_request', ?)`
+
+          await orgDb.execute(eventQuery, [eventTargetId, JSON.stringify(metadata)])
+          logger.info(`Recorded followup request event for ${isLead ? 'lead' : 'contact'} ${eventTargetId}`)
+
+          // Return success response
+          return {
+            success: true,
+            message: 'Contact request recorded successfully'
+          }
+
+        } catch (e) {
+          logger.error(`Error processing contact request: ${e}`)
+          throw new Error(String(e))
+        }
+      })
+      .get('/api/contacts/:id/eligibility', async ({ params: { id }, request }) => {
+        try {
+          const user = await getUserFromSession(request)
+          if (!user?.organization_id) {
+            throw new Error('No organization ID found in session')
+          }
+
+          logger.info(`GET /api/contacts/${id}/eligibility - Fetching eligibility results`)
+          
+          // Get org-specific database
+          const orgDb = await Database.getOrgDb(user.organization_id.toString())
+          
+          // Get most recent eligibility answers for this contact
+          const result = await orgDb.fetchOne(
+            `SELECT answers 
+             FROM eligibility_answers 
+             WHERE contact_id = ? 
+             ORDER BY created_at DESC 
+             LIMIT 1`,
+            [id]
+          )
+
+          if (!result) {
+            return {
+              status: "incomplete",
+              answers: null
+            }
+          }
+
+          // Parse answers JSON and determine status
+          const answers = JSON.parse(result.answers)
+          const allTrue = Object.values(answers).every(value => value === true)
+
+          return {
+            status: allTrue ? "pass" : "flagged",
+            answers: answers
+          }
+
+        } catch (e) {
+          logger.error(`Error fetching eligibility results: ${e}`)
+          throw new Error(String(e))
+        }
+      })
+      .post('/api/eligibility-answers', async ({ body, request }) => {
+        try {
+          const user = await getUserFromSession(request)
+          if (!user?.organization_id) {
+            throw new Error('No organization ID found in session')
+          }
+
+          type EligibilityAnswers = {
+            quote_id: string;
+            answers: Record<string, boolean>;
+          }
+          const { quote_id, answers } = body as EligibilityAnswers
+          logger.info(`POST /api/eligibility-answers - Recording answers for quote ${quote_id}`)
+
+          // Get org-specific database
+          const orgDb = await Database.getOrgDb(user.organization_id.toString())
+
+          // Decode the quote ID - format is {orgId-base36}-{contactId-base36}-{hash}
+          const [encodedOrgId, encodedContactId] = quote_id.split('-')
+          if (!encodedOrgId || !encodedContactId) {
+            throw new Error('Invalid quote ID format')
+          }
+
+          // Convert from base36 back to numbers
+          const orgId = parseInt(encodedOrgId, 36)
+          const contactId = parseInt(encodedContactId, 36)
+          
+          if (isNaN(orgId) || isNaN(contactId)) {
+            throw new Error('Invalid quote ID format - could not decode IDs')
+          }
+
+          // Verify the contact exists
+          const contactResult = await orgDb.fetchOne(
+            'SELECT id FROM contacts WHERE id = ?',
+            [contactId]
+          )
+            
+          if (!contactResult) {
+            throw new Error('Contact not found')
+          }
+
+          // Create eligibility_answers table if it doesn't exist
+          await orgDb.execute(`
+            CREATE TABLE IF NOT EXISTS eligibility_answers (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              contact_id INTEGER NOT NULL,
+              answers TEXT NOT NULL,
+              created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+              FOREIGN KEY (contact_id) REFERENCES contacts(id)
+            )
+          `)
+
+          // Insert the answers
+          await orgDb.execute(
+            'INSERT INTO eligibility_answers (contact_id, answers) VALUES (?, ?)',
+            [contactId, JSON.stringify(answers)]
+          )
+
+          return {
+            success: true,
+            message: 'Eligibility answers recorded successfully'
+          }
+
+        } catch (e) {
+          logger.error(`Error recording eligibility answers: ${e}`)
+          throw new Error(String(e))
+        }
+      })
       .listen(8000)
 
     logger.info('Server started on port 8000')
