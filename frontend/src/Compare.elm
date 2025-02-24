@@ -2,7 +2,7 @@ module Compare exposing (Model, Msg(..), init, subscriptions, update, view)
 
 import Browser
 import Browser.Navigation as Nav
-import CarrierNaic exposing (carrierToString, naicToCarrier)
+import CarrierNaic exposing (carrierToNaics, carrierToString, naicToCarrier, stringToCarrier)
 import Debug
 import Html exposing (..)
 import Html.Attributes exposing (..)
@@ -82,6 +82,8 @@ type alias Model =
     , showRatesVideo : Bool
     , key : Nav.Key
     , showDiscount : Bool
+    , currentCarrier : Maybe String
+    , dateOfBirth : String
     }
 
 
@@ -111,6 +113,8 @@ type alias Flags =
     , tobacco : Bool
     , age : Int
     , planType : String
+    , currentCarrier : Maybe String
+    , dateOfBirth : String
     }
 
 
@@ -129,6 +133,8 @@ init flags key =
             , tobacco = False
             , age = 65
             , planType = "G"
+            , currentCarrier = Nothing
+            , dateOfBirth = ""
             }
 
         model =
@@ -150,6 +156,8 @@ init flags key =
             , showRatesVideo = False
             , key = key
             , showDiscount = False
+            , currentCarrier = flags.currentCarrier
+            , dateOfBirth = flags.dateOfBirth
             }
     in
     ( model
@@ -500,9 +508,45 @@ getSelectedPlans model =
 
                 PlanN ->
                     model.plans.planN
+
+        _ =
+            Debug.log "Current carrier from URL" model.currentCarrier
+
+        carrierNaics =
+            model.currentCarrier
+                |> Maybe.andThen stringToCarrier
+                |> Maybe.map carrierToNaics
+                |> Debug.log "Carrier NAICs to filter out"
+
+        _ =
+            Debug.log "All plans before filtering" plans
+
+        filteredPlans =
+            case carrierNaics of
+                Just naicList ->
+                    List.filter
+                        (\plan ->
+                            let
+                                _ =
+                                    Debug.log ("Checking plan NAIC " ++ plan.naic ++ " for " ++ plan.name)
+                                        (not (List.member plan.naic naicList))
+                            in
+                            not (List.member plan.naic naicList)
+                        )
+                        plans
+
+                Nothing ->
+                    plans
+
+        _ =
+            Debug.log "Filtered plans before sorting" filteredPlans
+
+        sortedAndLimited =
+            List.sortBy .price filteredPlans
+                |> List.take 3
+                |> Debug.log "Final selected plans"
     in
-    List.sortBy .price plans
-        |> List.take 3
+    sortedAndLimited
 
 
 

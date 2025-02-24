@@ -2,6 +2,9 @@ import { Elysia } from 'elysia';
 import axios from 'axios';
 import { config } from '../config';
 import { logger } from '../logger';
+import { Database } from '../database';
+import { generateQuoteId, decodeQuoteId } from '../utils/quoteId';
+import { getUserFromSession } from '../services/auth';
 
 interface Quote {
     age: number;
@@ -40,8 +43,88 @@ interface QuoteRequest {
     county?: string;
 }
 
+interface ContactQuoteInfo {
+    zip_code: string;
+    birth_date: string;
+    tobacco_user: number;
+    gender: string;
+}
+
 export const quotesRoutes = (app: Elysia) => {
-    app.post('/api/quotes', async ({ body }: { body: QuoteRequestBody }) => {
+    app
+    .get('/api/quotes/generate/:contactId', async ({ params, request }) => {
+        try {
+            const user = await getUserFromSession(request);
+            if (!user?.organization_id) {
+                throw new Error('No organization ID found in session');
+            }
+
+            const contactId = parseInt(params.contactId);
+            if (isNaN(contactId)) {
+                throw new Error('Invalid contact ID');
+            }
+
+            // Get org-specific database
+            const orgDb = await Database.getOrgDb(user.organization_id.toString());
+            
+            // Verify contact exists and belongs to this org
+            const contact = await orgDb.fetchOne(
+                'SELECT id FROM contacts WHERE id = ?',
+                [contactId]
+            );
+
+            if (!contact) {
+                throw new Error('Contact not found');
+            }
+
+            // Generate quote ID
+            const quoteId = generateQuoteId(user.organization_id, contactId);
+
+            return {
+                success: true,
+                quoteId,
+                redirectUrl: `http://localhost:5173/quote?id=${quoteId}`
+            };
+        } catch (e) {
+            logger.error(`Error generating quote ID: ${e}`);
+            throw new Error(String(e));
+        }
+    })
+    .get('/api/quotes/decode/:quoteId', async ({ params }) => {
+        try {
+            const decoded = decodeQuoteId(params.quoteId);
+            if (!decoded) {
+                throw new Error('Invalid quote ID');
+            }
+
+            // Get org-specific database
+            const orgDb = await Database.getOrgDb(decoded.orgId.toString());
+            
+            // Fetch contact details
+            const contact = await orgDb.fetchOne<ContactQuoteInfo>(
+                'SELECT zip_code, birth_date, tobacco_user, gender FROM contacts WHERE id = ?',
+                [decoded.contactId]
+            );
+
+            if (!contact) {
+                throw new Error('Contact not found');
+            }
+
+            return {
+                success: true,
+                contact: {
+                    zipCode: contact.zip_code,
+                    dateOfBirth: contact.birth_date,
+                    tobacco: Boolean(contact.tobacco_user),
+                    gender: contact.gender
+                }
+            };
+        } catch (e) {
+            logger.error(`Error decoding quote ID: ${e}`);
+            throw new Error(String(e));
+        }
+    })
+    .post('/api/quotes', async ({ body }: { body: QuoteRequestBody }) => {
         try {
             // Format request body
             const requestBody: QuoteRequest = {

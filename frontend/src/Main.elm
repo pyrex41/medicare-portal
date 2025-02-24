@@ -9,6 +9,7 @@ import Compare
 import Contact
 import Contacts
 import Debug
+import Eligibility
 import Home
 import Html exposing (Html, button, div, h1, img, nav, p, text)
 import Html.Attributes exposing (alt, class, href, src)
@@ -17,6 +18,7 @@ import Http
 import Json.Decode as Decode exposing (Decoder)
 import Login
 import Profile
+import Quote
 import Settings
 import Signup
 import TempLanding
@@ -116,6 +118,8 @@ type Page
     | HomePage Home.Model
     | ContactPage Contact.Model
     | ComparePage Compare.Model
+    | QuotePage Quote.Model
+    | EligibilityPage Eligibility.Model
 
 
 type Msg
@@ -136,6 +140,8 @@ type Msg
     | HomeMsg Home.Msg
     | ContactMsg Contact.Msg
     | CompareMsg Compare.Msg
+    | QuoteMsg Quote.Msg
+    | EligibilityMsg Eligibility.Msg
 
 
 type alias Flags =
@@ -209,6 +215,24 @@ type alias CompareParams =
     , tobacco : Bool
     , age : Int
     , planType : String
+    , currentCarrier : Maybe String
+    , dateOfBirth : String
+    }
+
+
+type alias CompareParamsPartial1 =
+    { state : String
+    , zip : String
+    , county : String
+    , gender : String
+    }
+
+
+type alias CompareParamsPartial2 =
+    { tobacco : Bool
+    , age : Int
+    , planType : String
+    , currentCarrier : Maybe String
     }
 
 
@@ -229,6 +253,8 @@ type PublicPage
     | SignupRoute
     | VerifyRoute VerifyParams
     | CompareRoute CompareParams
+    | QuoteRoute (Maybe String)
+    | EligibilityRoute
 
 
 type ProtectedPage
@@ -282,14 +308,37 @@ setupProgressDecoder =
 
 compareParamsParser : Query.Parser CompareParams
 compareParamsParser =
-    Query.map7 CompareParams
-        (Query.string "state" |> Query.map (Maybe.withDefault "TX"))
-        (Query.string "zip" |> Query.map (Maybe.withDefault "75201"))
-        (Query.string "county" |> Query.map (Maybe.withDefault "Dallas"))
-        (Query.string "gender" |> Query.map (Maybe.withDefault "Male"))
-        (Query.string "tobacco" |> Query.map (Maybe.map (\t -> t == "yes") >> Maybe.withDefault False))
-        (Query.string "age" |> Query.map (Maybe.andThen String.toInt >> Maybe.withDefault 65))
-        (Query.string "planType" |> Query.map (Maybe.withDefault "G"))
+    let
+        part1 =
+            Query.map4 CompareParamsPartial1
+                (Query.string "state" |> Query.map (Maybe.withDefault "TX"))
+                (Query.string "zip" |> Query.map (Maybe.withDefault "75201"))
+                (Query.string "county" |> Query.map (Maybe.withDefault "Dallas"))
+                (Query.string "gender" |> Query.map (Maybe.withDefault "Male"))
+
+        part2 =
+            Query.map4 CompareParamsPartial2
+                (Query.string "tobacco" |> Query.map (Maybe.map (\t -> t == "yes") >> Maybe.withDefault False))
+                (Query.string "age" |> Query.map (Maybe.andThen String.toInt >> Maybe.withDefault 65))
+                (Query.string "planType" |> Query.map (Maybe.withDefault "G"))
+                (Query.string "currentCarrier")
+
+        combineParams p1 p2 dateOfBirth =
+            { state = p1.state
+            , zip = p1.zip
+            , county = p1.county
+            , gender = p1.gender
+            , tobacco = p2.tobacco
+            , age = p2.age
+            , planType = p2.planType
+            , currentCarrier = p2.currentCarrier
+            , dateOfBirth = dateOfBirth
+            }
+    in
+    Query.map3 combineParams
+        part1
+        part2
+        (Query.string "dateOfBirth" |> Query.map (Maybe.withDefault ""))
 
 
 routeParser : Parser (Route -> a) a
@@ -301,6 +350,8 @@ routeParser =
         , map (\orgSlug -> \token -> PublicRoute (VerifyRoute (VerifyParams orgSlug token)))
             (s "auth" </> s "verify" </> string </> string)
         , map (PublicRoute << CompareRoute) (s "compare" <?> compareParamsParser)
+        , map (PublicRoute << QuoteRoute) (s "quote" <?> Query.string "id")
+        , map (PublicRoute EligibilityRoute) (s "eligibility")
         , map (ProtectedRoute ContactsRoute) (s "contacts")
         , map (ProtectedRoute SettingsRoute) (s "settings")
         , map (ProtectedRoute ProfileRoute) (s "profile")
@@ -630,6 +681,34 @@ update msg model =
                 _ ->
                     ( model, Cmd.none )
 
+        QuoteMsg subMsg ->
+            case model.page of
+                QuotePage pageModel ->
+                    let
+                        ( newPageModel, newCmd ) =
+                            Quote.update subMsg pageModel
+                    in
+                    ( { model | page = QuotePage newPageModel }
+                    , Cmd.map QuoteMsg newCmd
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        EligibilityMsg subMsg ->
+            case model.page of
+                EligibilityPage pageModel ->
+                    let
+                        ( newPageModel, newCmd ) =
+                            Eligibility.update subMsg pageModel
+                    in
+                    ( { model | page = EligibilityPage newPageModel }
+                    , Cmd.map EligibilityMsg newCmd
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
+
 
 view : Model -> Browser.Document Msg
 view model =
@@ -746,6 +825,24 @@ view model =
                     in
                     { title = compareView.title
                     , body = [ viewWithNav model (Html.map CompareMsg (div [] compareView.body)) ]
+                    }
+
+                QuotePage quoteModel ->
+                    let
+                        quoteView =
+                            Quote.view quoteModel
+                    in
+                    { title = quoteView.title
+                    , body = [ viewWithNav model (Html.map QuoteMsg (div [] quoteView.body)) ]
+                    }
+
+                EligibilityPage eligibilityModel ->
+                    let
+                        eligibilityView =
+                            Eligibility.view eligibilityModel
+                    in
+                    { title = eligibilityView.title
+                    , body = List.map (Html.map EligibilityMsg) eligibilityView.body
                     }
     in
     viewPage
@@ -889,6 +986,12 @@ subscriptions model =
 
         ComparePage pageModel ->
             Sub.map CompareMsg (Compare.subscriptions pageModel)
+
+        QuotePage pageModel ->
+            Sub.map QuoteMsg (Quote.subscriptions pageModel)
+
+        EligibilityPage pageModel ->
+            Sub.map EligibilityMsg (Eligibility.subscriptions pageModel)
 
         NotFoundPage ->
             Sub.none
@@ -1085,6 +1188,32 @@ updatePage url ( model, cmd ) =
 
                     else
                         case route of
+                            PublicRoute EligibilityRoute ->
+                                let
+                                    ( eligibilityModel, eligibilityCmd ) =
+                                        Eligibility.init model.key
+                                in
+                                ( { model | page = EligibilityPage eligibilityModel }
+                                , Cmd.batch [ cmd, Cmd.map EligibilityMsg eligibilityCmd ]
+                                )
+
+                            PublicRoute (QuoteRoute maybeQuoteId) ->
+                                let
+                                    initialValues =
+                                        { zipCode = Nothing
+                                        , dateOfBirth = Nothing
+                                        , tobacco = Nothing
+                                        , gender = Nothing
+                                        , quoteId = maybeQuoteId
+                                        }
+
+                                    ( quoteModel, quoteCmd ) =
+                                        Quote.init model.key initialValues
+                                in
+                                ( { model | page = QuotePage quoteModel }
+                                , Cmd.batch [ cmd, Cmd.map QuoteMsg quoteCmd ]
+                                )
+
                             PublicRoute HomeRoute ->
                                 let
                                     ( homeModel, homeCmd ) =

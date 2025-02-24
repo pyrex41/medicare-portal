@@ -130,6 +130,8 @@ type alias Model =
     , emailExists : Bool
     , isDeletingContact : Bool
     , emailSchedule : EmailSchedule
+    , quoteUrl : Maybe String
+    , isGeneratingQuote : Bool
     }
 
 
@@ -192,11 +194,8 @@ init key contactId =
             EmailScheduler.init
                 (String.toInt contactId |> Maybe.withDefault 0)
                 (Date.fromCalendarDate 2024 Jan 1)
-                -- Will be updated when contact is loaded
                 (Date.fromCalendarDate 2024 Jan 1)
-                -- Will be updated when contact is loaded
                 (Date.fromCalendarDate 2024 Jan 1)
-                -- Will be updated with current date
                 NoPlan
     in
     ( { key = key
@@ -229,6 +228,8 @@ init key contactId =
       , emailExists = False
       , isDeletingContact = False
       , emailSchedule = initialSchedule
+      , quoteUrl = Nothing
+      , isGeneratingQuote = False
       }
     , Cmd.batch
         [ Http.get
@@ -261,6 +262,8 @@ type Msg
     | ShowDeleteConfirmModal
     | DeleteContact
     | ContactDeleted (Result Http.Error DeleteResponse)
+    | GenerateQuoteLink
+    | GotQuoteLink (Result Http.Error { quoteId : String, redirectUrl : String })
 
 
 type ContactFormField
@@ -291,14 +294,6 @@ update msg model =
                     case Date.fromIsoString contact.birthDate of
                         Ok birthDate ->
                             let
-                                _ =
-                                    Debug.log "Contact loaded"
-                                        { effectiveDate = Date.toIsoString effectiveDate
-                                        , birthDate = Date.toIsoString birthDate
-                                        , currentDate = Date.toIsoString model.emailSchedule.currentDate
-                                        , planType = contact.planType
-                                        }
-
                                 planType =
                                     case contact.planType of
                                         "Plan N" ->
@@ -316,12 +311,6 @@ update msg model =
                                         _ ->
                                             NoPlan
 
-                                _ =
-                                    Debug.log "Converting plan type"
-                                        { raw = contact.planType
-                                        , converted = Debug.toString planType
-                                        }
-
                                 newSchedule =
                                     EmailScheduler.init
                                         contact.id
@@ -330,7 +319,12 @@ update msg model =
                                         model.emailSchedule.currentDate
                                         planType
                             in
-                            ( { model | contact = Just contact, emailSchedule = newSchedule }, Cmd.none )
+                            ( { model | contact = Just contact, emailSchedule = newSchedule }
+                            , Http.get
+                                { url = "/api/quotes/generate/" ++ String.fromInt contact.id
+                                , expect = Http.expectJson GotQuoteLink quoteLinkDecoder
+                                }
+                            )
 
                         Err _ ->
                             ( { model | error = Just "Invalid birth date format" }, Cmd.none )
@@ -566,6 +560,35 @@ update msg model =
         ContactDeleted (Err _) ->
             ( { model | isDeletingContact = False, error = Just "Failed to delete contact" }, Cmd.none )
 
+        GenerateQuoteLink ->
+            case model.contact of
+                Just contact ->
+                    ( { model | isGeneratingQuote = True }
+                    , Http.get
+                        { url = "/api/quotes/generate/" ++ String.fromInt contact.id
+                        , expect = Http.expectJson GotQuoteLink quoteLinkDecoder
+                        }
+                    )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        GotQuoteLink (Ok response) ->
+            ( { model
+                | quoteUrl = Just ("/quote?id=" ++ response.quoteId)
+                , isGeneratingQuote = False
+              }
+            , Cmd.none
+            )
+
+        GotQuoteLink (Err _) ->
+            ( { model
+                | error = Just "Failed to generate quote link"
+                , isGeneratingQuote = False
+              }
+            , Cmd.none
+            )
+
 
 
 -- VIEW
@@ -582,7 +605,7 @@ view model =
                     Just contact ->
                         div []
                             [ viewHeader contact
-                            , viewContactSummary contact
+                            , viewContactSummary contact model.quoteUrl model.isGeneratingQuote
                             , div [ class "bg-white rounded-lg border border-gray-200 p-6 mb-8" ]
                                 [ viewFutureActivity (getScheduledEmails model.emailSchedule) ]
                             , viewActivity model.activities
@@ -631,8 +654,8 @@ viewHeader contact =
         ]
 
 
-viewContactSummary : Contact -> Html Msg
-viewContactSummary contact =
+viewContactSummary : Contact -> Maybe String -> Bool -> Html Msg
+viewContactSummary contact quoteUrl isGeneratingQuote =
     div [ class "bg-white rounded-lg border border-gray-200 p-6 mb-8" ]
         [ h2 [ class "text-lg font-medium mb-6" ] [ text "Contact Summary" ]
         , div [ class "grid grid-cols-2 gap-x-8 gap-y-6" ]
@@ -653,6 +676,26 @@ viewContactSummary contact =
             , viewField "Effective Date" contact.effectiveDate
             , viewField "Plan Type" contact.planType
             ]
+        , case quoteUrl of
+            Just url ->
+                div [ class "mt-6 p-4 bg-blue-50 rounded-lg" ]
+                    [ div [ class "text-sm font-medium text-gray-700 mb-2" ]
+                        [ text "Quote Link" ]
+                    , a
+                        [ href url
+                        , class "text-sm text-blue-600 hover:text-blue-800 underline break-all"
+                        , target "_blank"
+                        ]
+                        [ text "View Quote" ]
+                    ]
+
+            Nothing ->
+                if isGeneratingQuote then
+                    div [ class "mt-6 flex justify-center" ]
+                        [ viewSpinner ]
+
+                else
+                    text ""
         ]
 
 
@@ -1083,6 +1126,13 @@ viewDeleteConfirmModal model =
                 ]
             ]
         ]
+
+
+quoteLinkDecoder : Decode.Decoder { quoteId : String, redirectUrl : String }
+quoteLinkDecoder =
+    Decode.map2 (\id url -> { quoteId = id, redirectUrl = url })
+        (Decode.field "quoteId" Decode.string)
+        (Decode.field "redirectUrl" Decode.string)
 
 
 
