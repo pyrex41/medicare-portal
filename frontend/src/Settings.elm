@@ -5,15 +5,19 @@ import Browser.Navigation as Nav
 import Components.ProgressIndicator
 import Components.SetupLayout as SetupLayout
 import Debug
+import File exposing (File)
+import File.Select as Select
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (onCheck, onClick, onInput)
 import Http exposing (expectJson, jsonBody)
 import Json.Decode as Decode exposing (Decoder)
+import Json.Decode.Pipeline as Pipeline
 import Json.Encode as Encode
 import StateRegions exposing (Region(..), getRegionStates, regionToString)
 import Svg exposing (path, svg)
 import Svg.Attributes exposing (clipRule, d, fill, fillRule, viewBox)
+import Task
 
 
 
@@ -134,6 +138,7 @@ type alias Model =
     , key : Nav.Key
     , currentUser : Maybe CurrentUser
     , isLoading : Bool
+    , isSaving : Bool
     }
 
 
@@ -154,6 +159,10 @@ type alias Settings =
     , emailSendPolicyAnniversary : Bool
     , emailSendAep : Bool
     , smartSendEnabled : Bool
+    , brandName : String
+    , primaryColor : String
+    , secondaryColor : String
+    , logo : Maybe String
     }
 
 
@@ -185,6 +194,13 @@ type Msg
     | ToggleAllowAgentSettings Bool
     | FinishSetup
     | SelectCommonStates Region
+    | UpdateBrandName String
+    | UpdatePrimaryColor String
+    | UpdateSecondaryColor String
+    | UploadLogo
+    | GotLogo File
+    | GotLogoUrl String
+    | LogoUploaded (Result Http.Error String)
 
 
 type alias SettingsResponse =
@@ -203,6 +219,7 @@ init flags =
       , key = flags.key
       , currentUser = flags.currentUser
       , isLoading = True
+      , isSaving = False
       }
     , Cmd.batch
         [ fetchSettings
@@ -617,6 +634,36 @@ update msg model =
                     { s | stateLicenses = s.stateLicenses ++ getRegionStates region }
                 )
 
+        UpdateBrandName name ->
+            updateSettings model (\s -> { s | brandName = name })
+
+        UpdatePrimaryColor color ->
+            updateSettings model (\s -> { s | primaryColor = color })
+
+        UpdateSecondaryColor color ->
+            updateSettings model (\s -> { s | secondaryColor = color })
+
+        UploadLogo ->
+            ( model
+            , Select.file [ "image/png", "image/jpeg" ] GotLogo
+            )
+
+        GotLogo file ->
+            ( model
+            , Task.perform GotLogoUrl (File.toUrl file)
+            )
+
+        GotLogoUrl url ->
+            updateSettings model (\s -> { s | logo = Just url })
+
+        LogoUploaded result ->
+            case result of
+                Ok url ->
+                    updateSettings model (\s -> { s | logo = Just url })
+
+                Err error ->
+                    ( { model | status = Error "Failed to upload logo" }, Cmd.none )
+
 
 updateSettings : Model -> (Settings -> Settings) -> ( Model, Cmd Msg )
 updateSettings model updateFn =
@@ -658,6 +705,10 @@ encodeSettings settings =
         , ( "emailSendPolicyAnniversary", Encode.bool settings.emailSendPolicyAnniversary )
         , ( "emailSendAep", Encode.bool settings.emailSendAep )
         , ( "smartSendEnabled", Encode.bool settings.smartSendEnabled )
+        , ( "brandName", Encode.string settings.brandName )
+        , ( "primaryColor", Encode.string settings.primaryColor )
+        , ( "secondaryColor", Encode.string settings.secondaryColor )
+        , ( "logo", Maybe.withDefault Encode.null (Maybe.map Encode.string settings.logo) )
         ]
 
 
@@ -759,6 +810,7 @@ viewSettingsContent maybeSettings canEdit expandedSections =
                             ToggleAllowAgentSettings
                         ]
                     ]
+                , viewBrandSettings settings
                 , viewEmailSettings settings
                 , viewExpandableSection "State Licenses"
                     (viewLicensesGrid settings)
@@ -774,6 +826,96 @@ viewSettingsContent maybeSettings canEdit expandedSections =
         Nothing ->
             div [ class "text-gray-500 italic" ]
                 [ text "Using organization settings" ]
+
+
+viewBrandSettings : Settings -> Html Msg
+viewBrandSettings settings =
+    div [ class "bg-white shadow rounded-lg p-6" ]
+        [ h2 [ class "text-lg font-medium mb-4" ] [ text "Brand Settings" ]
+        , div [ class "space-y-6" ]
+            [ div [ class "space-y-4" ]
+                [ viewFormGroup "Brand Name"
+                    (input
+                        [ type_ "text"
+                        , class "w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-purple-500 focus:border-purple-500"
+                        , value settings.brandName
+                        , onInput UpdateBrandName
+                        ]
+                        []
+                    )
+                , viewFormGroup "Primary Color"
+                    (div [ class "flex items-center space-x-4" ]
+                        [ input
+                            [ type_ "color"
+                            , class "w-16 h-10 p-1 border border-gray-300 rounded"
+                            , value settings.primaryColor
+                            , onInput UpdatePrimaryColor
+                            ]
+                            []
+                        , input
+                            [ type_ "text"
+                            , class "flex-1 px-4 py-2 border border-gray-300 rounded-md focus:ring-purple-500 focus:border-purple-500"
+                            , value settings.primaryColor
+                            , onInput UpdatePrimaryColor
+                            ]
+                            []
+                        ]
+                    )
+                , viewFormGroup "Secondary Color"
+                    (div [ class "flex items-center space-x-4" ]
+                        [ input
+                            [ type_ "color"
+                            , class "w-16 h-10 p-1 border border-gray-300 rounded"
+                            , value settings.secondaryColor
+                            , onInput UpdateSecondaryColor
+                            ]
+                            []
+                        , input
+                            [ type_ "text"
+                            , class "flex-1 px-4 py-2 border border-gray-300 rounded-md focus:ring-purple-500 focus:border-purple-500"
+                            , value settings.secondaryColor
+                            , onInput UpdateSecondaryColor
+                            ]
+                            []
+                        ]
+                    )
+                , viewFormGroup "Logo"
+                    (div [ class "flex items-center space-x-4" ]
+                        [ case settings.logo of
+                            Just logoUrl ->
+                                div [ class "flex items-center space-x-4" ]
+                                    [ img
+                                        [ src logoUrl
+                                        , class "h-16 w-16 object-contain border border-gray-200 rounded"
+                                        ]
+                                        []
+                                    , button
+                                        [ class "px-4 py-2 text-sm text-purple-600 hover:text-purple-800"
+                                        , onClick UploadLogo
+                                        ]
+                                        [ text "Change Logo" ]
+                                    ]
+
+                            Nothing ->
+                                button
+                                    [ class "px-4 py-2 text-sm text-purple-600 hover:text-purple-800 border border-purple-200 rounded"
+                                    , onClick UploadLogo
+                                    ]
+                                    [ text "Upload Logo" ]
+                        ]
+                    )
+                ]
+            ]
+        ]
+
+
+viewFormGroup : String -> Html Msg -> Html Msg
+viewFormGroup labelText content =
+    div [ class "mb-4" ]
+        [ label [ class "block text-sm font-medium text-gray-700 mb-2" ]
+            [ text labelText ]
+        , content
+        ]
 
 
 viewEmailSettings : Settings -> Html Msg
@@ -1177,15 +1319,19 @@ settingsObjectDecoder =
                     , Decode.null []
                     ]
     in
-    Decode.map8 Settings
-        (Decode.field "stateLicenses" (Decode.list Decode.string))
-        (Decode.field "carrierContracts" (Decode.list Decode.string))
-        stateCarrierSettingsDecoder
-        (Decode.field "allowAgentSettings" Decode.bool)
-        (Decode.field "emailSendBirthday" Decode.bool)
-        (Decode.field "emailSendPolicyAnniversary" Decode.bool)
-        (Decode.field "emailSendAep" Decode.bool)
-        (Decode.field "smartSendEnabled" Decode.bool)
+    Decode.succeed Settings
+        |> Pipeline.required "stateLicenses" (Decode.list Decode.string)
+        |> Pipeline.required "carrierContracts" (Decode.list Decode.string)
+        |> Pipeline.custom stateCarrierSettingsDecoder
+        |> Pipeline.required "allowAgentSettings" Decode.bool
+        |> Pipeline.required "emailSendBirthday" Decode.bool
+        |> Pipeline.required "emailSendPolicyAnniversary" Decode.bool
+        |> Pipeline.required "emailSendAep" Decode.bool
+        |> Pipeline.required "smartSendEnabled" Decode.bool
+        |> Pipeline.optional "brandName" Decode.string ""
+        |> Pipeline.optional "primaryColor" Decode.string "#6B46C1"
+        |> Pipeline.optional "secondaryColor" Decode.string "#9F7AEA"
+        |> Pipeline.optional "logo" (Decode.nullable Decode.string) Nothing
 
 
 stateCarrierSettingDecoder : Decoder StateCarrierSetting

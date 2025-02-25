@@ -1,7 +1,6 @@
 module Main exposing (main)
 
 import AddAgent
-import BrandSettings
 import Browser exposing (Document)
 import Browser.Navigation as Nav
 import ChoosePlan
@@ -114,7 +113,6 @@ type Page
     | SettingsPage Settings.Model
     | Signup Signup.Model
     | ChoosePlanPage ChoosePlan.Model
-    | BrandSettingsPage BrandSettings.Model
     | AddAgentsPage AddAgent.Model
     | ProfilePage Profile.Model
     | LoadingPage
@@ -136,7 +134,6 @@ type Msg
     | SettingsMsg Settings.Msg
     | SignupMsg Signup.Msg
     | ChoosePlanMsg ChoosePlan.Msg
-    | BrandSettingsMsg BrandSettings.Msg
     | AddAgentsMsg AddAgent.Msg
     | GotVerification (Result Http.Error VerificationResponse)
     | GotSession (Result Http.Error SessionResponse)
@@ -285,7 +282,6 @@ type ProtectedPage
     = ContactsRoute
     | SettingsRoute
     | ProfileRoute
-    | BrandSettingsRoute
     | TempLandingRoute
     | AgentsRoute
     | ContactRoute String
@@ -294,14 +290,12 @@ type ProtectedPage
 type SetupPage
     = ChoosePlanRoute (Maybe SetupProgress)
     | SetupSettingsRoute (Maybe SetupProgress)
-    | SetupBrandSettingsRoute (Maybe SetupProgress)
     | AddAgentsRoute (Maybe SetupProgress)
 
 
 type alias SetupProgress =
     { plan : Maybe String
     , orgSettings : Bool
-    , brandSettings : Bool
     }
 
 
@@ -320,7 +314,6 @@ setupProgressDecoder =
                     Just
                         { plan = Just p
                         , orgSettings = o == "complete"
-                        , brandSettings = False
                         }
 
                 _ ->
@@ -400,7 +393,6 @@ routeParser =
         , map (ProtectedRoute ContactsRoute) (s "contacts")
         , map (ProtectedRoute SettingsRoute) (s "settings")
         , map (ProtectedRoute ProfileRoute) (s "profile")
-        , map (ProtectedRoute BrandSettingsRoute) (s "brand-settings")
         , map (ProtectedRoute TempLandingRoute) (s "templanding")
         , map (ProtectedRoute AgentsRoute) (s "add-agents")
         , map (\id -> ProtectedRoute (ContactRoute id)) (s "contact" </> string)
@@ -408,8 +400,6 @@ routeParser =
             (s "choose-plan" <?> setupProgressDecoder)
         , map (\progress -> SetupRoute (SetupSettingsRoute progress))
             (s "setup" </> s "settings" <?> setupProgressDecoder)
-        , map (\progress -> SetupRoute (SetupBrandSettingsRoute progress))
-            (s "setup" </> s "brand-settings" <?> setupProgressDecoder)
         , map (\progress -> SetupRoute (AddAgentsRoute progress))
             (s "setup" </> s "add-agents" <?> setupProgressDecoder)
         ]
@@ -572,7 +562,7 @@ update msg model =
 
                             Nothing ->
                                 Cmd.batch
-                                    [ Nav.replaceUrl model.key response.redirectUrl
+                                    [ Nav.replaceUrl model.key "/choose-plan"
                                     , Cmd.map ChoosePlanMsg choosePlanCmd
                                     ]
                         )
@@ -682,20 +672,6 @@ update msg model =
                     in
                     ( { model | page = HomePage newPageModel }
                     , Cmd.map HomeMsg newCmd
-                    )
-
-                _ ->
-                    ( model, Cmd.none )
-
-        BrandSettingsMsg subMsg ->
-            case model.page of
-                BrandSettingsPage pageModel ->
-                    let
-                        ( newPageModel, newCmd ) =
-                            BrandSettings.update subMsg pageModel
-                    in
-                    ( { model | page = BrandSettingsPage newPageModel }
-                    , Cmd.map BrandSettingsMsg newCmd
                     )
 
                 _ ->
@@ -883,15 +859,6 @@ view model =
                     , body = [ viewWithNav model (Html.map ChoosePlanMsg (div [] choosePlanView.body)) ]
                     }
 
-                BrandSettingsPage brandSettingsModel ->
-                    let
-                        brandSettingsView =
-                            BrandSettings.view brandSettingsModel
-                    in
-                    { title = brandSettingsView.title
-                    , body = [ viewWithNav model (Html.map BrandSettingsMsg (div [] brandSettingsView.body)) ]
-                    }
-
                 AddAgentsPage addAgentModel ->
                     let
                         addAgentView =
@@ -1007,15 +974,6 @@ viewNavHeader model =
                     , if isAdmin model.currentUser then
                         button
                             [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:text-purple-600 transition-colors duration-200"
-                            , onClick (InternalLinkClicked "/brand-settings")
-                            ]
-                            [ text "Brand Settings" ]
-
-                      else
-                        text ""
-                    , if isAdmin model.currentUser then
-                        button
-                            [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:text-purple-600 transition-colors duration-200"
                             , onClick (InternalLinkClicked "/add-agents")
                             ]
                             [ text "Manage Agents" ]
@@ -1032,7 +990,7 @@ viewNavHeader model =
                             [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:text-purple-600 transition-colors duration-200"
                             , onClick (InternalLinkClicked "/settings")
                             ]
-                            [ text "Organization Settings" ]
+                            [ text "Settings" ]
 
                       else
                         text ""
@@ -1116,9 +1074,6 @@ subscriptions model =
         HomePage pageModel ->
             Sub.map HomeMsg (Home.subscriptions pageModel)
 
-        BrandSettingsPage pageModel ->
-            Sub.map BrandSettingsMsg (BrandSettings.subscriptions pageModel)
-
         ContactPage pageModel ->
             Sub.map ContactMsg (Contact.subscriptions pageModel)
 
@@ -1185,7 +1140,6 @@ type SetupStep
     = NotStarted
     | PlanSelection
     | OrganizationSetup
-    | BrandSetup
     | AgentSetup
     | Complete
 
@@ -1203,9 +1157,6 @@ getSetupStep model =
             else if not (hasOrganizationSettings user) then
                 OrganizationSetup
 
-            else if not (hasBrandSettings user) then
-                BrandSetup
-
             else if not (hasAgents user) then
                 AgentSetup
 
@@ -1215,14 +1166,15 @@ getSetupStep model =
 
 hasOrganizationSettings : User -> Bool
 hasOrganizationSettings user =
-    -- TODO: Add actual check for organization settings
-    True
+    -- Check if both organization and brand settings are configured
+    case user.organizationSlug of
+        "" ->
+            False
 
-
-hasBrandSettings : User -> Bool
-hasBrandSettings user =
-    -- TODO: Add actual check for brand settings
-    True
+        _ ->
+            -- For now return True since we've merged brand settings into org settings
+            -- TODO: Add actual check for required settings once API is updated
+            True
 
 
 hasAgents : User -> Bool
@@ -1251,23 +1203,12 @@ redirectToSetupStep model =
                 Nothing ->
                     ( model, Nav.pushUrl model.key "/setup/settings" )
 
-        BrandSetup ->
-            case model.currentUser of
-                Just user ->
-                    ( model
-                    , Nav.pushUrl model.key
-                        ("/setup/brand-settings?plan=" ++ user.organizationSlug ++ "&org=complete")
-                    )
-
-                Nothing ->
-                    ( model, Nav.pushUrl model.key "/setup/brand-settings" )
-
         AgentSetup ->
             case model.currentUser of
                 Just user ->
                     ( model
                     , Nav.pushUrl model.key
-                        ("/setup/add-agents?plan=" ++ user.organizationSlug ++ "&org=complete&brand=complete")
+                        ("/setup/add-agents?plan=" ++ user.organizationSlug ++ "&org=complete")
                     )
 
                 Nothing ->
@@ -1568,36 +1509,6 @@ updatePage url ( model, cmd ) =
                                 , Cmd.batch [ cmd, Cmd.map ProfileMsg profileCmd ]
                                 )
 
-                            ProtectedRoute BrandSettingsRoute ->
-                                let
-                                    ( brandSettingsModel, brandSettingsCmd ) =
-                                        case model.currentUser of
-                                            Just user ->
-                                                BrandSettings.init
-                                                    { key = model.key
-                                                    , session =
-                                                        case model.session of
-                                                            Verified session ->
-                                                                session
-
-                                                            _ ->
-                                                                ""
-                                                    , orgSlug = user.organizationSlug
-                                                    , isSetup = True
-                                                    }
-
-                                            Nothing ->
-                                                BrandSettings.init
-                                                    { key = model.key
-                                                    , session = ""
-                                                    , orgSlug = ""
-                                                    , isSetup = True
-                                                    }
-                                in
-                                ( { model | page = BrandSettingsPage brandSettingsModel }
-                                , Cmd.batch [ cmd, Cmd.map BrandSettingsMsg brandSettingsCmd ]
-                                )
-
                             ProtectedRoute TempLandingRoute ->
                                 let
                                     ( tempLandingModel, tempLandingCmd ) =
@@ -1658,55 +1569,29 @@ updatePage url ( model, cmd ) =
                             SetupRoute (SetupSettingsRoute progress) ->
                                 let
                                     ( settingsModel, settingsCmd ) =
-                                        Settings.init
-                                            { isSetup = True
-                                            , key = model.key
-                                            , currentUser =
-                                                case model.currentUser of
-                                                    Just user ->
+                                        case model.currentUser of
+                                            Just user ->
+                                                Settings.init
+                                                    { isSetup = True
+                                                    , key = model.key
+                                                    , currentUser =
                                                         Just
                                                             { id = user.id
                                                             , email = user.email
                                                             , isAdmin = user.isAdmin
                                                             , isAgent = user.isAgent
                                                             }
-
-                                                    Nothing ->
-                                                        Nothing
-                                            }
-                                in
-                                ( { model | page = SettingsPage settingsModel }
-                                , Cmd.batch [ cmd, Cmd.map SettingsMsg settingsCmd ]
-                                )
-
-                            SetupRoute (SetupBrandSettingsRoute progress) ->
-                                let
-                                    ( brandSettingsModel, brandSettingsCmd ) =
-                                        case model.currentUser of
-                                            Just user ->
-                                                BrandSettings.init
-                                                    { key = model.key
-                                                    , session =
-                                                        case model.session of
-                                                            Verified session ->
-                                                                session
-
-                                                            _ ->
-                                                                ""
-                                                    , orgSlug = user.organizationSlug
-                                                    , isSetup = True
                                                     }
 
                                             Nothing ->
-                                                BrandSettings.init
-                                                    { key = model.key
-                                                    , session = ""
-                                                    , orgSlug = ""
-                                                    , isSetup = True
+                                                Settings.init
+                                                    { isSetup = True
+                                                    , key = model.key
+                                                    , currentUser = Nothing
                                                     }
                                 in
-                                ( { model | page = BrandSettingsPage brandSettingsModel }
-                                , Cmd.batch [ cmd, Cmd.map BrandSettingsMsg brandSettingsCmd ]
+                                ( { model | page = SettingsPage settingsModel }
+                                , Cmd.batch [ cmd, Cmd.map SettingsMsg settingsCmd ]
                                 )
 
                             SetupRoute (AddAgentsRoute progress) ->

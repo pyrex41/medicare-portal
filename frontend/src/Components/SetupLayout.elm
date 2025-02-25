@@ -8,7 +8,6 @@ import Html.Attributes exposing (..)
 type SetupStep
     = PlanSelection
     | OrganizationSetup
-    | BrandSetup
     | AgentSetup
 
 
@@ -43,15 +42,10 @@ viewProgressIndicator currentStep =
             , { step = OrganizationSetup
               , icon = "2"
               , title = "Organization Settings"
-              , description = "Configure your organization"
-              }
-            , { step = BrandSetup
-              , icon = "3"
-              , title = "Brand Settings"
-              , description = "Style your platform"
+              , description = "Configure your organization and brand"
               }
             , { step = AgentSetup
-              , icon = "4"
+              , icon = "3"
               , title = "Add Team Members"
               , description = "Invite your team"
               }
@@ -79,12 +73,6 @@ isStepComplete currentStep step =
 
         ( OrganizationSetup, _ ) ->
             False
-
-        ( BrandSetup, AgentSetup ) ->
-            False
-
-        ( BrandSetup, _ ) ->
-            True
 
         ( AgentSetup, _ ) ->
             True
