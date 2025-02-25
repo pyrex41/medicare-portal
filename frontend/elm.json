@@ -20,10 +20,16 @@
             "elm/url": "1.0.0",
             "elm-community/list-extra": "8.7.0",
             "justinmimbs/date": "4.1.0",
-            "justinmimbs/time-extra": "1.2.0"
+            "justinmimbs/time-extra": "1.2.0",
+            "terezka/elm-charts": "4.0.0"
         },
         "indirect": {
-            "elm/virtual-dom": "1.0.3"
+            "K-Adam/elm-dom": "1.0.0",
+            "danhandrea/elm-time-extra": "1.1.0",
+            "elm/virtual-dom": "1.0.3",
+            "myrho/elm-round": "1.0.5",
+            "ryan-haskell/date-format": "1.0.0",
+            "terezka/intervals": "2.0.2"
         }
     },
     "test-dependencies": {

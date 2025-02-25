@@ -35,8 +35,6 @@ type alias User =
     , phone : String
     , isAdmin : Bool
     , isAgent : Bool
-    , carriers : List String
-    , stateLicenses : List String
     }
 
 
@@ -184,14 +182,6 @@ viewContent model =
             Just user ->
                 div [ class "bg-white shadow rounded-lg p-6 space-y-6" ]
                     [ viewBasicInfo user
-                    , if isAgent user then
-                        div [ class "space-y-6" ]
-                            [ viewCarriers user
-                            , viewStateLicenses user
-                            ]
-
-                      else
-                        text ""
                     , viewSaveButton model
                     ]
 
@@ -255,61 +245,9 @@ viewRoleInfo user =
         ]
 
 
-viewCarriers : User -> Html Msg
-viewCarriers user =
-    div [ class "space-y-4" ]
-        [ div [ class "border-b border-gray-200 pb-4" ]
-            [ h2 [ class "text-lg font-medium text-gray-900" ]
-                [ text "Activated Carriers" ]
-            ]
-        , if List.isEmpty user.carriers then
-            div [ class "text-sm text-gray-500 italic" ]
-                [ text "No carriers activated" ]
-
-          else
-            div [ class "grid grid-cols-3 gap-4" ]
-                (List.map
-                    (\carrier ->
-                        div [ class "flex items-center space-x-2 text-sm text-gray-600" ]
-                            [ svg [ SvgAttr.class "h-5 w-5 text-green-500", SvgAttr.viewBox "0 0 20 20", SvgAttr.fill "currentColor" ]
-                                [ path [ SvgAttr.d "M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z", SvgAttr.fillRule "evenodd", SvgAttr.clipRule "evenodd" ] [] ]
-                            , span [] [ text carrier ]
-                            ]
-                    )
-                    user.carriers
-                )
-        ]
-
-
-viewStateLicenses : User -> Html Msg
-viewStateLicenses user =
-    div [ class "space-y-4" ]
-        [ div [ class "border-b border-gray-200 pb-4" ]
-            [ h2 [ class "text-lg font-medium text-gray-900" ]
-                [ text "Activated State Licenses" ]
-            ]
-        , if List.isEmpty user.stateLicenses then
-            div [ class "text-sm text-gray-500 italic" ]
-                [ text "No state licenses activated" ]
-
-          else
-            div [ class "grid grid-cols-6 gap-4" ]
-                (List.map
-                    (\state ->
-                        div [ class "flex items-center space-x-2 text-sm text-gray-600" ]
-                            [ svg [ SvgAttr.class "h-5 w-5 text-green-500", SvgAttr.viewBox "0 0 20 20", SvgAttr.fill "currentColor" ]
-                                [ path [ SvgAttr.d "M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z", SvgAttr.fillRule "evenodd", SvgAttr.clipRule "evenodd" ] [] ]
-                            , span [] [ text state ]
-                            ]
-                    )
-                    user.stateLicenses
-                )
-        ]
-
-
 viewSaveButton : Model -> Html Msg
 viewSaveButton model =
-    div [ class "mt-8 flex justify-end" ]
+    div [ class "mt-8 flex justify-center" ]
         [ if model.pendingSave then
             div [ class "px-6 py-3 flex items-center space-x-2" ]
                 [ viewSpinner ]
@@ -346,7 +284,7 @@ saveProfile user =
     Http.request
         { method = "PUT"
         , headers = []
-        , url = "/api/agents/" ++ String.fromInt user.id
+        , url = "/api/profile"
         , body = Http.jsonBody (encodeUser user)
         , expect = Http.expectWhatever ProfileSaved
         , timeout = Nothing
@@ -375,8 +313,6 @@ userDecoder =
         |> Pipeline.required "phone" Decode.string
         |> Pipeline.required "is_admin" Decode.bool
         |> Pipeline.required "is_agent" Decode.bool
-        |> Pipeline.optional "carriers" (Decode.list Decode.string) []
-        |> Pipeline.optional "stateLicenses" (Decode.list Decode.string) []
 
 
 
@@ -390,8 +326,6 @@ encodeUser user =
         , ( "lastName", Encode.string user.lastName )
         , ( "email", Encode.string user.email )
         , ( "phone", Encode.string user.phone )
-        , ( "carriers", Encode.list Encode.string user.carriers )
-        , ( "stateLicenses", Encode.list Encode.string user.stateLicenses )
         ]
 
 

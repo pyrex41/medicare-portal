@@ -7,6 +7,7 @@ import ChoosePlan
 import Compare
 import Contact
 import Contacts
+import Dashboard
 import Debug
 import Eligibility
 import Home
@@ -86,6 +87,7 @@ type alias User =
     , organizationId : String
     , firstName : String
     , lastName : String
+    , subscriptionTier : String
     }
 
 
@@ -123,6 +125,7 @@ type Page
     | QuotePage Quote.Model
     | EligibilityPage Eligibility.Model
     | SchedulePage Schedule.Model
+    | DashboardPage Dashboard.Model
 
 
 type Msg
@@ -145,6 +148,7 @@ type Msg
     | QuoteMsg Quote.Msg
     | EligibilityMsg Eligibility.Msg
     | ScheduleMsg Schedule.Msg
+    | DashboardMsg Dashboard.Msg
     | NoOp
     | GotCurrentUser (Result Http.Error CurrentUserResponse)
     | OrgFinalized (Result Http.Error ())
@@ -287,6 +291,7 @@ type ProtectedPage
     | TempLandingRoute
     | AgentsRoute
     | ContactRoute String
+    | DashboardRoute
 
 
 type SetupPage
@@ -397,6 +402,7 @@ routeParser =
         , map (ProtectedRoute ProfileRoute) (s "profile")
         , map (ProtectedRoute TempLandingRoute) (s "templanding")
         , map (ProtectedRoute AgentsRoute) (s "add-agents")
+        , map (ProtectedRoute DashboardRoute) (s "dashboard")
         , map (\id -> ProtectedRoute (ContactRoute id)) (s "contact" </> string)
         , map (\progress -> SetupRoute (ChoosePlanRoute progress))
             (s "choose-plan" <?> setupProgressDecoder)
@@ -551,6 +557,7 @@ update msg model =
                                             , organizationId = response.orgSlug
                                             , firstName = ""
                                             , lastName = ""
+                                            , subscriptionTier = ""
                                             }
                                     , isSetup = True
                                 }
@@ -601,6 +608,7 @@ update msg model =
                                 , organizationId = response.organizationSlug -- Use the org slug as org ID for now
                                 , firstName = response.firstName
                                 , lastName = response.lastName
+                                , subscriptionTier = ""
                                 }
 
                             -- Only set isSetup to True if we're in the middle of setup
@@ -750,13 +758,23 @@ update msg model =
                 _ ->
                     ( model, Cmd.none )
 
+        DashboardMsg subMsg ->
+            case model.page of
+                DashboardPage pageModel ->
+                    let
+                        ( newPageModel, newCmd ) =
+                            Dashboard.update subMsg pageModel
+                    in
+                    ( { model | page = DashboardPage newPageModel }
+                    , Cmd.map DashboardMsg newCmd
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
+
         GotCurrentUser result ->
             case result of
                 Ok response ->
-                    let
-                        _ =
-                            Debug.log "GotCurrentUser response" response
-                    in
                     case response.user of
                         Just user ->
                             let
@@ -764,18 +782,17 @@ update msg model =
                                     Debug.log "Got user details" user
 
                                 currentUser =
-                                    Maybe.map
-                                        (\u ->
-                                            let
-                                                _ =
-                                                    Debug.log "Updating user roles" { isAdmin = user.isAdmin, isAgent = user.isAgent }
-                                            in
-                                            { u
-                                                | isAdmin = user.isAdmin
-                                                , isAgent = user.isAgent
-                                            }
-                                        )
-                                        model.currentUser
+                                    Just
+                                        { id = user.id
+                                        , email = user.email
+                                        , isAdmin = user.isAdmin
+                                        , isAgent = user.isAgent
+                                        , organizationSlug = user.organizationSlug
+                                        , organizationId = user.organizationId
+                                        , firstName = user.firstName
+                                        , lastName = user.lastName
+                                        , subscriptionTier = user.subscriptionTier
+                                        }
 
                                 newModel =
                                     { model | currentUser = currentUser }
@@ -783,7 +800,6 @@ update msg model =
                                 _ =
                                     Debug.log "Updated model.currentUser" currentUser
                             in
-                            -- Now that we have both session and user info, update the page
                             updatePage model.url ( newModel, Cmd.none )
 
                         Nothing ->
@@ -950,6 +966,15 @@ view model =
                     { title = scheduleView.title
                     , body = List.map (Html.map ScheduleMsg) scheduleView.body
                     }
+
+                DashboardPage dashboardModel ->
+                    let
+                        dashboardView =
+                            Dashboard.view dashboardModel
+                    in
+                    { title = dashboardView.title
+                    , body = [ viewWithNav model (Html.map DashboardMsg (div [] dashboardView.body)) ]
+                    }
     in
     viewPage
 
@@ -967,39 +992,44 @@ viewNavHeader model =
     nav [ class "bg-white border-b border-gray-200" ]
         [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8" ]
             [ div [ class "flex justify-between h-16" ]
-                [ div [ class "flex" ]
+                [ div [ class "flex items-center space-x-4" ]
                     [ div [ class "shrink-0 flex items-center" ]
                         [ button
                             [ onClick (InternalLinkClicked "/") ]
                             [ img
                                 [ src "/images/medicare-max-logo.png"
-                                , class "h-8 w-auto"
+                                , class "h-8 w-auto mr-8"
                                 , alt "Medicare Max logo"
                                 ]
                                 []
                             ]
                         ]
-                    ]
-                , div [ class "flex items-center space-x-4" ]
-                    [ button
+                    , button
+                        [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:text-purple-600 transition-colors duration-200"
+                        , onClick (InternalLinkClicked "/dashboard")
+                        ]
+                        [ text "Dashboard" ]
+                    , button
                         [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:text-purple-600 transition-colors duration-200"
                         , onClick (InternalLinkClicked "/contacts")
                         ]
                         [ text "Contacts" ]
-                    , if isAdmin model.currentUser && not (isBasicPlan model) then
-                        button
-                            [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:text-purple-600 transition-colors duration-200"
-                            , onClick (InternalLinkClicked "/add-agents")
-                            ]
-                            [ text "Manage Agents" ]
+                    ]
+                , div [ class "flex items-center space-x-4" ]
+                    [ case model.currentUser of
+                        Just user ->
+                            if user.isAdmin && user.subscriptionTier /= "basic" then
+                                button
+                                    [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:text-purple-600 transition-colors duration-200"
+                                    , onClick (InternalLinkClicked "/add-agents")
+                                    ]
+                                    [ text "Manage Agents" ]
 
-                      else
-                        text ""
-                    , button
-                        [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:text-purple-600 transition-colors duration-200"
-                        , onClick (InternalLinkClicked "/profile")
-                        ]
-                        [ text "Profile" ]
+                            else
+                                text ""
+
+                        Nothing ->
+                            text ""
                     , if isAdmin model.currentUser then
                         button
                             [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:text-purple-600 transition-colors duration-200"
@@ -1009,6 +1039,11 @@ viewNavHeader model =
 
                       else
                         text ""
+                    , button
+                        [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:text-purple-600 transition-colors duration-200"
+                        , onClick (InternalLinkClicked "/profile")
+                        ]
+                        [ text "Profile" ]
                     ]
                 ]
             ]
@@ -1104,6 +1139,9 @@ subscriptions model =
         SchedulePage pageModel ->
             Sub.map ScheduleMsg (Schedule.subscriptions pageModel)
 
+        DashboardPage pageModel ->
+            Sub.map DashboardMsg (Dashboard.subscriptions pageModel)
+
         NotFoundPage ->
             Sub.none
 
@@ -1145,10 +1183,11 @@ userDecoder =
                 , Decode.map (\n -> n == 1) Decode.int
                 ]
             )
-        |> Pipeline.optional "organization_name" Decode.string "default-org"
+        |> Pipeline.required "organization_slug" Decode.string
         |> Pipeline.required "organization_id" (Decode.map String.fromInt Decode.int)
         |> Pipeline.required "firstName" Decode.string
         |> Pipeline.required "lastName" Decode.string
+        |> Pipeline.required "subscription_tier" Decode.string
 
 
 type SetupStep
@@ -1497,7 +1536,7 @@ updatePage url ( model, cmd ) =
                                         case model.currentUser of
                                             Just user ->
                                                 Settings.init
-                                                    { isSetup = True
+                                                    { isSetup = False
                                                     , key = model.key
                                                     , currentUser =
                                                         Just
@@ -1513,7 +1552,7 @@ updatePage url ( model, cmd ) =
 
                                             Nothing ->
                                                 Settings.init
-                                                    { isSetup = True
+                                                    { isSetup = False
                                                     , key = model.key
                                                     , currentUser = Nothing
                                                     , planType = "basic"
@@ -1590,6 +1629,15 @@ updatePage url ( model, cmd ) =
                                 in
                                 ( { model | page = ContactPage contactModel }
                                 , Cmd.batch [ cmd, Cmd.map ContactMsg contactCmd ]
+                                )
+
+                            ProtectedRoute DashboardRoute ->
+                                let
+                                    ( dashboardModel, dashboardCmd ) =
+                                        Dashboard.init ()
+                                in
+                                ( { model | page = DashboardPage dashboardModel }
+                                , Cmd.batch [ cmd, Cmd.map DashboardMsg dashboardCmd ]
                                 )
 
                             SetupRoute (ChoosePlanRoute progress) ->
