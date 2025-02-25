@@ -50,8 +50,9 @@ export class TursoService {
       authToken: tokenData.jwt
     });
 
-    await client.execute(`
-      CREATE TABLE contacts (
+    // Execute SQL statements one at a time
+    const statements = [
+      `CREATE TABLE contacts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         first_name TEXT NOT NULL,
         last_name TEXT NOT NULL,
@@ -69,9 +70,8 @@ export class TursoService {
         phone_number TEXT NOT NULL DEFAULT '',
         status TEXT NOT NULL DEFAULT '',
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
-      );
-
-      CREATE TABLE leads (
+      )`,
+      `CREATE TABLE leads (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
         email TEXT NOT NULL,
@@ -79,12 +79,10 @@ export class TursoService {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         converted_contact_id INTEGER,
         FOREIGN KEY (converted_contact_id) REFERENCES contacts(id)
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_leads_email ON leads(email);
-      CREATE INDEX IF NOT EXISTS idx_leads_status ON leads(status);
-
-      CREATE TABLE contact_events (
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_leads_email ON leads(email)`,
+      `CREATE INDEX IF NOT EXISTS idx_leads_status ON leads(status)`,
+      `CREATE TABLE contact_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         contact_id INTEGER,
         lead_id INTEGER,
@@ -94,13 +92,11 @@ export class TursoService {
         FOREIGN KEY (contact_id) REFERENCES contacts(id),
         FOREIGN KEY (lead_id) REFERENCES leads(id),
         CHECK ((contact_id IS NOT NULL AND lead_id IS NULL) OR (contact_id IS NULL AND lead_id IS NOT NULL))
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_contact_events_contact_id ON contact_events(contact_id);
-      CREATE INDEX IF NOT EXISTS idx_contact_events_lead_id ON contact_events(lead_id);
-      CREATE INDEX IF NOT EXISTS idx_contact_events_type ON contact_events(event_type);
-
-      CREATE TABLE contact_requests (
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_contact_events_contact_id ON contact_events(contact_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_contact_events_lead_id ON contact_events(lead_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_contact_events_type ON contact_events(event_type)`,
+      `CREATE TABLE contact_requests (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
         email TEXT NOT NULL,
@@ -110,8 +106,13 @@ export class TursoService {
         agent_name TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (contact_id) REFERENCES contacts(id)
-      );
-    `);
+      )`
+    ];
+
+    // Execute each statement
+    for (const statement of statements) {
+      await client.execute(statement);
+    }
 
     return {
       url: `https://${dbData.database.Hostname}`,

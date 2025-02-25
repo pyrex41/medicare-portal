@@ -1,8 +1,10 @@
 import { Elysia } from 'elysia';
 import { validateSession } from '../services/auth';
 import { Database } from '../database';
-import { User } from '../types';
+import { type User } from '../types';
 import { logger } from '../logger';
+import { type Cookie } from '@elysiajs/cookie';
+import { type BaseSettings } from '../types';
 
 interface StateCarrierSetting {
   state: string;
@@ -11,15 +13,9 @@ interface StateCarrierSetting {
   targetGI: boolean;
 }
 
-interface BaseSettings {
-  stateLicenses: string[];
-  carrierContracts: string[];
-  stateCarrierSettings: StateCarrierSetting[];
-  allowAgentSettings: boolean;
-  emailSendBirthday: boolean;
-  emailSendPolicyAnniversary: boolean;
-  emailSendAep: boolean;
-  smartSendEnabled: boolean;
+interface SettingsBody {
+    settings?: BaseSettings;
+    inheritOrgSettings?: boolean;
 }
 
 interface AgentSettingsResponse {
@@ -143,18 +139,9 @@ export const settingsRoutes = new Elysia()
 
   .put('/api/settings/:scope', async ({ cookie, body, params }) => {
     const { scope } = params;
-    logger.info(`PUT /api/settings/${scope} called`);
-    logger.info(`Body type: ${typeof body}`);
-    logger.info(`Body content: ${JSON.stringify(body, null, 2)}`);
+    logger.info(`PUT /api/settings/${scope} - Starting`);
     
-    if (body.settings) {
-        logger.info(`Settings type: ${typeof body.settings}`);
-        logger.info(`Settings content: ${JSON.stringify(body.settings, null, 2)}`);
-    }
-
-    const user = await validateSession(cookie.session);
-    logger.info(`User validation result: ${user ? JSON.stringify(user) : 'no user found'}`);
-    
+    const user = await validateSession(cookie?.session?.toString() || '');
     if (!user?.id) {
         return { success: false, error: 'No authenticated user' };
     }
@@ -162,73 +149,70 @@ export const settingsRoutes = new Elysia()
     const db = new Database();
 
     try {
+        // Get organization's subscription tier
+        const orgRow = await db.fetchOne<{ subscription_tier: string }>(
+            'SELECT subscription_tier FROM organizations WHERE id = ?',
+            [user.organization_id]
+        );
+
+        const isBasicTier = orgRow?.subscription_tier === 'basic';
+        const typedBody = body as SettingsBody;
+
         if (scope === 'org') {
-            // Verify admin role for org settings
-            if (!user.is_admin) {
-                logger.warn(`User ${user.id} attempted to modify org settings but is not an admin`);
-                return { success: false, error: 'Only admins can modify organization settings' };
-            }
+            logger.info('Updating organization settings');
+            
+            // Update organization settings
+            await db.execute(
+                'UPDATE organizations SET org_settings = ? WHERE id = ?',
+                [JSON.stringify(typedBody), user.organization_id]
+            );
 
-            // If states or carriers changed, regenerate the settings array
-            const settings = body.settings || body;
-            if (settings.stateCarrierSettings.length === 0) {
-                settings.stateCarrierSettings = generateDefaultStateCarrierSettings(
-                    settings.stateLicenses,
-                    settings.carrierContracts
-                );
-            }
-
-            let settingsToSave;
-            try {
-                settingsToSave = JSON.stringify(settings);
-                logger.info(`Settings to save (type): ${typeof settingsToSave}`);
-                logger.info(`Settings to save (value): ${settingsToSave}`);
+            // For basic tier, also update the admin agent's settings
+            if (isBasicTier) {
+                logger.info('Basic tier detected - syncing settings to admin agent');
                 
-                // Verify it's valid JSON
-                JSON.parse(settingsToSave);
-                logger.info('Settings validated as valid JSON');
-            } catch (jsonError) {
-                logger.error(`JSON processing error: ${jsonError}`);
-                throw jsonError;
-            }
-
-            try {
-                logger.info(`Executing DB update for org ${user.organization_id}`);
-                logger.info(`First parameter type: ${typeof settingsToSave}`);
-                logger.info(`First parameter value: ${settingsToSave}`);
-                logger.info(`Second parameter type: ${typeof user.organization_id}`);
-                logger.info(`Second parameter value: ${user.organization_id}`);
-
-                await db.execute(
-                    'UPDATE organizations SET org_settings = ? WHERE id = ?',
-                    [settingsToSave, user.organization_id]
+                // Get the admin agent's ID
+                const adminAgentRow = await db.fetchOne<{ id: number }>(
+                    'SELECT id FROM users WHERE organization_id = ? AND is_admin = 1 AND is_agent = 1 LIMIT 1',
+                    [user.organization_id]
                 );
-                logger.info('Organization settings updated successfully');
-            } catch (dbError) {
-                logger.error(`Database execute error details: ${JSON.stringify(dbError, null, 2)}`);
-                logger.error(`Database error name: ${dbError.name}`);
-                logger.error(`Database error message: ${dbError.message}`);
-                if (dbError.stack) {
-                    logger.error(`Database error stack: ${dbError.stack}`);
+
+                if (adminAgentRow) {
+                    // Update agent settings with organization settings and set inherit_org_settings to true
+                    await db.execute(
+                        `INSERT INTO agent_settings (agent_id, inherit_org_settings, settings)
+                         VALUES (?, true, ?)
+                         ON CONFLICT (agent_id) DO UPDATE
+                         SET inherit_org_settings = true, settings = ?`,
+                        [adminAgentRow.id, JSON.stringify(typedBody), JSON.stringify(typedBody)]
+                    );
+                    logger.info('Successfully synced settings to admin agent');
                 }
-                throw dbError;
             }
         } else if (scope === 'agent') {
+            // For basic tier, don't allow direct agent settings updates
+            if (isBasicTier) {
+                return {
+                    success: false,
+                    error: 'Agent settings cannot be modified directly in basic tier - update organization settings instead'
+                };
+            }
+
             logger.info('Updating agent settings');
-            logger.info(`Agent settings body: ${JSON.stringify(body, null, 2)}`);
+            logger.info(`Agent settings body: ${JSON.stringify(typedBody, null, 2)}`);
 
             try {
-                await db.execute(`
-                    INSERT INTO agent_settings (agent_id, inherit_org_settings, settings)
-                    VALUES (?, ?, ?)
-                    ON CONFLICT (agent_id) DO UPDATE
-                    SET inherit_org_settings = ?, settings = ?`,
+                await db.execute(
+                    `INSERT INTO agent_settings (agent_id, inherit_org_settings, settings)
+                     VALUES (?, ?, ?)
+                     ON CONFLICT (agent_id) DO UPDATE
+                     SET inherit_org_settings = ?, settings = ?`,
                     [
                         user.id,
-                        body.inheritOrgSettings,
-                        JSON.stringify(body.settings),
-                        body.inheritOrgSettings,
-                        JSON.stringify(body.settings)
+                        typedBody.inheritOrgSettings,
+                        JSON.stringify(typedBody.settings),
+                        typedBody.inheritOrgSettings,
+                        JSON.stringify(typedBody.settings)
                     ]
                 );
                 logger.info('Agent settings updated successfully');
@@ -240,11 +224,11 @@ export const settingsRoutes = new Elysia()
 
         return {
             success: true,
-            settings: body.settings || body
+            settings: typedBody.settings || typedBody
         };
     } catch (error) {
         logger.error(`Error updating settings: ${error}`);
-        logger.error(`Error stack: ${error.stack}`);
+        logger.error(`Error stack: ${(error as Error).stack}`);
         return {
             success: false,
             error: 'Failed to update settings'

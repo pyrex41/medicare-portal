@@ -118,6 +118,7 @@ type alias InitFlags =
     { isSetup : Bool
     , key : Nav.Key
     , currentUser : Maybe CurrentUser
+    , planType : String
     }
 
 
@@ -126,6 +127,8 @@ type alias CurrentUser =
     , email : String
     , isAdmin : Bool
     , isAgent : Bool
+    , organizationSlug : String
+    , organizationId : String
     }
 
 
@@ -139,6 +142,8 @@ type alias Model =
     , currentUser : Maybe CurrentUser
     , isLoading : Bool
     , isSaving : Bool
+    , planType : String
+    , error : Maybe String
     }
 
 
@@ -201,6 +206,8 @@ type Msg
     | GotLogo File
     | GotLogoUrl String
     | LogoUploaded (Result Http.Error String)
+    | NoOp
+    | OrgFinalized (Result Http.Error ())
 
 
 type alias SettingsResponse =
@@ -220,6 +227,8 @@ init flags =
       , currentUser = flags.currentUser
       , isLoading = True
       , isSaving = False
+      , planType = flags.planType
+      , error = Nothing
       }
     , Cmd.batch
         [ fetchSettings
@@ -255,6 +264,9 @@ fetchRecommendedGICombos =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+        NoOp ->
+            ( model, Cmd.none )
+
         GotSettings result ->
             case result of
                 Ok response ->
@@ -618,14 +630,46 @@ update msg model =
         FinishSetup ->
             case model.currentUser of
                 Just user ->
-                    ( model
-                    , Nav.pushUrl model.key
-                        ("/setup/brand-settings?plan=" ++ user.id ++ "&org=complete")
-                    )
+                    if model.planType == "basic" then
+                        ( { model | isLoading = True }
+                        , finalizeOrganization user.organizationSlug
+                        )
+
+                    else
+                        ( model
+                        , Nav.pushUrl model.key "/dashboard"
+                        )
 
                 Nothing ->
                     ( model
-                    , Nav.pushUrl model.key "/setup/brand-settings"
+                    , Nav.pushUrl model.key "/dashboard"
+                    )
+
+        OrgFinalized result ->
+            case result of
+                Ok _ ->
+                    ( { model | isLoading = False }
+                    , Nav.pushUrl model.key "/dashboard"
+                    )
+
+                Err error ->
+                    let
+                        errorMessage =
+                            case error of
+                                Http.BadStatus 500 ->
+                                    "Failed to set up your organization's database. Please contact support at help@medicaremax.com and we'll help you get started."
+
+                                Http.BadBody message ->
+                                    message ++ "\nPlease contact support at help@medicaremax.com and we'll help you get started."
+
+                                _ ->
+                                    "An unexpected error occurred. Please contact support at help@medicaremax.com and we'll help you get started."
+                    in
+                    ( { model
+                        | isLoading = False
+                        , error = Just errorMessage
+                      }
+                    , Cmd.none
                     )
 
         SelectCommonStates region ->
@@ -733,6 +777,7 @@ view model =
     , body =
         [ if model.isSetup then
             SetupLayout.view SetupLayout.OrganizationSetup
+                (model.planType == "basic")
                 [ if model.isLoading then
                     viewLoading
 
@@ -778,37 +823,42 @@ viewBottomBar model =
                   px-4 py-4 sm:px-6 lg:px-8 flex justify-between items-center
                   mt-8"""
         ]
-        [ button
-            [ class """px-4 py-2 text-sm font-medium text-gray-700 bg-white 
-                      border border-gray-300 rounded-md hover:bg-gray-50"""
-            , onClick SaveSettings
-            ]
-            [ text "Save Changes" ]
-        , if model.isSetup then
-            button
-                [ class """px-4 py-2 text-sm font-medium text-white bg-blue-600 
-                          rounded-md hover:bg-blue-700 ml-4"""
-                , onClick FinishSetup
-                ]
-                [ text "Next: Add Agents" ]
+        [ case model.error of
+            Just errorMsg ->
+                div [ class "text-red-600 text-sm max-w-xl" ]
+                    [ text errorMsg ]
 
-          else
-            text ""
+            Nothing ->
+                text ""
+        , button
+            [ class """px-4 py-2 text-sm font-medium text-white bg-blue-600 
+                      rounded-md hover:bg-blue-700"""
+            , onClick FinishSetup
+            ]
+            [ text "Next: Go to Dashboard" ]
         ]
 
 
-viewSettingsContent : Maybe Settings -> Bool -> List String -> Html Msg
-viewSettingsContent maybeSettings canEdit expandedSections =
+viewSettingsContent : Maybe Settings -> Bool -> List String -> String -> Html Msg
+viewSettingsContent maybeSettings canEdit expandedSections planType =
     case maybeSettings of
         Just settings ->
             div [ class "space-y-6" ]
                 [ div [ class "bg-white shadow rounded-lg p-6" ]
-                    [ h2 [ class "text-lg font-medium mb-4" ] [ text "Organization Settings" ]
-                    , div [ class "space-y-4" ]
-                        [ checkbox "Allow agents to customize their own settings"
-                            settings.allowAgentSettings
-                            ToggleAllowAgentSettings
+                    [ div [ class "flex justify-between items-center mb-4" ]
+                        [ h2 [ class "text-lg font-medium" ] [ text "Organization Settings" ]
+                        , div [ class "px-3 py-1 bg-gray-100 rounded-full text-sm text-gray-600" ]
+                            [ text (String.toUpper planType ++ " Plan") ]
                         ]
+                    , if planType /= "basic" then
+                        div [ class "space-y-4" ]
+                            [ checkbox "Allow agents to customize their own settings"
+                                settings.allowAgentSettings
+                                ToggleAllowAgentSettings
+                            ]
+
+                      else
+                        text ""
                     ]
                 , viewBrandSettings settings
                 , viewEmailSettings settings
@@ -831,10 +881,10 @@ viewSettingsContent maybeSettings canEdit expandedSections =
 viewBrandSettings : Settings -> Html Msg
 viewBrandSettings settings =
     div [ class "bg-white shadow rounded-lg p-6" ]
-        [ h2 [ class "text-lg font-medium mb-4" ] [ text "Brand Settings" ]
+        [ h2 [ class "text-lg font-medium mb-4" ] [ text "Agency Settings" ]
         , div [ class "space-y-6" ]
             [ div [ class "space-y-4" ]
-                [ viewFormGroup "Brand Name"
+                [ viewFormGroup "Agency Name"
                     (input
                         [ type_ "text"
                         , class "w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-purple-500 focus:border-purple-500"
@@ -1431,6 +1481,15 @@ viewHeader =
 viewSettings : Model -> Html Msg
 viewSettings model =
     div [ class "space-y-8" ]
-        [ viewSettingsContent model.orgSettings True model.expandedSections
+        [ viewSettingsContent model.orgSettings True model.expandedSections model.planType
         , viewBottomBar model
         ]
+
+
+finalizeOrganization : String -> Cmd Msg
+finalizeOrganization orgSlug =
+    Http.post
+        { url = "/api/organizations/" ++ orgSlug ++ "/setup-database"
+        , body = Http.emptyBody
+        , expect = Http.expectWhatever OrgFinalized
+        }

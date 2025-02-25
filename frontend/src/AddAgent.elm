@@ -108,10 +108,11 @@ type alias Model =
     , isLoading : Bool
     , agents : List Agent
     , showAddForm : Bool
-    , currentUser : Maybe User
+    , currentUser : Maybe CurrentUser
     , isLoadingForAgent : Maybe String
     , orgSettings : Maybe Settings
     , pendingSave : Maybe String
+    , planType : String
     }
 
 
@@ -137,6 +138,17 @@ type alias Agent =
     , carriers : List String
     , stateLicenses : List String
     , expanded : Bool
+    }
+
+
+type alias CurrentUser =
+    { id : String
+    , email : String
+    , firstName : String
+    , lastName : String
+    , isAdmin : Bool
+    , isAgent : Bool
+    , phone : String
     }
 
 
@@ -183,6 +195,7 @@ type Msg
     | SaveAgentDetails String
     | AgentDetailsSaved String (Result Http.Error ())
     | DebounceSaveAgent String
+    | EditAgent Agent
 
 
 type alias CurrentUserResponse =
@@ -191,8 +204,8 @@ type alias CurrentUserResponse =
     }
 
 
-init : { isSetup : Bool, key : Nav.Key } -> ( Model, Cmd Msg )
-init flags =
+init : Bool -> Nav.Key -> Maybe CurrentUser -> String -> ( Model, Cmd Msg )
+init isSetup key currentUser planType =
     ( { email = ""
       , firstName = ""
       , lastName = ""
@@ -203,24 +216,18 @@ init flags =
       , carriers = []
       , stateLicenses = []
       , error = Nothing
-      , isSetup = flags.isSetup
-      , key = flags.key
-      , isLoading = False
+      , isSetup = isSetup
+      , key = key
+      , isLoading = True
       , agents = []
       , showAddForm = False
-      , currentUser = Nothing
+      , currentUser = currentUser
       , isLoadingForAgent = Nothing
       , orgSettings = Nothing
       , pendingSave = Nothing
+      , planType = planType
       }
-    , Cmd.batch
-        [ fetchAgents
-        , fetchCurrentUser
-        , Http.get
-            { url = "/api/settings"
-            , expect = Http.expectJson GotOrgSettings (Decode.field "orgSettings" settingsObjectDecoder)
-            }
-        ]
+    , fetchAgents
     )
 
 
@@ -235,6 +242,7 @@ view model =
     , body =
         [ if model.isSetup then
             SetupLayout.view SetupLayout.AgentSetup
+                (model.planType == "basic")
                 [ div [ class "max-w-3xl mx-auto pb-24" ]
                     [ viewSetupHeader model
                     , viewAgentsList model
@@ -568,33 +576,37 @@ viewStateLicenses model =
 
 viewAgentsList : Model -> Html Msg
 viewAgentsList model =
-    div [ class "space-y-8" ]
-        [ div [ class "flow-root" ]
-            [ if List.isEmpty model.agents && model.error /= Nothing then
-                div [ class "text-center py-4" ]
-                    [ p [ class "text-red-600" ]
-                        [ text (Maybe.withDefault "Failed to load agents" model.error) ]
-                    ]
-
-              else
-                ul [ class "-my-5 divide-y divide-gray-200" ]
-                    (let
-                        -- Show admin/admin_agent first, but only once
-                        adminAgents =
-                            List.filter
-                                (\agent ->
-                                    (agent.isAdmin || agent.isAgent)
-                                        && not (List.any (\a -> a.id == agent.id && a /= agent) model.agents)
-                                )
-                                model.agents
-
-                        -- Then show regular agents
-                        regularAgents =
-                            List.filter (\agent -> not agent.isAdmin && agent.isAgent) model.agents
-                     in
-                     List.map (viewAgentItem model) adminAgents ++ List.map (viewAgentItem model) regularAgents
-                    )
-            ]
+    div [ class "space-y-6" ]
+        [ div [ class "grid grid-cols-1 gap-6" ]
+            (List.map
+                (\agent ->
+                    div [ class "bg-white shadow rounded-lg p-6" ]
+                        [ div [ class "flex items-center justify-between" ]
+                            [ div [ class "flex items-center" ]
+                                [ div [ class "ml-4" ]
+                                    [ div [ class "text-lg font-medium text-gray-900" ]
+                                        [ text (agent.firstName ++ " " ++ agent.lastName) ]
+                                    , div [ class "text-sm text-gray-500" ]
+                                        [ text agent.email ]
+                                    ]
+                                ]
+                            , div [ class "flex items-center space-x-4" ]
+                                [ button
+                                    [ class "text-gray-400 hover:text-gray-500"
+                                    , onClick (EditAgent agent)
+                                    ]
+                                    [ text "Edit" ]
+                                , button
+                                    [ class "text-red-400 hover:text-red-500"
+                                    , onClick (DeleteAgent agent.id)
+                                    ]
+                                    [ text "Delete" ]
+                                ]
+                            ]
+                        ]
+                )
+                model.agents
+            )
         ]
 
 
@@ -1602,6 +1614,9 @@ update msg model =
                         Cmd.none
                 )
 
+        EditAgent agent ->
+            ( model, Cmd.none )
+
 
 
 -- Helper functions
@@ -1941,11 +1956,11 @@ saveAgentDetails agent =
         }
 
 
-isCurrentUser : Maybe User -> String -> Bool
-isCurrentUser maybeUser agentId =
-    case maybeUser of
+isCurrentUser : Agent -> Model -> Bool
+isCurrentUser agent model =
+    case model.currentUser of
         Just user ->
-            user.id == agentId
+            user.id == agent.id
 
         Nothing ->
             False

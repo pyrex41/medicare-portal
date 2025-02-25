@@ -118,19 +118,6 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
 
         logger.info(`Organization created with ID: ${orgId}`);
 
-        // Create Turso database for organization
-        logger.info('Creating Turso database');
-        const { url, token } = await turso.createOrganizationDatabase(orgId.toString());
-
-        logger.info('Turso database created');
-
-        // Update organization with Turso credentials
-        logger.info('Updating organization with Turso credentials');
-        await transactionDb.execute(
-          'UPDATE organizations SET turso_db_url = ?, turso_auth_token = ? WHERE id = ?',
-          [url, token, orgId]
-        );
-
         // Create inactive admin user
         logger.info('Creating admin user');
         await transactionDb.execute(
@@ -148,7 +135,7 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
             data.adminEmail,
             orgId,
             1, // is_admin
-            0, // is_agent
+            1, // is_agent - Set to 1 for basic tier since admin is also an agent
             1, // is_active
             data.adminFirstName,
             data.adminLastName,
@@ -285,33 +272,25 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
     }
   })
   .get('/organizations/subscription-tiers', async ({ set }) => {
+    const db = new Database();
     try {
-      const tiers = [
-        {
-          id: "basic",
-          name: "Basic",
-          price: "$99/month",
-          agentLimit: 5,
-          contactLimit: 100,
-          features: ["Basic CRM features", "Email integration", "Contact management"]
-        },
-        {
-          id: "professional",
-          name: "Professional",
-          price: "$199/month",
-          agentLimit: 15,
-          contactLimit: 500,
-          features: ["All Basic features", "Advanced analytics", "API access"]
-        },
-        {
-          id: "enterprise",
-          name: "Enterprise",
-          price: "$499/month",
-          agentLimit: 50,
-          contactLimit: 2000,
-          features: ["All Professional features", "Priority support", "Custom integrations"]
-        }
-      ];
+      const tiersResult = await db.query<{
+        id: string,
+        name: string,
+        agent_limit: number,
+        contact_limit: number,
+        price_monthly: number,
+        features: string
+      }>('SELECT id, name, agent_limit, contact_limit, price_monthly, features FROM subscription_tiers');
+
+      const tiers = tiersResult.map(tier => ({
+        id: tier.id,
+        name: tier.name,
+        price: `$${(tier.price_monthly / 100).toFixed(0)}/mo`,
+        agentLimit: tier.agent_limit,
+        contactLimit: tier.contact_limit,
+        features: JSON.parse(tier.features)
+      }));
 
       return { success: true, tiers };
     } catch (error) {
@@ -335,11 +314,7 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
       }
 
       // Add more detailed logging
-      logger.info('Updating subscription', {
-        orgSlug,
-        currentUser: currentUser.organization_id,
-        requestBody: body
-      })
+      logger.info(`Updating subscription - orgSlug: ${orgSlug}, userId: ${currentUser.organization_id}, body: ${JSON.stringify(body)}`);
 
       // First verify this user belongs to the organization they're trying to update
       const orgResult = await db.fetchAll(
@@ -378,6 +353,21 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
         [tierId, organizationId]
       )
 
+      // Set up the Turso database after subscription is saved
+      const baseUrl = process.env.PUBLIC_URL || 'http://localhost:5173';
+      const setupDbResponse = await fetch(`${baseUrl}/api/organizations/${orgSlug}/setup-database`, {
+        method: 'POST',
+        headers: {
+          'Cookie': request.headers.get('cookie') || ''
+        }
+      });
+
+      if (!setupDbResponse.ok) {
+        logger.error(`Failed to set up database for org ${organizationId}`);
+      } else {
+        logger.info(`Successfully set up database for org ${organizationId}`);
+      }
+
       logger.info(`Successfully updated subscription for org ${organizationId} to tier ${tierId}`)
 
       return {
@@ -392,5 +382,63 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
         success: false,
         error: String(e)
       }
+    }
+  })
+  // Add new endpoint to create Turso database after plan selection
+  .post('/organizations/:orgSlug/setup-database', async ({ params, set }) => {
+    const db = new Database();
+    const turso = new TursoService();
+
+    try {
+      const orgSlug = params.orgSlug;
+
+      // Get organization ID from slug
+      const orgResult = await db.query<{ id: number, has_db: number }>(
+        'SELECT id, CASE WHEN turso_db_url IS NOT NULL THEN 1 ELSE 0 END as has_db FROM organizations WHERE slug = ?',
+        [orgSlug]
+      );
+
+      if (!orgResult || orgResult.length === 0) {
+        set.status = 404;
+        return {
+          success: false,
+          message: 'Organization not found'
+        };
+      }
+
+      const orgId = orgResult[0].id;
+
+      if (orgResult[0].has_db === 1) {
+        set.status = 400;
+        return {
+          success: false,
+          message: 'Organization already has a database'
+        };
+      }
+
+      // Create Turso database for the organization
+      const { url, token } = await turso.createOrganizationDatabase(orgId.toString());
+
+      // Update organization with Turso database credentials
+      await db.execute(
+        'UPDATE organizations SET turso_db_url = ?, turso_auth_token = ? WHERE id = ?',
+        [url, token, orgId]
+      );
+
+      logger.info(`Successfully created Turso database for organization ${orgId}`);
+
+      return {
+        success: true,
+        message: 'Database created successfully'
+      };
+
+    } catch (error) {
+      logger.error(`Error creating database for organization ${params.orgSlug}: ${error}`);
+      set.status = 500;
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      return {
+        success: false,
+        message: `Failed to create database: ${errorMessage}`
+      };
     }
   }); 

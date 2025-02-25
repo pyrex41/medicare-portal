@@ -83,6 +83,7 @@ type alias User =
     , isAdmin : Bool
     , isAgent : Bool
     , organizationSlug : String
+    , organizationId : String
     , firstName : String
     , lastName : String
     }
@@ -146,6 +147,7 @@ type Msg
     | ScheduleMsg Schedule.Msg
     | NoOp
     | GotCurrentUser (Result Http.Error CurrentUserResponse)
+    | OrgFinalized (Result Http.Error ())
 
 
 type alias Flags =
@@ -546,6 +548,7 @@ update msg model =
                                             , isAdmin = False
                                             , isAgent = False
                                             , organizationSlug = response.orgSlug
+                                            , organizationId = response.orgSlug
                                             , firstName = ""
                                             , lastName = ""
                                             }
@@ -589,13 +592,13 @@ update msg model =
                             _ =
                                 Debug.log "Session is valid" response.session
 
-                            -- Create the user first so we can check setup state
                             user =
                                 { id = response.id
                                 , email = response.email
                                 , isAdmin = False -- We'll get this from /api/me endpoint
                                 , isAgent = False -- We'll get this from /api/me endpoint
                                 , organizationSlug = response.organizationSlug
+                                , organizationId = response.organizationSlug -- Use the org slug as org ID for now
                                 , firstName = response.firstName
                                 , lastName = response.lastName
                                 }
@@ -797,6 +800,18 @@ update msg model =
                     in
                     updatePage model.url ( model, Cmd.none )
 
+        OrgFinalized result ->
+            case result of
+                Ok _ ->
+                    ( model, Cmd.none )
+
+                -- Navigation already happened
+                Err _ ->
+                    ( { model | page = LoadingPage }
+                    , Nav.pushUrl model.key "/settings"
+                      -- Redirect to settings on error
+                    )
+
         NoOp ->
             ( model, Cmd.none )
 
@@ -847,7 +862,7 @@ view model =
                             Signup.view signupModel
                     in
                     { title = signupView.title
-                    , body = List.map (Html.map SignupMsg) signupView.body
+                    , body = [ viewWithNav model (Html.map SignupMsg (div [] signupView.body)) ]
                     }
 
                 ChoosePlanPage choosePlanModel ->
@@ -971,7 +986,7 @@ viewNavHeader model =
                         , onClick (InternalLinkClicked "/contacts")
                         ]
                         [ text "Contacts" ]
-                    , if isAdmin model.currentUser then
+                    , if isAdmin model.currentUser && not (isBasicPlan model) then
                         button
                             [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:text-purple-600 transition-colors duration-200"
                             , onClick (InternalLinkClicked "/add-agents")
@@ -1131,7 +1146,7 @@ userDecoder =
                 ]
             )
         |> Pipeline.optional "organization_name" Decode.string "default-org"
-        -- Make organization_name optional
+        |> Pipeline.required "organization_id" (Decode.map String.fromInt Decode.int)
         |> Pipeline.required "firstName" Decode.string
         |> Pipeline.required "lastName" Decode.string
 
@@ -1479,22 +1494,30 @@ updatePage url ( model, cmd ) =
                             ProtectedRoute SettingsRoute ->
                                 let
                                     ( settingsModel, settingsCmd ) =
-                                        Settings.init
-                                            { isSetup = False
-                                            , key = model.key
-                                            , currentUser =
-                                                case model.currentUser of
-                                                    Just user ->
+                                        case model.currentUser of
+                                            Just user ->
+                                                Settings.init
+                                                    { isSetup = True
+                                                    , key = model.key
+                                                    , currentUser =
                                                         Just
                                                             { id = user.id
                                                             , email = user.email
                                                             , isAdmin = user.isAdmin
                                                             , isAgent = user.isAgent
+                                                            , organizationSlug = user.organizationSlug
+                                                            , organizationId = user.organizationId
                                                             }
+                                                    , planType = "basic" -- Default to basic plan if not in setup flow
+                                                    }
 
-                                                    Nothing ->
-                                                        Nothing
-                                            }
+                                            Nothing ->
+                                                Settings.init
+                                                    { isSetup = True
+                                                    , key = model.key
+                                                    , currentUser = Nothing
+                                                    , planType = "basic"
+                                                    }
                                 in
                                 ( { model | page = SettingsPage settingsModel }
                                 , Cmd.batch [ cmd, Cmd.map SettingsMsg settingsCmd ]
@@ -1519,16 +1542,43 @@ updatePage url ( model, cmd ) =
                                 )
 
                             ProtectedRoute AgentsRoute ->
-                                let
-                                    ( addAgentsModel, addAgentsCmd ) =
-                                        AddAgent.init
-                                            { isSetup = False
-                                            , key = model.key
-                                            }
-                                in
-                                ( { model | page = AddAgentsPage addAgentsModel }
-                                , Cmd.batch [ cmd, Cmd.map AddAgentsMsg addAgentsCmd ]
-                                )
+                                if isBasicPlan model then
+                                    ( model, Nav.pushUrl model.key "/settings" )
+
+                                else
+                                    let
+                                        planType =
+                                            case model.currentUser of
+                                                Just user ->
+                                                    user.organizationSlug
+
+                                                Nothing ->
+                                                    "basic"
+
+                                        ( addAgentsModel, addAgentsCmd ) =
+                                            case model.currentUser of
+                                                Just user ->
+                                                    AddAgent.init
+                                                        True
+                                                        model.key
+                                                        (Just
+                                                            { id = user.id
+                                                            , email = user.email
+                                                            , firstName = user.firstName
+                                                            , lastName = user.lastName
+                                                            , isAdmin = user.isAdmin
+                                                            , isAgent = user.isAgent
+                                                            , phone = ""
+                                                            }
+                                                        )
+                                                        planType
+
+                                                Nothing ->
+                                                    AddAgent.init True model.key Nothing planType
+                                    in
+                                    ( { model | page = AddAgentsPage addAgentsModel }
+                                    , Cmd.batch [ cmd, Cmd.map AddAgentsMsg addAgentsCmd ]
+                                    )
 
                             ProtectedRoute (ContactRoute id) ->
                                 let
@@ -1568,6 +1618,19 @@ updatePage url ( model, cmd ) =
 
                             SetupRoute (SetupSettingsRoute progress) ->
                                 let
+                                    planType =
+                                        case progress of
+                                            Just p ->
+                                                case p.plan of
+                                                    Just plan ->
+                                                        plan
+
+                                                    Nothing ->
+                                                        "basic"
+
+                                            Nothing ->
+                                                "basic"
+
                                     ( settingsModel, settingsCmd ) =
                                         case model.currentUser of
                                             Just user ->
@@ -1580,7 +1643,10 @@ updatePage url ( model, cmd ) =
                                                             , email = user.email
                                                             , isAdmin = user.isAdmin
                                                             , isAgent = user.isAgent
+                                                            , organizationSlug = user.organizationSlug
+                                                            , organizationId = user.organizationId
                                                             }
+                                                    , planType = planType
                                                     }
 
                                             Nothing ->
@@ -1588,6 +1654,7 @@ updatePage url ( model, cmd ) =
                                                     { isSetup = True
                                                     , key = model.key
                                                     , currentUser = Nothing
+                                                    , planType = planType
                                                     }
                                 in
                                 ( { model | page = SettingsPage settingsModel }
@@ -1596,15 +1663,58 @@ updatePage url ( model, cmd ) =
 
                             SetupRoute (AddAgentsRoute progress) ->
                                 let
-                                    ( addAgentsModel, addAgentsCmd ) =
-                                        AddAgent.init
-                                            { isSetup = True
-                                            , key = model.key
-                                            }
+                                    planType =
+                                        case progress of
+                                            Just setupProgress ->
+                                                case setupProgress.plan of
+                                                    Just plan ->
+                                                        plan
+
+                                                    Nothing ->
+                                                        "basic"
+
+                                            Nothing ->
+                                                "basic"
                                 in
-                                ( { model | page = AddAgentsPage addAgentsModel }
-                                , Cmd.batch [ cmd, Cmd.map AddAgentsMsg addAgentsCmd ]
-                                )
+                                if planType == "basic" then
+                                    case model.currentUser of
+                                        Just user ->
+                                            ( model
+                                            , Cmd.batch
+                                                [ finalizeOrganization user.organizationId
+                                                , Nav.pushUrl model.key "/dashboard"
+                                                ]
+                                            )
+
+                                        Nothing ->
+                                            ( model, Nav.pushUrl model.key "/dashboard" )
+
+                                else
+                                    let
+                                        ( addAgentModel, addAgentCmd ) =
+                                            case model.currentUser of
+                                                Just user ->
+                                                    AddAgent.init
+                                                        True
+                                                        model.key
+                                                        (Just
+                                                            { id = user.id
+                                                            , email = user.email
+                                                            , firstName = user.firstName
+                                                            , lastName = user.lastName
+                                                            , isAdmin = user.isAdmin
+                                                            , isAgent = user.isAgent
+                                                            , phone = ""
+                                                            }
+                                                        )
+                                                        planType
+
+                                                Nothing ->
+                                                    AddAgent.init True model.key Nothing planType
+                                    in
+                                    ( { model | page = AddAgentsPage addAgentModel }
+                                    , Cmd.batch [ cmd, Cmd.map AddAgentsMsg addAgentCmd ]
+                                    )
 
                             NotFound ->
                                 ( { model | page = NotFoundPage }
@@ -1640,3 +1750,22 @@ currentUserResponseDecoder =
 
 
 -- Wrap the user in Just since our type expects Maybe User
+
+
+isBasicPlan : Model -> Bool
+isBasicPlan model =
+    case model.currentUser of
+        Just user ->
+            user.organizationSlug == "basic"
+
+        Nothing ->
+            True
+
+
+finalizeOrganization : String -> Cmd Msg
+finalizeOrganization orgId =
+    Http.post
+        { url = "/api/organizations/" ++ orgId ++ "/finalize"
+        , body = Http.emptyBody
+        , expect = Http.expectWhatever OrgFinalized
+        }

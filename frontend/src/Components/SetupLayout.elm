@@ -19,10 +19,10 @@ type alias StepInfo =
     }
 
 
-view : SetupStep -> List (Html msg) -> Html msg
-view currentStep content =
+view : SetupStep -> Bool -> List (Html msg) -> Html msg
+view currentStep isBasicPlan content =
     div [ class "min-h-screen bg-gray-50 flex" ]
-        [ viewProgressIndicator currentStep
+        [ viewProgressIndicator currentStep isBasicPlan
         , div [ class "flex-1 ml-[280px] pb-24" ]
             [ div [ class "max-w-3xl mx-auto py-6 px-4 sm:px-6 lg:px-8" ]
                 content
@@ -30,10 +30,23 @@ view currentStep content =
         ]
 
 
-viewProgressIndicator : SetupStep -> Html msg
-viewProgressIndicator currentStep =
+viewProgressIndicator : SetupStep -> Bool -> Html msg
+viewProgressIndicator currentStep isBasicPlan =
     let
-        steps =
+        basicSteps =
+            [ { step = PlanSelection
+              , icon = "1"
+              , title = "Choose Plan"
+              , description = "Select your subscription"
+              }
+            , { step = OrganizationSetup
+              , icon = "2"
+              , title = "Agency Settings"
+              , description = "Configure your agency"
+              }
+            ]
+
+        multiAgentSteps =
             [ { step = PlanSelection
               , icon = "1"
               , title = "Choose Plan"
@@ -42,7 +55,7 @@ viewProgressIndicator currentStep =
             , { step = OrganizationSetup
               , icon = "2"
               , title = "Organization Settings"
-              , description = "Configure your organization and brand"
+              , description = "Configure your organization"
               }
             , { step = AgentSetup
               , icon = "3"
@@ -50,6 +63,13 @@ viewProgressIndicator currentStep =
               , description = "Invite your team"
               }
             ]
+
+        steps =
+            if isBasicPlan then
+                basicSteps
+
+            else
+                multiAgentSteps
 
         makeStep info =
             { icon = info.icon

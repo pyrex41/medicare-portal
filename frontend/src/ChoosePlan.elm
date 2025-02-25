@@ -197,6 +197,13 @@ view model =
     { title = "Choose Plan - Medicare Max"
     , body =
         [ SetupLayout.view SetupLayout.PlanSelection
+            (case model.selectedPlan of
+                Just "basic" ->
+                    True
+
+                _ ->
+                    False
+            )
             [ if model.isLoading then
                 viewLoading
 
@@ -281,13 +288,35 @@ viewPlanOption id name price features agentLimit contactLimit selectedPlan =
         [ div [ class "space-y-4" ]
             [ div []
                 [ h3 [ class "text-xl font-semibold text-gray-900" ] [ text name ]
-                , p [ class "text-3xl font-bold text-gray-900 mt-2" ] [ text price ]
+                , p [ class "text-3xl font-bold text-gray-900 mt-2" ]
+                    [ text
+                        (if id == "enterprise" then
+                            "Contact Us"
+
+                         else
+                            price
+                        )
+                    ]
                 ]
             , div [ class "space-y-2 py-4 border-t border-b border-gray-200" ]
                 [ div [ class "text-gray-600" ]
-                    [ text ("Up to " ++ String.fromInt agentLimit ++ " agents") ]
+                    [ text
+                        (if agentLimit == -1 then
+                            "Unlimited agents"
+
+                         else
+                            "Up to " ++ String.fromInt agentLimit ++ " agents"
+                        )
+                    ]
                 , div [ class "text-gray-600" ]
-                    [ text ("Up to " ++ String.fromInt contactLimit ++ " contacts") ]
+                    [ text
+                        (if contactLimit == -1 then
+                            "Unlimited contacts"
+
+                         else
+                            "Up to " ++ String.fromInt contactLimit ++ " contacts"
+                        )
+                    ]
                 ]
             , div [ class "mt-4" ]
                 [ p [ class "text-sm font-medium text-gray-900 mb-2" ] [ text "Features:" ]
