@@ -25,6 +25,7 @@ type alias Model =
     , currentDate : Maybe Date
     , quoteId : Maybe String
     , error : Maybe String
+    , currentCarrier : Maybe String
     }
 
 
@@ -52,6 +53,7 @@ type alias QuoteInfo =
     , dateOfBirth : String
     , tobacco : Bool
     , gender : String
+    , currentCarrier : String
     }
 
 
@@ -67,6 +69,7 @@ init key initialValues =
             , currentDate = Nothing
             , quoteId = initialValues.quoteId
             , error = Nothing
+            , currentCarrier = Nothing
             }
 
         commands =
@@ -93,11 +96,12 @@ fetchQuoteInfo quoteId =
 quoteInfoDecoder : D.Decoder QuoteInfo
 quoteInfoDecoder =
     D.field "contact"
-        (D.map4 QuoteInfo
+        (D.map5 QuoteInfo
             (D.field "zipCode" D.string)
             (D.field "dateOfBirth" D.string)
             (D.field "tobacco" D.bool)
             (D.field "gender" D.string)
+            (D.field "currentCarrier" D.string)
         )
 
 
@@ -127,6 +131,12 @@ update msg model =
                         , dateOfBirth = quoteInfo.dateOfBirth
                         , tobacco = quoteInfo.tobacco
                         , gender = quoteInfo.gender
+                        , currentCarrier =
+                            if String.isEmpty quoteInfo.currentCarrier then
+                                Nothing
+
+                            else
+                                Just quoteInfo.currentCarrier
                       }
                     , Cmd.none
                     )
@@ -166,6 +176,13 @@ update msg model =
                             ++ (case model.quoteId of
                                     Just id ->
                                         [ Builder.string "id" id ]
+
+                                    Nothing ->
+                                        []
+                               )
+                            ++ (case model.currentCarrier of
+                                    Just carrier ->
+                                        [ Builder.string "currentCarrier" carrier ]
 
                                     Nothing ->
                                         []

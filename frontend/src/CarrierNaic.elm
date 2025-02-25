@@ -62,29 +62,41 @@ carrierToString carrier =
 
 stringToCarrier : String -> Maybe Carrier
 stringToCarrier str =
-    case str of
-        "Aetna" ->
+    case String.toLower str of
+        "aetna" ->
             Just Aetna
 
-        "Humana" ->
+        "humana" ->
             Just Humana
 
-        "UnitedHealthcare" ->
+        "unitedhealthcare" ->
             Just UnitedHealthcare
 
-        "Cigna" ->
+        "uhc" ->
+            Just UnitedHealthcare
+
+        "united healthcare" ->
+            Just UnitedHealthcare
+
+        "cigna" ->
             Just Cigna
 
-        "Aflac" ->
+        "aflac" ->
             Just Aflac
 
-        "Allstate" ->
+        "allstate" ->
             Just Allstate
 
-        "Mutual of Omaha" ->
+        "mutual of omaha" ->
             Just MutualOfOmaha
 
-        "Ace Chubb" ->
+        "ace chubb" ->
+            Just AceChubb
+
+        "ace" ->
+            Just AceChubb
+
+        "chubb" ->
             Just AceChubb
 
         _ ->

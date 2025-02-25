@@ -3549,6 +3549,28 @@ type alias Model =
     , currentCarrier : Maybe String
     , dateOfBirth : String
     , quoteId : Maybe String
+    , orgSettings : Maybe Settings
+    , settingsLoaded : Bool
+    }
+
+
+type alias Settings =
+    { stateLicenses : List String
+    , carrierContracts : List String
+    , stateCarrierSettings : List StateCarrierSetting
+    , allowAgentSettings : Bool
+    , emailSendBirthday : Bool
+    , emailSendPolicyAnniversary : Bool
+    , emailSendAep : Bool
+    , smartSendEnabled : Bool
+    }
+
+
+type alias StateCarrierSetting =
+    { state : String
+    , carrier : String
+    , active : Bool
+    , targetGI : Bool
     }
 
 
@@ -3568,6 +3590,7 @@ type Msg
     | CloseRatesVideo
     | NavigateTo String
     | ToggleDiscount
+    | GotOrgSettings (Result Http.Error Settings)
 
 
 type alias Flags =
@@ -3626,10 +3649,15 @@ init flags key =
             , currentCarrier = flags.currentCarrier
             , dateOfBirth = flags.dateOfBirth
             , quoteId = flags.quoteId
+            , orgSettings = Nothing
+            , settingsLoaded = False
             }
     in
     ( model
-    , fetchPlans flags model
+    , Http.get
+        { url = "/api/settings"
+        , expect = Http.expectJson GotOrgSettings settingsDecoder
+        }
     )
 
 
@@ -3652,15 +3680,30 @@ defaultPlanType flags =
 
 fetchPlans : Flags -> Model -> Cmd Msg
 fetchPlans flags model =
-    Http.request
-        { method = "POST"
-        , headers = []
-        , url = "/api/quotes"
-        , body = Http.jsonBody (buildPlansBody flags)
-        , expect = Http.expectJson GotPlans (plansDecoder model)
-        , timeout = Nothing
-        , tracker = Nothing
-        }
+    let
+        _ =
+            Debug.log "Attempting to fetch plans"
+                { hasSettings = model.orgSettings /= Nothing
+                , settingsLoaded = model.settingsLoaded
+                }
+    in
+    if model.settingsLoaded then
+        Http.request
+            { method = "POST"
+            , headers = []
+            , url = "/api/quotes"
+            , body = Http.jsonBody (buildPlansBody flags)
+            , expect = Http.expectJson GotPlans (plansDecoder model)
+            , timeout = Nothing
+            , tracker = Nothing
+            }
+
+    else
+        let
+            _ =
+                Debug.log "Skipping plans fetch - settings not loaded" ()
+        in
+        Cmd.none
 
 
 buildPlansBody : Flags -> E.Value
@@ -3741,6 +3784,53 @@ groupQuotesByPlan responses model =
         _ =
             Debug.log "Raw responses from API" responses
 
+        _ =
+            Debug.log "Settings state when grouping quotes"
+                { settingsLoaded = model.settingsLoaded
+                , hasOrgSettings = model.orgSettings /= Nothing
+                , carrierContracts = Maybe.map .carrierContracts model.orgSettings
+                }
+
+        isCarrierSupported : String -> Bool
+        isCarrierSupported naic =
+            let
+                _ =
+                    Debug.log "Checking carrier support for NAIC" naic
+
+                carrierResult =
+                    naicToCarrier naic
+                        |> Debug.log "naicToCarrier result"
+
+                _ =
+                    Debug.log "orgSettings" model.orgSettings
+            in
+            case ( carrierResult, model.orgSettings ) of
+                ( Just carrier, Just settings ) ->
+                    let
+                        carrierStr =
+                            carrierToString carrier
+
+                        _ =
+                            Debug.log "Checking carrier support"
+                                { naic = naic
+                                , carrier = carrierStr
+                                , carrierContracts = settings.carrierContracts
+                                , supported = List.member carrierStr settings.carrierContracts
+                                }
+                    in
+                    List.member carrierStr settings.carrierContracts
+
+                _ ->
+                    let
+                        _ =
+                            Debug.log "Carrier not supported - fallthrough case"
+                                { naic = naic
+                                , carrierResult = carrierResult
+                                , hasSettings = model.orgSettings /= Nothing
+                                }
+                    in
+                    False
+
         convertToPlan : QuoteResponse -> QuoteData -> Plan
         convertToPlan response quote =
             let
@@ -3781,24 +3871,28 @@ groupQuotesByPlan responses model =
         allQuotes =
             List.concatMap
                 (\response ->
-                    List.concatMap
-                        (\quote ->
-                            let
-                                upperPlan =
-                                    String.toUpper quote.plan
-                            in
-                            if List.member upperPlan [ "G", "N" ] then
-                                [ convertToPlan response quote ]
+                    if isCarrierSupported response.naic then
+                        List.concatMap
+                            (\quote ->
+                                let
+                                    upperPlan =
+                                        String.toUpper quote.plan
+                                in
+                                if List.member upperPlan [ "G", "N" ] then
+                                    [ convertToPlan response quote ]
 
-                            else
-                                []
-                        )
-                        response.quotes
+                                else
+                                    []
+                            )
+                            (response.quotes |> Debug.log "Response.quotes")
+
+                    else
+                        []
                 )
                 responses
 
         _ =
-            Debug.log "All quotes after conversion" allQuotes
+            Debug.log "All quotes after conversion and carrier filtering" allQuotes
 
         planG =
             List.filter (\q -> String.toUpper q.planType == "G") allQuotes
@@ -3860,6 +3954,42 @@ planNCoverageList =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+        GotOrgSettings (Ok settings) ->
+            let
+                flags =
+                    { state = model.state
+                    , zip = model.zip
+                    , county = model.county
+                    , age = model.age
+                    , gender = model.gender
+                    , tobacco = model.tobacco
+                    , planType =
+                        case model.selectedPlanType of
+                            PlanG ->
+                                "G"
+
+                            PlanN ->
+                                "N"
+                    , currentCarrier = model.currentCarrier
+                    , dateOfBirth = model.dateOfBirth
+                    , quoteId = model.quoteId
+                    }
+
+                _ =
+                    Debug.log "Settings loaded, fetching quotes" settings
+
+                updatedModel =
+                    { model | orgSettings = Just settings, settingsLoaded = True }
+            in
+            ( updatedModel
+            , fetchPlans flags updatedModel
+            )
+
+        GotOrgSettings (Err _) ->
+            ( { model | error = Just "Failed to load organization settings" }
+            , Cmd.none
+            )
+
         ToggleDiscount ->
             ( { model | showDiscount = not model.showDiscount }
             , Cmd.none
@@ -3989,9 +4119,11 @@ getSelectedPlans model =
 
         carrierNaics =
             model.currentCarrier
+                |> Debug.log "Current carrier to exclude"
                 |> Maybe.andThen stringToCarrier
+                |> Debug.log "Carrier after conversion"
                 |> Maybe.map carrierToNaics
-                |> Debug.log "Carrier NAICs to filter out"
+                |> Debug.log "NAICs to exclude"
 
         _ =
             Debug.log "All plans before filtering" plans
@@ -4002,11 +4134,18 @@ getSelectedPlans model =
                     List.filter
                         (\plan ->
                             let
+                                shouldInclude =
+                                    not (List.member plan.naic naicList)
+
                                 _ =
-                                    Debug.log ("Checking plan NAIC " ++ plan.naic ++ " for " ++ plan.name)
-                                        (not (List.member plan.naic naicList))
+                                    Debug.log "Checking plan"
+                                        { naic = plan.naic
+                                        , name = plan.name
+                                        , excluded = not shouldInclude
+                                        , excludedNaics = naicList
+                                        }
                             in
-                            not (List.member plan.naic naicList)
+                            shouldInclude
                         )
                         plans
 
@@ -4481,6 +4620,71 @@ viewRatesModal model =
     else
         text ""
 
+
+settingsDecoder : Decoder Settings
+settingsDecoder =
+    let
+        _ =
+            Debug.log "Running settingsDecoder" ()
+    in
+    D.field "success" D.bool
+        |> D.andThen
+            (\success ->
+                let
+                    _ =
+                        Debug.log "Settings success value" success
+                in
+                if success then
+                    D.field "orgSettings" settingsObjectDecoder
+
+                else
+                    D.fail "Settings request was not successful"
+            )
+
+
+settingsObjectDecoder : Decoder Settings
+settingsObjectDecoder =
+    let
+        _ =
+            Debug.log "Running settingsObjectDecoder" ()
+    in
+    D.map8 Settings
+        (D.field "stateLicenses" (D.list D.string)
+            |> D.andThen
+                (\licenses ->
+                    let
+                        _ =
+                            Debug.log "Decoded stateLicenses" licenses
+                    in
+                    D.succeed licenses
+                )
+        )
+        (D.field "carrierContracts" (D.list D.string)
+            |> D.andThen
+                (\contracts ->
+                    let
+                        _ =
+                            Debug.log "Decoded carrierContracts" contracts
+                    in
+                    D.succeed contracts
+                )
+        )
+        (D.field "stateCarrierSettings" (D.list stateCarrierSettingDecoder))
+        (D.field "allowAgentSettings" D.bool)
+        (D.field "emailSendBirthday" D.bool)
+        (D.field "emailSendPolicyAnniversary" D.bool)
+        (D.field "emailSendAep" D.bool)
+        (D.field "smartSendEnabled" D.bool)
+
+
+stateCarrierSettingDecoder : Decoder StateCarrierSetting
+stateCarrierSettingDecoder =
+    D.map4 StateCarrierSetting
+        (D.field "state" D.string)
+        (D.field "carrier" D.string)
+        (D.field "active" D.bool)
+        (D.field "targetGI" D.bool)
+
 ================
 File: src/Contact.elm
 ================
@@ -4623,6 +4827,7 @@ type alias Model =
     , followUps : List FollowUpRequest
     , timeZone : Zone
     , showAllFollowUps : Bool
+    , orgSettings : Maybe Settings
     }
 
 
@@ -4636,6 +4841,26 @@ type alias FollowUpRequest =
     { type_ : String
     , quoteId : String
     , createdAt : Posix
+    }
+
+
+type alias Settings =
+    { stateLicenses : List String
+    , carrierContracts : List String
+    , stateCarrierSettings : List StateCarrierSetting
+    , allowAgentSettings : Bool
+    , emailSendBirthday : Bool
+    , emailSendPolicyAnniversary : Bool
+    , emailSendAep : Bool
+    , smartSendEnabled : Bool
+    }
+
+
+type alias StateCarrierSetting =
+    { state : String
+    , carrier : String
+    , active : Bool
+    , targetGI : Bool
     }
 
 
@@ -4687,6 +4912,41 @@ healthStatusDecoder =
         (Decode.field "answers" (Decode.nullable (Decode.dict Decode.bool)))
 
 
+settingsDecoder : Decoder Settings
+settingsDecoder =
+    Decode.field "success" Decode.bool
+        |> Decode.andThen
+            (\success ->
+                if success then
+                    Decode.field "orgSettings" settingsObjectDecoder
+
+                else
+                    Decode.fail "Settings request was not successful"
+            )
+
+
+settingsObjectDecoder : Decoder Settings
+settingsObjectDecoder =
+    Decode.map8 Settings
+        (Decode.field "stateLicenses" (Decode.list Decode.string))
+        (Decode.field "carrierContracts" (Decode.list Decode.string))
+        (Decode.field "stateCarrierSettings" (Decode.list stateCarrierSettingDecoder))
+        (Decode.field "allowAgentSettings" Decode.bool)
+        (Decode.field "emailSendBirthday" Decode.bool)
+        (Decode.field "emailSendPolicyAnniversary" Decode.bool)
+        (Decode.field "emailSendAep" Decode.bool)
+        (Decode.field "smartSendEnabled" Decode.bool)
+
+
+stateCarrierSettingDecoder : Decoder StateCarrierSetting
+stateCarrierSettingDecoder =
+    Decode.map4 StateCarrierSetting
+        (Decode.field "state" Decode.string)
+        (Decode.field "carrier" Decode.string)
+        (Decode.field "active" Decode.bool)
+        (Decode.field "targetGI" Decode.bool)
+
+
 
 -- INIT
 
@@ -4708,6 +4968,13 @@ init key contactId =
                 (Date.fromCalendarDate 2024 Jan 1)
                 (Date.fromCalendarDate 2024 Jan 1)
                 NoPlan
+                ""
+                -- Empty initial state
+                []
+                -- Empty initial state carrier settings
+                []
+
+        -- Empty initial state licenses
     in
     ( { key = key
       , contact = Nothing
@@ -4726,6 +4993,7 @@ init key contactId =
       , followUps = []
       , timeZone = Time.utc
       , showAllFollowUps = False
+      , orgSettings = Nothing
       }
     , Cmd.batch
         [ Http.get
@@ -4773,6 +5041,7 @@ type Msg
     | GotHealthStatus (Result Http.Error HealthStatus)
     | GotFollowUps (Result Http.Error (List FollowUpRequest))
     | ToggleFollowUps
+    | GotOrgSettings (Result Http.Error Settings)
 
 
 type ContactFormField
@@ -4803,6 +5072,9 @@ update msg model =
                     case Date.fromIsoString contact.birthDate of
                         Ok birthDate ->
                             let
+                                _ =
+                                    Debug.log "Contact loaded with state" contact.state
+
                                 planType =
                                     case contact.planType of
                                         "Plan N" ->
@@ -4820,6 +5092,25 @@ update msg model =
                                         _ ->
                                             NoPlan
 
+                                ( stateCarrierSettings, stateLicenses ) =
+                                    case model.orgSettings of
+                                        Just settings ->
+                                            let
+                                                _ =
+                                                    Debug.log "Using existing org settings"
+                                                        { stateCarrierSettings = settings.stateCarrierSettings
+                                                        , stateLicenses = settings.stateLicenses
+                                                        }
+                                            in
+                                            ( settings.stateCarrierSettings, settings.stateLicenses )
+
+                                        Nothing ->
+                                            let
+                                                _ =
+                                                    Debug.log "No org settings available" ()
+                                            in
+                                            ( [], [] )
+
                                 newSchedule =
                                     EmailScheduler.init
                                         contact.id
@@ -4827,12 +5118,24 @@ update msg model =
                                         birthDate
                                         model.emailSchedule.currentDate
                                         planType
+                                        contact.state
+                                        stateCarrierSettings
+                                        stateLicenses
+
+                                _ =
+                                    Debug.log "Created new schedule" newSchedule
                             in
                             ( { model | contact = Just contact, emailSchedule = newSchedule }
-                            , Http.get
-                                { url = "/api/quotes/generate/" ++ String.fromInt contact.id
-                                , expect = Http.expectJson GotQuoteLink quoteLinkDecoder
-                                }
+                            , Cmd.batch
+                                [ Http.get
+                                    { url = "/api/quotes/generate/" ++ String.fromInt contact.id
+                                    , expect = Http.expectJson GotQuoteLink quoteLinkDecoder
+                                    }
+                                , Http.get
+                                    { url = "/api/settings"
+                                    , expect = Http.expectJson GotOrgSettings settingsDecoder
+                                    }
+                                ]
                             )
 
                         Err _ ->
@@ -5086,8 +5389,24 @@ update msg model =
                     ( model, Cmd.none )
 
         GotQuoteLink (Ok response) ->
+            let
+                quoteUrl =
+                    case model.contact of
+                        Just contact ->
+                            "/quote?id="
+                                ++ response.quoteId
+                                ++ (if String.isEmpty contact.currentCarrier then
+                                        ""
+
+                                    else
+                                        "&currentCarrier=" ++ contact.currentCarrier
+                                   )
+
+                        Nothing ->
+                            "/quote?id=" ++ response.quoteId
+            in
             ( { model
-                | quoteUrl = Just ("/quote?id=" ++ response.quoteId)
+                | quoteUrl = Just quoteUrl
                 , isGeneratingQuote = False
               }
             , Cmd.none
@@ -5119,6 +5438,35 @@ update msg model =
 
         ToggleFollowUps ->
             ( { model | showAllFollowUps = not model.showAllFollowUps }, Cmd.none )
+
+        GotOrgSettings (Ok settings) ->
+            let
+                _ =
+                    Debug.log "Received org settings"
+                        { stateCarrierSettings = settings.stateCarrierSettings
+                        , stateLicenses = settings.stateLicenses
+                        }
+
+                currentSchedule =
+                    model.emailSchedule
+
+                updatedSchedule =
+                    { currentSchedule
+                        | stateCarrierSettings = settings.stateCarrierSettings
+                        , stateLicenses = settings.stateLicenses
+                    }
+
+                _ =
+                    Debug.log "Updated email schedule" updatedSchedule
+            in
+            ( { model | orgSettings = Just settings, emailSchedule = updatedSchedule }
+            , Cmd.none
+            )
+
+        GotOrgSettings (Err _) ->
+            ( { model | error = Just "Failed to load organization settings" }
+            , Cmd.none
+            )
 
 
 
@@ -9354,6 +9702,9 @@ import Time exposing (Month(..))
   - `birthDate`: The contact's birth date.
   - `currentDate`: The current date for reference.
   - `planType`: The type of plan (PlanN, PlanG, or NoPlan).
+  - `state`: The state of the contact.
+  - `stateCarrierSettings`: List of state carrier settings.
+  - `stateLicenses`: List of state licenses.
 
 -}
 type alias EmailSchedule =
@@ -9362,6 +9713,9 @@ type alias EmailSchedule =
     , birthDate : Date
     , currentDate : Date
     , planType : PlanType
+    , state : String
+    , stateCarrierSettings : List StateCarrierSetting
+    , stateLicenses : List String
     }
 
 
@@ -9396,6 +9750,7 @@ type ScheduledEmailStatus
   - `Anniversary`: Email for the plan's anniversary.
   - `NewYear`: Email for New Year greetings.
   - `OctoberBlast`: Email for an October promotional blast.
+  - `NoEmails`: No scheduled emails.
 
 -}
 type ScheduledEmailType
@@ -9403,6 +9758,7 @@ type ScheduledEmailType
     | Anniversary PlanType
     | NewYear PlanType
     | OctoberBlast PlanType
+    | NoEmails
 
 
 {-| Represents the plan type for a contact.
@@ -9418,6 +9774,22 @@ type PlanType
     | NoPlan
 
 
+{-| Represents a state carrier setting.
+
+  - `state`: The state.
+  - `carrier`: The carrier.
+  - `active`: Whether the setting is active.
+  - `targetGI`: Whether the setting targets GI.
+
+-}
+type alias StateCarrierSetting =
+    { state : String
+    , carrier : String
+    , active : Bool
+    , targetGI : Bool
+    }
+
+
 
 -- INITIALIZATION
 
@@ -9429,21 +9801,49 @@ type PlanType
   - `birth`: The contact's birth date.
   - `current`: The current date for scheduling reference.
   - `plan`: The plan type.
+  - `state`: The state of the contact.
+  - `settings`: List of state carrier settings.
+  - `licenses`: List of state licenses.
     Returns an `EmailSchedule` record with the provided values.
 
 -}
-init : Int -> Date -> Date -> Date -> PlanType -> EmailSchedule
-init contactId effective birth current plan =
+init : Int -> Date -> Date -> Date -> PlanType -> String -> List StateCarrierSetting -> List String -> EmailSchedule
+init contactId effective birth current plan state settings licenses =
     { contactId = contactId
     , effectiveDate = effective
     , birthDate = birth
     , currentDate = current
     , planType = plan
+    , state = state
+    , stateCarrierSettings = settings
+    , stateLicenses = licenses
     }
 
 
 
 -- CALCULATIONS
+
+
+{-| Checks if a contact's state is active.
+
+  - `schedule`: The email schedule to check.
+    Returns `True` if the contact's state is active, otherwise `False`.
+
+-}
+isStateActive : EmailSchedule -> Bool
+isStateActive schedule =
+    let
+        _ =
+            Debug.log "Checking state active for"
+                { contactState = schedule.state
+                , availableLicenses = schedule.stateLicenses
+                }
+
+        isActive =
+            List.member schedule.state schedule.stateLicenses
+                |> Debug.log "State is active"
+    in
+    isActive
 
 
 {-| Calculates the list of scheduled emails for a given email schedule.
@@ -9460,205 +9860,183 @@ init contactId effective birth current plan =
 -}
 getScheduledEmails : EmailSchedule -> List ScheduledEmail
 getScheduledEmails schedule =
-    let
-        _ =
-            Debug.log "Schedule"
-                { effectiveDate = Date.toIsoString schedule.effectiveDate
-                , birthDate = Date.toIsoString schedule.birthDate
-                , currentDate = Date.toIsoString schedule.currentDate
-                , planType = Debug.toString schedule.planType
+    if not (isStateActive schedule) then
+        [ { emailType = NoEmails
+          , scheduledTime = schedule.currentDate
+          , status = Skipped "Contact's state is not active"
+          }
+        ]
+
+    else
+        let
+            _ =
+                Debug.log "Schedule"
+                    { effectiveDate = Date.toIsoString schedule.effectiveDate
+                    , birthDate = Date.toIsoString schedule.birthDate
+                    , currentDate = Date.toIsoString schedule.currentDate
+                    , planType = Debug.toString schedule.planType
+                    }
+
+            -- Calculate the date one year after the effective date for status checks.
+            oneYearAfterEffective : Date
+            oneYearAfterEffective =
+                Date.add Date.Years 1 schedule.effectiveDate
+
+            -- Determine the next occurrence of an event based on the email type and base date.
+            nextOccurrence : ScheduledEmailType -> Date -> Date
+            nextOccurrence emailType baseDate =
+                let
+                    currentYear : Int
+                    currentYear =
+                        Date.year schedule.currentDate
+
+                    -- Calculate next year's date for birthday and anniversary
+                    nextBirthdayOrAnniversaryYear : Date -> Int
+                    nextBirthdayOrAnniversaryYear date =
+                        let
+                            thisYearDate =
+                                Date.fromCalendarDate currentYear (Date.month date) (Date.day date)
+                        in
+                        if Date.compare thisYearDate schedule.currentDate == LT then
+                            currentYear + 1
+
+                        else
+                            currentYear
+
+                    -- Calculate next New Year's date
+                    nextNewYearDate : Date
+                    nextNewYearDate =
+                        let
+                            nextJan1 =
+                                Date.fromCalendarDate (currentYear + 1) Jan 1
+                        in
+                        nextJan1
+
+                    -- For October blast, use current year if October hasn't passed yet
+                    octoberThisYear : Date
+                    octoberThisYear =
+                        Date.fromCalendarDate currentYear Oct 1
+
+                    shouldUseNextYearForOctober : Bool
+                    shouldUseNextYearForOctober =
+                        Date.compare octoberThisYear schedule.currentDate == LT
+
+                    result =
+                        case emailType of
+                            Birthday _ ->
+                                Date.fromCalendarDate
+                                    (nextBirthdayOrAnniversaryYear baseDate)
+                                    (Date.month baseDate)
+                                    (Date.day baseDate)
+
+                            Anniversary _ ->
+                                Date.fromCalendarDate
+                                    (nextBirthdayOrAnniversaryYear baseDate)
+                                    (Date.month baseDate)
+                                    (Date.day baseDate)
+
+                            NewYear _ ->
+                                nextNewYearDate
+
+                            OctoberBlast _ ->
+                                Date.fromCalendarDate
+                                    (if shouldUseNextYearForOctober then
+                                        currentYear + 1
+
+                                     else
+                                        currentYear
+                                    )
+                                    Oct
+                                    1
+
+                            NoEmails ->
+                                schedule.currentDate
+                in
+                result
+
+            -- Create a scheduled email with the appropriate status.
+            createScheduledEmail : ScheduledEmailType -> Date -> ScheduledEmail
+            createScheduledEmail emailType baseDate =
+                let
+                    scheduledTime : Date
+                    scheduledTime =
+                        nextOccurrence emailType baseDate
+
+                    status : ScheduledEmailStatus
+                    status =
+                        if Date.compare scheduledTime schedule.currentDate == LT then
+                            -- Skip if the date is in the past
+                            Skipped "Date is in the past"
+
+                        else if
+                            Date.compare scheduledTime oneYearAfterEffective
+                                == LT
+                                && Date.compare scheduledTime schedule.effectiveDate
+                                == GT
+                        then
+                            Skipped "Within first year of effective date"
+
+                        else
+                            Scheduled
+                in
+                { emailType = emailType
+                , scheduledTime = scheduledTime
+                , status = status
                 }
 
-        -- Calculate the date one year after the effective date for status checks.
-        oneYearAfterEffective : Date
-        oneYearAfterEffective =
-            Date.add Date.Years 1 schedule.effectiveDate
+            -- Helper function to create plan-specific emails for each event type.
+            planSpecificEmail : (PlanType -> ScheduledEmailType) -> ScheduledEmail
+            planSpecificEmail constructor =
+                let
+                    emailType =
+                        constructor schedule.planType
 
-        -- Determine the next occurrence of an event based on the email type and base date.
-        nextOccurrence : ScheduledEmailType -> Date -> Date
-        nextOccurrence emailType baseDate =
-            let
-                currentYear : Int
-                currentYear =
-                    Date.year schedule.currentDate
+                    baseDate =
+                        case emailType of
+                            Birthday _ ->
+                                schedule.birthDate
 
-                -- Calculate next year's date for birthday and anniversary
-                nextBirthdayOrAnniversaryYear : Date -> Int
-                nextBirthdayOrAnniversaryYear date =
-                    let
-                        thisYearDate =
-                            Date.fromCalendarDate currentYear (Date.month date) (Date.day date)
-                    in
-                    if Date.compare thisYearDate schedule.currentDate == LT then
-                        currentYear + 1
+                            Anniversary _ ->
+                                schedule.effectiveDate
 
-                    else
-                        currentYear
+                            NewYear _ ->
+                                -- For New Year, we don't need a base date since we always use Jan 1
+                                Date.fromCalendarDate (Date.year schedule.currentDate) Jan 1
 
-                -- Calculate next New Year's date
-                nextNewYearDate : Date
-                nextNewYearDate =
-                    let
-                        nextJan1 =
-                            Date.fromCalendarDate (currentYear + 1) Jan 1
-                    in
-                    nextJan1
+                            OctoberBlast _ ->
+                                -- For October blast, we don't need a base date since we always use Oct 1
+                                Date.fromCalendarDate (Date.year schedule.currentDate) Oct 1
 
-                -- For October blast, use current year if October hasn't passed yet
-                octoberThisYear : Date
-                octoberThisYear =
-                    Date.fromCalendarDate currentYear Oct 1
+                            NoEmails ->
+                                schedule.currentDate
+                in
+                createScheduledEmail emailType baseDate
 
-                shouldUseNextYearForOctober : Bool
-                shouldUseNextYearForOctober =
-                    Date.compare octoberThisYear schedule.currentDate == LT
+            emails =
+                [ planSpecificEmail Birthday
+                , planSpecificEmail Anniversary
+                , planSpecificEmail NewYear
+                , planSpecificEmail OctoberBlast
+                ]
 
-                result =
-                    case emailType of
-                        Birthday _ ->
-                            Date.fromCalendarDate
-                                (nextBirthdayOrAnniversaryYear baseDate)
-                                (Date.month baseDate)
-                                (Date.day baseDate)
+            _ =
+                Debug.log "Generated emails" (List.map (\e -> { type_ = Debug.toString e.emailType, date = Date.toIsoString e.scheduledTime }) emails)
+        in
+        -- Filter out past dates and sort by date in ascending order (closest dates first)
+        List.filter
+            (\email ->
+                case email.status of
+                    Scheduled ->
+                        True
 
-                        Anniversary _ ->
-                            Date.fromCalendarDate
-                                (nextBirthdayOrAnniversaryYear baseDate)
-                                (Date.month baseDate)
-                                (Date.day baseDate)
-
-                        NewYear _ ->
-                            nextNewYearDate
-
-                        OctoberBlast _ ->
-                            Date.fromCalendarDate
-                                (if shouldUseNextYearForOctober then
-                                    currentYear + 1
-
-                                 else
-                                    currentYear
-                                )
-                                Oct
-                                1
-
-                _ =
-                    Debug.log "Next occurrence calculation"
-                        { emailType = Debug.toString emailType
-                        , baseDate = Date.toIsoString baseDate
-                        , currentYear = String.fromInt currentYear
-                        , result = Date.toIsoString result
-                        , details =
-                            case emailType of
-                                NewYear _ ->
-                                    "Next New Year's date"
-
-                                Birthday _ ->
-                                    "Next birthday using year: " ++ String.fromInt (nextBirthdayOrAnniversaryYear baseDate)
-
-                                Anniversary _ ->
-                                    "Next anniversary using year: " ++ String.fromInt (nextBirthdayOrAnniversaryYear baseDate)
-
-                                OctoberBlast _ ->
-                                    "Next October blast using year: "
-                                        ++ String.fromInt
-                                            (if shouldUseNextYearForOctober then
-                                                currentYear + 1
-
-                                             else
-                                                currentYear
-                                            )
-                        }
-            in
-            result
-
-        -- Create a scheduled email with the appropriate status.
-        createScheduledEmail : ScheduledEmailType -> Date -> ScheduledEmail
-        createScheduledEmail emailType baseDate =
-            let
-                scheduledTime : Date
-                scheduledTime =
-                    nextOccurrence emailType baseDate
-
-                status : ScheduledEmailStatus
-                status =
-                    if Date.compare scheduledTime schedule.currentDate == LT then
-                        -- Skip if the date is in the past
-                        Skipped "Date is in the past"
-
-                    else if
-                        Date.compare scheduledTime oneYearAfterEffective
-                            == LT
-                            && Date.compare scheduledTime schedule.effectiveDate
-                            == GT
-                    then
-                        Skipped "Within first year of effective date"
-
-                    else
-                        Scheduled
-
-                _ =
-                    Debug.log "Created scheduled email"
-                        { emailType = Debug.toString emailType
-                        , baseDate = Date.toIsoString baseDate
-                        , scheduledTime = Date.toIsoString scheduledTime
-                        , status = Debug.toString status
-                        }
-            in
-            { emailType = emailType
-            , scheduledTime = scheduledTime
-            , status = status
-            }
-
-        -- Helper function to create plan-specific emails for each event type.
-        planSpecificEmail : (PlanType -> ScheduledEmailType) -> ScheduledEmail
-        planSpecificEmail constructor =
-            let
-                emailType =
-                    constructor schedule.planType
-
-                baseDate =
-                    case emailType of
-                        Birthday _ ->
-                            schedule.birthDate
-
-                        Anniversary _ ->
-                            schedule.effectiveDate
-
-                        NewYear _ ->
-                            -- For New Year, we don't need a base date since we always use Jan 1
-                            Date.fromCalendarDate (Date.year schedule.currentDate) Jan 1
-
-                        OctoberBlast _ ->
-                            -- For October blast, we don't need a base date since we always use Oct 1
-                            Date.fromCalendarDate (Date.year schedule.currentDate) Oct 1
-            in
-            createScheduledEmail emailType baseDate
-
-        emails =
-            [ planSpecificEmail Birthday
-            , planSpecificEmail Anniversary
-            , planSpecificEmail NewYear
-            , planSpecificEmail OctoberBlast
-            ]
-
-        _ =
-            Debug.log "Generated emails" (List.map (\e -> { type_ = Debug.toString e.emailType, date = Date.toIsoString e.scheduledTime }) emails)
-    in
-    -- Filter out past dates and sort by date in ascending order (closest dates first)
-    List.filter
-        (\email ->
-            case email.status of
-                Scheduled ->
-                    True
-
-                Skipped _ ->
-                    False
-        )
-        emails
-        |> List.sortWith
-            (\a b ->
-                Date.compare a.scheduledTime b.scheduledTime
+                    Skipped _ ->
+                        False
             )
+            emails
+            |> List.sortWith
+                (\a b ->
+                    Date.compare a.scheduledTime b.scheduledTime
+                )
 
 
 
@@ -9725,7 +10103,6 @@ viewScheduledEmail email =
 scheduledEmailTypeToString : ScheduledEmailType -> String
 scheduledEmailTypeToString emailType =
     let
-        -- Helper function to convert plan type to string.
         planString : PlanType -> String
         planString plan =
             case plan of
@@ -9750,6 +10127,9 @@ scheduledEmailTypeToString emailType =
 
         OctoberBlast plan ->
             "AEP Blast (" ++ planString plan ++ ")"
+
+        NoEmails ->
+            "No Scheduled Emails"
 
 ================
 File: src/Home.elm
@@ -10126,6 +10506,7 @@ import Html.Attributes exposing (alt, class, href, src)
 import Html.Events exposing (onClick)
 import Http
 import Json.Decode as Decode exposing (Decoder)
+import Json.Decode.Pipeline as Pipeline
 import Json.Encode as E
 import Login
 import Profile
@@ -10257,6 +10638,7 @@ type Msg
     | EligibilityMsg Eligibility.Msg
     | ScheduleMsg Schedule.Msg
     | NoOp
+    | GotCurrentUser (Result Http.Error CurrentUserResponse)
 
 
 type alias Flags =
@@ -10331,8 +10713,8 @@ init flags url key =
                 }
     in
     ( model
-      -- Don't call updatePage here, wait for session response
     , checkSession
+      -- Only check session first, we'll fetch user details after session is verified
     )
 
 
@@ -10711,8 +11093,8 @@ update msg model =
                             user =
                                 { id = response.id
                                 , email = response.email
-                                , isAdmin = False
-                                , isAgent = False
+                                , isAdmin = False -- We'll get this from /api/me endpoint
+                                , isAgent = False -- We'll get this from /api/me endpoint
                                 , organizationSlug = response.organizationSlug
                                 , firstName = response.firstName
                                 , lastName = response.lastName
@@ -10734,8 +11116,11 @@ update msg model =
                                     , isSetup = isInSetup
                                 }
                         in
-                        -- Now that we have session info, update the page
-                        updatePage model.url ( newModel, Cmd.none )
+                        -- Now that we have session info, just update the model
+                        -- We'll wait for GotCurrentUser to update the page
+                        ( newModel
+                        , fetchCurrentUser
+                        )
 
                     else
                         let
@@ -10875,6 +11260,56 @@ update msg model =
 
                 _ ->
                     ( model, Cmd.none )
+
+        GotCurrentUser result ->
+            case result of
+                Ok response ->
+                    let
+                        _ =
+                            Debug.log "GotCurrentUser response" response
+                    in
+                    case response.user of
+                        Just user ->
+                            let
+                                _ =
+                                    Debug.log "Got user details" user
+
+                                currentUser =
+                                    Maybe.map
+                                        (\u ->
+                                            let
+                                                _ =
+                                                    Debug.log "Updating user roles" { isAdmin = user.isAdmin, isAgent = user.isAgent }
+                                            in
+                                            { u
+                                                | isAdmin = user.isAdmin
+                                                , isAgent = user.isAgent
+                                            }
+                                        )
+                                        model.currentUser
+
+                                newModel =
+                                    { model | currentUser = currentUser }
+
+                                _ =
+                                    Debug.log "Updated model.currentUser" currentUser
+                            in
+                            -- Now that we have both session and user info, update the page
+                            updatePage model.url ( newModel, Cmd.none )
+
+                        Nothing ->
+                            let
+                                _ =
+                                    Debug.log "No user in response" response
+                            in
+                            updatePage model.url ( model, Cmd.none )
+
+                Err error ->
+                    let
+                        _ =
+                            Debug.log "GotCurrentUser error in Main" error
+                    in
+                    updatePage model.url ( model, Cmd.none )
 
         NoOp ->
             ( model, Cmd.none )
@@ -11059,12 +11494,16 @@ viewNavHeader model =
                         , onClick (InternalLinkClicked "/contacts")
                         ]
                         [ text "Contacts" ]
-                    , button
-                        [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:text-purple-600 transition-colors duration-200"
-                        , onClick (InternalLinkClicked "/brand-settings")
-                        ]
-                        [ text "Brand Settings" ]
-                    , if isAdminOrAdminAgent model.currentUser then
+                    , if isAdmin model.currentUser then
+                        button
+                            [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:text-purple-600 transition-colors duration-200"
+                            , onClick (InternalLinkClicked "/brand-settings")
+                            ]
+                            [ text "Brand Settings" ]
+
+                      else
+                        text ""
+                    , if isAdmin model.currentUser then
                         button
                             [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:text-purple-600 transition-colors duration-200"
                             , onClick (InternalLinkClicked "/add-agents")
@@ -11078,7 +11517,7 @@ viewNavHeader model =
                         , onClick (InternalLinkClicked "/profile")
                         ]
                         [ text "Profile" ]
-                    , if isAdminOrAdminAgent model.currentUser then
+                    , if isAdmin model.currentUser then
                         button
                             [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:text-purple-600 transition-colors duration-200"
                             , onClick (InternalLinkClicked "/settings")
@@ -11095,6 +11534,16 @@ viewNavHeader model =
 
 isAdminOrAdminAgent : Maybe User -> Bool
 isAdminOrAdminAgent maybeUser =
+    case maybeUser of
+        Just user ->
+            user.isAdmin && user.isAgent
+
+        Nothing ->
+            False
+
+
+isAdmin : Maybe User -> Bool
+isAdmin maybeUser =
     case maybeUser of
         Just user ->
             user.isAdmin
@@ -11197,14 +11646,29 @@ getRouteAccess route =
 
 userDecoder : Decoder User
 userDecoder =
-    Decode.map7 User
-        (Decode.field "id" (Decode.map String.fromInt Decode.int))
-        (Decode.field "email" Decode.string)
-        (Decode.field "is_admin" Decode.bool)
-        (Decode.field "is_agent" Decode.bool)
-        (Decode.field "organization_name" Decode.string)
-        (Decode.field "first_name" Decode.string)
-        (Decode.field "last_name" Decode.string)
+    let
+        _ =
+            Debug.log "Running userDecoder" ()
+    in
+    Decode.succeed User
+        |> Pipeline.required "id" (Decode.map String.fromInt Decode.int)
+        |> Pipeline.required "email" Decode.string
+        |> Pipeline.required "is_admin"
+            (Decode.oneOf
+                [ Decode.bool
+                , Decode.map (\n -> n == 1) Decode.int
+                ]
+            )
+        |> Pipeline.required "is_agent"
+            (Decode.oneOf
+                [ Decode.bool
+                , Decode.map (\n -> n == 1) Decode.int
+                ]
+            )
+        |> Pipeline.optional "organization_name" Decode.string "default-org"
+        -- Make organization_name optional
+        |> Pipeline.required "firstName" Decode.string
+        |> Pipeline.required "lastName" Decode.string
 
 
 type SetupStep
@@ -11406,6 +11870,7 @@ updatePage url ( model, cmd ) =
                                         , tobacco = Nothing
                                         , gender = Nothing
                                         , quoteId = maybeQuoteId
+                                        , currentCarrier = Nothing
                                         }
 
                                     ( quoteModel, quoteCmd ) =
@@ -11565,7 +12030,7 @@ updatePage url ( model, cmd ) =
                                 let
                                     ( settingsModel, settingsCmd ) =
                                         Settings.init
-                                            { isSetup = True
+                                            { isSetup = False
                                             , key = model.key
                                             , currentUser =
                                                 case model.currentUser of
@@ -11756,6 +12221,31 @@ updatePage url ( model, cmd ) =
                     ( { model | page = NotFoundPage }
                     , cmd
                     )
+
+
+type alias CurrentUserResponse =
+    { success : Bool
+    , user : Maybe User
+    }
+
+
+fetchCurrentUser : Cmd Msg
+fetchCurrentUser =
+    Http.get
+        { url = "/api/me"
+        , expect = Http.expectJson GotCurrentUser currentUserResponseDecoder
+        }
+
+
+currentUserResponseDecoder : Decoder CurrentUserResponse
+currentUserResponseDecoder =
+    Decode.map2 CurrentUserResponse
+        (Decode.field "success" Decode.bool)
+        (Decode.field "user" (Decode.nullable userDecoder))
+
+
+
+-- Wrap the user in Just since our type expects Maybe User
 
 ================
 File: src/main.ts
@@ -12299,6 +12789,7 @@ type alias Model =
     , currentDate : Maybe Date
     , quoteId : Maybe String
     , error : Maybe String
+    , currentCarrier : Maybe String
     }
 
 
@@ -12318,6 +12809,7 @@ type alias InitialValues =
     , tobacco : Maybe Bool
     , gender : Maybe String
     , quoteId : Maybe String
+    , currentCarrier : Maybe String
     }
 
 
@@ -12326,6 +12818,7 @@ type alias QuoteInfo =
     , dateOfBirth : String
     , tobacco : Bool
     , gender : String
+    , currentCarrier : Maybe String
     }
 
 
@@ -12341,6 +12834,7 @@ init key initialValues =
             , currentDate = Nothing
             , quoteId = initialValues.quoteId
             , error = Nothing
+            , currentCarrier = initialValues.currentCarrier
             }
 
         commands =
@@ -12367,11 +12861,12 @@ fetchQuoteInfo quoteId =
 quoteInfoDecoder : D.Decoder QuoteInfo
 quoteInfoDecoder =
     D.field "contact"
-        (D.map4 QuoteInfo
+        (D.map5 QuoteInfo
             (D.field "zipCode" D.string)
             (D.field "dateOfBirth" D.string)
             (D.field "tobacco" D.bool)
             (D.field "gender" D.string)
+            (D.field "currentCarrier" (D.nullable D.string))
         )
 
 
@@ -12401,6 +12896,7 @@ update msg model =
                         , dateOfBirth = quoteInfo.dateOfBirth
                         , tobacco = quoteInfo.tobacco
                         , gender = quoteInfo.gender
+                        , currentCarrier = quoteInfo.currentCarrier
                       }
                     , Cmd.none
                     )
@@ -12440,6 +12936,13 @@ update msg model =
                             ++ (case model.quoteId of
                                     Just id ->
                                         [ Builder.string "id" id ]
+
+                                    Nothing ->
+                                        []
+                               )
+                            ++ (case model.currentCarrier of
+                                    Just carrier ->
+                                        [ Builder.string "currentCarrier" carrier ]
 
                                     Nothing ->
                                         []
@@ -13202,48 +13705,74 @@ update msg model =
         AddStateLicense state ->
             updateSettings model
                 (\s ->
-                    { s
-                        | stateLicenses =
-                            if List.member state s.stateLicenses then
-                                s.stateLicenses
+                    if List.member state s.stateLicenses then
+                        s
 
-                            else
-                                state :: s.stateLicenses
-                    }
+                    else
+                        let
+                            newStateCarrierSettings =
+                                List.concat
+                                    [ s.stateCarrierSettings
+                                    , List.map
+                                        (\carrier ->
+                                            { state = state
+                                            , carrier = carrier
+                                            , active = True
+                                            , targetGI = False
+                                            }
+                                        )
+                                        s.carrierContracts
+                                    ]
+                        in
+                        { s
+                            | stateLicenses = state :: s.stateLicenses
+                            , stateCarrierSettings = newStateCarrierSettings
+                        }
                 )
 
         RemoveStateLicense state ->
             updateSettings model
                 (\s ->
                     { s
-                        | stateLicenses =
-                            List.filter (\x -> x /= state) s.stateLicenses
-                        , stateCarrierSettings =
-                            List.filter (\setting -> setting.state /= state) s.stateCarrierSettings
+                        | stateLicenses = List.filter (\x -> x /= state) s.stateLicenses
+                        , stateCarrierSettings = List.filter (\setting -> setting.state /= state) s.stateCarrierSettings
                     }
                 )
 
         AddCarrierContract carrier ->
             updateSettings model
                 (\s ->
-                    { s
-                        | carrierContracts =
-                            if List.member carrier s.carrierContracts then
-                                s.carrierContracts
+                    if List.member carrier s.carrierContracts then
+                        s
 
-                            else
-                                carrier :: s.carrierContracts
-                    }
+                    else
+                        let
+                            newStateCarrierSettings =
+                                List.concat
+                                    [ s.stateCarrierSettings
+                                    , List.map
+                                        (\state ->
+                                            { state = state
+                                            , carrier = carrier
+                                            , active = True
+                                            , targetGI = False
+                                            }
+                                        )
+                                        s.stateLicenses
+                                    ]
+                        in
+                        { s
+                            | carrierContracts = carrier :: s.carrierContracts
+                            , stateCarrierSettings = newStateCarrierSettings
+                        }
                 )
 
         RemoveCarrierContract carrier ->
             updateSettings model
                 (\s ->
                     { s
-                        | carrierContracts =
-                            List.filter (\x -> x /= carrier) s.carrierContracts
-                        , stateCarrierSettings =
-                            List.filter (\setting -> setting.carrier /= carrier) s.stateCarrierSettings
+                        | carrierContracts = List.filter (\x -> x /= carrier) s.carrierContracts
+                        , stateCarrierSettings = List.filter (\setting -> setting.carrier /= carrier) s.stateCarrierSettings
                     }
                 )
 
@@ -13309,12 +13838,23 @@ update msg model =
                                         []
                                 , stateCarrierSettings =
                                     if checked then
-                                        settings.stateCarrierSettings
+                                        -- Create settings for all state/carrier combinations
+                                        List.concatMap
+                                            (\state ->
+                                                List.map
+                                                    (\carrier ->
+                                                        { state = state
+                                                        , carrier = carrier
+                                                        , active = True
+                                                        , targetGI = False
+                                                        }
+                                                    )
+                                                    settings.carrierContracts
+                                            )
+                                            allStates
 
                                     else
                                         []
-
-                                -- Clear all state/carrier settings when deselecting all states
                             }
                     in
                     ( { model | orgSettings = Just newSettings }
@@ -13338,12 +13878,23 @@ update msg model =
                                         []
                                 , stateCarrierSettings =
                                     if checked then
-                                        settings.stateCarrierSettings
+                                        -- Create settings for all state/carrier combinations
+                                        List.concatMap
+                                            (\state ->
+                                                List.map
+                                                    (\carrier ->
+                                                        { state = state
+                                                        , carrier = carrier
+                                                        , active = True
+                                                        , targetGI = False
+                                                        }
+                                                    )
+                                                    allCarriers
+                                            )
+                                            settings.stateLicenses
 
                                     else
                                         []
-
-                                -- Clear all state/carrier settings when deselecting all carriers
                             }
                     in
                     ( { model | orgSettings = Just newSettings }
@@ -13994,10 +14545,24 @@ settingsDecoder =
     let
         _ =
             Debug.log "Running settingsDecoder" ()
+
+        boolDecoder =
+            Decode.oneOf
+                [ Decode.bool
+                , Decode.map (\n -> n == 1) Decode.int
+                ]
     in
-    Decode.map2 SettingsResponse
-        (Decode.field "orgSettings" settingsObjectDecoder)
-        (Decode.field "canEditOrgSettings" Decode.bool)
+    Decode.field "success" Decode.bool
+        |> Decode.andThen
+            (\success ->
+                if success then
+                    Decode.map2 SettingsResponse
+                        (Decode.field "orgSettings" settingsObjectDecoder)
+                        (Decode.field "canEditOrgSettings" boolDecoder)
+
+                else
+                    Decode.fail "Settings request was not successful"
+            )
 
 
 settingsObjectDecoder : Decoder Settings

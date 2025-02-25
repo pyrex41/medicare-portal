@@ -85,6 +85,28 @@ type alias Model =
     , currentCarrier : Maybe String
     , dateOfBirth : String
     , quoteId : Maybe String
+    , orgSettings : Maybe Settings
+    , settingsLoaded : Bool
+    }
+
+
+type alias Settings =
+    { stateLicenses : List String
+    , carrierContracts : List String
+    , stateCarrierSettings : List StateCarrierSetting
+    , allowAgentSettings : Bool
+    , emailSendBirthday : Bool
+    , emailSendPolicyAnniversary : Bool
+    , emailSendAep : Bool
+    , smartSendEnabled : Bool
+    }
+
+
+type alias StateCarrierSetting =
+    { state : String
+    , carrier : String
+    , active : Bool
+    , targetGI : Bool
     }
 
 
@@ -104,6 +126,7 @@ type Msg
     | CloseRatesVideo
     | NavigateTo String
     | ToggleDiscount
+    | GotOrgSettings (Result Http.Error Settings)
 
 
 type alias Flags =
@@ -162,10 +185,15 @@ init flags key =
             , currentCarrier = flags.currentCarrier
             , dateOfBirth = flags.dateOfBirth
             , quoteId = flags.quoteId
+            , orgSettings = Nothing
+            , settingsLoaded = False
             }
     in
     ( model
-    , fetchPlans flags model
+    , Http.get
+        { url = "/api/settings"
+        , expect = Http.expectJson GotOrgSettings settingsDecoder
+        }
     )
 
 
@@ -188,15 +216,30 @@ defaultPlanType flags =
 
 fetchPlans : Flags -> Model -> Cmd Msg
 fetchPlans flags model =
-    Http.request
-        { method = "POST"
-        , headers = []
-        , url = "/api/quotes"
-        , body = Http.jsonBody (buildPlansBody flags)
-        , expect = Http.expectJson GotPlans (plansDecoder model)
-        , timeout = Nothing
-        , tracker = Nothing
-        }
+    let
+        _ =
+            Debug.log "Attempting to fetch plans"
+                { hasSettings = model.orgSettings /= Nothing
+                , settingsLoaded = model.settingsLoaded
+                }
+    in
+    if model.settingsLoaded then
+        Http.request
+            { method = "POST"
+            , headers = []
+            , url = "/api/quotes"
+            , body = Http.jsonBody (buildPlansBody flags)
+            , expect = Http.expectJson GotPlans (plansDecoder model)
+            , timeout = Nothing
+            , tracker = Nothing
+            }
+
+    else
+        let
+            _ =
+                Debug.log "Skipping plans fetch - settings not loaded" ()
+        in
+        Cmd.none
 
 
 buildPlansBody : Flags -> E.Value
@@ -277,6 +320,53 @@ groupQuotesByPlan responses model =
         _ =
             Debug.log "Raw responses from API" responses
 
+        _ =
+            Debug.log "Settings state when grouping quotes"
+                { settingsLoaded = model.settingsLoaded
+                , hasOrgSettings = model.orgSettings /= Nothing
+                , carrierContracts = Maybe.map .carrierContracts model.orgSettings
+                }
+
+        isCarrierSupported : String -> Bool
+        isCarrierSupported naic =
+            let
+                _ =
+                    Debug.log "Checking carrier support for NAIC" naic
+
+                carrierResult =
+                    naicToCarrier naic
+                        |> Debug.log "naicToCarrier result"
+
+                _ =
+                    Debug.log "orgSettings" model.orgSettings
+            in
+            case ( carrierResult, model.orgSettings ) of
+                ( Just carrier, Just settings ) ->
+                    let
+                        carrierStr =
+                            carrierToString carrier
+
+                        _ =
+                            Debug.log "Checking carrier support"
+                                { naic = naic
+                                , carrier = carrierStr
+                                , carrierContracts = settings.carrierContracts
+                                , supported = List.member carrierStr settings.carrierContracts
+                                }
+                    in
+                    List.member carrierStr settings.carrierContracts
+
+                _ ->
+                    let
+                        _ =
+                            Debug.log "Carrier not supported - fallthrough case"
+                                { naic = naic
+                                , carrierResult = carrierResult
+                                , hasSettings = model.orgSettings /= Nothing
+                                }
+                    in
+                    False
+
         convertToPlan : QuoteResponse -> QuoteData -> Plan
         convertToPlan response quote =
             let
@@ -317,24 +407,28 @@ groupQuotesByPlan responses model =
         allQuotes =
             List.concatMap
                 (\response ->
-                    List.concatMap
-                        (\quote ->
-                            let
-                                upperPlan =
-                                    String.toUpper quote.plan
-                            in
-                            if List.member upperPlan [ "G", "N" ] then
-                                [ convertToPlan response quote ]
+                    if isCarrierSupported response.naic then
+                        List.concatMap
+                            (\quote ->
+                                let
+                                    upperPlan =
+                                        String.toUpper quote.plan
+                                in
+                                if List.member upperPlan [ "G", "N" ] then
+                                    [ convertToPlan response quote ]
 
-                            else
-                                []
-                        )
-                        response.quotes
+                                else
+                                    []
+                            )
+                            (response.quotes |> Debug.log "Response.quotes")
+
+                    else
+                        []
                 )
                 responses
 
         _ =
-            Debug.log "All quotes after conversion" allQuotes
+            Debug.log "All quotes after conversion and carrier filtering" allQuotes
 
         planG =
             List.filter (\q -> String.toUpper q.planType == "G") allQuotes
@@ -396,6 +490,42 @@ planNCoverageList =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+        GotOrgSettings (Ok settings) ->
+            let
+                flags =
+                    { state = model.state
+                    , zip = model.zip
+                    , county = model.county
+                    , age = model.age
+                    , gender = model.gender
+                    , tobacco = model.tobacco
+                    , planType =
+                        case model.selectedPlanType of
+                            PlanG ->
+                                "G"
+
+                            PlanN ->
+                                "N"
+                    , currentCarrier = model.currentCarrier
+                    , dateOfBirth = model.dateOfBirth
+                    , quoteId = model.quoteId
+                    }
+
+                _ =
+                    Debug.log "Settings loaded, fetching quotes" settings
+
+                updatedModel =
+                    { model | orgSettings = Just settings, settingsLoaded = True }
+            in
+            ( updatedModel
+            , fetchPlans flags updatedModel
+            )
+
+        GotOrgSettings (Err _) ->
+            ( { model | error = Just "Failed to load organization settings" }
+            , Cmd.none
+            )
+
         ToggleDiscount ->
             ( { model | showDiscount = not model.showDiscount }
             , Cmd.none
@@ -1016,3 +1146,68 @@ viewRatesModal model =
 
     else
         text ""
+
+
+settingsDecoder : Decoder Settings
+settingsDecoder =
+    let
+        _ =
+            Debug.log "Running settingsDecoder" ()
+    in
+    D.field "success" D.bool
+        |> D.andThen
+            (\success ->
+                let
+                    _ =
+                        Debug.log "Settings success value" success
+                in
+                if success then
+                    D.field "orgSettings" settingsObjectDecoder
+
+                else
+                    D.fail "Settings request was not successful"
+            )
+
+
+settingsObjectDecoder : Decoder Settings
+settingsObjectDecoder =
+    let
+        _ =
+            Debug.log "Running settingsObjectDecoder" ()
+    in
+    D.map8 Settings
+        (D.field "stateLicenses" (D.list D.string)
+            |> D.andThen
+                (\licenses ->
+                    let
+                        _ =
+                            Debug.log "Decoded stateLicenses" licenses
+                    in
+                    D.succeed licenses
+                )
+        )
+        (D.field "carrierContracts" (D.list D.string)
+            |> D.andThen
+                (\contracts ->
+                    let
+                        _ =
+                            Debug.log "Decoded carrierContracts" contracts
+                    in
+                    D.succeed contracts
+                )
+        )
+        (D.field "stateCarrierSettings" (D.list stateCarrierSettingDecoder))
+        (D.field "allowAgentSettings" D.bool)
+        (D.field "emailSendBirthday" D.bool)
+        (D.field "emailSendPolicyAnniversary" D.bool)
+        (D.field "emailSendAep" D.bool)
+        (D.field "smartSendEnabled" D.bool)
+
+
+stateCarrierSettingDecoder : Decoder StateCarrierSetting
+stateCarrierSettingDecoder =
+    D.map4 StateCarrierSetting
+        (D.field "state" D.string)
+        (D.field "carrier" D.string)
+        (D.field "active" D.bool)
+        (D.field "targetGI" D.bool)
