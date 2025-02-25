@@ -47,6 +47,9 @@ import Time exposing (Month(..))
   - `birthDate`: The contact's birth date.
   - `currentDate`: The current date for reference.
   - `planType`: The type of plan (PlanN, PlanG, or NoPlan).
+  - `state`: The state of the contact.
+  - `stateCarrierSettings`: List of state carrier settings.
+  - `stateLicenses`: List of state licenses.
 
 -}
 type alias EmailSchedule =
@@ -55,6 +58,9 @@ type alias EmailSchedule =
     , birthDate : Date
     , currentDate : Date
     , planType : PlanType
+    , state : String
+    , stateCarrierSettings : List StateCarrierSetting
+    , stateLicenses : List String
     }
 
 
@@ -89,6 +95,7 @@ type ScheduledEmailStatus
   - `Anniversary`: Email for the plan's anniversary.
   - `NewYear`: Email for New Year greetings.
   - `OctoberBlast`: Email for an October promotional blast.
+  - `NoEmails`: No scheduled emails.
 
 -}
 type ScheduledEmailType
@@ -96,6 +103,7 @@ type ScheduledEmailType
     | Anniversary PlanType
     | NewYear PlanType
     | OctoberBlast PlanType
+    | NoEmails
 
 
 {-| Represents the plan type for a contact.
@@ -111,6 +119,22 @@ type PlanType
     | NoPlan
 
 
+{-| Represents a state carrier setting.
+
+  - `state`: The state.
+  - `carrier`: The carrier.
+  - `active`: Whether the setting is active.
+  - `targetGI`: Whether the setting targets GI.
+
+-}
+type alias StateCarrierSetting =
+    { state : String
+    , carrier : String
+    , active : Bool
+    , targetGI : Bool
+    }
+
+
 
 -- INITIALIZATION
 
@@ -122,21 +146,49 @@ type PlanType
   - `birth`: The contact's birth date.
   - `current`: The current date for scheduling reference.
   - `plan`: The plan type.
+  - `state`: The state of the contact.
+  - `settings`: List of state carrier settings.
+  - `licenses`: List of state licenses.
     Returns an `EmailSchedule` record with the provided values.
 
 -}
-init : Int -> Date -> Date -> Date -> PlanType -> EmailSchedule
-init contactId effective birth current plan =
+init : Int -> Date -> Date -> Date -> PlanType -> String -> List StateCarrierSetting -> List String -> EmailSchedule
+init contactId effective birth current plan state settings licenses =
     { contactId = contactId
     , effectiveDate = effective
     , birthDate = birth
     , currentDate = current
     , planType = plan
+    , state = state
+    , stateCarrierSettings = settings
+    , stateLicenses = licenses
     }
 
 
 
 -- CALCULATIONS
+
+
+{-| Checks if a contact's state is active.
+
+  - `schedule`: The email schedule to check.
+    Returns `True` if the contact's state is active, otherwise `False`.
+
+-}
+isStateActive : EmailSchedule -> Bool
+isStateActive schedule =
+    let
+        _ =
+            Debug.log "Checking state active for"
+                { contactState = schedule.state
+                , availableLicenses = schedule.stateLicenses
+                }
+
+        isActive =
+            List.member schedule.state schedule.stateLicenses
+                |> Debug.log "State is active"
+    in
+    isActive
 
 
 {-| Calculates the list of scheduled emails for a given email schedule.
@@ -153,205 +205,183 @@ init contactId effective birth current plan =
 -}
 getScheduledEmails : EmailSchedule -> List ScheduledEmail
 getScheduledEmails schedule =
-    let
-        _ =
-            Debug.log "Schedule"
-                { effectiveDate = Date.toIsoString schedule.effectiveDate
-                , birthDate = Date.toIsoString schedule.birthDate
-                , currentDate = Date.toIsoString schedule.currentDate
-                , planType = Debug.toString schedule.planType
+    if not (isStateActive schedule) then
+        [ { emailType = NoEmails
+          , scheduledTime = schedule.currentDate
+          , status = Skipped "Contact's state is not active"
+          }
+        ]
+
+    else
+        let
+            _ =
+                Debug.log "Schedule"
+                    { effectiveDate = Date.toIsoString schedule.effectiveDate
+                    , birthDate = Date.toIsoString schedule.birthDate
+                    , currentDate = Date.toIsoString schedule.currentDate
+                    , planType = Debug.toString schedule.planType
+                    }
+
+            -- Calculate the date one year after the effective date for status checks.
+            oneYearAfterEffective : Date
+            oneYearAfterEffective =
+                Date.add Date.Years 1 schedule.effectiveDate
+
+            -- Determine the next occurrence of an event based on the email type and base date.
+            nextOccurrence : ScheduledEmailType -> Date -> Date
+            nextOccurrence emailType baseDate =
+                let
+                    currentYear : Int
+                    currentYear =
+                        Date.year schedule.currentDate
+
+                    -- Calculate next year's date for birthday and anniversary
+                    nextBirthdayOrAnniversaryYear : Date -> Int
+                    nextBirthdayOrAnniversaryYear date =
+                        let
+                            thisYearDate =
+                                Date.fromCalendarDate currentYear (Date.month date) (Date.day date)
+                        in
+                        if Date.compare thisYearDate schedule.currentDate == LT then
+                            currentYear + 1
+
+                        else
+                            currentYear
+
+                    -- Calculate next New Year's date
+                    nextNewYearDate : Date
+                    nextNewYearDate =
+                        let
+                            nextJan1 =
+                                Date.fromCalendarDate (currentYear + 1) Jan 1
+                        in
+                        nextJan1
+
+                    -- For October blast, use current year if October hasn't passed yet
+                    octoberThisYear : Date
+                    octoberThisYear =
+                        Date.fromCalendarDate currentYear Oct 1
+
+                    shouldUseNextYearForOctober : Bool
+                    shouldUseNextYearForOctober =
+                        Date.compare octoberThisYear schedule.currentDate == LT
+
+                    result =
+                        case emailType of
+                            Birthday _ ->
+                                Date.fromCalendarDate
+                                    (nextBirthdayOrAnniversaryYear baseDate)
+                                    (Date.month baseDate)
+                                    (Date.day baseDate)
+
+                            Anniversary _ ->
+                                Date.fromCalendarDate
+                                    (nextBirthdayOrAnniversaryYear baseDate)
+                                    (Date.month baseDate)
+                                    (Date.day baseDate)
+
+                            NewYear _ ->
+                                nextNewYearDate
+
+                            OctoberBlast _ ->
+                                Date.fromCalendarDate
+                                    (if shouldUseNextYearForOctober then
+                                        currentYear + 1
+
+                                     else
+                                        currentYear
+                                    )
+                                    Oct
+                                    1
+
+                            NoEmails ->
+                                schedule.currentDate
+                in
+                result
+
+            -- Create a scheduled email with the appropriate status.
+            createScheduledEmail : ScheduledEmailType -> Date -> ScheduledEmail
+            createScheduledEmail emailType baseDate =
+                let
+                    scheduledTime : Date
+                    scheduledTime =
+                        nextOccurrence emailType baseDate
+
+                    status : ScheduledEmailStatus
+                    status =
+                        if Date.compare scheduledTime schedule.currentDate == LT then
+                            -- Skip if the date is in the past
+                            Skipped "Date is in the past"
+
+                        else if
+                            Date.compare scheduledTime oneYearAfterEffective
+                                == LT
+                                && Date.compare scheduledTime schedule.effectiveDate
+                                == GT
+                        then
+                            Skipped "Within first year of effective date"
+
+                        else
+                            Scheduled
+                in
+                { emailType = emailType
+                , scheduledTime = scheduledTime
+                , status = status
                 }
 
-        -- Calculate the date one year after the effective date for status checks.
-        oneYearAfterEffective : Date
-        oneYearAfterEffective =
-            Date.add Date.Years 1 schedule.effectiveDate
+            -- Helper function to create plan-specific emails for each event type.
+            planSpecificEmail : (PlanType -> ScheduledEmailType) -> ScheduledEmail
+            planSpecificEmail constructor =
+                let
+                    emailType =
+                        constructor schedule.planType
 
-        -- Determine the next occurrence of an event based on the email type and base date.
-        nextOccurrence : ScheduledEmailType -> Date -> Date
-        nextOccurrence emailType baseDate =
-            let
-                currentYear : Int
-                currentYear =
-                    Date.year schedule.currentDate
+                    baseDate =
+                        case emailType of
+                            Birthday _ ->
+                                schedule.birthDate
 
-                -- Calculate next year's date for birthday and anniversary
-                nextBirthdayOrAnniversaryYear : Date -> Int
-                nextBirthdayOrAnniversaryYear date =
-                    let
-                        thisYearDate =
-                            Date.fromCalendarDate currentYear (Date.month date) (Date.day date)
-                    in
-                    if Date.compare thisYearDate schedule.currentDate == LT then
-                        currentYear + 1
+                            Anniversary _ ->
+                                schedule.effectiveDate
 
-                    else
-                        currentYear
+                            NewYear _ ->
+                                -- For New Year, we don't need a base date since we always use Jan 1
+                                Date.fromCalendarDate (Date.year schedule.currentDate) Jan 1
 
-                -- Calculate next New Year's date
-                nextNewYearDate : Date
-                nextNewYearDate =
-                    let
-                        nextJan1 =
-                            Date.fromCalendarDate (currentYear + 1) Jan 1
-                    in
-                    nextJan1
+                            OctoberBlast _ ->
+                                -- For October blast, we don't need a base date since we always use Oct 1
+                                Date.fromCalendarDate (Date.year schedule.currentDate) Oct 1
 
-                -- For October blast, use current year if October hasn't passed yet
-                octoberThisYear : Date
-                octoberThisYear =
-                    Date.fromCalendarDate currentYear Oct 1
+                            NoEmails ->
+                                schedule.currentDate
+                in
+                createScheduledEmail emailType baseDate
 
-                shouldUseNextYearForOctober : Bool
-                shouldUseNextYearForOctober =
-                    Date.compare octoberThisYear schedule.currentDate == LT
+            emails =
+                [ planSpecificEmail Birthday
+                , planSpecificEmail Anniversary
+                , planSpecificEmail NewYear
+                , planSpecificEmail OctoberBlast
+                ]
 
-                result =
-                    case emailType of
-                        Birthday _ ->
-                            Date.fromCalendarDate
-                                (nextBirthdayOrAnniversaryYear baseDate)
-                                (Date.month baseDate)
-                                (Date.day baseDate)
+            _ =
+                Debug.log "Generated emails" (List.map (\e -> { type_ = Debug.toString e.emailType, date = Date.toIsoString e.scheduledTime }) emails)
+        in
+        -- Filter out past dates and sort by date in ascending order (closest dates first)
+        List.filter
+            (\email ->
+                case email.status of
+                    Scheduled ->
+                        True
 
-                        Anniversary _ ->
-                            Date.fromCalendarDate
-                                (nextBirthdayOrAnniversaryYear baseDate)
-                                (Date.month baseDate)
-                                (Date.day baseDate)
-
-                        NewYear _ ->
-                            nextNewYearDate
-
-                        OctoberBlast _ ->
-                            Date.fromCalendarDate
-                                (if shouldUseNextYearForOctober then
-                                    currentYear + 1
-
-                                 else
-                                    currentYear
-                                )
-                                Oct
-                                1
-
-                _ =
-                    Debug.log "Next occurrence calculation"
-                        { emailType = Debug.toString emailType
-                        , baseDate = Date.toIsoString baseDate
-                        , currentYear = String.fromInt currentYear
-                        , result = Date.toIsoString result
-                        , details =
-                            case emailType of
-                                NewYear _ ->
-                                    "Next New Year's date"
-
-                                Birthday _ ->
-                                    "Next birthday using year: " ++ String.fromInt (nextBirthdayOrAnniversaryYear baseDate)
-
-                                Anniversary _ ->
-                                    "Next anniversary using year: " ++ String.fromInt (nextBirthdayOrAnniversaryYear baseDate)
-
-                                OctoberBlast _ ->
-                                    "Next October blast using year: "
-                                        ++ String.fromInt
-                                            (if shouldUseNextYearForOctober then
-                                                currentYear + 1
-
-                                             else
-                                                currentYear
-                                            )
-                        }
-            in
-            result
-
-        -- Create a scheduled email with the appropriate status.
-        createScheduledEmail : ScheduledEmailType -> Date -> ScheduledEmail
-        createScheduledEmail emailType baseDate =
-            let
-                scheduledTime : Date
-                scheduledTime =
-                    nextOccurrence emailType baseDate
-
-                status : ScheduledEmailStatus
-                status =
-                    if Date.compare scheduledTime schedule.currentDate == LT then
-                        -- Skip if the date is in the past
-                        Skipped "Date is in the past"
-
-                    else if
-                        Date.compare scheduledTime oneYearAfterEffective
-                            == LT
-                            && Date.compare scheduledTime schedule.effectiveDate
-                            == GT
-                    then
-                        Skipped "Within first year of effective date"
-
-                    else
-                        Scheduled
-
-                _ =
-                    Debug.log "Created scheduled email"
-                        { emailType = Debug.toString emailType
-                        , baseDate = Date.toIsoString baseDate
-                        , scheduledTime = Date.toIsoString scheduledTime
-                        , status = Debug.toString status
-                        }
-            in
-            { emailType = emailType
-            , scheduledTime = scheduledTime
-            , status = status
-            }
-
-        -- Helper function to create plan-specific emails for each event type.
-        planSpecificEmail : (PlanType -> ScheduledEmailType) -> ScheduledEmail
-        planSpecificEmail constructor =
-            let
-                emailType =
-                    constructor schedule.planType
-
-                baseDate =
-                    case emailType of
-                        Birthday _ ->
-                            schedule.birthDate
-
-                        Anniversary _ ->
-                            schedule.effectiveDate
-
-                        NewYear _ ->
-                            -- For New Year, we don't need a base date since we always use Jan 1
-                            Date.fromCalendarDate (Date.year schedule.currentDate) Jan 1
-
-                        OctoberBlast _ ->
-                            -- For October blast, we don't need a base date since we always use Oct 1
-                            Date.fromCalendarDate (Date.year schedule.currentDate) Oct 1
-            in
-            createScheduledEmail emailType baseDate
-
-        emails =
-            [ planSpecificEmail Birthday
-            , planSpecificEmail Anniversary
-            , planSpecificEmail NewYear
-            , planSpecificEmail OctoberBlast
-            ]
-
-        _ =
-            Debug.log "Generated emails" (List.map (\e -> { type_ = Debug.toString e.emailType, date = Date.toIsoString e.scheduledTime }) emails)
-    in
-    -- Filter out past dates and sort by date in ascending order (closest dates first)
-    List.filter
-        (\email ->
-            case email.status of
-                Scheduled ->
-                    True
-
-                Skipped _ ->
-                    False
-        )
-        emails
-        |> List.sortWith
-            (\a b ->
-                Date.compare a.scheduledTime b.scheduledTime
+                    Skipped _ ->
+                        False
             )
+            emails
+            |> List.sortWith
+                (\a b ->
+                    Date.compare a.scheduledTime b.scheduledTime
+                )
 
 
 
@@ -418,7 +448,6 @@ viewScheduledEmail email =
 scheduledEmailTypeToString : ScheduledEmailType -> String
 scheduledEmailTypeToString emailType =
     let
-        -- Helper function to convert plan type to string.
         planString : PlanType -> String
         planString plan =
             case plan of
@@ -443,3 +472,6 @@ scheduledEmailTypeToString emailType =
 
         OctoberBlast plan ->
             "AEP Blast (" ++ planString plan ++ ")"
+
+        NoEmails ->
+            "No Scheduled Emails"

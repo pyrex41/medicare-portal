@@ -16,6 +16,7 @@ import Html.Attributes exposing (alt, class, href, src)
 import Html.Events exposing (onClick)
 import Http
 import Json.Decode as Decode exposing (Decoder)
+import Json.Decode.Pipeline as Pipeline
 import Json.Encode as E
 import Login
 import Profile
@@ -147,6 +148,7 @@ type Msg
     | EligibilityMsg Eligibility.Msg
     | ScheduleMsg Schedule.Msg
     | NoOp
+    | GotCurrentUser (Result Http.Error CurrentUserResponse)
 
 
 type alias Flags =
@@ -221,8 +223,8 @@ init flags url key =
                 }
     in
     ( model
-      -- Don't call updatePage here, wait for session response
     , checkSession
+      -- Only check session first, we'll fetch user details after session is verified
     )
 
 
@@ -601,8 +603,8 @@ update msg model =
                             user =
                                 { id = response.id
                                 , email = response.email
-                                , isAdmin = False
-                                , isAgent = False
+                                , isAdmin = False -- We'll get this from /api/me endpoint
+                                , isAgent = False -- We'll get this from /api/me endpoint
                                 , organizationSlug = response.organizationSlug
                                 , firstName = response.firstName
                                 , lastName = response.lastName
@@ -624,8 +626,11 @@ update msg model =
                                     , isSetup = isInSetup
                                 }
                         in
-                        -- Now that we have session info, update the page
-                        updatePage model.url ( newModel, Cmd.none )
+                        -- Now that we have session info, just update the model
+                        -- We'll wait for GotCurrentUser to update the page
+                        ( newModel
+                        , fetchCurrentUser
+                        )
 
                     else
                         let
@@ -765,6 +770,56 @@ update msg model =
 
                 _ ->
                     ( model, Cmd.none )
+
+        GotCurrentUser result ->
+            case result of
+                Ok response ->
+                    let
+                        _ =
+                            Debug.log "GotCurrentUser response" response
+                    in
+                    case response.user of
+                        Just user ->
+                            let
+                                _ =
+                                    Debug.log "Got user details" user
+
+                                currentUser =
+                                    Maybe.map
+                                        (\u ->
+                                            let
+                                                _ =
+                                                    Debug.log "Updating user roles" { isAdmin = user.isAdmin, isAgent = user.isAgent }
+                                            in
+                                            { u
+                                                | isAdmin = user.isAdmin
+                                                , isAgent = user.isAgent
+                                            }
+                                        )
+                                        model.currentUser
+
+                                newModel =
+                                    { model | currentUser = currentUser }
+
+                                _ =
+                                    Debug.log "Updated model.currentUser" currentUser
+                            in
+                            -- Now that we have both session and user info, update the page
+                            updatePage model.url ( newModel, Cmd.none )
+
+                        Nothing ->
+                            let
+                                _ =
+                                    Debug.log "No user in response" response
+                            in
+                            updatePage model.url ( model, Cmd.none )
+
+                Err error ->
+                    let
+                        _ =
+                            Debug.log "GotCurrentUser error in Main" error
+                    in
+                    updatePage model.url ( model, Cmd.none )
 
         NoOp ->
             ( model, Cmd.none )
@@ -949,12 +1004,16 @@ viewNavHeader model =
                         , onClick (InternalLinkClicked "/contacts")
                         ]
                         [ text "Contacts" ]
-                    , button
-                        [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:text-purple-600 transition-colors duration-200"
-                        , onClick (InternalLinkClicked "/brand-settings")
-                        ]
-                        [ text "Brand Settings" ]
-                    , if isAdminOrAdminAgent model.currentUser then
+                    , if isAdmin model.currentUser then
+                        button
+                            [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:text-purple-600 transition-colors duration-200"
+                            , onClick (InternalLinkClicked "/brand-settings")
+                            ]
+                            [ text "Brand Settings" ]
+
+                      else
+                        text ""
+                    , if isAdmin model.currentUser then
                         button
                             [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:text-purple-600 transition-colors duration-200"
                             , onClick (InternalLinkClicked "/add-agents")
@@ -968,7 +1027,7 @@ viewNavHeader model =
                         , onClick (InternalLinkClicked "/profile")
                         ]
                         [ text "Profile" ]
-                    , if isAdminOrAdminAgent model.currentUser then
+                    , if isAdmin model.currentUser then
                         button
                             [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:text-purple-600 transition-colors duration-200"
                             , onClick (InternalLinkClicked "/settings")
@@ -985,6 +1044,16 @@ viewNavHeader model =
 
 isAdminOrAdminAgent : Maybe User -> Bool
 isAdminOrAdminAgent maybeUser =
+    case maybeUser of
+        Just user ->
+            user.isAdmin && user.isAgent
+
+        Nothing ->
+            False
+
+
+isAdmin : Maybe User -> Bool
+isAdmin maybeUser =
     case maybeUser of
         Just user ->
             user.isAdmin
@@ -1087,14 +1156,29 @@ getRouteAccess route =
 
 userDecoder : Decoder User
 userDecoder =
-    Decode.map7 User
-        (Decode.field "id" (Decode.map String.fromInt Decode.int))
-        (Decode.field "email" Decode.string)
-        (Decode.field "is_admin" Decode.bool)
-        (Decode.field "is_agent" Decode.bool)
-        (Decode.field "organization_name" Decode.string)
-        (Decode.field "first_name" Decode.string)
-        (Decode.field "last_name" Decode.string)
+    let
+        _ =
+            Debug.log "Running userDecoder" ()
+    in
+    Decode.succeed User
+        |> Pipeline.required "id" (Decode.map String.fromInt Decode.int)
+        |> Pipeline.required "email" Decode.string
+        |> Pipeline.required "is_admin"
+            (Decode.oneOf
+                [ Decode.bool
+                , Decode.map (\n -> n == 1) Decode.int
+                ]
+            )
+        |> Pipeline.required "is_agent"
+            (Decode.oneOf
+                [ Decode.bool
+                , Decode.map (\n -> n == 1) Decode.int
+                ]
+            )
+        |> Pipeline.optional "organization_name" Decode.string "default-org"
+        -- Make organization_name optional
+        |> Pipeline.required "firstName" Decode.string
+        |> Pipeline.required "lastName" Decode.string
 
 
 type SetupStep
@@ -1455,7 +1539,7 @@ updatePage url ( model, cmd ) =
                                 let
                                     ( settingsModel, settingsCmd ) =
                                         Settings.init
-                                            { isSetup = True
+                                            { isSetup = False
                                             , key = model.key
                                             , currentUser =
                                                 case model.currentUser of
@@ -1646,3 +1730,28 @@ updatePage url ( model, cmd ) =
                     ( { model | page = NotFoundPage }
                     , cmd
                     )
+
+
+type alias CurrentUserResponse =
+    { success : Bool
+    , user : Maybe User
+    }
+
+
+fetchCurrentUser : Cmd Msg
+fetchCurrentUser =
+    Http.get
+        { url = "/api/me"
+        , expect = Http.expectJson GotCurrentUser currentUserResponseDecoder
+        }
+
+
+currentUserResponseDecoder : Decoder CurrentUserResponse
+currentUserResponseDecoder =
+    Decode.map2 CurrentUserResponse
+        (Decode.field "success" Decode.bool)
+        (Decode.field "user" (Decode.nullable userDecoder))
+
+
+
+-- Wrap the user in Just since our type expects Maybe User

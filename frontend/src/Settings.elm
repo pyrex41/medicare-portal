@@ -304,48 +304,74 @@ update msg model =
         AddStateLicense state ->
             updateSettings model
                 (\s ->
-                    { s
-                        | stateLicenses =
-                            if List.member state s.stateLicenses then
-                                s.stateLicenses
+                    if List.member state s.stateLicenses then
+                        s
 
-                            else
-                                state :: s.stateLicenses
-                    }
+                    else
+                        let
+                            newStateCarrierSettings =
+                                List.concat
+                                    [ s.stateCarrierSettings
+                                    , List.map
+                                        (\carrier ->
+                                            { state = state
+                                            , carrier = carrier
+                                            , active = True
+                                            , targetGI = False
+                                            }
+                                        )
+                                        s.carrierContracts
+                                    ]
+                        in
+                        { s
+                            | stateLicenses = state :: s.stateLicenses
+                            , stateCarrierSettings = newStateCarrierSettings
+                        }
                 )
 
         RemoveStateLicense state ->
             updateSettings model
                 (\s ->
                     { s
-                        | stateLicenses =
-                            List.filter (\x -> x /= state) s.stateLicenses
-                        , stateCarrierSettings =
-                            List.filter (\setting -> setting.state /= state) s.stateCarrierSettings
+                        | stateLicenses = List.filter (\x -> x /= state) s.stateLicenses
+                        , stateCarrierSettings = List.filter (\setting -> setting.state /= state) s.stateCarrierSettings
                     }
                 )
 
         AddCarrierContract carrier ->
             updateSettings model
                 (\s ->
-                    { s
-                        | carrierContracts =
-                            if List.member carrier s.carrierContracts then
-                                s.carrierContracts
+                    if List.member carrier s.carrierContracts then
+                        s
 
-                            else
-                                carrier :: s.carrierContracts
-                    }
+                    else
+                        let
+                            newStateCarrierSettings =
+                                List.concat
+                                    [ s.stateCarrierSettings
+                                    , List.map
+                                        (\state ->
+                                            { state = state
+                                            , carrier = carrier
+                                            , active = True
+                                            , targetGI = False
+                                            }
+                                        )
+                                        s.stateLicenses
+                                    ]
+                        in
+                        { s
+                            | carrierContracts = carrier :: s.carrierContracts
+                            , stateCarrierSettings = newStateCarrierSettings
+                        }
                 )
 
         RemoveCarrierContract carrier ->
             updateSettings model
                 (\s ->
                     { s
-                        | carrierContracts =
-                            List.filter (\x -> x /= carrier) s.carrierContracts
-                        , stateCarrierSettings =
-                            List.filter (\setting -> setting.carrier /= carrier) s.stateCarrierSettings
+                        | carrierContracts = List.filter (\x -> x /= carrier) s.carrierContracts
+                        , stateCarrierSettings = List.filter (\setting -> setting.carrier /= carrier) s.stateCarrierSettings
                     }
                 )
 
@@ -411,12 +437,23 @@ update msg model =
                                         []
                                 , stateCarrierSettings =
                                     if checked then
-                                        settings.stateCarrierSettings
+                                        -- Create settings for all state/carrier combinations
+                                        List.concatMap
+                                            (\state ->
+                                                List.map
+                                                    (\carrier ->
+                                                        { state = state
+                                                        , carrier = carrier
+                                                        , active = True
+                                                        , targetGI = False
+                                                        }
+                                                    )
+                                                    settings.carrierContracts
+                                            )
+                                            allStates
 
                                     else
                                         []
-
-                                -- Clear all state/carrier settings when deselecting all states
                             }
                     in
                     ( { model | orgSettings = Just newSettings }
@@ -440,12 +477,23 @@ update msg model =
                                         []
                                 , stateCarrierSettings =
                                     if checked then
-                                        settings.stateCarrierSettings
+                                        -- Create settings for all state/carrier combinations
+                                        List.concatMap
+                                            (\state ->
+                                                List.map
+                                                    (\carrier ->
+                                                        { state = state
+                                                        , carrier = carrier
+                                                        , active = True
+                                                        , targetGI = False
+                                                        }
+                                                    )
+                                                    allCarriers
+                                            )
+                                            settings.stateLicenses
 
                                     else
                                         []
-
-                                -- Clear all state/carrier settings when deselecting all carriers
                             }
                     in
                     ( { model | orgSettings = Just newSettings }
@@ -1096,10 +1144,24 @@ settingsDecoder =
     let
         _ =
             Debug.log "Running settingsDecoder" ()
+
+        boolDecoder =
+            Decode.oneOf
+                [ Decode.bool
+                , Decode.map (\n -> n == 1) Decode.int
+                ]
     in
-    Decode.map2 SettingsResponse
-        (Decode.field "orgSettings" settingsObjectDecoder)
-        (Decode.field "canEditOrgSettings" Decode.bool)
+    Decode.field "success" Decode.bool
+        |> Decode.andThen
+            (\success ->
+                if success then
+                    Decode.map2 SettingsResponse
+                        (Decode.field "orgSettings" settingsObjectDecoder)
+                        (Decode.field "canEditOrgSettings" boolDecoder)
+
+                else
+                    Decode.fail "Settings request was not successful"
+            )
 
 
 settingsObjectDecoder : Decoder Settings

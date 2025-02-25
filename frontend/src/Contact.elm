@@ -137,6 +137,7 @@ type alias Model =
     , followUps : List FollowUpRequest
     , timeZone : Zone
     , showAllFollowUps : Bool
+    , orgSettings : Maybe Settings
     }
 
 
@@ -150,6 +151,26 @@ type alias FollowUpRequest =
     { type_ : String
     , quoteId : String
     , createdAt : Posix
+    }
+
+
+type alias Settings =
+    { stateLicenses : List String
+    , carrierContracts : List String
+    , stateCarrierSettings : List StateCarrierSetting
+    , allowAgentSettings : Bool
+    , emailSendBirthday : Bool
+    , emailSendPolicyAnniversary : Bool
+    , emailSendAep : Bool
+    , smartSendEnabled : Bool
+    }
+
+
+type alias StateCarrierSetting =
+    { state : String
+    , carrier : String
+    , active : Bool
+    , targetGI : Bool
     }
 
 
@@ -201,6 +222,41 @@ healthStatusDecoder =
         (Decode.field "answers" (Decode.nullable (Decode.dict Decode.bool)))
 
 
+settingsDecoder : Decoder Settings
+settingsDecoder =
+    Decode.field "success" Decode.bool
+        |> Decode.andThen
+            (\success ->
+                if success then
+                    Decode.field "orgSettings" settingsObjectDecoder
+
+                else
+                    Decode.fail "Settings request was not successful"
+            )
+
+
+settingsObjectDecoder : Decoder Settings
+settingsObjectDecoder =
+    Decode.map8 Settings
+        (Decode.field "stateLicenses" (Decode.list Decode.string))
+        (Decode.field "carrierContracts" (Decode.list Decode.string))
+        (Decode.field "stateCarrierSettings" (Decode.list stateCarrierSettingDecoder))
+        (Decode.field "allowAgentSettings" Decode.bool)
+        (Decode.field "emailSendBirthday" Decode.bool)
+        (Decode.field "emailSendPolicyAnniversary" Decode.bool)
+        (Decode.field "emailSendAep" Decode.bool)
+        (Decode.field "smartSendEnabled" Decode.bool)
+
+
+stateCarrierSettingDecoder : Decoder StateCarrierSetting
+stateCarrierSettingDecoder =
+    Decode.map4 StateCarrierSetting
+        (Decode.field "state" Decode.string)
+        (Decode.field "carrier" Decode.string)
+        (Decode.field "active" Decode.bool)
+        (Decode.field "targetGI" Decode.bool)
+
+
 
 -- INIT
 
@@ -222,6 +278,13 @@ init key contactId =
                 (Date.fromCalendarDate 2024 Jan 1)
                 (Date.fromCalendarDate 2024 Jan 1)
                 NoPlan
+                ""
+                -- Empty initial state
+                []
+                -- Empty initial state carrier settings
+                []
+
+        -- Empty initial state licenses
     in
     ( { key = key
       , contact = Nothing
@@ -240,6 +303,7 @@ init key contactId =
       , followUps = []
       , timeZone = Time.utc
       , showAllFollowUps = False
+      , orgSettings = Nothing
       }
     , Cmd.batch
         [ Http.get
@@ -287,6 +351,7 @@ type Msg
     | GotHealthStatus (Result Http.Error HealthStatus)
     | GotFollowUps (Result Http.Error (List FollowUpRequest))
     | ToggleFollowUps
+    | GotOrgSettings (Result Http.Error Settings)
 
 
 type ContactFormField
@@ -317,6 +382,9 @@ update msg model =
                     case Date.fromIsoString contact.birthDate of
                         Ok birthDate ->
                             let
+                                _ =
+                                    Debug.log "Contact loaded with state" contact.state
+
                                 planType =
                                     case contact.planType of
                                         "Plan N" ->
@@ -334,6 +402,25 @@ update msg model =
                                         _ ->
                                             NoPlan
 
+                                ( stateCarrierSettings, stateLicenses ) =
+                                    case model.orgSettings of
+                                        Just settings ->
+                                            let
+                                                _ =
+                                                    Debug.log "Using existing org settings"
+                                                        { stateCarrierSettings = settings.stateCarrierSettings
+                                                        , stateLicenses = settings.stateLicenses
+                                                        }
+                                            in
+                                            ( settings.stateCarrierSettings, settings.stateLicenses )
+
+                                        Nothing ->
+                                            let
+                                                _ =
+                                                    Debug.log "No org settings available" ()
+                                            in
+                                            ( [], [] )
+
                                 newSchedule =
                                     EmailScheduler.init
                                         contact.id
@@ -341,12 +428,24 @@ update msg model =
                                         birthDate
                                         model.emailSchedule.currentDate
                                         planType
+                                        contact.state
+                                        stateCarrierSettings
+                                        stateLicenses
+
+                                _ =
+                                    Debug.log "Created new schedule" newSchedule
                             in
                             ( { model | contact = Just contact, emailSchedule = newSchedule }
-                            , Http.get
-                                { url = "/api/quotes/generate/" ++ String.fromInt contact.id
-                                , expect = Http.expectJson GotQuoteLink quoteLinkDecoder
-                                }
+                            , Cmd.batch
+                                [ Http.get
+                                    { url = "/api/quotes/generate/" ++ String.fromInt contact.id
+                                    , expect = Http.expectJson GotQuoteLink quoteLinkDecoder
+                                    }
+                                , Http.get
+                                    { url = "/api/settings"
+                                    , expect = Http.expectJson GotOrgSettings settingsDecoder
+                                    }
+                                ]
                             )
 
                         Err _ ->
@@ -633,6 +732,35 @@ update msg model =
 
         ToggleFollowUps ->
             ( { model | showAllFollowUps = not model.showAllFollowUps }, Cmd.none )
+
+        GotOrgSettings (Ok settings) ->
+            let
+                _ =
+                    Debug.log "Received org settings"
+                        { stateCarrierSettings = settings.stateCarrierSettings
+                        , stateLicenses = settings.stateLicenses
+                        }
+
+                currentSchedule =
+                    model.emailSchedule
+
+                updatedSchedule =
+                    { currentSchedule
+                        | stateCarrierSettings = settings.stateCarrierSettings
+                        , stateLicenses = settings.stateLicenses
+                    }
+
+                _ =
+                    Debug.log "Updated email schedule" updatedSchedule
+            in
+            ( { model | orgSettings = Just settings, emailSchedule = updatedSchedule }
+            , Cmd.none
+            )
+
+        GotOrgSettings (Err _) ->
+            ( { model | error = Just "Failed to load organization settings" }
+            , Cmd.none
+            )
 
 
 

@@ -37,7 +37,7 @@ Notes:
 - Some files may have been excluded based on .gitignore rules and Repomix's configuration
 - Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
 - Only files matching these patterns are included: **/*.elm, **/*.ts
-- Files matching these patterns are excluded: backend/node_modules/*, frontend/node_modules/*
+- Files matching these patterns are excluded: node_modules/
 - Files matching patterns in .gitignore are excluded
 - Files matching default ignore patterns are excluded
 
@@ -51,17 +51,25 @@ src/
   Components/
     ProgressIndicator.elm
     SetupLayout.elm
+  Accept.elm
   AddAgent.elm
+  AgeCalc.elm
   BrandSettings.elm
+  CarrierNaic.elm
   ChoosePlan.elm
+  Compare.elm
   Contact.elm
   Contacts.elm
+  Decline.elm
+  Eligibility.elm
   EmailScheduler.elm
   Home.elm
   Login.elm
   Main.elm
   main.ts
   Profile.elm
+  Quote.elm
+  Schedule.elm
   Settings.elm
   Signup.elm
   StateRegions.elm
@@ -245,6 +253,213 @@ isStepComplete currentStep step =
 
         ( AgentSetup, _ ) ->
             True
+
+================
+File: src/Accept.elm
+================
+module Accept exposing (Model, Msg(..), init, subscriptions, update, view)
+
+import Browser
+import Browser.Navigation as Nav
+import Html exposing (..)
+import Html.Attributes exposing (..)
+import Html.Events exposing (onInput, onSubmit)
+import Http
+import Json.Decode as D
+import Json.Encode as E
+import Url.Parser.Query as Query
+
+
+type alias Model =
+    { name : String
+    , email : String
+    , isSubmitting : Bool
+    , error : Maybe String
+    , success : Bool
+    , quoteId : Maybe String
+    , key : Nav.Key
+    }
+
+
+type Msg
+    = UpdateName String
+    | UpdateEmail String
+    | SubmitForm
+    | GotSubmitResponse (Result Http.Error ())
+    | GotContactInfo (Result Http.Error ContactInfo)
+
+
+type alias ContactInfo =
+    { email : String
+    , firstName : String
+    , lastName : String
+    }
+
+
+init : Nav.Key -> Maybe String -> ( Model, Cmd Msg )
+init key maybeQuoteId =
+    ( { name = ""
+      , email = ""
+      , isSubmitting = False
+      , error = Nothing
+      , success = False
+      , quoteId = maybeQuoteId
+      , key = key
+      }
+    , case maybeQuoteId of
+        Just quoteId ->
+            Http.get
+                { url = "/api/quotes/decode/" ++ quoteId
+                , expect = Http.expectJson GotContactInfo contactInfoDecoder
+                }
+
+        Nothing ->
+            Cmd.none
+    )
+
+
+contactInfoDecoder : D.Decoder ContactInfo
+contactInfoDecoder =
+    D.field "contact"
+        (D.map3 ContactInfo
+            (D.field "email" D.string)
+            (D.field "firstName" D.string)
+            (D.field "lastName" D.string)
+        )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        UpdateName name ->
+            ( { model | name = name }, Cmd.none )
+
+        UpdateEmail email ->
+            ( { model | email = email }, Cmd.none )
+
+        SubmitForm ->
+            ( { model | isSubmitting = True }
+            , Http.post
+                { url = "/api/contact-request"
+                , body = Http.jsonBody (encodeForm model)
+                , expect = Http.expectWhatever GotSubmitResponse
+                }
+            )
+
+        GotSubmitResponse result ->
+            case result of
+                Ok _ ->
+                    ( { model | isSubmitting = False, success = True }, Cmd.none )
+
+                Err _ ->
+                    ( { model | isSubmitting = False, error = Just "Failed to submit form. Please try again." }, Cmd.none )
+
+        GotContactInfo result ->
+            case result of
+                Ok info ->
+                    ( { model
+                        | email = info.email
+                        , name = info.firstName ++ " " ++ info.lastName
+                      }
+                    , Cmd.none
+                    )
+
+                Err _ ->
+                    ( model, Cmd.none )
+
+
+encodeForm : Model -> E.Value
+encodeForm model =
+    E.object
+        [ ( "name", E.string model.name )
+        , ( "email", E.string model.email )
+        , ( "type", E.string "accept" )
+        , ( "quoteId", Maybe.map E.string model.quoteId |> Maybe.withDefault E.null )
+        ]
+
+
+view : Model -> Browser.Document Msg
+view model =
+    { title = "Good News! - Medicare Max"
+    , body =
+        [ div [ class "min-h-screen bg-white" ]
+            [ nav [ class "bg-white border-b border-gray-200" ]
+                [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8" ]
+                    [ div [ class "flex justify-between h-16 items-center" ]
+                        [ div [ class "flex-shrink-0" ]
+                            [ img [ src "/images/medicare-max-logo.png", class "h-8 w-auto", alt "Medicare Max" ] [] ]
+                        ]
+                    ]
+                ]
+            , div [ class "max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-12" ]
+                [ if model.success then
+                    div [ class "text-center" ]
+                        [ h1 [ class "text-3xl font-bold text-gray-900 mb-4" ]
+                            [ text "Thank You" ]
+                        , p [ class "text-gray-600" ]
+                            [ text "We'll be in touch soon to schedule your follow-up." ]
+                        ]
+
+                  else
+                    div []
+                        [ h1 [ class "text-3xl font-bold text-center text-gray-900 mb-4" ]
+                            [ text "Great News!" ]
+                        , p [ class "text-gray-600 text-center mb-8" ]
+                            [ text "Based on your answers, you look like a good candidate to switch plans. Let's schedule a follow-up to discuss your options." ]
+                        , case model.error of
+                            Just error ->
+                                div [ class "bg-red-50 border border-red-400 text-red-700 px-4 py-3 rounded mb-4" ]
+                                    [ text error ]
+
+                            Nothing ->
+                                text ""
+                        , Html.form [ onSubmit SubmitForm, class "space-y-6 max-w-lg mx-auto" ]
+                            [ div []
+                                [ label [ class "block text-sm font-medium text-gray-700 mb-1" ]
+                                    [ text "Name" ]
+                                , input
+                                    [ type_ "text"
+                                    , class "w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-purple-500 focus:border-purple-500"
+                                    , value model.name
+                                    , onInput UpdateName
+                                    , required True
+                                    ]
+                                    []
+                                ]
+                            , div []
+                                [ label [ class "block text-sm font-medium text-gray-700 mb-1" ]
+                                    [ text "Email" ]
+                                , input
+                                    [ type_ "email"
+                                    , class "w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-purple-500 focus:border-purple-500"
+                                    , value model.email
+                                    , onInput UpdateEmail
+                                    , required True
+                                    ]
+                                    []
+                                ]
+                            , button
+                                [ class "w-full bg-purple-600 text-white py-3 px-4 rounded-lg hover:bg-purple-700 transition-colors duration-200 disabled:opacity-50"
+                                , type_ "submit"
+                                , disabled model.isSubmitting
+                                ]
+                                [ if model.isSubmitting then
+                                    text "Submitting..."
+
+                                  else
+                                    text "Schedule Follow-up"
+                                ]
+                            ]
+                        ]
+                ]
+            ]
+        ]
+    }
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
 
 ================
 File: src/AddAgent.elm
@@ -2216,6 +2431,35 @@ canModifySettings model agentId =
             False
 
 ================
+File: src/AgeCalc.elm
+================
+module AgeCalc exposing (getAgeNextMonth)
+
+import Date exposing (Date, Interval(..), Unit(..), add, fromIsoString, toIsoString)
+import Time exposing (Month(..))
+
+
+getAgeNextMonth : String -> Date -> Int
+getAgeNextMonth birthDateStr currentDate =
+    case fromIsoString birthDateStr of
+        Ok birthDate ->
+            let
+                -- Get first of next month
+                nextMonth =
+                    currentDate
+                        |> add Months 1
+                        |> Date.floor Month
+
+                -- Calculate years between birth date and first of next month
+                years =
+                    Date.diff Years birthDate nextMonth
+            in
+            years
+
+        Err _ ->
+            0
+
+================
 File: src/BrandSettings.elm
 ================
 module BrandSettings exposing
@@ -2633,6 +2877,248 @@ subscriptions _ =
     Sub.none
 
 ================
+File: src/CarrierNaic.elm
+================
+module CarrierNaic exposing
+    ( Carrier(..)
+    , allCarriers
+    , carrierToNaics
+    , carrierToString
+    , naicToCarrier
+    , stringToCarrier
+    )
+
+
+type Carrier
+    = Aetna
+    | Humana
+    | UnitedHealthcare
+    | Cigna
+    | Aflac
+    | Allstate
+    | MutualOfOmaha
+    | AceChubb
+
+
+allCarriers : List Carrier
+allCarriers =
+    [ Aetna
+    , Humana
+    , UnitedHealthcare
+    , Cigna
+    , Aflac
+    , Allstate
+    , MutualOfOmaha
+    , AceChubb
+    ]
+
+
+carrierToString : Carrier -> String
+carrierToString carrier =
+    case carrier of
+        Aetna ->
+            "Aetna"
+
+        Humana ->
+            "Humana"
+
+        UnitedHealthcare ->
+            "UnitedHealthcare"
+
+        Cigna ->
+            "Cigna"
+
+        Aflac ->
+            "Aflac"
+
+        Allstate ->
+            "Allstate"
+
+        MutualOfOmaha ->
+            "Mutual of Omaha"
+
+        AceChubb ->
+            "Ace Chubb"
+
+
+stringToCarrier : String -> Maybe Carrier
+stringToCarrier str =
+    case str of
+        "Aetna" ->
+            Just Aetna
+
+        "Humana" ->
+            Just Humana
+
+        "UnitedHealthcare" ->
+            Just UnitedHealthcare
+
+        "Cigna" ->
+            Just Cigna
+
+        "Aflac" ->
+            Just Aflac
+
+        "Allstate" ->
+            Just Allstate
+
+        "Mutual of Omaha" ->
+            Just MutualOfOmaha
+
+        "Ace Chubb" ->
+            Just AceChubb
+
+        _ ->
+            Nothing
+
+
+carrierToNaics : Carrier -> List String
+carrierToNaics carrier =
+    case carrier of
+        Aetna ->
+            [ "72052" -- Aetna Hlth Ins Co
+            , "78700" -- Aetna Hlth & Life Ins Co
+            , "68500" -- Continental Life Ins Co Brentwood
+            ]
+
+        Humana ->
+            [ "12634" -- Humana Ins Co of NY
+            , "60052" -- Humana Insurance Company
+            , "60219" -- Humana Insurance Company
+            , "60984" -- Humana Insurance Company
+            , "69671" -- Humana Insurance Company
+            , "70580" -- Humana Insurance Company
+            , "73288" -- Humana Ins Co
+            , "88595" -- Humana Insurance Company
+            , "95158" -- Humana Insurance Company
+            ]
+
+        UnitedHealthcare ->
+            [ "60093" -- United Hlthcare Ins Co Of NY
+            , "79413" -- UnitedHealthcare Ins Co
+            ]
+
+        Cigna ->
+            [ "61727" -- Cigna National Health Ins Co
+            , "65269" -- Cigna Ins Co
+            , "65722" -- Loyal Amer Life Ins Co (CIGNA)
+            , "67369" -- Cigna Hlth & Life Ins Co
+            , "88366" -- American Retirement Life Ins Co (CIGNA)
+            ]
+
+        Aflac ->
+            [ "60380" -- AFLAC
+            ]
+
+        Allstate ->
+            [ "60534" -- Allstate Health Solutions (AHL)
+            , "82538" -- Allstate Health Solutions
+            ]
+
+        MutualOfOmaha ->
+            [ "13100" -- Omaha Ins Co
+            , "71412" -- Mutual Of Omaha Ins Co
+            , "72850" -- United World Life Ins Co
+            ]
+
+        AceChubb ->
+            [ "20699" -- Ace Prop & Cas Ins Co
+            ]
+
+
+naicToCarrier : String -> Maybe Carrier
+naicToCarrier naic =
+    case naic of
+        -- Aetna
+        "72052" ->
+            Just Aetna
+
+        "78700" ->
+            Just Aetna
+
+        "68500" ->
+            Just Aetna
+
+        -- Humana
+        "12634" ->
+            Just Humana
+
+        "60052" ->
+            Just Humana
+
+        "60219" ->
+            Just Humana
+
+        "60984" ->
+            Just Humana
+
+        "69671" ->
+            Just Humana
+
+        "70580" ->
+            Just Humana
+
+        "73288" ->
+            Just Humana
+
+        "88595" ->
+            Just Humana
+
+        "95158" ->
+            Just Humana
+
+        -- UnitedHealthcare
+        "60093" ->
+            Just UnitedHealthcare
+
+        "79413" ->
+            Just UnitedHealthcare
+
+        -- Cigna
+        "61727" ->
+            Just Cigna
+
+        "65269" ->
+            Just Cigna
+
+        "65722" ->
+            Just Cigna
+
+        "67369" ->
+            Just Cigna
+
+        "88366" ->
+            Just Cigna
+
+        -- Aflac
+        "60380" ->
+            Just Aflac
+
+        -- Allstate
+        "60534" ->
+            Just Allstate
+
+        "82538" ->
+            Just Allstate
+
+        -- Mutual of Omaha
+        "13100" ->
+            Just MutualOfOmaha
+
+        "71412" ->
+            Just MutualOfOmaha
+
+        "72850" ->
+            Just MutualOfOmaha
+
+        -- Ace Chubb
+        "20699" ->
+            Just AceChubb
+
+        _ ->
+            Nothing
+
+================
 File: src/ChoosePlan.elm
 ================
 module ChoosePlan exposing (Model, Msg(..), init, subscriptions, update, view)
@@ -2974,6 +3460,1028 @@ encodeSubscriptionUpdate tierId =
         ]
 
 ================
+File: src/Compare.elm
+================
+module Compare exposing (Model, Msg(..), init, subscriptions, update, view)
+
+import Browser
+import Browser.Navigation as Nav
+import CarrierNaic exposing (carrierToNaics, carrierToString, naicToCarrier, stringToCarrier)
+import Debug
+import Html exposing (..)
+import Html.Attributes exposing (..)
+import Html.Events exposing (onClick)
+import Http
+import Json.Decode as D exposing (Decoder)
+import Json.Decode.Pipeline as Pipeline
+import Json.Encode as E
+import Url exposing (Url)
+import Url.Parser.Query as Query
+
+
+
+-- TYPES
+
+
+type PlanType
+    = PlanG
+    | PlanN
+
+
+type alias CoverageItem =
+    { name : String
+    , percentageCovered : Int
+    , note : Maybe String
+    }
+
+
+type alias CoverageList =
+    List CoverageItem
+
+
+type alias Plan =
+    { price : Float
+    , priceDiscount : Float
+    , flag : Maybe String
+    , age : Int
+    , description : String
+    , gender : String
+    , id : Int
+    , image : String
+    , naic : String
+    , name : String
+    , planType : String
+    , premiumStability : String
+    , ratingCategory : String
+    , score : Int
+    , select : Bool
+    , state : String
+    , tobacco : Bool
+    , coverageSummary : CoverageList
+    }
+
+
+type alias Plans =
+    { planG : List Plan
+    , planN : List Plan
+    }
+
+
+type alias Model =
+    { isLoading : Bool
+    , error : Maybe String
+    , plans : Plans
+    , state : String
+    , county : String
+    , zip : String
+    , age : Int
+    , gender : String
+    , tobacco : Bool
+    , selectedPlanType : PlanType
+    , showReviewVideo : Bool
+    , showQualificationVideo : Bool
+    , showGvsNVideo : Bool
+    , showFAQ : Bool
+    , currentCardIndex : Int
+    , showRatesVideo : Bool
+    , key : Nav.Key
+    , showDiscount : Bool
+    , currentCarrier : Maybe String
+    , dateOfBirth : String
+    , quoteId : Maybe String
+    }
+
+
+type Msg
+    = GotPlans (Result Http.Error Plans)
+    | TogglePlanType
+    | SelectPlan Plan
+    | CloseReviewVideo
+    | OpenGvsNVideo
+    | CloseGvsNVideo
+    | ShowQualificationVideo
+    | CloseQualificationVideo
+    | ShowFAQ
+    | CloseFAQ
+    | NextCard
+    | PreviousCard
+    | CloseRatesVideo
+    | NavigateTo String
+    | ToggleDiscount
+
+
+type alias Flags =
+    { state : String
+    , zip : String
+    , county : String
+    , gender : String
+    , tobacco : Bool
+    , age : Int
+    , planType : String
+    , currentCarrier : Maybe String
+    , dateOfBirth : String
+    , quoteId : Maybe String
+    }
+
+
+
+-- INIT
+
+
+init : Flags -> Nav.Key -> ( Model, Cmd Msg )
+init flags key =
+    let
+        defaultFlags =
+            { state = "TX"
+            , zip = "75201"
+            , county = "Dallas"
+            , gender = "Male"
+            , tobacco = False
+            , age = 65
+            , planType = "G"
+            , currentCarrier = Nothing
+            , dateOfBirth = ""
+            , quoteId = Nothing
+            }
+
+        model =
+            { isLoading = True
+            , error = Nothing
+            , plans = { planG = [], planN = [] }
+            , state = flags.state
+            , county = flags.county
+            , zip = flags.zip
+            , age = flags.age
+            , gender = flags.gender
+            , tobacco = flags.tobacco
+            , selectedPlanType = defaultPlanType flags
+            , showReviewVideo = False
+            , showQualificationVideo = False
+            , showGvsNVideo = False
+            , showFAQ = False
+            , currentCardIndex = 0
+            , showRatesVideo = False
+            , key = key
+            , showDiscount = False
+            , currentCarrier = flags.currentCarrier
+            , dateOfBirth = flags.dateOfBirth
+            , quoteId = flags.quoteId
+            }
+    in
+    ( model
+    , fetchPlans flags model
+    )
+
+
+defaultPlanType : Flags -> PlanType
+defaultPlanType flags =
+    case flags.planType of
+        "G" ->
+            PlanG
+
+        "N" ->
+            PlanN
+
+        _ ->
+            PlanG
+
+
+
+-- HTTP
+
+
+fetchPlans : Flags -> Model -> Cmd Msg
+fetchPlans flags model =
+    Http.request
+        { method = "POST"
+        , headers = []
+        , url = "/api/quotes"
+        , body = Http.jsonBody (buildPlansBody flags)
+        , expect = Http.expectJson GotPlans (plansDecoder model)
+        , timeout = Nothing
+        , tracker = Nothing
+        }
+
+
+buildPlansBody : Flags -> E.Value
+buildPlansBody flags =
+    E.object
+        [ ( "zip_code", E.string flags.zip )
+        , ( "state", E.string flags.state )
+        , ( "county", E.string flags.county )
+        , ( "age", E.int flags.age )
+        , ( "gender"
+          , E.string
+                (if flags.gender == "Male" then
+                    "M"
+
+                 else
+                    "F"
+                )
+          )
+        , ( "tobacco", E.bool flags.tobacco )
+        , ( "plans", E.list E.string [ "G", "N" ] )
+        , ( "carriers", E.string "supported" )
+        ]
+
+
+
+-- DECODERS
+
+
+plansDecoder : Model -> Decoder Plans
+plansDecoder model =
+    D.list quoteResponseDecoder
+        |> D.map (\responses -> groupQuotesByPlan responses model)
+
+
+type alias QuoteResponse =
+    { naic : String
+    , group : Int
+    , companyName : String
+    , quotes : List QuoteData
+    }
+
+
+type alias QuoteData =
+    { rate : Float
+    , discountRate : Float
+    , discountCategory : Maybe String
+    , age : Int
+    , gender : String
+    , plan : String
+    , tobacco : Int
+    }
+
+
+quoteResponseDecoder : Decoder QuoteResponse
+quoteResponseDecoder =
+    D.map4 QuoteResponse
+        (D.field "naic" D.string)
+        (D.field "group" D.int)
+        (D.field "company_name" D.string)
+        (D.field "quotes" (D.list quoteDataDecoder))
+
+
+quoteDataDecoder : Decoder QuoteData
+quoteDataDecoder =
+    D.map7 QuoteData
+        (D.field "rate" D.float)
+        (D.field "discount_rate" D.float)
+        (D.field "discount_category" (D.nullable D.string))
+        (D.field "age" D.int)
+        (D.field "gender" D.string)
+        (D.field "plan" D.string)
+        (D.field "tobacco" D.int)
+
+
+groupQuotesByPlan : List QuoteResponse -> Model -> Plans
+groupQuotesByPlan responses model =
+    let
+        _ =
+            Debug.log "Raw responses from API" responses
+
+        convertToPlan : QuoteResponse -> QuoteData -> Plan
+        convertToPlan response quote =
+            let
+                carrierImagePath =
+                    case naicToCarrier response.naic of
+                        Just carrier ->
+                            "/images/" ++ carrierToString carrier ++ ".svg"
+
+                        Nothing ->
+                            -- Fallback to png if we can't match the carrier
+                            "/images/medicare-max-logo.png"
+            in
+            { price = quote.rate / 100
+            , priceDiscount = quote.discountRate / 100
+            , flag = quote.discountCategory
+            , age = quote.age
+            , description = ""
+            , gender = quote.gender
+            , id = 0
+            , image = carrierImagePath
+            , naic = response.naic
+            , name = response.companyName
+            , planType = quote.plan
+            , premiumStability = ""
+            , ratingCategory = ""
+            , score = 0
+            , select = False
+            , state = model.state
+            , tobacco = quote.tobacco == 1
+            , coverageSummary =
+                if String.toUpper quote.plan == "G" then
+                    planGCoverageList
+
+                else
+                    planNCoverageList
+            }
+
+        allQuotes =
+            List.concatMap
+                (\response ->
+                    List.concatMap
+                        (\quote ->
+                            let
+                                upperPlan =
+                                    String.toUpper quote.plan
+                            in
+                            if List.member upperPlan [ "G", "N" ] then
+                                [ convertToPlan response quote ]
+
+                            else
+                                []
+                        )
+                        response.quotes
+                )
+                responses
+
+        _ =
+            Debug.log "All quotes after conversion" allQuotes
+
+        planG =
+            List.filter (\q -> String.toUpper q.planType == "G") allQuotes
+                |> List.sortBy .price
+
+        planN =
+            List.filter (\q -> String.toUpper q.planType == "N") allQuotes
+                |> List.sortBy .price
+
+        _ =
+            Debug.log "Plan G quotes" planG
+
+        _ =
+            Debug.log "Plan N quotes" planN
+
+        result =
+            { planG = planG
+            , planN = planN
+            }
+
+        _ =
+            Debug.log "Final result" result
+    in
+    result
+
+
+
+-- COVERAGE LISTS
+
+
+planGCoverageList : CoverageList
+planGCoverageList =
+    [ { name = "Part A Deductible", percentageCovered = 100, note = Nothing }
+    , { name = "Hospital Co-Pays", percentageCovered = 100, note = Nothing }
+    , { name = "Skilled Nursing Facility Co-Pays", percentageCovered = 100, note = Nothing }
+    , { name = "Part B Annual Deductible", percentageCovered = 0, note = Just "$240 annual deductible" }
+    , { name = "Part B Coinsurance", percentageCovered = 100, note = Nothing }
+    , { name = "Excess Charges", percentageCovered = 100, note = Nothing }
+    , { name = "Foreign Travel Emergency", percentageCovered = 80, note = Nothing }
+    ]
+
+
+planNCoverageList : CoverageList
+planNCoverageList =
+    [ { name = "Part A Deductible", percentageCovered = 100, note = Nothing }
+    , { name = "Hospital Co-Pays", percentageCovered = 100, note = Nothing }
+    , { name = "Skilled Nursing Facility Co-Pays", percentageCovered = 100, note = Nothing }
+    , { name = "Part B Annual Deductible", percentageCovered = 0, note = Just "$240 annual deductible" }
+    , { name = "Part B Coinsurance", percentageCovered = 100, note = Just "w/ some copayments" }
+    , { name = "Excess Charges", percentageCovered = 0, note = Nothing }
+    , { name = "Foreign Travel Emergency", percentageCovered = 80, note = Nothing }
+    ]
+
+
+
+-- UPDATE
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        ToggleDiscount ->
+            ( { model | showDiscount = not model.showDiscount }
+            , Cmd.none
+            )
+
+        GotPlans result ->
+            case result of
+                Ok plans ->
+                    let
+                        _ =
+                            Debug.log "Received plans" plans
+                    in
+                    ( { model
+                        | plans = plans
+                        , isLoading = False
+                      }
+                    , Cmd.none
+                    )
+
+                Err error ->
+                    let
+                        _ =
+                            Debug.log "Error getting plans" (httpErrorToString error)
+                    in
+                    ( { model
+                        | error = Just (httpErrorToString error)
+                        , isLoading = False
+                      }
+                    , Cmd.none
+                    )
+
+        TogglePlanType ->
+            ( { model
+                | selectedPlanType = togglePlanType model.selectedPlanType
+                , currentCardIndex = 0
+              }
+            , Cmd.none
+            )
+
+        SelectPlan plan ->
+            ( { model | showQualificationVideo = True }
+            , Nav.pushUrl model.key
+                (case model.quoteId of
+                    Just id ->
+                        "/eligibility?id=" ++ id
+
+                    Nothing ->
+                        "/eligibility"
+                )
+            )
+
+        CloseReviewVideo ->
+            ( { model | showReviewVideo = False }
+            , Cmd.none
+            )
+
+        OpenGvsNVideo ->
+            ( { model | showGvsNVideo = True }, Cmd.none )
+
+        CloseGvsNVideo ->
+            ( { model | showGvsNVideo = False }, Cmd.none )
+
+        ShowQualificationVideo ->
+            ( { model | showQualificationVideo = True }
+            , Cmd.none
+            )
+
+        CloseQualificationVideo ->
+            ( { model | showQualificationVideo = False }
+            , Nav.pushUrl model.key "/eligibility"
+            )
+
+        ShowFAQ ->
+            ( { model | showFAQ = True }
+            , Cmd.none
+            )
+
+        CloseFAQ ->
+            ( { model | showFAQ = False }
+            , Cmd.none
+            )
+
+        NextCard ->
+            ( { model | currentCardIndex = Basics.min (model.currentCardIndex + 1) (List.length (getSelectedPlans model) - 1) }
+            , Cmd.none
+            )
+
+        PreviousCard ->
+            ( { model | currentCardIndex = Basics.max (model.currentCardIndex - 1) 0 }
+            , Cmd.none
+            )
+
+        CloseRatesVideo ->
+            ( { model | showRatesVideo = False }, Cmd.none )
+
+        NavigateTo path ->
+            ( model, Nav.pushUrl model.key path )
+
+
+
+-- HELPERS
+
+
+togglePlanType : PlanType -> PlanType
+togglePlanType planType =
+    case planType of
+        PlanG ->
+            PlanN
+
+        PlanN ->
+            PlanG
+
+
+getSelectedPlans : Model -> List Plan
+getSelectedPlans model =
+    let
+        plans =
+            case model.selectedPlanType of
+                PlanG ->
+                    model.plans.planG
+
+                PlanN ->
+                    model.plans.planN
+
+        _ =
+            Debug.log "Current carrier from URL" model.currentCarrier
+
+        carrierNaics =
+            model.currentCarrier
+                |> Maybe.andThen stringToCarrier
+                |> Maybe.map carrierToNaics
+                |> Debug.log "Carrier NAICs to filter out"
+
+        _ =
+            Debug.log "All plans before filtering" plans
+
+        filteredPlans =
+            case carrierNaics of
+                Just naicList ->
+                    List.filter
+                        (\plan ->
+                            let
+                                _ =
+                                    Debug.log ("Checking plan NAIC " ++ plan.naic ++ " for " ++ plan.name)
+                                        (not (List.member plan.naic naicList))
+                            in
+                            not (List.member plan.naic naicList)
+                        )
+                        plans
+
+                Nothing ->
+                    plans
+
+        _ =
+            Debug.log "Filtered plans before sorting" filteredPlans
+
+        sortedAndLimited =
+            List.sortBy .price filteredPlans
+                |> List.take 3
+                |> Debug.log "Final selected plans"
+    in
+    sortedAndLimited
+
+
+
+-- Only take the three cheapest plans
+
+
+httpErrorToString : Http.Error -> String
+httpErrorToString error =
+    case error of
+        Http.BadUrl url ->
+            "Bad URL: " ++ url ++ ". Please check the URL and try again."
+
+        Http.Timeout ->
+            "Request timed out. The server took too long to respond. Please try again later or check your internet connection."
+
+        Http.NetworkError ->
+            "Network error. Unable to connect to the server. Please check your internet connection and try again."
+
+        Http.BadStatus statusCode ->
+            "Bad status: " ++ String.fromInt statusCode ++ ". The server returned an unexpected status code. Please try again later or contact support if the issue persists."
+
+        Http.BadBody message ->
+            "Bad body: " ++ message ++ ". The server response was not in the expected format. Please try again or contact support if the issue persists."
+
+
+
+-- SUBSCRIPTIONS
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+
+-- VIEW
+
+
+view : Model -> Browser.Document Msg
+view model =
+    { title = "Compare Medicare Plans - Medicare Max"
+    , body =
+        [ div [ class "container mx-auto px-4 py-8" ]
+            [ if model.isLoading then
+                viewLoading
+
+              else
+                case model.error of
+                    Just error ->
+                        viewError error
+
+                    Nothing ->
+                        div [ class "flex flex-col gap-6 text-center mx-auto max-w-3xl" ]
+                            [ h1 [ class "text-2xl font-semibold text-[#1A1A1A] mb-2" ]
+                                [ text "Select a Plan from these recommendations" ]
+                            , div [ class "mt-6" ]
+                                [ viewPlanToggle model ]
+                            , div [ class "flex justify-center mt-4" ]
+                                [ viewPillButton "Learn About Plan G vs. Plan N" True OpenGvsNVideo ]
+                            , viewCarousel model
+                            ]
+            ]
+        , viewGvsNModal model
+        , viewQualificationModal model
+        , viewRatesModal model
+        ]
+    }
+
+
+viewLoading : Html Msg
+viewLoading =
+    div [ class "flex flex-col items-center justify-center gap-4 text-center min-h-[400px]" ]
+        [ div [ class "animate-spin text-brand w-10 h-10 border-4 border-current border-t-transparent rounded-full" ] []
+        , p [ class "text-center text-lg font-medium text-neutral-600" ]
+            [ text "Searching plans..." ]
+        ]
+
+
+viewError : String -> Html Msg
+viewError error =
+    div [ class "text-center text-xl font-bold text-red-600 mt-8 p-4 bg-red-50 rounded-lg" ]
+        [ text error ]
+
+
+viewPlanToggle : Model -> Html Msg
+viewPlanToggle model =
+    let
+        ( planGClass, planNClass ) =
+            case model.selectedPlanType of
+                PlanG ->
+                    ( "font-medium text-[#1A1A1A]", "text-[#666666]" )
+
+                PlanN ->
+                    ( "text-[#666666]", "font-medium text-[#1A1A1A]" )
+    in
+    div [ class "flex justify-center items-center gap-3 text-base" ]
+        [ span [ class planGClass ] [ text (getPlanGName model) ]
+        , button
+            [ onClick TogglePlanType
+            , class "w-12 h-6 bg-[#0066FF] rounded-full relative"
+            ]
+            [ div
+                [ class "absolute top-0.5 left-0.5 bg-white w-5 h-5 rounded-full shadow-sm transform duration-300 ease-in-out"
+                , class
+                    (if model.selectedPlanType == PlanN then
+                        "translate-x-6"
+
+                     else
+                        "translate-x-0"
+                    )
+                ]
+                []
+            ]
+        , span [ class planNClass ] [ text (getPlanNName model) ]
+        ]
+
+
+getPlanGName : Model -> String
+getPlanGName model =
+    case List.head model.plans.planG of
+        Just firstPlan ->
+            if firstPlan.state == "MN" || firstPlan.state == "WI" then
+                "Extended"
+
+            else if firstPlan.state == "MA" then
+                "Expanded"
+
+            else
+                "Plan G"
+
+        Nothing ->
+            "Plan G"
+
+
+getPlanNName : Model -> String
+getPlanNName model =
+    case List.head model.plans.planN of
+        Just firstPlan ->
+            case firstPlan.state of
+                "MN" ->
+                    "Basic"
+
+                "WI" ->
+                    ""
+
+                "MA" ->
+                    "Core"
+
+                _ ->
+                    "Plan N"
+
+        Nothing ->
+            "Plan N"
+
+
+viewCarousel : Model -> Html Msg
+viewCarousel model =
+    let
+        currentPlans =
+            getSelectedPlans model
+
+        totalCards =
+            List.length currentPlans
+    in
+    div [ class "relative w-full max-w-[640px] mx-auto mt-8" ]
+        [ div [ class "absolute left-1/2 transform -translate-x-1/2 -top-6 z-10" ]
+            [ viewCarouselDots model totalCards ]
+        , div [ class "overflow-hidden" ]
+            [ div
+                [ class "flex transition-transform duration-300 ease-in-out"
+                , style "transform" ("translateX(-" ++ String.fromInt (model.currentCardIndex * 100) ++ "%)")
+                ]
+                (List.map (viewPlanCard model) currentPlans)
+            ]
+        , viewCarouselControls model totalCards
+        , div [ class "mt-8 text-center text-sm text-[#666666] max-w-lg mx-auto" ]
+            [ p [ class "mb-2" ]
+                [ text "These are the three least expensive plans available. All Medicare Supplement plans of the same letter (G or N) provide identical coverage, as mandated by federal law." ]
+            , p []
+                [ text "Our recommendation: Choose an established insurance company with a strong financial rating, then select their most affordable plan since the coverage will be identical to other companies offering the same plan letter." ]
+            ]
+        ]
+
+
+viewCarouselDots : Model -> Int -> Html Msg
+viewCarouselDots model totalCards =
+    div [ class "flex space-x-3" ]
+        (List.range 0 (totalCards - 1)
+            |> List.map
+                (\index ->
+                    div
+                        [ class "w-3 h-3 rounded-full transition-colors duration-200"
+                        , class
+                            (if index == model.currentCardIndex then
+                                "bg-[#0066FF]"
+
+                             else
+                                "bg-[#E5E5E5]"
+                            )
+                        ]
+                        []
+                )
+        )
+
+
+viewCarouselControls : Model -> Int -> Html Msg
+viewCarouselControls model totalCards =
+    div [ class "absolute w-full flex justify-between items-center", style "top" "50%" ]
+        [ button
+            [ class "bg-[#F5F8FF] w-10 h-10 rounded-lg shadow-sm -ml-5 flex justify-center items-center disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[#E5EFFF] transition-colors"
+            , onClick PreviousCard
+            , disabled (model.currentCardIndex == 0)
+            ]
+            [ text "←" ]
+        , button
+            [ class "bg-[#F5F8FF] w-10 h-10 rounded-lg shadow-sm -mr-5 flex justify-center items-center disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[#E5EFFF] transition-colors"
+            , onClick NextCard
+            , disabled (model.currentCardIndex == totalCards - 1)
+            ]
+            [ text "→" ]
+        ]
+
+
+viewPlanCard : Model -> Plan -> Html Msg
+viewPlanCard model plan =
+    let
+        displayPrice =
+            if model.showDiscount then
+                plan.priceDiscount
+
+            else
+                plan.price
+    in
+    div [ class "flex-shrink-0 w-full px-4 relative" ]
+        [ div [ class "bg-white rounded-2xl shadow-sm p-8" ]
+            [ div [ class "mb-8 flex justify-center items-center h-16" ]
+                [ img [ src plan.image, alt (plan.name ++ " logo"), class "h-full object-contain" ] [] ]
+            , div [ class "text-center mb-6" ]
+                [ p [ class "text-[#1A1A1A]" ]
+                    [ span [ class "text-[48px] font-bold leading-none" ]
+                        [ text ("$" ++ String.fromFloat displayPrice) ]
+                    , span [ class "text-lg text-[#666666] ml-1" ] [ text "/mo" ]
+                    ]
+                ]
+            , div [ class "mb-6" ]
+                [ label [ class "flex items-center justify-center text-sm text-[#666666] gap-2" ]
+                    [ input
+                        [ type_ "checkbox"
+                        , class "w-4 h-4 rounded border-gray-300 text-[#0066FF] focus:ring-[#0066FF]"
+                        , checked model.showDiscount
+                        , onClick ToggleDiscount
+                        ]
+                        []
+                    , text ("Apply " ++ calculateDiscount plan ++ "% Household Discount")
+                    ]
+                ]
+            , button
+                [ onClick (SelectPlan plan)
+                , class "w-full bg-[#7C3AED] text-white py-4 px-4 rounded-lg hover:bg-[#6D28D9] transition-colors mb-8 font-medium text-base"
+                ]
+                [ text "See If I Qualify" ]
+            , div [ class "border-t border-[#E5E5E5] pt-6" ]
+                [ h3 [ class "font-medium text-base text-[#1A1A1A] text-left mb-4" ] [ text "GAPS Plan G Covers:" ]
+                , ul [ class "space-y-3" ]
+                    (List.map viewCoverageItem plan.coverageSummary)
+                ]
+            ]
+        ]
+
+
+calculateDiscount : Plan -> String
+calculateDiscount plan =
+    let
+        discount =
+            plan.priceDiscount / plan.price
+    in
+    (100 - (discount * 100 |> round)) |> String.fromInt
+
+
+viewCoverageItem : CoverageItem -> Html Msg
+viewCoverageItem item =
+    li [ class "flex flex-col" ]
+        [ div [ class "flex justify-between items-center" ]
+            [ span [ class "text-sm text-left font-medium text-neutral-700" ] [ text item.name ]
+            , div [ class "flex items-center" ]
+                [ if item.percentageCovered == 0 then
+                    span [ class "bg-medicare-danger-light text-medicare-danger text-xs font-medium px-2.5 py-1 rounded-full whitespace-nowrap" ]
+                        [ text "NOT COVERED" ]
+
+                  else if item.percentageCovered == 100 then
+                    span [ class "bg-medicare-success-light text-medicare-success text-xs font-medium px-2.5 py-1 rounded-full" ]
+                        [ text "COVERED" ]
+
+                  else
+                    span [ class "bg-medicare-success-light text-medicare-success text-xs font-medium px-2.5 py-1 rounded-full whitespace-nowrap" ]
+                        [ text (String.fromInt item.percentageCovered ++ "% COVERED") ]
+                ]
+            ]
+        , case item.note of
+            Just noteText ->
+                p [ class "text-xs text-neutral-500 mt-1 text-right" ] [ text noteText ]
+
+            Nothing ->
+                text ""
+        ]
+
+
+viewPillButton : String -> Bool -> Msg -> Html Msg
+viewPillButton label isVideo msg =
+    button
+        [ class "mx-auto bg-white text-brand px-4 py-2 rounded-full border border-brand hover:bg-brand/5 transition-colors flex items-center justify-center gap-2"
+        , onClick msg
+        ]
+        [ if isVideo then
+            div [ class "flex items-center justify-center gap-1" ]
+                [ text "▶"
+                , span [ class "text-xs" ] [ text "Video" ]
+                ]
+
+          else
+            text ""
+        , text label
+        ]
+
+
+viewGvsNModal : Model -> Html Msg
+viewGvsNModal model =
+    if model.showGvsNVideo then
+        div [ class "fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" ]
+            [ div [ class "bg-white rounded-lg p-8 w-[95%] max-w-5xl mx-auto flex flex-col items-center relative" ]
+                [ button
+                    [ class "absolute top-2 right-2 text-gray-500 hover:text-gray-700"
+                    , onClick CloseGvsNVideo
+                    ]
+                    [ text "×" ]
+                , h2 [ class "text-2xl font-bold mb-4 text-center" ] [ text "Plan G vs. Plan N" ]
+                , p [ class "mb-4 text-center" ] [ text "Understanding the differences" ]
+                , p [ class "mb-4 text-center" ] [ text "Watch this video to learn about the key differences between Plan G and Plan N" ]
+                , div [ class "w-full max-w-3xl mx-auto" ]
+                    [ div [ class "relative", style "padding-top" "125%" ]
+                        [ iframe
+                            [ src "https://player.vimeo.com/video/1018402330?autoplay=0&title=0&byline=0&portrait=0&responsive=1"
+                            , class "w-full h-full absolute top-0 left-0"
+                            , attribute "frameborder" "0"
+                            , attribute "allow" "autoplay; fullscreen; picture-in-picture"
+                            , attribute "allowfullscreen" ""
+                            ]
+                            []
+                        ]
+                    ]
+                , button
+                    [ class "bg-med-green-500 text-white px-6 py-2 rounded hover:bg-med-green-600 mt-4"
+                    , onClick CloseGvsNVideo
+                    ]
+                    [ text "Continue" ]
+                ]
+            ]
+
+    else
+        text ""
+
+
+viewQualificationModal : Model -> Html Msg
+viewQualificationModal model =
+    if model.showQualificationVideo then
+        div [ class "fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" ]
+            [ div [ class "bg-white rounded-lg p-8 w-[95%] max-w-5xl mx-auto flex flex-col items-center relative" ]
+                [ button
+                    [ class "absolute top-2 right-2 text-gray-500 hover:text-gray-700"
+                    , onClick CloseQualificationVideo
+                    ]
+                    [ text "×" ]
+                , h1 [ class "text-2xl font-bold mb-4 text-center" ] [ text "Great Choice!" ]
+                , h2 [ class "text-xl font-bold mb-4 text-center" ] [ text "Now let's see if you qualify" ]
+                , p [ class "mb-4 text-center" ] [ text "Watch this video to understand the process of qualifying for the plan you selected" ]
+                , div [ class "w-full max-w-3xl mx-auto" ]
+                    [ div [ class "relative", style "padding-top" "125%" ]
+                        [ iframe
+                            [ src "https://player.vimeo.com/video/1018421414?autoplay=0&title=0&byline=0&portrait=0&responsive=1"
+                            , class "w-full h-full absolute top-0 left-0"
+                            , attribute "frameborder" "0"
+                            , attribute "allow" "autoplay; fullscreen; picture-in-picture"
+                            , attribute "allowfullscreen" ""
+                            ]
+                            []
+                        ]
+                    ]
+                , button
+                    [ class "bg-med-green-500 text-white px-6 py-2 rounded hover:bg-med-green-600 mt-4"
+                    , onClick CloseQualificationVideo
+                    ]
+                    [ text "Continue" ]
+                ]
+            ]
+
+    else
+        text ""
+
+
+viewRatesModal : Model -> Html Msg
+viewRatesModal model =
+    if model.showRatesVideo then
+        let
+            rateText =
+                case List.head (getSelectedPlans model) of
+                    Just plan ->
+                        "$" ++ String.fromFloat plan.price
+
+                    Nothing ->
+                        ""
+
+            countyText =
+                model.county
+
+            stateText =
+                model.state
+
+            planTypeText =
+                case model.selectedPlanType of
+                    PlanG ->
+                        "Plan G"
+
+                    PlanN ->
+                        "Plan N"
+        in
+        div [ class "fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" ]
+            [ div [ class "bg-white rounded-lg p-8 w-[95%] max-w-5xl mx-auto flex flex-col items-center relative" ]
+                [ button
+                    [ class "absolute top-2 right-2 text-gray-500 hover:text-gray-700"
+                    , onClick CloseRatesVideo
+                    ]
+                    [ text "×" ]
+                , h1 [ class "text-2xl font-bold mb-4 text-center" ] [ text "Good News!" ]
+                , h2 [ class "text-xl font-bold mb-4 text-center" ]
+                    [ text ("We found " ++ planTypeText ++ " options as low as " ++ rateText ++ " in " ++ countyText ++ " County, " ++ stateText) ]
+                , p [ class "mb-4 text-center" ] [ text "Watch this quick video for 3 things to consider while reviewing your quotes" ]
+                , div [ class "w-full max-w-3xl mx-auto" ]
+                    [ div [ class "relative", style "padding-top" "125%" ]
+                        [ iframe
+                            [ src "https://player.vimeo.com/video/1018421439?autoplay=0&title=0&byline=0&portrait=0&responsive=1"
+                            , class "w-full h-full absolute top-0 left-0"
+                            , attribute "frameborder" "0"
+                            , attribute "allow" "autoplay; fullscreen; picture-in-picture"
+                            , attribute "allowfullscreen" ""
+                            ]
+                            []
+                        ]
+                    ]
+                , button
+                    [ class "bg-med-green-500 text-white px-6 py-2 rounded hover:bg-med-green-600 mt-4"
+                    , onClick CloseRatesVideo
+                    ]
+                    [ text "Continue" ]
+                ]
+            ]
+
+    else
+        text ""
+
+================
 File: src/Contact.elm
 ================
 module Contact exposing (Model, Msg(..), init, subscriptions, update, view)
@@ -2983,6 +4491,7 @@ import Browser.Events
 import Browser.Navigation as Nav
 import Date exposing (Date)
 import Debug
+import Dict exposing (Dict)
 import EmailScheduler exposing (EmailSchedule, PlanType(..), ScheduledEmail, getScheduledEmails, init, viewFutureActivity)
 import Html exposing (..)
 import Html.Attributes exposing (..)
@@ -2992,7 +4501,7 @@ import Json.Decode as Decode exposing (Decoder)
 import Json.Decode.Pipeline as Pipeline
 import Json.Encode as Encode
 import Task
-import Time exposing (Month(..))
+import Time exposing (Month(..), Posix, Zone)
 
 
 
@@ -3108,6 +4617,25 @@ type alias Model =
     , emailExists : Bool
     , isDeletingContact : Bool
     , emailSchedule : EmailSchedule
+    , quoteUrl : Maybe String
+    , isGeneratingQuote : Bool
+    , healthStatus : Maybe HealthStatus
+    , followUps : List FollowUpRequest
+    , timeZone : Zone
+    , showAllFollowUps : Bool
+    }
+
+
+type alias HealthStatus =
+    { status : String
+    , answers : Maybe (Dict String Bool)
+    }
+
+
+type alias FollowUpRequest =
+    { type_ : String
+    , quoteId : String
+    , createdAt : Posix
     }
 
 
@@ -3152,6 +4680,13 @@ userDecoder =
         |> Pipeline.required "phone" Decode.string
 
 
+healthStatusDecoder : Decoder HealthStatus
+healthStatusDecoder =
+    Decode.map2 HealthStatus
+        (Decode.field "status" Decode.string)
+        (Decode.field "answers" (Decode.nullable (Decode.dict Decode.bool)))
+
+
 
 -- INIT
 
@@ -3170,11 +4705,8 @@ init key contactId =
             EmailScheduler.init
                 (String.toInt contactId |> Maybe.withDefault 0)
                 (Date.fromCalendarDate 2024 Jan 1)
-                -- Will be updated when contact is loaded
                 (Date.fromCalendarDate 2024 Jan 1)
-                -- Will be updated when contact is loaded
                 (Date.fromCalendarDate 2024 Jan 1)
-                -- Will be updated with current date
                 NoPlan
     in
     ( { key = key
@@ -3183,37 +4715,33 @@ init key contactId =
       , editForm = emptyForm
       , isSubmittingForm = False
       , error = Nothing
-      , activities =
-            [ { submissionDate = "11-24-2024"
-              , status = QuoteCreated
-              , carrierSelected = Just "Allstate"
-              , planSelected = Just "Silver Tsunami xJ5"
-              , quoteAmount = Just 120.0
-              }
-            , { submissionDate = "11-24-2024"
-              , status = EmailOpened
-              , carrierSelected = Nothing
-              , planSelected = Nothing
-              , quoteAmount = Nothing
-              }
-            , { submissionDate = "11-24-2024"
-              , status = EmailSent 1
-              , carrierSelected = Nothing
-              , planSelected = Nothing
-              , quoteAmount = Nothing
-              }
-            ]
+      , activities = []
       , isCheckingEmail = False
       , emailExists = False
       , isDeletingContact = False
       , emailSchedule = initialSchedule
+      , quoteUrl = Nothing
+      , isGeneratingQuote = False
+      , healthStatus = Nothing
+      , followUps = []
+      , timeZone = Time.utc
+      , showAllFollowUps = False
       }
     , Cmd.batch
         [ Http.get
             { url = "/api/contacts/" ++ contactId
             , expect = Http.expectJson GotContact contactDecoder
             }
+        , Http.get
+            { url = "/api/contacts/" ++ contactId ++ "/eligibility"
+            , expect = Http.expectJson GotHealthStatus healthStatusDecoder
+            }
+        , Http.get
+            { url = "/api/contacts/" ++ contactId ++ "/follow-ups"
+            , expect = Http.expectJson GotFollowUps followUpsDecoder
+            }
         , Task.perform GotCurrentTime Date.today
+        , Task.perform GotTimeZone Time.here
         ]
     )
 
@@ -3226,6 +4754,7 @@ type Msg
     = NoOp
     | GotContact (Result Http.Error Contact)
     | GotCurrentTime Date
+    | GotTimeZone Zone
     | ShowEditModal
     | CloseModal
     | BackToContacts
@@ -3239,6 +4768,11 @@ type Msg
     | ShowDeleteConfirmModal
     | DeleteContact
     | ContactDeleted (Result Http.Error DeleteResponse)
+    | GenerateQuoteLink
+    | GotQuoteLink (Result Http.Error { quoteId : String, redirectUrl : String })
+    | GotHealthStatus (Result Http.Error HealthStatus)
+    | GotFollowUps (Result Http.Error (List FollowUpRequest))
+    | ToggleFollowUps
 
 
 type ContactFormField
@@ -3269,20 +4803,18 @@ update msg model =
                     case Date.fromIsoString contact.birthDate of
                         Ok birthDate ->
                             let
-                                _ =
-                                    Debug.log "Contact loaded"
-                                        { effectiveDate = Date.toIsoString effectiveDate
-                                        , birthDate = Date.toIsoString birthDate
-                                        , currentDate = Date.toIsoString model.emailSchedule.currentDate
-                                        , planType = contact.planType
-                                        }
-
                                 planType =
                                     case contact.planType of
                                         "Plan N" ->
                                             PlanN
 
+                                        "N" ->
+                                            PlanN
+
                                         "Plan G" ->
+                                            PlanG
+
+                                        "G" ->
                                             PlanG
 
                                         _ ->
@@ -3296,7 +4828,12 @@ update msg model =
                                         model.emailSchedule.currentDate
                                         planType
                             in
-                            ( { model | contact = Just contact, emailSchedule = newSchedule }, Cmd.none )
+                            ( { model | contact = Just contact, emailSchedule = newSchedule }
+                            , Http.get
+                                { url = "/api/quotes/generate/" ++ String.fromInt contact.id
+                                , expect = Http.expectJson GotQuoteLink quoteLinkDecoder
+                                }
+                            )
 
                         Err _ ->
                             ( { model | error = Just "Invalid birth date format" }, Cmd.none )
@@ -3321,6 +4858,9 @@ update msg model =
             ( { model | emailSchedule = newSchedule }
             , Cmd.none
             )
+
+        GotTimeZone zone ->
+            ( { model | timeZone = zone }, Cmd.none )
 
         ShowEditModal ->
             case model.contact of
@@ -3532,6 +5072,54 @@ update msg model =
         ContactDeleted (Err _) ->
             ( { model | isDeletingContact = False, error = Just "Failed to delete contact" }, Cmd.none )
 
+        GenerateQuoteLink ->
+            case model.contact of
+                Just contact ->
+                    ( { model | isGeneratingQuote = True }
+                    , Http.get
+                        { url = "/api/quotes/generate/" ++ String.fromInt contact.id
+                        , expect = Http.expectJson GotQuoteLink quoteLinkDecoder
+                        }
+                    )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        GotQuoteLink (Ok response) ->
+            ( { model
+                | quoteUrl = Just ("/quote?id=" ++ response.quoteId)
+                , isGeneratingQuote = False
+              }
+            , Cmd.none
+            )
+
+        GotQuoteLink (Err _) ->
+            ( { model
+                | error = Just "Failed to generate quote link"
+                , isGeneratingQuote = False
+              }
+            , Cmd.none
+            )
+
+        GotHealthStatus (Ok status) ->
+            ( { model | healthStatus = Just status }
+            , Cmd.none
+            )
+
+        GotHealthStatus (Err _) ->
+            ( model, Cmd.none )
+
+        GotFollowUps (Ok followUps) ->
+            ( { model | followUps = followUps }
+            , Cmd.none
+            )
+
+        GotFollowUps (Err _) ->
+            ( model, Cmd.none )
+
+        ToggleFollowUps ->
+            ( { model | showAllFollowUps = not model.showAllFollowUps }, Cmd.none )
+
 
 
 -- VIEW
@@ -3548,8 +5136,8 @@ view model =
                     Just contact ->
                         div []
                             [ viewHeader contact
-                            , viewContactSummary contact
-                            , div [ class "mb-8" ]
+                            , viewContactSummary contact model.quoteUrl model.isGeneratingQuote model.healthStatus model.followUps model.timeZone model.showAllFollowUps
+                            , div [ class "bg-white rounded-lg border border-gray-200 p-6 mb-8" ]
                                 [ viewFutureActivity (getScheduledEmails model.emailSchedule) ]
                             , viewActivity model.activities
                             ]
@@ -3597,27 +5185,126 @@ viewHeader contact =
         ]
 
 
-viewContactSummary : Contact -> Html Msg
-viewContactSummary contact =
-    div [ class "bg-white rounded-lg border border-gray-200 p-6 mb-8" ]
-        [ h2 [ class "text-lg font-medium mb-6" ] [ text "Contact Summary" ]
-        , div [ class "grid grid-cols-2 gap-x-8 gap-y-6" ]
-            [ viewField "Date of Birth" contact.birthDate
-            , viewField "Contact Owner" (Maybe.map .firstName contact.contactOwner |> Maybe.withDefault "Default")
-            , viewField "Phone Number" (formatPhoneNumber contact.phoneNumber)
-            , viewField "Email" contact.email
-            , viewField "Gender" contact.gender
-            , viewField "Tobacco Use"
-                (if contact.tobaccoUser then
-                    "Yes"
+viewContactSummary : Contact -> Maybe String -> Bool -> Maybe HealthStatus -> List FollowUpRequest -> Zone -> Bool -> Html Msg
+viewContactSummary contact quoteUrl isGeneratingQuote healthStatus followUps zone showAllFollowUps =
+    div []
+        [ div [ class "bg-white rounded-lg border border-gray-200 p-6 mb-8" ]
+            [ h2 [ class "text-lg font-medium mb-6" ] [ text "Contact Summary" ]
+            , div [ class "grid grid-cols-2 gap-x-8 gap-y-6" ]
+                [ viewField "Date of Birth" contact.birthDate
+                , viewField "Contact Owner" (Maybe.map .firstName contact.contactOwner |> Maybe.withDefault "Default")
+                , viewField "Phone Number" (formatPhoneNumber contact.phoneNumber)
+                , viewField "Email" contact.email
+                , viewField "Current Carrier" contact.currentCarrier
+                , viewField "Gender" contact.gender
+                , viewField "Tobacco Use"
+                    (if contact.tobaccoUser then
+                        "Yes"
 
-                 else
-                    "No"
-                )
-            , viewField "State" contact.state
-            , viewField "Zip Code" contact.zipCode
-            , viewField "Effective Date" contact.effectiveDate
-            , viewField "Plan Type" contact.planType
+                     else
+                        "No"
+                    )
+                , viewField "State" contact.state
+                , viewField "Zip Code" contact.zipCode
+                , viewField "Effective Date" contact.effectiveDate
+                , viewField "Plan Type" contact.planType
+                , viewQuoteField quoteUrl isGeneratingQuote
+                , viewHealthStatusField healthStatus
+                ]
+            ]
+        , if not (List.isEmpty followUps) then
+            div [ class "bg-white rounded-lg border border-gray-200 p-6 mb-8" ]
+                [ div [ class "flex justify-between items-center mb-6" ]
+                    [ h2 [ class "text-lg font-medium" ] [ text "Follow-up Requests" ] ]
+                , div [ class "space-y-4" ]
+                    (List.take
+                        (if showAllFollowUps then
+                            List.length followUps
+
+                         else
+                            2
+                        )
+                        followUps
+                        |> List.map (viewFollowUpRequest zone)
+                    )
+                , if not showAllFollowUps && List.length followUps > 2 then
+                    div [ class "mt-4 text-center" ]
+                        [ button
+                            [ class "text-sm text-purple-600 hover:text-purple-800"
+                            , onClick ToggleFollowUps
+                            ]
+                            [ text ("Show " ++ String.fromInt (List.length followUps - 2) ++ " More") ]
+                        ]
+
+                  else if showAllFollowUps then
+                    div [ class "mt-4 text-center" ]
+                        [ button
+                            [ class "text-sm text-purple-600 hover:text-purple-800"
+                            , onClick ToggleFollowUps
+                            ]
+                            [ text "Show Less" ]
+                        ]
+
+                  else
+                    text ""
+                ]
+
+          else
+            text ""
+        ]
+
+
+viewQuoteField : Maybe String -> Bool -> Html Msg
+viewQuoteField quoteUrl isGeneratingQuote =
+    div []
+        [ div [ class "text-sm font-medium text-gray-500" ] [ text "Quote Link" ]
+        , div [ class "mt-1" ]
+            [ case quoteUrl of
+                Just url ->
+                    a
+                        [ href url
+                        , class "text-sm text-blue-600 hover:text-blue-800 underline"
+                        , target "_blank"
+                        ]
+                        [ text "View Quote" ]
+
+                Nothing ->
+                    if isGeneratingQuote then
+                        viewSpinner
+
+                    else
+                        text "-"
+            ]
+        ]
+
+
+viewHealthStatusField : Maybe HealthStatus -> Html Msg
+viewHealthStatusField maybeStatus =
+    div []
+        [ div [ class "text-sm font-medium text-gray-500" ] [ text "Health Status" ]
+        , div [ class "mt-1" ]
+            [ case maybeStatus of
+                Just status ->
+                    case status.status of
+                        "pass" ->
+                            div [ class "flex items-center text-green-600 text-sm" ]
+                                [ span [ class "mr-1" ] [ text "✓" ]
+                                , text "Pass"
+                                ]
+
+                        "flagged" ->
+                            div [ class "flex items-center text-red-600 text-sm" ]
+                                [ span [ class "mr-1" ] [ text "✕" ]
+                                , text "Issue Flagged"
+                                ]
+
+                        _ ->
+                            div [ class "text-gray-600 text-sm" ]
+                                [ text "Incomplete" ]
+
+                Nothing ->
+                    div [ class "text-gray-600 text-sm" ]
+                        [ text "Loading..." ]
             ]
         ]
 
@@ -3633,7 +5320,7 @@ viewField label value =
 viewActivity : List Activity -> Html Msg
 viewActivity activities =
     div [ class "bg-white rounded-lg border border-gray-200 p-6" ]
-        [ h2 [ class "text-lg font-medium mb-6" ] [ text "Activity" ]
+        [ h2 [ class "text-lg font-medium mb-6" ] [ text "Past Activity" ]
         , table [ class "min-w-full" ]
             [ thead [ class "bg-gray-50" ]
                 [ tr []
@@ -3710,6 +5397,35 @@ viewStatus status =
     in
     div [ class ("inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium " ++ bgColor ++ " " ++ textColor) ]
         [ text status ]
+
+
+viewHealthStatus : Maybe HealthStatus -> Html Msg
+viewHealthStatus maybeStatus =
+    div [ class "p-4 rounded-lg flex items-center" ]
+        [ div [ class "text-sm font-medium mr-2" ] [ text "Health Status:" ]
+        , case maybeStatus of
+            Just status ->
+                case status.status of
+                    "pass" ->
+                        div [ class "flex items-center text-green-600" ]
+                            [ span [ class "mr-2" ] [ text "✓" ]
+                            , text "Pass"
+                            ]
+
+                    "flagged" ->
+                        div [ class "flex items-center text-red-600" ]
+                            [ span [ class "mr-2" ] [ text "✕" ]
+                            , text "Issue Flagged"
+                            ]
+
+                    _ ->
+                        div [ class "flex items-center text-gray-600" ]
+                            [ text "Incomplete" ]
+
+            Nothing ->
+                div [ class "flex items-center text-gray-600" ]
+                    [ text "Loading..." ]
+        ]
 
 
 viewModals : Model -> Html Msg
@@ -4049,6 +5765,229 @@ viewDeleteConfirmModal model =
                 ]
             ]
         ]
+
+
+quoteLinkDecoder : Decode.Decoder { quoteId : String, redirectUrl : String }
+quoteLinkDecoder =
+    Decode.map2 (\id url -> { quoteId = id, redirectUrl = url })
+        (Decode.field "quoteId" Decode.string)
+        (Decode.field "redirectUrl" Decode.string)
+
+
+followUpsDecoder : Decoder (List FollowUpRequest)
+followUpsDecoder =
+    Decode.list
+        (Decode.map3 FollowUpRequest
+            (Decode.field "type" Decode.string)
+            (Decode.field "quoteId" Decode.string)
+            (Decode.field "createdAt" posixDecoder)
+        )
+
+
+posixDecoder : Decoder Posix
+posixDecoder =
+    Decode.string
+        |> Decode.andThen
+            (\str ->
+                let
+                    parts =
+                        String.split " " str
+
+                    datePart =
+                        List.head parts |> Maybe.withDefault ""
+
+                    timePart =
+                        List.drop 1 parts |> List.head |> Maybe.withDefault ""
+
+                    dateParts =
+                        String.split "-" datePart
+
+                    year =
+                        List.head dateParts |> Maybe.andThen String.toInt |> Maybe.withDefault 1970
+
+                    month =
+                        List.drop 1 dateParts |> List.head |> Maybe.andThen String.toInt |> Maybe.withDefault 1
+
+                    day =
+                        List.drop 2 dateParts |> List.head |> Maybe.andThen String.toInt |> Maybe.withDefault 1
+
+                    timeComponents =
+                        String.split ":" timePart
+
+                    hour =
+                        List.head timeComponents |> Maybe.andThen String.toInt |> Maybe.withDefault 0
+
+                    minute =
+                        List.drop 1 timeComponents |> List.head |> Maybe.andThen String.toInt |> Maybe.withDefault 0
+
+                    second =
+                        List.drop 2 timeComponents |> List.head |> Maybe.andThen (String.split "." >> List.head) |> Maybe.andThen String.toInt |> Maybe.withDefault 0
+
+                    -- Calculate milliseconds since epoch
+                    msPerDay =
+                        86400000
+
+                    msPerHour =
+                        3600000
+
+                    msPerMinute =
+                        60000
+
+                    msPerSecond =
+                        1000
+
+                    -- Start with Unix epoch (1970-01-01) and add days
+                    daysFromEpoch =
+                        (year - 1970)
+                            * 365
+                            + ((year - 1969) // 4)
+                            + (case month of
+                                1 ->
+                                    0
+
+                                2 ->
+                                    31
+
+                                3 ->
+                                    59
+
+                                4 ->
+                                    90
+
+                                5 ->
+                                    120
+
+                                6 ->
+                                    151
+
+                                7 ->
+                                    181
+
+                                8 ->
+                                    212
+
+                                9 ->
+                                    243
+
+                                10 ->
+                                    273
+
+                                11 ->
+                                    304
+
+                                12 ->
+                                    334
+
+                                _ ->
+                                    0
+                              )
+                            + day
+                            - 1
+
+                    timestamp =
+                        daysFromEpoch
+                            * msPerDay
+                            + hour
+                            * msPerHour
+                            + minute
+                            * msPerMinute
+                            + second
+                            * msPerSecond
+                in
+                Decode.succeed (Time.millisToPosix timestamp)
+            )
+
+
+viewFollowUpRequest : Zone -> FollowUpRequest -> Html Msg
+viewFollowUpRequest zone followUp =
+    div [ class "flex items-center justify-between py-3 border-b border-gray-100 last:border-0" ]
+        [ div [ class "flex items-center space-x-4" ]
+            [ div [ class "text-sm text-gray-600" ]
+                [ text (formatDate zone followUp.createdAt) ]
+            , div [ class "text-sm font-medium" ]
+                [ text
+                    (case followUp.type_ of
+                        "accept" ->
+                            "Accepted - Ready to Switch"
+
+                        "decline" ->
+                            "Declined - Looking for Alternatives"
+
+                        _ ->
+                            "General Follow-up Request"
+                    )
+                ]
+            ]
+        ]
+
+
+formatDate : Zone -> Posix -> String
+formatDate zone time =
+    let
+        year =
+            String.fromInt (Time.toYear zone time)
+
+        month =
+            case Time.toMonth zone time of
+                Jan ->
+                    "01"
+
+                Feb ->
+                    "02"
+
+                Mar ->
+                    "03"
+
+                Apr ->
+                    "04"
+
+                May ->
+                    "05"
+
+                Jun ->
+                    "06"
+
+                Jul ->
+                    "07"
+
+                Aug ->
+                    "08"
+
+                Sep ->
+                    "09"
+
+                Oct ->
+                    "10"
+
+                Nov ->
+                    "11"
+
+                Dec ->
+                    "12"
+
+        day =
+            String.padLeft 2 '0' (String.fromInt (Time.toDay zone time))
+
+        hour =
+            Time.toHour zone time
+
+        ( displayHour, amPm ) =
+            if hour == 0 then
+                ( "12", "AM" )
+
+            else if hour < 12 then
+                ( String.fromInt hour, "AM" )
+
+            else if hour == 12 then
+                ( "12", "PM" )
+
+            else
+                ( String.fromInt (hour - 12), "PM" )
+
+        minute =
+            String.padLeft 2 '0' (String.fromInt (Time.toMinute zone time))
+    in
+    year ++ "-" ++ month ++ "-" ++ day ++ " at " ++ displayHour ++ ":" ++ minute ++ " " ++ amPm
 
 
 
@@ -5816,7 +7755,7 @@ viewCsvUploadModal state isUploading =
                                                 [ text "Carrier Conversions" ]
                                             , div [ class "space-y-4 text-sm text-yellow-700" ]
                                                 [ p []
-                                                    [ text (String.fromInt stats.converted_carrier_rows ++ " rows had carriers we do not currently recognize/support. This is normal and expected.") ]
+                                                    [ text (String.fromInt stats.converted_carrier_rows ++ " rows had carriers we do not currently recognize or provide quotes for. This is normal and expected -- we will still email these contacts with quotes from supported Carriers.") ]
                                                 , p []
                                                     [ text "However, this can also happen if there is a misspelling of a supported carrier. Please review to ensure the data is correct." ]
                                                 , case state.converted_carriers_csv of
@@ -6839,6 +8778,531 @@ viewDeleteConfirmModal model =
         ]
 
 ================
+File: src/Decline.elm
+================
+module Decline exposing (Model, Msg(..), init, subscriptions, update, view)
+
+import Browser
+import Browser.Navigation as Nav
+import Html exposing (..)
+import Html.Attributes exposing (..)
+import Html.Events exposing (onInput, onSubmit)
+import Http
+import Json.Decode as D
+import Json.Encode as E
+import Url.Parser.Query as Query
+
+
+type alias Model =
+    { name : String
+    , email : String
+    , isSubmitting : Bool
+    , error : Maybe String
+    , success : Bool
+    , quoteId : Maybe String
+    , key : Nav.Key
+    }
+
+
+type Msg
+    = UpdateName String
+    | UpdateEmail String
+    | SubmitForm
+    | GotSubmitResponse (Result Http.Error ())
+    | GotContactInfo (Result Http.Error ContactInfo)
+
+
+type alias ContactInfo =
+    { email : String
+    , firstName : String
+    , lastName : String
+    }
+
+
+init : Nav.Key -> Maybe String -> ( Model, Cmd Msg )
+init key maybeQuoteId =
+    ( { name = ""
+      , email = ""
+      , isSubmitting = False
+      , error = Nothing
+      , success = False
+      , quoteId = maybeQuoteId
+      , key = key
+      }
+    , case maybeQuoteId of
+        Just quoteId ->
+            Http.get
+                { url = "/api/quotes/decode/" ++ quoteId
+                , expect = Http.expectJson GotContactInfo contactInfoDecoder
+                }
+
+        Nothing ->
+            Cmd.none
+    )
+
+
+contactInfoDecoder : D.Decoder ContactInfo
+contactInfoDecoder =
+    D.field "contact"
+        (D.map3 ContactInfo
+            (D.field "email" D.string)
+            (D.field "firstName" D.string)
+            (D.field "lastName" D.string)
+        )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        UpdateName name ->
+            ( { model | name = name }, Cmd.none )
+
+        UpdateEmail email ->
+            ( { model | email = email }, Cmd.none )
+
+        SubmitForm ->
+            ( { model | isSubmitting = True }
+            , Http.post
+                { url = "/api/contact-request"
+                , body = Http.jsonBody (encodeForm model)
+                , expect = Http.expectWhatever GotSubmitResponse
+                }
+            )
+
+        GotSubmitResponse result ->
+            case result of
+                Ok _ ->
+                    ( { model | isSubmitting = False, success = True }, Cmd.none )
+
+                Err _ ->
+                    ( { model | isSubmitting = False, error = Just "Failed to submit form. Please try again." }, Cmd.none )
+
+        GotContactInfo result ->
+            case result of
+                Ok info ->
+                    ( { model
+                        | email = info.email
+                        , name = info.firstName ++ " " ++ info.lastName
+                      }
+                    , Cmd.none
+                    )
+
+                Err _ ->
+                    ( model, Cmd.none )
+
+
+encodeForm : Model -> E.Value
+encodeForm model =
+    E.object
+        [ ( "name", E.string model.name )
+        , ( "email", E.string model.email )
+        , ( "type", E.string "decline" )
+        , ( "quoteId", Maybe.map E.string model.quoteId |> Maybe.withDefault E.null )
+        ]
+
+
+view : Model -> Browser.Document Msg
+view model =
+    { title = "Not Eligible - Medicare Max"
+    , body =
+        [ div [ class "min-h-screen bg-white" ]
+            [ nav [ class "bg-white border-b border-gray-200" ]
+                [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8" ]
+                    [ div [ class "flex justify-between h-16 items-center" ]
+                        [ div [ class "flex-shrink-0" ]
+                            [ img [ src "/images/medicare-max-logo.png", class "h-8 w-auto", alt "Medicare Max" ] [] ]
+                        ]
+                    ]
+                ]
+            , div [ class "max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-12" ]
+                [ if model.success then
+                    div [ class "text-center" ]
+                        [ h1 [ class "text-3xl font-bold text-gray-900 mb-4" ]
+                            [ text "Thank You" ]
+                        , p [ class "text-gray-600" ]
+                            [ text "We'll be in touch soon to discuss your options." ]
+                        ]
+
+                  else
+                    div []
+                        [ h1 [ class "text-3xl font-bold text-center text-gray-900 mb-4" ]
+                            [ text "We Need to Talk" ]
+                        , p [ class "text-gray-600 text-center mb-8" ]
+                            [ text "Based on your answers, you may not qualify for this plan. However, we'd love to help you find a different plan that's a perfect fit for your needs." ]
+                        , case model.error of
+                            Just error ->
+                                div [ class "bg-red-50 border border-red-400 text-red-700 px-4 py-3 rounded mb-4" ]
+                                    [ text error ]
+
+                            Nothing ->
+                                text ""
+                        , Html.form [ onSubmit SubmitForm, class "space-y-6 max-w-lg mx-auto" ]
+                            [ div []
+                                [ label [ class "block text-sm font-medium text-gray-700 mb-1" ]
+                                    [ text "Name" ]
+                                , input
+                                    [ type_ "text"
+                                    , class "w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-purple-500 focus:border-purple-500"
+                                    , value model.name
+                                    , onInput UpdateName
+                                    , required True
+                                    ]
+                                    []
+                                ]
+                            , div []
+                                [ label [ class "block text-sm font-medium text-gray-700 mb-1" ]
+                                    [ text "Email" ]
+                                , input
+                                    [ type_ "email"
+                                    , class "w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-purple-500 focus:border-purple-500"
+                                    , value model.email
+                                    , onInput UpdateEmail
+                                    , required True
+                                    ]
+                                    []
+                                ]
+                            , button
+                                [ class "w-full bg-purple-600 text-white py-3 px-4 rounded-lg hover:bg-purple-700 transition-colors duration-200 disabled:opacity-50"
+                                , type_ "submit"
+                                , disabled model.isSubmitting
+                                ]
+                                [ if model.isSubmitting then
+                                    text "Submitting..."
+
+                                  else
+                                    text "Request Follow-up"
+                                ]
+                            ]
+                        ]
+                ]
+            ]
+        ]
+    }
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+================
+File: src/Eligibility.elm
+================
+module Eligibility exposing (Model, Msg(..), init, subscriptions, update, view)
+
+import Browser
+import Browser.Navigation as Nav
+import Html exposing (..)
+import Html.Attributes exposing (..)
+import Html.Events exposing (onClick, onSubmit)
+import Http
+import Json.Encode as E
+import Url.Builder as Builder
+
+
+
+-- TYPES
+
+
+type alias Question =
+    { id : Int
+    , text : String
+    , answer : Maybe Bool
+    }
+
+
+type alias Model =
+    { key : Nav.Key
+    , questions : List Question
+    , quoteId : Maybe String
+    }
+
+
+type Msg
+    = AnswerQuestion Int Bool
+    | SubmitAnswers
+    | SkipQuestions
+    | GotSubmitResponse (Result Http.Error ())
+
+
+
+-- INIT
+
+
+init : Nav.Key -> Maybe String -> ( Model, Cmd Msg )
+init key maybeQuoteId =
+    ( { key = key
+      , questions =
+            [ { id = 1
+              , text = "Are you currently hospitalized or in a nursing home or assisted living facility; or, are you bedridden or confined to a wheelchair, or require the assistance of motorized mobility aid, or have you had any amputation caused by disease?"
+              , answer = Nothing
+              }
+            , { id = 2
+              , text = "Within the past 24 months, have you been hospitalized two or more times, or been confined to a nursing home or assisted living facility?"
+              , answer = Nothing
+              }
+            , { id = 3
+              , text = "Have you been advised by a medical professional to have surgery, medical tests, treatment or therapy that has not been performed?"
+              , answer = Nothing
+              }
+            ]
+      , quoteId = maybeQuoteId
+      }
+    , Cmd.none
+    )
+
+
+
+-- UPDATE
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        SkipQuestions ->
+            ( model
+            , Nav.pushUrl model.key
+                (case model.quoteId of
+                    Just id ->
+                        "/schedule?id=" ++ id
+
+                    Nothing ->
+                        "/schedule"
+                )
+            )
+
+        AnswerQuestion id answer ->
+            ( { model
+                | questions =
+                    List.map
+                        (\q ->
+                            if q.id == id then
+                                { q | answer = Just answer }
+
+                            else
+                                q
+                        )
+                        model.questions
+              }
+            , Cmd.none
+            )
+
+        GotSubmitResponse result ->
+            case result of
+                Ok _ ->
+                    let
+                        anyNo =
+                            List.any (\q -> q.answer == Just False) model.questions
+
+                        nextUrl =
+                            case model.quoteId of
+                                Just id ->
+                                    if anyNo then
+                                        "/schedule?id=" ++ id ++ "&status=decline"
+
+                                    else
+                                        "/schedule?id=" ++ id ++ "&status=accept"
+
+                                Nothing ->
+                                    if anyNo then
+                                        "/schedule?status=decline"
+
+                                    else
+                                        "/schedule?status=accept"
+                    in
+                    ( model
+                    , Nav.pushUrl model.key nextUrl
+                    )
+
+                Err _ ->
+                    -- On error, still proceed to next page but don't save answers
+                    let
+                        anyNo =
+                            List.any (\q -> q.answer == Just False) model.questions
+
+                        nextUrl =
+                            case model.quoteId of
+                                Just id ->
+                                    if anyNo then
+                                        "/schedule?id=" ++ id ++ "&status=decline"
+
+                                    else
+                                        "/schedule?id=" ++ id ++ "&status=accept"
+
+                                Nothing ->
+                                    if anyNo then
+                                        "/schedule?status=decline"
+
+                                    else
+                                        "/schedule?status=accept"
+                    in
+                    ( model
+                    , Nav.pushUrl model.key nextUrl
+                    )
+
+        SubmitAnswers ->
+            let
+                allAnswered =
+                    List.all (.answer >> (/=) Nothing) model.questions
+
+                submitAnswers =
+                    case model.quoteId of
+                        Just quoteId ->
+                            Http.post
+                                { url = "/api/eligibility-answers"
+                                , body =
+                                    Http.jsonBody <|
+                                        E.object
+                                            [ ( "quote_id", E.string quoteId )
+                                            , ( "answers"
+                                              , E.object
+                                                    (List.filterMap
+                                                        (\q ->
+                                                            case q.answer of
+                                                                Just ans ->
+                                                                    Just ( String.fromInt q.id, E.bool ans )
+
+                                                                Nothing ->
+                                                                    Nothing
+                                                        )
+                                                        model.questions
+                                                    )
+                                              )
+                                            ]
+                                , expect = Http.expectWhatever GotSubmitResponse
+                                }
+
+                        Nothing ->
+                            -- If no quote ID, just proceed without saving
+                            Cmd.none
+            in
+            if allAnswered then
+                ( model
+                , submitAnswers
+                )
+
+            else
+                ( model
+                , Cmd.none
+                )
+
+
+
+-- VIEW
+
+
+view : Model -> Browser.Document Msg
+view model =
+    { title = "Underwriting Assessment"
+    , body =
+        [ div [ class "min-h-screen bg-white" ]
+            [ nav [ class "bg-white border-b border-gray-200" ]
+                [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8" ]
+                    [ div [ class "flex justify-between h-16 items-center" ]
+                        [ div [ class "flex-shrink-0" ]
+                            [ img [ src "/images/medicare-max-logo.png", class "h-8 w-auto", alt "Medicare Max" ] [] ]
+                        , div [ class "flex space-x-8" ]
+                            [ a [ href "/", class "text-gray-500 hover:text-gray-900" ] [ text "Start Here" ]
+                            , a [ href "/quote", class "text-gray-500 hover:text-gray-900" ] [ text "Get a Quote" ]
+                            , a [ href "/compare", class "text-gray-500 hover:text-gray-900" ] [ text "Compare" ]
+                            , a [ href "/apply", class "text-gray-500 hover:text-gray-900" ] [ text "Apply" ]
+                            , a [ href "/contact", class "text-gray-500 hover:text-gray-900" ] [ text "Contact Us" ]
+                            , a [ href "/login", class "text-gray-500 hover:text-gray-900" ] [ text "Login/Register" ]
+                            ]
+                        ]
+                    ]
+                ]
+            , div [ class "max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-12" ]
+                [ h1 [ class "text-3xl font-bold text-center text-gray-900 mb-4" ]
+                    [ text "Underwriting Assessment" ]
+                , p [ class "text-gray-600 text-center mb-12" ]
+                    [ text "In order to qualify for a new Supplemental plan you must past medical underwriting. This is a quick questionnaire to assess the likelihood of you being able to pass." ]
+                , Html.form [ onSubmit SubmitAnswers, class "space-y-8" ]
+                    (List.map viewQuestion model.questions
+                        ++ [ viewSubmitButton model ]
+                    )
+                , div [ class "text-center mt-6" ]
+                    [ button
+                        [ onClick SkipQuestions
+                        , class "text-blue-600 hover:text-blue-800 underline text-sm"
+                        , type_ "button"
+                        ]
+                        [ text "Skip" ]
+                    ]
+                ]
+            ]
+        ]
+    }
+
+
+viewQuestion : Question -> Html Msg
+viewQuestion question =
+    div [ class "space-y-4" ]
+        [ p [ class "text-gray-900 text-lg" ]
+            [ text question.text ]
+        , div [ class "grid grid-cols-2 gap-4" ]
+            [ viewRadioButton question "Yes" True
+            , viewRadioButton question "No" False
+            ]
+        ]
+
+
+viewRadioButton : Question -> String -> Bool -> Html Msg
+viewRadioButton question labelText value =
+    label
+        [ class
+            ("flex items-center justify-center px-6 py-3 rounded-lg border-[2.5px] cursor-pointer transition-all duration-200 w-full "
+                ++ (if question.answer == Just value then
+                        "border-blue-500 bg-white text-gray-900"
+
+                    else
+                        "border-gray-200 hover:border-blue-200 text-gray-700"
+                   )
+            )
+        , onClick (AnswerQuestion question.id value)
+        ]
+        [ input
+            [ type_ "radio"
+            , name ("question-" ++ String.fromInt question.id)
+            , checked (question.answer == Just value)
+            , class "sr-only"
+            ]
+            []
+        , span [ class "font-medium" ] [ text labelText ]
+        ]
+
+
+viewSubmitButton : Model -> Html Msg
+viewSubmitButton model =
+    let
+        allAnswered =
+            List.all (.answer >> (/=) Nothing) model.questions
+
+        buttonClass =
+            "w-full py-4 rounded-lg text-white font-medium transition-colors duration-200 mt-8 "
+                ++ (if allAnswered then
+                        "bg-purple-600 hover:bg-purple-700"
+
+                    else
+                        "bg-gray-300 cursor-not-allowed"
+                   )
+    in
+    button
+        [ class buttonClass
+        , type_ "submit"
+        , disabled (not allAnswered)
+        ]
+        [ text "Next" ]
+
+
+
+-- SUBSCRIPTIONS
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+================
 File: src/EmailScheduler.elm
 ================
 module EmailScheduler exposing
@@ -7651,17 +10115,22 @@ import BrandSettings
 import Browser exposing (Document)
 import Browser.Navigation as Nav
 import ChoosePlan
+import Compare
 import Contact
 import Contacts
 import Debug
+import Eligibility
 import Home
 import Html exposing (Html, button, div, h1, img, nav, p, text)
 import Html.Attributes exposing (alt, class, href, src)
 import Html.Events exposing (onClick)
 import Http
 import Json.Decode as Decode exposing (Decoder)
+import Json.Encode as E
 import Login
 import Profile
+import Quote
+import Schedule
 import Settings
 import Signup
 import TempLanding
@@ -7760,6 +10229,10 @@ type Page
     | LoadingPage
     | HomePage Home.Model
     | ContactPage Contact.Model
+    | ComparePage Compare.Model
+    | QuotePage Quote.Model
+    | EligibilityPage Eligibility.Model
+    | SchedulePage Schedule.Model
 
 
 type Msg
@@ -7779,10 +10252,29 @@ type Msg
     | ProfileMsg Profile.Msg
     | HomeMsg Home.Msg
     | ContactMsg Contact.Msg
+    | CompareMsg Compare.Msg
+    | QuoteMsg Quote.Msg
+    | EligibilityMsg Eligibility.Msg
+    | ScheduleMsg Schedule.Msg
+    | NoOp
 
 
 type alias Flags =
     { initialSession : Maybe String }
+
+
+type alias CompareFlags =
+    { state : String
+    , zip : String
+    , county : String
+    , gender : String
+    , tobacco : Bool
+    , age : Int
+    , planType : String
+    , currentCarrier : Maybe String
+    , dateOfBirth : String
+    , quoteId : Maybe String
+    }
 
 
 main : Program Flags Model Msg
@@ -7844,6 +10336,37 @@ init flags url key =
     )
 
 
+type alias CompareParams =
+    { state : String
+    , zip : String
+    , county : String
+    , gender : String
+    , tobacco : Bool
+    , age : Int
+    , planType : String
+    , currentCarrier : Maybe String
+    , dateOfBirth : String
+    , quoteId : Maybe String
+    , trackingId : Maybe String
+    }
+
+
+type alias CompareParamsPartial1 =
+    { state : String
+    , zip : String
+    , county : String
+    , gender : String
+    }
+
+
+type alias CompareParamsPartial2 =
+    { tobacco : Bool
+    , age : Int
+    , planType : String
+    , currentCarrier : Maybe String
+    }
+
+
 type Route
     = PublicRoute PublicPage
     | ProtectedRoute ProtectedPage
@@ -7860,6 +10383,10 @@ type PublicPage
     | LoginRoute
     | SignupRoute
     | VerifyRoute VerifyParams
+    | CompareRoute CompareParams
+    | QuoteRoute ( Maybe String, Maybe String )
+    | EligibilityRoute ( Maybe String, Maybe String )
+    | ScheduleRoute ( Maybe String, Maybe String, Maybe String )
 
 
 type ProtectedPage
@@ -7911,6 +10438,45 @@ setupProgressDecoder =
         (Query.string "org")
 
 
+compareParamsParser : Query.Parser CompareParams
+compareParamsParser =
+    let
+        part1 =
+            Query.map4 CompareParamsPartial1
+                (Query.string "state" |> Query.map (Maybe.withDefault "TX"))
+                (Query.string "zip" |> Query.map (Maybe.withDefault "75201"))
+                (Query.string "county" |> Query.map (Maybe.withDefault "Dallas"))
+                (Query.string "gender" |> Query.map (Maybe.withDefault "Male"))
+
+        part2 =
+            Query.map4 CompareParamsPartial2
+                (Query.string "tobacco" |> Query.map (Maybe.map (\t -> t == "yes") >> Maybe.withDefault False))
+                (Query.string "age" |> Query.map (Maybe.andThen String.toInt >> Maybe.withDefault 65))
+                (Query.string "planType" |> Query.map (Maybe.withDefault "G"))
+                (Query.string "currentCarrier")
+
+        combineParams p1 p2 dateOfBirth quoteId trackingId =
+            { state = p1.state
+            , zip = p1.zip
+            , county = p1.county
+            , gender = p1.gender
+            , tobacco = p2.tobacco
+            , age = p2.age
+            , planType = p2.planType
+            , currentCarrier = p2.currentCarrier
+            , dateOfBirth = dateOfBirth
+            , quoteId = quoteId
+            , trackingId = trackingId
+            }
+    in
+    Query.map5 combineParams
+        part1
+        part2
+        (Query.string "dateOfBirth" |> Query.map (Maybe.withDefault ""))
+        (Query.string "id")
+        (Query.string "tid")
+
+
 routeParser : Parser (Route -> a) a
 routeParser =
     oneOf
@@ -7919,6 +10485,26 @@ routeParser =
         , map (PublicRoute SignupRoute) (s "signup")
         , map (\orgSlug -> \token -> PublicRoute (VerifyRoute (VerifyParams orgSlug token)))
             (s "auth" </> s "verify" </> string </> string)
+        , map (PublicRoute << CompareRoute) (s "compare" <?> compareParamsParser)
+        , map (PublicRoute << QuoteRoute)
+            (s "quote"
+                <?> Query.map2 Tuple.pair
+                        (Query.string "id")
+                        (Query.string "tid")
+            )
+        , map (PublicRoute << EligibilityRoute)
+            (s "eligibility"
+                <?> Query.map2 Tuple.pair
+                        (Query.string "id")
+                        (Query.string "tid")
+            )
+        , map (PublicRoute << ScheduleRoute)
+            (s "schedule"
+                <?> Query.map3 (\id status tid -> ( id, status, tid ))
+                        (Query.string "id")
+                        (Query.string "status")
+                        (Query.string "tid")
+            )
         , map (ProtectedRoute ContactsRoute) (s "contacts")
         , map (ProtectedRoute SettingsRoute) (s "settings")
         , map (ProtectedRoute ProfileRoute) (s "profile")
@@ -8234,6 +10820,65 @@ update msg model =
                 _ ->
                     ( model, Cmd.none )
 
+        CompareMsg subMsg ->
+            case model.page of
+                ComparePage pageModel ->
+                    let
+                        ( newPageModel, newCmd ) =
+                            Compare.update subMsg pageModel
+                    in
+                    ( { model | page = ComparePage newPageModel }
+                    , Cmd.map CompareMsg newCmd
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        QuoteMsg subMsg ->
+            case model.page of
+                QuotePage pageModel ->
+                    let
+                        ( newPageModel, newCmd ) =
+                            Quote.update subMsg pageModel
+                    in
+                    ( { model | page = QuotePage newPageModel }
+                    , Cmd.map QuoteMsg newCmd
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        EligibilityMsg subMsg ->
+            case model.page of
+                EligibilityPage pageModel ->
+                    let
+                        ( newPageModel, newCmd ) =
+                            Eligibility.update subMsg pageModel
+                    in
+                    ( { model | page = EligibilityPage newPageModel }
+                    , Cmd.map EligibilityMsg newCmd
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        ScheduleMsg subMsg ->
+            case model.page of
+                SchedulePage pageModel ->
+                    let
+                        ( newPageModel, newCmd ) =
+                            Schedule.update subMsg pageModel
+                    in
+                    ( { model | page = SchedulePage newPageModel }
+                    , Cmd.map ScheduleMsg newCmd
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        NoOp ->
+            ( model, Cmd.none )
+
 
 view : Model -> Browser.Document Msg
 view model =
@@ -8341,6 +10986,42 @@ view model =
                     in
                     { title = contactView.title
                     , body = [ viewWithNav model (Html.map ContactMsg (div [] contactView.body)) ]
+                    }
+
+                ComparePage compareModel ->
+                    let
+                        compareView =
+                            Compare.view compareModel
+                    in
+                    { title = compareView.title
+                    , body = [ viewWithNav model (Html.map CompareMsg (div [] compareView.body)) ]
+                    }
+
+                QuotePage quoteModel ->
+                    let
+                        quoteView =
+                            Quote.view quoteModel
+                    in
+                    { title = quoteView.title
+                    , body = [ viewWithNav model (Html.map QuoteMsg (div [] quoteView.body)) ]
+                    }
+
+                EligibilityPage eligibilityModel ->
+                    let
+                        eligibilityView =
+                            Eligibility.view eligibilityModel
+                    in
+                    { title = eligibilityView.title
+                    , body = List.map (Html.map EligibilityMsg) eligibilityView.body
+                    }
+
+                SchedulePage scheduleModel ->
+                    let
+                        scheduleView =
+                            Schedule.view scheduleModel
+                    in
+                    { title = scheduleView.title
+                    , body = List.map (Html.map ScheduleMsg) scheduleView.body
                     }
     in
     viewPage
@@ -8481,6 +11162,18 @@ subscriptions model =
 
         ContactPage pageModel ->
             Sub.map ContactMsg (Contact.subscriptions pageModel)
+
+        ComparePage pageModel ->
+            Sub.map CompareMsg (Compare.subscriptions pageModel)
+
+        QuotePage pageModel ->
+            Sub.map QuoteMsg (Quote.subscriptions pageModel)
+
+        EligibilityPage pageModel ->
+            Sub.map EligibilityMsg (Eligibility.subscriptions pageModel)
+
+        SchedulePage pageModel ->
+            Sub.map ScheduleMsg (Schedule.subscriptions pageModel)
 
         NotFoundPage ->
             Sub.none
@@ -8657,13 +11350,11 @@ updatePage : Url -> ( Model, Cmd Msg ) -> ( Model, Cmd Msg )
 updatePage url ( model, cmd ) =
     case model.session of
         Unknown ->
-            -- If we don't know session state yet, stay on loading page
             ( { model | page = LoadingPage }
             , cmd
             )
 
         _ ->
-            -- Only process route after we know session state
             case Parser.parse routeParser url of
                 Just route ->
                     if shouldRedirectToLogin route model then
@@ -8679,6 +11370,103 @@ updatePage url ( model, cmd ) =
 
                     else
                         case route of
+                            PublicRoute (EligibilityRoute ( maybeQuoteId, maybeTrackingId )) ->
+                                let
+                                    ( eligibilityModel, eligibilityCmd ) =
+                                        Eligibility.init model.key maybeQuoteId
+                                in
+                                ( { model | page = EligibilityPage eligibilityModel }
+                                , Cmd.batch
+                                    [ cmd
+                                    , Cmd.map EligibilityMsg eligibilityCmd
+                                    , case maybeTrackingId of
+                                        Just tid ->
+                                            Http.post
+                                                { url = "/api/contact-events"
+                                                , body =
+                                                    Http.jsonBody
+                                                        (E.object
+                                                            [ ( "tracking_id", E.string tid )
+                                                            , ( "event_type", E.string "eligibility_opened" )
+                                                            ]
+                                                        )
+                                                , expect = Http.expectWhatever (\_ -> NoOp)
+                                                }
+
+                                        Nothing ->
+                                            Cmd.none
+                                    ]
+                                )
+
+                            PublicRoute (QuoteRoute ( maybeQuoteId, maybeTrackingId )) ->
+                                let
+                                    initialValues =
+                                        { zipCode = Nothing
+                                        , dateOfBirth = Nothing
+                                        , tobacco = Nothing
+                                        , gender = Nothing
+                                        , quoteId = maybeQuoteId
+                                        }
+
+                                    ( quoteModel, quoteCmd ) =
+                                        Quote.init model.key initialValues
+                                in
+                                ( { model | page = QuotePage quoteModel }
+                                , Cmd.batch
+                                    [ cmd
+                                    , Cmd.map QuoteMsg quoteCmd
+                                    , case maybeTrackingId of
+                                        Just tid ->
+                                            Http.post
+                                                { url = "/api/contact-events"
+                                                , body =
+                                                    Http.jsonBody
+                                                        (E.object
+                                                            [ ( "tracking_id", E.string tid )
+                                                            , ( "event_type", E.string "quote_opened" )
+                                                            ]
+                                                        )
+                                                , expect = Http.expectWhatever (\_ -> NoOp)
+                                                }
+
+                                        Nothing ->
+                                            Cmd.none
+                                    ]
+                                )
+
+                            PublicRoute (ScheduleRoute ( quoteId, status, trackingId )) ->
+                                let
+                                    ( scheduleModel, scheduleCmd ) =
+                                        Schedule.init model.key quoteId status
+                                in
+                                ( { model | page = SchedulePage scheduleModel }
+                                , Cmd.batch
+                                    [ cmd
+                                    , Cmd.map ScheduleMsg scheduleCmd
+                                    , case trackingId of
+                                        Just tid ->
+                                            Http.post
+                                                { url = "/api/contact-events"
+                                                , body =
+                                                    Http.jsonBody
+                                                        (E.object
+                                                            [ ( "tracking_id", E.string tid )
+                                                            , ( "event_type", E.string "followup_requested" )
+                                                            , ( "metadata"
+                                                              , E.object
+                                                                    [ ( "status", E.string (Maybe.withDefault "generic" status) )
+                                                                    ]
+                                                              )
+                                                            ]
+                                                        )
+                                                , expect = Http.expectWhatever (\_ -> NoOp)
+                                                }
+
+                                        Nothing ->
+                                            Cmd.none
+                                    ]
+                                )
+
                             PublicRoute HomeRoute ->
                                 let
                                     ( homeModel, homeCmd ) =
@@ -8722,6 +11510,46 @@ updatePage url ( model, cmd ) =
                                 in
                                 ( { model | page = Signup signupModel }
                                 , Cmd.batch [ cmd, Cmd.map SignupMsg signupCmd ]
+                                )
+
+                            PublicRoute (CompareRoute params) ->
+                                let
+                                    flags =
+                                        { state = params.state
+                                        , zip = params.zip
+                                        , county = params.county
+                                        , gender = params.gender
+                                        , tobacco = params.tobacco
+                                        , age = params.age
+                                        , planType = params.planType
+                                        , currentCarrier = params.currentCarrier
+                                        , dateOfBirth = params.dateOfBirth
+                                        , quoteId = params.quoteId
+                                        }
+
+                                    ( compareModel, compareCmd ) =
+                                        Compare.init flags model.key
+
+                                    trackingCmd =
+                                        case params.trackingId of
+                                            Just tid ->
+                                                Http.post
+                                                    { url = "/api/contact-events"
+                                                    , body =
+                                                        Http.jsonBody
+                                                            (E.object
+                                                                [ ( "tracking_id", E.string tid )
+                                                                , ( "event_type", E.string "compare_opened" )
+                                                                ]
+                                                            )
+                                                    , expect = Http.expectWhatever (\_ -> NoOp)
+                                                    }
+
+                                            Nothing ->
+                                                Cmd.none
+                                in
+                                ( { model | page = ComparePage compareModel }
+                                , Cmd.batch [ cmd, Cmd.map CompareMsg compareCmd, trackingCmd ]
                                 )
 
                             ProtectedRoute ContactsRoute ->
@@ -9435,6 +12263,630 @@ hasChanges model =
 
 
 -- SUBSCRIPTIONS
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+================
+File: src/Quote.elm
+================
+module Quote exposing (Model, Msg(..), init, subscriptions, update, view)
+
+import AgeCalc exposing (getAgeNextMonth)
+import Browser
+import Browser.Navigation as Nav
+import Date exposing (Date)
+import Html exposing (..)
+import Html.Attributes exposing (..)
+import Html.Events exposing (onClick, onInput, onSubmit)
+import Http
+import Json.Decode as D
+import Task
+import Time
+import Url.Builder as Builder
+import Url.Parser as Parser exposing ((<?>), Parser)
+import Url.Parser.Query as Query
+
+
+type alias Model =
+    { zipCode : String
+    , dateOfBirth : String
+    , key : Nav.Key
+    , tobacco : Bool
+    , gender : String
+    , currentDate : Maybe Date
+    , quoteId : Maybe String
+    , error : Maybe String
+    }
+
+
+type Msg
+    = UpdateZipCode String
+    | UpdateDateOfBirth String
+    | UpdateTobacco String
+    | UpdateGender String
+    | SubmitForm
+    | GotCurrentDate Date
+    | GotQuoteInfo (Result Http.Error QuoteInfo)
+
+
+type alias InitialValues =
+    { zipCode : Maybe String
+    , dateOfBirth : Maybe String
+    , tobacco : Maybe Bool
+    , gender : Maybe String
+    , quoteId : Maybe String
+    }
+
+
+type alias QuoteInfo =
+    { zipCode : String
+    , dateOfBirth : String
+    , tobacco : Bool
+    , gender : String
+    }
+
+
+init : Nav.Key -> InitialValues -> ( Model, Cmd Msg )
+init key initialValues =
+    let
+        model =
+            { zipCode = Maybe.withDefault "" initialValues.zipCode
+            , dateOfBirth = Maybe.withDefault "" initialValues.dateOfBirth
+            , key = key
+            , tobacco = Maybe.withDefault False initialValues.tobacco
+            , gender = Maybe.withDefault "M" initialValues.gender
+            , currentDate = Nothing
+            , quoteId = initialValues.quoteId
+            , error = Nothing
+            }
+
+        commands =
+            [ Task.perform GotCurrentDate Date.today
+            , case initialValues.quoteId of
+                Just id ->
+                    fetchQuoteInfo id
+
+                Nothing ->
+                    Cmd.none
+            ]
+    in
+    ( model, Cmd.batch commands )
+
+
+fetchQuoteInfo : String -> Cmd Msg
+fetchQuoteInfo quoteId =
+    Http.get
+        { url = "/api/quotes/decode/" ++ quoteId
+        , expect = Http.expectJson GotQuoteInfo quoteInfoDecoder
+        }
+
+
+quoteInfoDecoder : D.Decoder QuoteInfo
+quoteInfoDecoder =
+    D.field "contact"
+        (D.map4 QuoteInfo
+            (D.field "zipCode" D.string)
+            (D.field "dateOfBirth" D.string)
+            (D.field "tobacco" D.bool)
+            (D.field "gender" D.string)
+        )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        UpdateZipCode zip ->
+            ( { model | zipCode = String.filter Char.isDigit zip |> String.left 5 }, Cmd.none )
+
+        UpdateDateOfBirth dob ->
+            ( { model | dateOfBirth = dob }, Cmd.none )
+
+        UpdateTobacco value ->
+            ( { model | tobacco = value == "true" }, Cmd.none )
+
+        UpdateGender value ->
+            ( { model | gender = value }, Cmd.none )
+
+        GotCurrentDate date ->
+            ( { model | currentDate = Just date }, Cmd.none )
+
+        GotQuoteInfo result ->
+            case result of
+                Ok quoteInfo ->
+                    ( { model
+                        | zipCode = quoteInfo.zipCode
+                        , dateOfBirth = quoteInfo.dateOfBirth
+                        , tobacco = quoteInfo.tobacco
+                        , gender = quoteInfo.gender
+                      }
+                    , Cmd.none
+                    )
+
+                Err _ ->
+                    ( { model | error = Just "Failed to load quote information" }, Cmd.none )
+
+        SubmitForm ->
+            let
+                age =
+                    case model.currentDate of
+                        Just currentDate ->
+                            getAgeNextMonth model.dateOfBirth currentDate
+                                |> String.fromInt
+
+                        Nothing ->
+                            "65"
+
+                -- Fallback if we somehow don't have current date
+                compareUrl =
+                    Builder.absolute [ "compare" ]
+                        ([ Builder.string "state" "TX"
+                         , Builder.string "zip" model.zipCode
+                         , Builder.string "county" "Dallas" -- We'll need to look this up based on zip
+                         , Builder.string "gender" model.gender
+                         , Builder.string "tobacco"
+                            (if model.tobacco then
+                                "true"
+
+                             else
+                                "false"
+                            )
+                         , Builder.string "age" age
+                         , Builder.string "planType" "G"
+                         , Builder.string "dateOfBirth" model.dateOfBirth
+                         ]
+                            ++ (case model.quoteId of
+                                    Just id ->
+                                        [ Builder.string "id" id ]
+
+                                    Nothing ->
+                                        []
+                               )
+                        )
+            in
+            ( model
+            , Nav.pushUrl model.key compareUrl
+            )
+
+
+view : Model -> Browser.Document Msg
+view model =
+    { title = "Get Your Quote - Medicare Max"
+    , body =
+        [ div [ class "container mx-auto px-4 py-8 max-w-xl" ]
+            [ h1 [ class "text-3xl font-bold text-center mb-6" ]
+                [ text "Get Your Quote" ]
+            , div [ class "flex justify-center mb-8" ]
+                [ button
+                    [ class "flex items-center gap-2 px-4 py-2 rounded-full border border-blue-500 text-blue-500 hover:bg-blue-50 transition-colors"
+                    ]
+                    [ span [ class "text-sm" ] [ text "▶ Video" ]
+                    , text "Rates and Plan Options"
+                    ]
+                ]
+            , case model.error of
+                Just error ->
+                    div [ class "bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4" ]
+                        [ text error ]
+
+                Nothing ->
+                    text ""
+            , Html.form [ onSubmit SubmitForm, class "space-y-6" ]
+                [ viewFormInput "Zip Code" "text" model.zipCode UpdateZipCode True
+                , viewFormInput "Date of Birth" "date" model.dateOfBirth UpdateDateOfBirth True
+                , viewFormRadioGroup "Tobacco User"
+                    (if model.tobacco then
+                        "true"
+
+                     else
+                        "false"
+                    )
+                    UpdateTobacco
+                    [ ( "true", "Yes" ), ( "false", "No" ) ]
+                , viewFormRadioGroup "Gender"
+                    model.gender
+                    UpdateGender
+                    [ ( "M", "Male" ), ( "F", "Female" ) ]
+                , button
+                    [ class "w-full bg-purple-600 text-white py-4 rounded-lg hover:bg-purple-700 transition-colors mt-8"
+                    , type_ "submit"
+                    ]
+                    [ text "Next" ]
+                ]
+            ]
+        ]
+    }
+
+
+viewFormInput : String -> String -> String -> (String -> Msg) -> Bool -> Html Msg
+viewFormInput labelText inputType inputValue msg isRequired =
+    div [ class "form-group" ]
+        [ Html.label [ class "block text-sm font-medium text-gray-700 mb-2" ]
+            [ text labelText ]
+        , if inputType == "date" then
+            input
+                [ type_ inputType
+                , class "w-full px-4 py-3 bg-white border-[2.5px] border-purple-300 rounded-lg text-gray-700 placeholder-gray-400 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 focus:bg-white transition-all duration-200"
+                , Html.Attributes.value inputValue
+                , onInput msg
+                , required isRequired
+                ]
+                []
+
+          else if labelText == "Zip Code" then
+            input
+                [ type_ inputType
+                , class "w-full px-4 py-3 bg-white border-[2.5px] border-purple-300 rounded-lg text-gray-700 placeholder-gray-400 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 focus:bg-white transition-all duration-200"
+                , Html.Attributes.value (formatZipCode inputValue)
+                , onInput msg
+                , required isRequired
+                , Html.Attributes.maxlength 5
+                , Html.Attributes.pattern "[0-9]*"
+                ]
+                []
+
+          else
+            input
+                [ type_ inputType
+                , class "w-full px-4 py-3 bg-white border-[2.5px] border-purple-300 rounded-lg text-gray-700 placeholder-gray-400 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 focus:bg-white transition-all duration-200"
+                , Html.Attributes.value inputValue
+                , onInput msg
+                , required isRequired
+                ]
+                []
+        ]
+
+
+viewFormRadioGroup : String -> String -> (String -> Msg) -> List ( String, String ) -> Html Msg
+viewFormRadioGroup labelText selectedValue msg options =
+    div [ class "form-group" ]
+        [ Html.label [ class "block text-sm font-medium text-gray-700 mb-2" ]
+            [ text labelText ]
+        , div [ class "flex gap-4" ]
+            (List.map
+                (\( val, txt ) ->
+                    label
+                        [ class
+                            ("flex items-center px-4 py-2 rounded-lg border-2 cursor-pointer transition-all duration-200 "
+                                ++ (if selectedValue == val then
+                                        "border-purple-500 bg-purple-50 text-purple-700"
+
+                                    else
+                                        "border-gray-200 hover:border-purple-200"
+                                   )
+                            )
+                        ]
+                        [ input
+                            [ type_ "radio"
+                            , value val
+                            , checked (selectedValue == val)
+                            , onInput msg
+                            , class "sr-only"
+                            ]
+                            []
+                        , text txt
+                        ]
+                )
+                options
+            )
+        ]
+
+
+formatZipCode : String -> String
+formatZipCode zip =
+    String.filter Char.isDigit zip |> String.left 5
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+================
+File: src/Schedule.elm
+================
+module Schedule exposing (Model, Msg(..), init, subscriptions, update, view)
+
+import Browser
+import Browser.Navigation as Nav
+import Html exposing (..)
+import Html.Attributes exposing (..)
+import Html.Events exposing (onInput, onSubmit)
+import Http
+import Json.Decode as D
+import Json.Encode as E
+
+
+type EligibilityStatus
+    = Accept
+    | Decline
+    | Generic
+
+
+type alias OrgInfo =
+    { redirectUrl : Maybe String
+    , agentName : String
+    }
+
+
+type alias Model =
+    { name : String
+    , email : String
+    , isSubmitting : Bool
+    , error : Maybe String
+    , success : Bool
+    , quoteId : Maybe String
+    , key : Nav.Key
+    , status : EligibilityStatus
+    }
+
+
+type Msg
+    = UpdateName String
+    | UpdateEmail String
+    | SubmitForm
+    | GotSubmitResponse (Result Http.Error SubmitResponse)
+    | GotContactInfo (Result Http.Error ContactInfo)
+
+
+type alias ContactInfo =
+    { email : String
+    , firstName : String
+    , lastName : String
+    }
+
+
+type alias SubmitResponse =
+    { success : Bool
+    , message : String
+    }
+
+
+init : Nav.Key -> Maybe String -> Maybe String -> ( Model, Cmd Msg )
+init key maybeQuoteId maybeStatus =
+    let
+        status =
+            case maybeStatus of
+                Just "accept" ->
+                    Accept
+
+                Just "decline" ->
+                    Decline
+
+                _ ->
+                    Generic
+
+        commands =
+            case maybeQuoteId of
+                Just quoteId ->
+                    [ Http.get
+                        { url = "/api/quotes/decode/" ++ quoteId
+                        , expect = Http.expectJson GotContactInfo contactInfoDecoder
+                        }
+                    ]
+
+                Nothing ->
+                    []
+    in
+    ( { name = ""
+      , email = ""
+      , isSubmitting = False
+      , error = Nothing
+      , success = False
+      , quoteId = maybeQuoteId
+      , key = key
+      , status = status
+      }
+    , Cmd.batch commands
+    )
+
+
+contactInfoDecoder : D.Decoder ContactInfo
+contactInfoDecoder =
+    D.field "contact"
+        (D.map3 ContactInfo
+            (D.field "email" D.string)
+            (D.field "firstName" D.string)
+            (D.field "lastName" D.string)
+        )
+
+
+submitResponseDecoder : D.Decoder SubmitResponse
+submitResponseDecoder =
+    D.map2 SubmitResponse
+        (D.field "success" D.bool)
+        (D.field "message" D.string)
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        UpdateName name ->
+            ( { model | name = name }, Cmd.none )
+
+        UpdateEmail email ->
+            ( { model | email = email }, Cmd.none )
+
+        SubmitForm ->
+            ( { model | isSubmitting = True }
+            , Http.post
+                { url = "/api/contact-request"
+                , body = Http.jsonBody (encodeForm model)
+                , expect = Http.expectJson GotSubmitResponse submitResponseDecoder
+                }
+            )
+
+        GotSubmitResponse result ->
+            case result of
+                Ok response ->
+                    if response.success then
+                        ( { model | isSubmitting = False, success = True }
+                        , Cmd.none
+                        )
+
+                    else
+                        ( { model | isSubmitting = False, error = Just response.message }
+                        , Cmd.none
+                        )
+
+                Err _ ->
+                    ( { model | isSubmitting = False, error = Just "Failed to submit form. Please try again." }
+                    , Cmd.none
+                    )
+
+        GotContactInfo result ->
+            case result of
+                Ok info ->
+                    ( { model
+                        | email = info.email
+                        , name = info.firstName ++ " " ++ info.lastName
+                      }
+                    , Cmd.none
+                    )
+
+                Err _ ->
+                    ( model, Cmd.none )
+
+
+encodeForm : Model -> E.Value
+encodeForm model =
+    E.object
+        [ ( "name", E.string model.name )
+        , ( "email", E.string model.email )
+        , ( "type"
+          , E.string
+                (case model.status of
+                    Accept ->
+                        "accept"
+
+                    Decline ->
+                        "decline"
+
+                    Generic ->
+                        "generic"
+                )
+          )
+        , ( "quoteId", Maybe.map E.string model.quoteId |> Maybe.withDefault E.null )
+        ]
+
+
+view : Model -> Browser.Document Msg
+view model =
+    { title = getTitle model.status
+    , body =
+        [ div [ class "min-h-screen bg-white" ]
+            [ nav [ class "bg-white border-b border-gray-200" ]
+                [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8" ]
+                    [ div [ class "flex justify-between h-16 items-center" ]
+                        [ div [ class "flex-shrink-0" ]
+                            [ img [ src "/images/medicare-max-logo.png", class "h-8 w-auto", alt "Medicare Max" ] [] ]
+                        ]
+                    ]
+                ]
+            , div [ class "max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-12" ]
+                [ if model.success then
+                    div [ class "text-center" ]
+                        [ h1 [ class "text-3xl font-bold text-gray-900 mb-4" ]
+                            [ text "Thank You" ]
+                        , p [ class "text-gray-600" ]
+                            [ text "We'll be in touch soon to discuss your options." ]
+                        ]
+
+                  else
+                    div []
+                        [ h1 [ class "text-3xl font-bold text-center text-gray-900 mb-4" ]
+                            [ text (getHeading model.status) ]
+                        , p [ class "text-gray-600 text-center mb-8" ]
+                            [ text (getMessage model.status) ]
+                        , case model.error of
+                            Just error ->
+                                div [ class "bg-red-50 border border-red-400 text-red-700 px-4 py-3 rounded mb-4" ]
+                                    [ text error ]
+
+                            Nothing ->
+                                text ""
+                        , Html.form [ onSubmit SubmitForm, class "space-y-6 max-w-lg mx-auto" ]
+                            [ div []
+                                [ label [ class "block text-sm font-medium text-gray-700 mb-1" ]
+                                    [ text "Name" ]
+                                , input
+                                    [ type_ "text"
+                                    , class "w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-purple-500 focus:border-purple-500"
+                                    , value model.name
+                                    , onInput UpdateName
+                                    , required True
+                                    ]
+                                    []
+                                ]
+                            , div []
+                                [ label [ class "block text-sm font-medium text-gray-700 mb-1" ]
+                                    [ text "Email" ]
+                                , input
+                                    [ type_ "email"
+                                    , class "w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-purple-500 focus:border-purple-500"
+                                    , value model.email
+                                    , onInput UpdateEmail
+                                    , required True
+                                    ]
+                                    []
+                                ]
+                            , button
+                                [ class "w-full bg-purple-600 text-white py-3 px-4 rounded-lg hover:bg-purple-700 transition-colors duration-200 disabled:opacity-50"
+                                , type_ "submit"
+                                , disabled model.isSubmitting
+                                ]
+                                [ if model.isSubmitting then
+                                    text "Submitting..."
+
+                                  else
+                                    text "Schedule Follow-up"
+                                ]
+                            ]
+                        ]
+                ]
+            ]
+        ]
+    }
+
+
+getTitle : EligibilityStatus -> String
+getTitle status =
+    case status of
+        Accept ->
+            "Good News! - Medicare Max"
+
+        Decline ->
+            "Not Eligible - Medicare Max"
+
+        Generic ->
+            "Schedule Follow-up - Medicare Max"
+
+
+getHeading : EligibilityStatus -> String
+getHeading status =
+    case status of
+        Accept ->
+            "Great News!"
+
+        Decline ->
+            "We Need to Talk"
+
+        Generic ->
+            "Let's Connect"
+
+
+getMessage : EligibilityStatus -> String
+getMessage status =
+    case status of
+        Accept ->
+            "Based on your answers, you look like a good candidate to switch plans. Let's schedule a follow-up to discuss your options."
+
+        Decline ->
+            "Based on your answers, you may not qualify for this plan. However, we'd love to help you find a different plan that's a perfect fit for your needs."
+
+        Generic ->
+            "Let's schedule a follow-up call to discuss your Medicare options and find the best plan for your needs."
 
 
 subscriptions : Model -> Sub Msg
