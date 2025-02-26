@@ -187,6 +187,9 @@ const startServer = async () => {
     logger.info(`Current working directory: ${process.cwd()}`)
     logger.info(`Is production mode: ${process.env.NODE_ENV === 'production'}`)
     
+    // Log available environment variables (without values for security)
+    logger.info(`Available environment variables: ${Object.keys(process.env).join(', ')}`)
+    
     const db = new Database()
     logger.info('Database initialized successfully')
 

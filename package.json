@@ -7,7 +7,7 @@
     "dev:frontend": "cd frontend && bun run dev",
     "dev:backend": "cd backend && bun run dev",
     "build": "cd frontend && bun run build",
-    "start": "NODE_ENV=production cd backend && bun run start"
+    "start": "NODE_ENV=production cd backend && bun run --no-env-file start"
   },
   "devDependencies": {
     "concurrently": "^8.2.2",

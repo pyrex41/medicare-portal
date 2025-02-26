@@ -7,7 +7,7 @@
     "add-agent": "bun run scripts/add-agent.ts",
     "manage-recommendations": "bun run scripts/manage-recommendations.ts",
     "manage-turso": "bun run scripts/manage-turso.ts",
-    "start": "NODE_ENV=production bun run src/index.ts"
+    "start": "NODE_ENV=production bun run --no-env-file src/index.ts"
   },
   "dependencies": {
     "@clack/prompts": "^0.7.0",
