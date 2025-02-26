@@ -19,6 +19,7 @@ const sessionCookie = getCookie('session')
 console.log('Found session cookie:', sessionCookie)
 
 try {
+  // @ts-ignore - Will be used for ports in the future
   const app = Elm.Main.init({
     node: root,
     flags: {
