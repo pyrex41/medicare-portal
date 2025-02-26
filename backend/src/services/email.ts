@@ -1,13 +1,6 @@
 import sgMail from '@sendgrid/mail';
 import { logger } from '../logger';
 
-// Helper function to get the base email address by taking everything after the first +
-function getBaseEmail(email: string): string {
-  const firstPlusIndex = email.indexOf('+');
-  if (firstPlusIndex === -1) return email;
-  
-  return email.substring(firstPlusIndex + 1);
-}
 
 interface MagicLinkEmailParams {
   email: string;
@@ -26,11 +19,8 @@ export class EmailService {
 
   async sendMagicLink(email: string, magicLink: string, organizationSlug: string) {
     try {
-      const baseEmail = getBaseEmail(email);
-      logger.info(`Sending magic link email to ${baseEmail} (original: ${email}) for org ${organizationSlug}`);
-
       const msg = {
-        to: baseEmail,
+        to: email,
         from: process.env.SENDGRID_FROM_EMAIL || 'information@medicaremax.ai',
         subject: 'Your Login Link',
         text: `Click this link to log in: ${magicLink}\n\nThis link will expire in 30 minutes.`,
@@ -55,7 +45,7 @@ export class EmailService {
       };
 
       await sgMail.send(msg);
-      logger.info(`Magic link email sent successfully to ${baseEmail}`);
+      logger.info(`Magic link email sent successfully to ${email}`);
     } catch (error) {
       logger.error(`Error sending magic link email: ${error}`);
       throw new Error('Failed to send magic link email');
@@ -70,11 +60,8 @@ export async function sendMagicLink({ email, magicLink, name }: {
   name: string;
 }) {
   try {
-    const baseEmail = getBaseEmail(email);
-    logger.info(`Sending magic link email to ${baseEmail} (original: ${email}) for ${name}`);
-
     const msg = {
-      to: baseEmail,
+      to: email,
       from: process.env.SENDGRID_FROM_EMAIL || 'information@medicaremax.ai',
       subject: 'Verify Your MedicareMax Account',
       text: `Hi ${name},\n\nClick this link to verify your account: ${magicLink}\n\nThis link will expire in 30 minutes.`,
