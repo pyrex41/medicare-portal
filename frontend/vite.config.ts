@@ -1,6 +1,6 @@
 import { defineConfig } from 'vite'
 import elmPlugin from 'vite-plugin-elm'
-import path from 'path'
+import { resolve } from 'path'
 import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
@@ -37,7 +37,7 @@ export default defineConfig({
     assetsDir: 'assets',
     rollupOptions: {
       input: {
-        main: path.resolve(__dirname, 'index.html')
+        main: resolve(__dirname, 'index.html')
       }
     }
   }
