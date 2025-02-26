@@ -15,6 +15,8 @@ import { createBrandRoutes } from './routes/brand'
 import { quotesRoutes } from './routes/quotes'
 import { errorHandler } from './middleware/error'
 import { getUserFromSession } from './services/auth'
+import { join } from 'path'
+import { existsSync } from 'fs'
 
 // At the top of the file, add interface for ZIP data
 interface ZipInfo {
@@ -180,6 +182,11 @@ async function validateCarrier(carrier: string, db: Database): Promise<{ isValid
 
 const startServer = async () => {
   try {
+    // Log environment information at startup
+    logger.info(`Environment: NODE_ENV = "${process.env.NODE_ENV}"`)
+    logger.info(`Current working directory: ${process.cwd()}`)
+    logger.info(`Is production mode: ${process.env.NODE_ENV === 'production'}`)
+    
     const db = new Database()
     logger.info('Database initialized successfully')
 
@@ -1053,11 +1060,97 @@ const startServer = async () => {
       // In production, serve the frontend static files
       .use(process.env.NODE_ENV === 'production' 
         ? async (app) => {
-            const plugin = staticPlugin({
-              assets: '../dist',
-              prefix: '/'
-            })
-            return app.use(plugin)
+            logger.info(`[Static Files] Running in production mode: NODE_ENV = "${process.env.NODE_ENV}"`)
+            const distPath = join(process.cwd(), '../dist');
+            logger.info(`[Static Files] Serving from: ${distPath} (exists: ${existsSync(distPath)})`);
+            
+            // List directory contents for debugging
+            try {
+              const fs = require('fs');
+              const distContents = fs.readdirSync(distPath);
+              logger.info(`[Static Files] dist directory contents: ${JSON.stringify(distContents)}`);
+              
+              // Check if index.html exists
+              const indexPath = join(distPath, 'index.html');
+              logger.info(`[Static Files] index.html path: ${indexPath} (exists: ${existsSync(indexPath)})`);
+              
+              // If it exists, log its contents for debugging
+              if (existsSync(indexPath)) {
+                const indexContent = fs.readFileSync(indexPath, 'utf-8');
+                logger.info(`[Static Files] index.html first 100 chars: ${indexContent.substring(0, 100)}...`);
+              }
+            } catch (error) {
+              logger.error(`[Static Files] Error inspecting dist directory: ${error}`);
+            }
+            
+            // Try different approach for static files
+            app.get('/*', async ({ request }) => {
+              const url = new URL(request.url);
+              const path = url.pathname;
+              
+              logger.info(`[Static Route Handler] Handling request for: ${path}`);
+              
+              // Skip API routes
+              if (path.startsWith('/api/')) {
+                logger.info(`[Static Route Handler] Skipping API route: ${path}`);
+                return;
+              }
+              
+              // Try to serve the file directly from dist directory
+              try {
+                const filePath = join(distPath, path === '/' ? 'index.html' : path.slice(1));
+                logger.info(`[Static Route Handler] Trying file path: ${filePath} (exists: ${existsSync(filePath)})`);
+                
+                if (existsSync(filePath)) {
+                  logger.info(`[Static Route Handler] File exists, serving: ${filePath}`);
+                  const ext = filePath.substring(filePath.lastIndexOf('.') + 1);
+                  const mimeTypes: Record<string, string> = {
+                    'html': 'text/html',
+                    'js': 'application/javascript',
+                    'css': 'text/css',
+                    'json': 'application/json',
+                    'png': 'image/png',
+                    'jpg': 'image/jpeg',
+                    'svg': 'image/svg+xml',
+                    'ico': 'image/x-icon',
+                    'csv': 'text/csv',
+                  };
+                  
+                  return new Response(Bun.file(filePath), {
+                    headers: { 'Content-Type': mimeTypes[ext] || 'application/octet-stream' }
+                  });
+                } else if (path !== '/' && !path.includes('.')) {
+                  // This is likely a SPA route, serve index.html
+                  logger.info(`[Static Route Handler] Likely SPA route, serving index.html for: ${path}`);
+                  return new Response(Bun.file(join(distPath, 'index.html')), {
+                    headers: { 'Content-Type': 'text/html' }
+                  });
+                } else if (path === '/') {
+                  // Explicitly handle root path
+                  logger.info(`[Static Route Handler] Handling root path, serving index.html`);
+                  const indexPath = join(distPath, 'index.html');
+                  
+                  if (existsSync(indexPath)) {
+                    logger.info(`[Static Route Handler] Root: index.html exists, serving it`);
+                    return new Response(Bun.file(indexPath), {
+                      headers: { 'Content-Type': 'text/html' }
+                    });
+                  } else {
+                    logger.error(`[Static Route Handler] Root: index.html doesn't exist at ${indexPath}`);
+                    return new Response('index.html not found', { status: 404 });
+                  }
+                }
+                
+                // If we get here, the file doesn't exist
+                logger.warn(`[Static Route Handler] No matching file found for: ${path}`);
+                return new Response('Not found', { status: 404 });
+              } catch (error) {
+                logger.error(`[Static Route Handler] Error serving file for ${path}: ${error}`);
+                return new Response(`Server error: ${error}`, { status: 500 });
+              }
+            });
+
+            return app;
           }
         : (app) => app
       )

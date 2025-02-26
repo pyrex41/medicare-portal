@@ -52,7 +52,7 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
   .post('/organizations/signup', async ({ body, set }) => {
     const db = new Database();
     const turso = new TursoService();
-    const auth = new AuthService(process.env.PUBLIC_URL || 'http://localhost:5173');
+    const auth = new AuthService();
 
     try {
       logger.info(`Attempting to create organization with data: ${JSON.stringify(body)}`);

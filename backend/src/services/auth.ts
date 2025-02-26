@@ -3,6 +3,7 @@ import { logger } from '../logger';
 import { db } from '../database';
 import { Database } from '../database';
 import type { User } from '../types';
+import { config } from '../config';
 
 const algorithm = "aes-256-gcm";
 const IV_LENGTH = 12;
@@ -30,9 +31,16 @@ interface MagicLinkPayload {
 }
 
 export class AuthService {
-  constructor(private baseUrl: string) {
-    // Ensure baseUrl doesn't end with a slash
-    this.baseUrl = baseUrl.replace(/\/$/, '');
+  constructor(private baseUrl?: string) {
+    // If no baseUrl is provided, get it from config
+    if (!baseUrl) {
+      this.baseUrl = config.PUBLIC_URL;
+    } else {
+      // Ensure baseUrl doesn't end with a slash
+      this.baseUrl = baseUrl.replace(/\/$/, '');
+    }
+    
+    logger.info(`AuthService initialized with baseUrl: ${this.baseUrl}`);
   }
 
   async createMagicLink(

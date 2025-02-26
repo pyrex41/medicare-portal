@@ -93,7 +93,7 @@ export const quotesRoutes = (app: Elysia) => {
             return {
                 success: true,
                 quoteId,
-                redirectUrl: `http://localhost:5173/quote?id=${quoteId}`
+                redirectUrl: `${process.env.PUBLIC_URL || 'http://localhost:5173'}/quote?id=${quoteId}`
             };
         } catch (e) {
             logger.error(`Error generating quote ID: ${e}`);

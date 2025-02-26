@@ -36,6 +36,9 @@ export const config = {
   TURSO_AUTH_TOKEN: process.env.TURSO_AUTH_TOKEN,
   TURSO_DATABASE_PATH: process.env.TURSO_DATABASE_PATH,
   quoteApiKey: process.env.QUOTE_API_KEY,
+  PUBLIC_URL: process.env.PUBLIC_URL || (process.env.NODE_ENV === 'development' 
+    ? 'http://localhost:5173'
+    : 'http://localhost:3000'),
   // Add other config values here
 }
 

@@ -1,6 +1,14 @@
 import sgMail from '@sendgrid/mail';
 import { logger } from '../logger';
 
+// Helper function to get the base email address by taking everything after the first +
+function getBaseEmail(email: string): string {
+  const firstPlusIndex = email.indexOf('+');
+  if (firstPlusIndex === -1) return email;
+  
+  return email.substring(firstPlusIndex + 1);
+}
+
 interface MagicLinkEmailParams {
   email: string;
   token: string;
@@ -17,19 +25,41 @@ export class EmailService {
   }
 
   async sendMagicLink(email: string, magicLink: string, organizationSlug: string) {
-    // In development, just log the magic link
-    if (process.env.NODE_ENV === 'development') {
-      logger.info('=======================================');
-      logger.info('Magic Link Email would be sent to:', email);
-      logger.info('Organization:', organizationSlug);
-      logger.info('Link:', magicLink);
-      logger.info('=======================================');
-      return;
-    }
+    try {
+      const baseEmail = getBaseEmail(email);
+      logger.info(`Sending magic link email to ${baseEmail} (original: ${email}) for org ${organizationSlug}`);
 
-    // TODO: Implement actual email sending in production
-    // You would integrate with your email service here (SendGrid, AWS SES, etc.)
-    throw new Error('Email sending not implemented in production');
+      const msg = {
+        to: baseEmail,
+        from: process.env.SENDGRID_FROM_EMAIL || 'information@medicaremax.ai',
+        subject: 'Your Login Link',
+        text: `Click this link to log in: ${magicLink}\n\nThis link will expire in 30 minutes.`,
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h2 style="color: #333;">Welcome to MedicareMax</h2>
+            <p>Click the button below to log in to your account. This link will expire in 30 minutes.</p>
+            <div style="margin: 30px 0;">
+              <a href="${magicLink}" 
+                 style="background-color: #4F46E5; color: white; padding: 12px 24px; 
+                        text-decoration: none; border-radius: 4px; display: inline-block;">
+                Log In
+              </a>
+            </div>
+            <p style="color: #666; font-size: 14px;">
+              If the button doesn't work, copy and paste this link into your browser:
+              <br>
+              <a href="${magicLink}" style="color: #4F46E5;">${magicLink}</a>
+            </p>
+          </div>
+        `
+      };
+
+      await sgMail.send(msg);
+      logger.info(`Magic link email sent successfully to ${baseEmail}`);
+    } catch (error) {
+      logger.error(`Error sending magic link email: ${error}`);
+      throw new Error('Failed to send magic link email');
+    }
   }
 }
 
@@ -40,26 +70,39 @@ export async function sendMagicLink({ email, magicLink, name }: {
   name: string;
 }) {
   try {
-    logger.info('Attempting to send magic link email', { email, name });
-    
-    if (process.env.NODE_ENV === 'development') {
-      logger.info('=======================================');
-      logger.info('Organization Verification Email');
-      logger.info('To:', email);
-      logger.info('Name:', name);
-      logger.info('Magic Link:', magicLink);
-      logger.info('=======================================');
-      return;
-    }
+    const baseEmail = getBaseEmail(email);
+    logger.info(`Sending magic link email to ${baseEmail} (original: ${email}) for ${name}`);
 
-    // TODO: Add production email sending
-    logger.info('Email sending would happen here in production');
-    return;
+    const msg = {
+      to: baseEmail,
+      from: process.env.SENDGRID_FROM_EMAIL || 'information@medicaremax.ai',
+      subject: 'Verify Your MedicareMax Account',
+      text: `Hi ${name},\n\nClick this link to verify your account: ${magicLink}\n\nThis link will expire in 30 minutes.`,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #333;">Welcome to MedicareMax</h2>
+          <p>Hi ${name},</p>
+          <p>Click the button below to verify your account and complete your organization setup. This link will expire in 30 minutes.</p>
+          <div style="margin: 30px 0;">
+            <a href="${magicLink}" 
+               style="background-color: #4F46E5; color: white; padding: 12px 24px; 
+                      text-decoration: none; border-radius: 4px; display: inline-block;">
+              Verify Account
+            </a>
+          </div>
+          <p style="color: #666; font-size: 14px;">
+            If the button doesn't work, copy and paste this link into your browser:
+            <br>
+            <a href="${magicLink}" style="color: #4F46E5;">${magicLink}</a>
+          </p>
+        </div>
+      `
+    };
+
+    await sgMail.send(msg);
+    logger.info('Magic link email sent successfully');
   } catch (error) {
-    logger.error('Failed to send magic link email:', error);
-    if (error instanceof Error) {
-      logger.error('Error details:', error.message);
-    }
+    logger.error(`Failed to send magic link email: ${error}`);
     throw error;
   }
 } 

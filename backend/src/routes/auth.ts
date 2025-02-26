@@ -14,11 +14,7 @@ import type { User } from '../types';
 const dbInstance = new Database();
 
 export function createAuthRoutes() {
-  const auth = new AuthService(
-    process.env.NODE_ENV === 'development' 
-      ? 'http://localhost:5173'  // Frontend URL in development
-      : (process.env.BASE_URL || 'http://localhost:3000')
-  );
+  const auth = new AuthService();
   const emailService = new EmailService();
 
   return new Elysia()
@@ -48,12 +44,13 @@ export function createAuthRoutes() {
           { redirectUrl: '/dashboard' }
         );
 
+        // Always send the email, but also log in development
         if (process.env.NODE_ENV === 'development') {
           logger.info(`Development mode - Magic link: ${magicLink}`);
-        } else {
-          // In production, send email with magic link
-          await emailService.sendLoginLink(email, magicLink);
         }
+        
+        // Send the email
+        await emailService.sendMagicLink(email, magicLink, 'default');
 
         return { success: true };
 
