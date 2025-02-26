@@ -6,3 +6,7 @@ channel = "stable-24_05"
 
 [deployment]
 run = ["sh", "-c", "bun run start"]
+
+[[ports]]
+localPort = 8000
+externalPort = 80
