@@ -3,7 +3,6 @@ module Compare exposing (Model, Msg(..), init, subscriptions, update, view)
 import Browser
 import Browser.Navigation as Nav
 import CarrierNaic exposing (carrierToNaics, carrierToString, naicToCarrier, stringToCarrier)
-import Debug
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (onClick)
@@ -216,13 +215,6 @@ defaultPlanType flags =
 
 fetchPlans : Flags -> Model -> Cmd Msg
 fetchPlans flags model =
-    let
-        _ =
-            Debug.log "Attempting to fetch plans"
-                { hasSettings = model.orgSettings /= Nothing
-                , settingsLoaded = model.settingsLoaded
-                }
-    in
     if model.settingsLoaded then
         Http.request
             { method = "POST"
@@ -235,10 +227,6 @@ fetchPlans flags model =
             }
 
     else
-        let
-            _ =
-                Debug.log "Skipping plans fetch - settings not loaded" ()
-        in
         Cmd.none
 
 
@@ -317,54 +305,17 @@ quoteDataDecoder =
 groupQuotesByPlan : List QuoteResponse -> Model -> Plans
 groupQuotesByPlan responses model =
     let
-        _ =
-            Debug.log "Raw responses from API" responses
-
-        _ =
-            Debug.log "Settings state when grouping quotes"
-                { settingsLoaded = model.settingsLoaded
-                , hasOrgSettings = model.orgSettings /= Nothing
-                , carrierContracts = Maybe.map .carrierContracts model.orgSettings
-                }
-
         isCarrierSupported : String -> Bool
         isCarrierSupported naic =
-            let
-                _ =
-                    Debug.log "Checking carrier support for NAIC" naic
-
-                carrierResult =
-                    naicToCarrier naic
-                        |> Debug.log "naicToCarrier result"
-
-                _ =
-                    Debug.log "orgSettings" model.orgSettings
-            in
-            case ( carrierResult, model.orgSettings ) of
+            case ( naicToCarrier naic, model.orgSettings ) of
                 ( Just carrier, Just settings ) ->
                     let
                         carrierStr =
                             carrierToString carrier
-
-                        _ =
-                            Debug.log "Checking carrier support"
-                                { naic = naic
-                                , carrier = carrierStr
-                                , carrierContracts = settings.carrierContracts
-                                , supported = List.member carrierStr settings.carrierContracts
-                                }
                     in
                     List.member carrierStr settings.carrierContracts
 
                 _ ->
-                    let
-                        _ =
-                            Debug.log "Carrier not supported - fallthrough case"
-                                { naic = naic
-                                , carrierResult = carrierResult
-                                , hasSettings = model.orgSettings /= Nothing
-                                }
-                    in
                     False
 
         convertToPlan : QuoteResponse -> QuoteData -> Plan
@@ -420,15 +371,12 @@ groupQuotesByPlan responses model =
                                 else
                                     []
                             )
-                            (response.quotes |> Debug.log "Response.quotes")
+                            response.quotes
 
                     else
                         []
                 )
                 responses
-
-        _ =
-            Debug.log "All quotes after conversion and carrier filtering" allQuotes
 
         planG =
             List.filter (\q -> String.toUpper q.planType == "G") allQuotes
@@ -438,19 +386,10 @@ groupQuotesByPlan responses model =
             List.filter (\q -> String.toUpper q.planType == "N") allQuotes
                 |> List.sortBy .price
 
-        _ =
-            Debug.log "Plan G quotes" planG
-
-        _ =
-            Debug.log "Plan N quotes" planN
-
         result =
             { planG = planG
             , planN = planN
             }
-
-        _ =
-            Debug.log "Final result" result
     in
     result
 
@@ -511,9 +450,6 @@ update msg model =
                     , quoteId = model.quoteId
                     }
 
-                _ =
-                    Debug.log "Settings loaded, fetching quotes" settings
-
                 updatedModel =
                     { model | orgSettings = Just settings, settingsLoaded = True }
             in
@@ -534,10 +470,6 @@ update msg model =
         GotPlans result ->
             case result of
                 Ok plans ->
-                    let
-                        _ =
-                            Debug.log "Received plans" plans
-                    in
                     ( { model
                         | plans = plans
                         , isLoading = False
@@ -546,10 +478,6 @@ update msg model =
                     )
 
                 Err error ->
-                    let
-                        _ =
-                            Debug.log "Error getting plans" (httpErrorToString error)
-                    in
                     ( { model
                         | error = Just (httpErrorToString error)
                         , isLoading = False
@@ -650,17 +578,10 @@ getSelectedPlans model =
                 PlanN ->
                     model.plans.planN
 
-        _ =
-            Debug.log "Current carrier from URL" model.currentCarrier
-
         carrierNaics =
             model.currentCarrier
                 |> Maybe.andThen stringToCarrier
                 |> Maybe.map carrierToNaics
-                |> Debug.log "Carrier NAICs to filter out"
-
-        _ =
-            Debug.log "All plans before filtering" plans
 
         filteredPlans =
             case carrierNaics of
@@ -669,8 +590,7 @@ getSelectedPlans model =
                         (\plan ->
                             let
                                 _ =
-                                    Debug.log ("Checking plan NAIC " ++ plan.naic ++ " for " ++ plan.name)
-                                        (not (List.member plan.naic naicList))
+                                    not (List.member plan.naic naicList)
                             in
                             not (List.member plan.naic naicList)
                         )
@@ -679,13 +599,9 @@ getSelectedPlans model =
                 Nothing ->
                     plans
 
-        _ =
-            Debug.log "Filtered plans before sorting" filteredPlans
-
         sortedAndLimited =
             List.sortBy .price filteredPlans
                 |> List.take 3
-                |> Debug.log "Final selected plans"
     in
     sortedAndLimited
 
@@ -1150,17 +1066,9 @@ viewRatesModal model =
 
 settingsDecoder : Decoder Settings
 settingsDecoder =
-    let
-        _ =
-            Debug.log "Running settingsDecoder" ()
-    in
     D.field "success" D.bool
         |> D.andThen
             (\success ->
-                let
-                    _ =
-                        Debug.log "Settings success value" success
-                in
                 if success then
                     D.field "orgSettings" settingsObjectDecoder
 
@@ -1171,31 +1079,9 @@ settingsDecoder =
 
 settingsObjectDecoder : Decoder Settings
 settingsObjectDecoder =
-    let
-        _ =
-            Debug.log "Running settingsObjectDecoder" ()
-    in
     D.map8 Settings
-        (D.field "stateLicenses" (D.list D.string)
-            |> D.andThen
-                (\licenses ->
-                    let
-                        _ =
-                            Debug.log "Decoded stateLicenses" licenses
-                    in
-                    D.succeed licenses
-                )
-        )
-        (D.field "carrierContracts" (D.list D.string)
-            |> D.andThen
-                (\contracts ->
-                    let
-                        _ =
-                            Debug.log "Decoded carrierContracts" contracts
-                    in
-                    D.succeed contracts
-                )
-        )
+        (D.field "stateLicenses" (D.list D.string))
+        (D.field "carrierContracts" (D.list D.string))
         (D.field "stateCarrierSettings" (D.list stateCarrierSettingDecoder))
         (D.field "allowAgentSettings" D.bool)
         (D.field "emailSendBirthday" D.bool)

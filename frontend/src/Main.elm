@@ -9,7 +9,6 @@ import Compare
 import Contact
 import Contacts
 import Dashboard
-import Debug
 import Eligibility
 import Home
 import Html exposing (Html, button, div, h1, img, nav, p, text)
@@ -197,23 +196,12 @@ main =
 init : Flags -> Url.Url -> Nav.Key -> ( Model, Cmd Msg )
 init flags url key =
     let
-        _ =
-            Debug.log "Init flags" flags
-
         initialSession =
             case flags.initialSession of
                 Just session ->
-                    let
-                        _ =
-                            Debug.log "Found initial session" session
-                    in
                     Verified session
 
                 Nothing ->
-                    let
-                        _ =
-                            Debug.log "No initial session found" ()
-                    in
                     Unknown
 
         model =
@@ -227,9 +215,6 @@ init flags url key =
             , showDropdown = False
             }
 
-        _ =
-            Debug.log "Checking session at URL" (Url.toString url)
-
         checkSession =
             Http.get
                 { url = "/api/auth/session"
@@ -238,7 +223,6 @@ init flags url key =
     in
     ( model
     , checkSession
-      -- Only check session first, we'll fetch user details after session is verified
     )
 
 
@@ -549,9 +533,6 @@ update msg model =
                 Ok response ->
                     if response.success then
                         let
-                            _ =
-                                Debug.log "Got verification response" response
-
                             ( choosePlanModel, choosePlanCmd ) =
                                 ChoosePlan.init response.orgSlug response.session model.key
 
@@ -597,21 +578,10 @@ update msg model =
                     ( model, Nav.pushUrl model.key "/login" )
 
         GotSession result ->
-            let
-                _ =
-                    Debug.log "Got session response" result
-            in
             case result of
                 Ok response ->
-                    let
-                        _ =
-                            Debug.log "Session response details" response
-                    in
                     if response.valid then
                         let
-                            _ =
-                                Debug.log "Session is valid" response.session
-
                             user =
                                 { id = response.id
                                 , email = response.email
@@ -648,9 +618,6 @@ update msg model =
 
                     else
                         let
-                            _ =
-                                Debug.log "Session is invalid" ()
-
                             newModel =
                                 { model | session = NoSession }
                         in
@@ -659,9 +626,6 @@ update msg model =
 
                 Err error ->
                     let
-                        _ =
-                            Debug.log "Session check error" error
-
                         newModel =
                             { model | session = NoSession }
                     in
@@ -791,9 +755,6 @@ update msg model =
                     case response.user of
                         Just user ->
                             let
-                                _ =
-                                    Debug.log "Got user details" user
-
                                 currentUser =
                                     Just
                                         { id = user.id
@@ -809,24 +770,13 @@ update msg model =
 
                                 newModel =
                                     { model | currentUser = currentUser }
-
-                                _ =
-                                    Debug.log "Updated model.currentUser" currentUser
                             in
                             updatePage model.url ( newModel, Cmd.none )
 
                         Nothing ->
-                            let
-                                _ =
-                                    Debug.log "No user in response" response
-                            in
                             updatePage model.url ( model, Cmd.none )
 
                 Err error ->
-                    let
-                        _ =
-                            Debug.log "GotCurrentUser error in Main" error
-                    in
                     updatePage model.url ( model, Cmd.none )
 
         OrgFinalized result ->
@@ -1266,10 +1216,6 @@ getRouteAccess route =
 
 userDecoder : Decoder User
 userDecoder =
-    let
-        _ =
-            Debug.log "Running userDecoder" ()
-    in
     Decode.succeed User
         |> Pipeline.required "id" (Decode.map String.fromInt Decode.int)
         |> Pipeline.required "email" Decode.string
@@ -1558,9 +1504,6 @@ updatePage url ( model, cmd ) =
 
                             PublicRoute (VerifyRoute (VerifyParams orgSlug token)) ->
                                 let
-                                    _ =
-                                        Debug.log "Verifying magic link" ( orgSlug, token )
-
                                     verifyUrl =
                                         "/api/auth/verify/" ++ orgSlug ++ "/" ++ token
 
@@ -1723,9 +1666,6 @@ updatePage url ( model, cmd ) =
 
                             ProtectedRoute (ContactRoute id) ->
                                 let
-                                    _ =
-                                        Debug.log "Handling contact route with ID" id
-
                                     ( contactModel, contactCmd ) =
                                         Contact.init model.key id
                                 in

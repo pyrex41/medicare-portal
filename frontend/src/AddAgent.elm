@@ -4,7 +4,6 @@ import Browser
 import Browser.Navigation as Nav
 import Components.ProgressIndicator
 import Components.SetupLayout as SetupLayout
-import Debug
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (..)
@@ -964,9 +963,6 @@ update msg model =
 
                 formattedPhone =
                     formatPhoneNumber rawDigits
-
-                _ =
-                    Debug.log "Phone number updated" { raw = rawDigits, formatted = formattedPhone }
             in
             ( { model
                 | rawPhone = rawDigits
@@ -1157,10 +1153,6 @@ update msg model =
         GotAgents result ->
             case result of
                 Ok agents ->
-                    let
-                        _ =
-                            Debug.log "Successfully decoded agents" agents
-                    in
                     ( { model | agents = agents }, Cmd.none )
 
                 Err error ->
@@ -1230,11 +1222,7 @@ update msg model =
                         Nothing ->
                             ( { model | currentUser = Nothing }, Cmd.none )
 
-                Err error ->
-                    let
-                        _ =
-                            Debug.log "GotCurrentUser error" error
-                    in
+                Err _ ->
                     ( { model | error = Just "Failed to load current user" }
                     , Cmd.none
                     )
@@ -1829,10 +1817,6 @@ fetchAgents =
                             Err (Http.BadStatus metadata.statusCode)
 
                         Http.GoodStatus_ metadata body ->
-                            let
-                                _ =
-                                    Debug.log "Raw response body" body
-                            in
                             case Decode.decodeString (Decode.list agentDecoder) body of
                                 Ok value ->
                                     Ok value
@@ -1900,24 +1884,9 @@ fetchCurrentUser =
 
 currentUserResponseDecoder : Decoder CurrentUserResponse
 currentUserResponseDecoder =
-    let
-        _ =
-            Debug.log "Running currentUserResponseDecoder" ()
-
-        debugField fieldName decoder =
-            Decode.field fieldName decoder
-                |> Decode.map
-                    (\value ->
-                        let
-                            _ =
-                                Debug.log ("Decoded " ++ fieldName) value
-                        in
-                        value
-                    )
-    in
     Decode.map2 CurrentUserResponse
-        (debugField "success" Decode.bool)
-        (Decode.maybe (debugField "user" userDecoder))
+        (Decode.field "success" Decode.bool)
+        (Decode.maybe (Decode.field "user" userDecoder))
 
 
 userDecoder : Decoder User
@@ -1931,11 +1900,11 @@ userDecoder =
     in
     Decode.map7 User
         idDecoder
-        (Decode.field "email" (Debug.log "email field" Decode.string))
-        (Decode.field "firstName" (Debug.log "firstName field" Decode.string))
-        (Decode.field "lastName" (Debug.log "lastName field" Decode.string))
-        (Decode.field "is_admin" (Debug.log "is_admin field" Decode.bool))
-        (Decode.field "is_agent" (Debug.log "is_agent field" Decode.bool))
+        (Decode.field "email" Decode.string)
+        (Decode.field "firstName" Decode.string)
+        (Decode.field "lastName" Decode.string)
+        (Decode.field "is_admin" Decode.bool)
+        (Decode.field "is_agent" Decode.bool)
         (Decode.oneOf
             [ Decode.field "phone" Decode.string
             , Decode.succeed ""

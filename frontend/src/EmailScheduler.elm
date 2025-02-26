@@ -30,7 +30,6 @@ Dependencies:
 -}
 
 import Date exposing (Date)
-import Debug
 import Html exposing (Html, div, h2, span, table, tbody, td, text, th, thead, tr)
 import Html.Attributes exposing (class)
 import Time exposing (Month(..))
@@ -177,18 +176,7 @@ init contactId effective birth current plan state settings licenses =
 -}
 isStateActive : EmailSchedule -> Bool
 isStateActive schedule =
-    let
-        _ =
-            Debug.log "Checking state active for"
-                { contactState = schedule.state
-                , availableLicenses = schedule.stateLicenses
-                }
-
-        isActive =
-            List.member schedule.state schedule.stateLicenses
-                |> Debug.log "State is active"
-    in
-    isActive
+    List.member schedule.state schedule.stateLicenses
 
 
 {-| Calculates the list of scheduled emails for a given email schedule.
@@ -214,14 +202,6 @@ getScheduledEmails schedule =
 
     else
         let
-            _ =
-                Debug.log "Schedule"
-                    { effectiveDate = Date.toIsoString schedule.effectiveDate
-                    , birthDate = Date.toIsoString schedule.birthDate
-                    , currentDate = Date.toIsoString schedule.currentDate
-                    , planType = Debug.toString schedule.planType
-                    }
-
             -- Calculate the date one year after the effective date for status checks.
             oneYearAfterEffective : Date
             oneYearAfterEffective =
@@ -363,9 +343,6 @@ getScheduledEmails schedule =
                 , planSpecificEmail NewYear
                 , planSpecificEmail OctoberBlast
                 ]
-
-            _ =
-                Debug.log "Generated emails" (List.map (\e -> { type_ = Debug.toString e.emailType, date = Date.toIsoString e.scheduledTime }) emails)
         in
         -- Filter out past dates and sort by date in ascending order (closest dates first)
         List.filter

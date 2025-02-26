@@ -643,11 +643,7 @@ update msg model =
             )
 
         GotContacts (Err error) ->
-            let
-                _ =
-                    Debug.log "Error fetching contacts" error
-            in
-            ( model, Cmd.none )
+            ( { model | error = Just "Failed to load contacts" }, Cmd.none )
 
         ContactAdded (Ok contact) ->
             ( { model
@@ -922,13 +918,6 @@ update msg model =
                     ( model, Cmd.none )
 
         FileDrop file ->
-            let
-                _ =
-                    Debug.log "File dropped"
-                        { fileName = File.name file
-                        , fileSize = File.size file
-                        }
-            in
             case model.showModal of
                 CsvUploadModal state ->
                     ( { model | showModal = CsvUploadModal { state | file = Just file, dragOver = False } }
@@ -973,9 +962,6 @@ update msg model =
 
         CsvUploaded (Ok response) ->
             let
-                _ =
-                    Debug.log "CSV Upload Response" response
-
                 errorMessage =
                     if String.startsWith "Missing required columns:" response.message then
                         let
@@ -1032,9 +1018,6 @@ update msg model =
 
         CsvUploaded (Err httpError) ->
             let
-                _ =
-                    Debug.log "CSV Upload Error" httpError
-
                 errorMessage =
                     case httpError of
                         Http.BadStatus 400 ->
@@ -1502,10 +1485,6 @@ contactDecoder : Decode.Decoder Contact
 contactDecoder =
     let
         debugLog label value =
-            let
-                _ =
-                    Debug.log ("Decoding " ++ label) value
-            in
             value
     in
     Decode.succeed Contact
@@ -1516,13 +1495,7 @@ contactDecoder =
         |> Pipeline.optional "phone_number"
             (Decode.string
                 |> Decode.andThen
-                    (\val ->
-                        let
-                            _ =
-                                Debug.log "Raw phone_number" val
-                        in
-                        Decode.succeed val
-                    )
+                    (\val -> Decode.succeed val)
             )
             ""
         |> Pipeline.required "state" Decode.string
@@ -1883,13 +1856,6 @@ dropDecoder toMsg =
 uploadCsv : File -> Bool -> Cmd Msg
 uploadCsv file overwriteDuplicates =
     let
-        _ =
-            Debug.log "Uploading CSV"
-                { fileName = File.name file
-                , fileSize = File.size file
-                , overwriteDuplicates = overwriteDuplicates
-                }
-
         body =
             Http.multipartBody
                 [ Http.filePart "file" file

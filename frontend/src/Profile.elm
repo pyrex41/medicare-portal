@@ -1,7 +1,6 @@
 module Profile exposing (Model, Msg(..), init, subscriptions, update, view)
 
 import Browser
-import Debug
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (..)
@@ -72,10 +71,6 @@ update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
         GotCurrentUser (Ok response) ->
-            let
-                _ =
-                    Debug.log "GotCurrentUser success" response
-            in
             ( { model
                 | currentUser = response.user
                 , originalUser = response.user -- Store original user data
@@ -85,10 +80,6 @@ update msg model =
             )
 
         GotCurrentUser (Err error) ->
-            let
-                _ =
-                    Debug.log "GotCurrentUser error" error
-            in
             ( { model
                 | error = Just "Failed to load profile"
                 , isLoading = False

@@ -3,7 +3,6 @@ module ChoosePlan exposing (Model, Msg(..), init, subscriptions, update, view)
 import Browser exposing (Document)
 import Browser.Navigation as Nav
 import Components.SetupLayout as SetupLayout
-import Debug
 import Html exposing (Html, button, div, h1, h2, h3, input, label, li, p, span, text, ul)
 import Html.Attributes exposing (class, type_, value)
 import Html.Events exposing (onClick, onInput)
@@ -53,10 +52,6 @@ type Msg
 
 init : String -> String -> Nav.Key -> ( Model, Cmd Msg )
 init orgSlug session key =
-    let
-        _ =
-            Debug.log "Initializing ChoosePlan with orgSlug" orgSlug
-    in
     ( { session = Just session
       , orgSlug = orgSlug
       , currentStep = PlanSelection
@@ -83,13 +78,6 @@ saveSubscription orgSlug tierId =
     let
         url =
             "/api/organizations/" ++ orgSlug ++ "/subscription"
-
-        _ =
-            Debug.log "Making subscription request"
-                { url = url
-                , tierId = tierId
-                , orgSlug = orgSlug
-                }
     in
     Http.post
         { url = url
@@ -100,10 +88,6 @@ saveSubscription orgSlug tierId =
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
-    let
-        _ =
-            Debug.log "VerifyOrganization update" msg
-    in
     case msg of
         SubscriptionSaved result ->
             case result of
@@ -127,10 +111,6 @@ update msg model =
                 PlanSelection ->
                     case model.selectedPlan of
                         Just planId ->
-                            let
-                                _ =
-                                    Debug.log "Saving subscription with orgSlug" model.orgSlug
-                            in
                             ( { model | currentStep = Payment }
                             , saveSubscription model.orgSlug planId
                             )
@@ -156,19 +136,11 @@ update msg model =
         GotTiers result ->
             case result of
                 Ok tiers ->
-                    let
-                        _ =
-                            Debug.log "Got tiers" tiers
-                    in
                     ( { model | tiers = tiers, isLoading = False }
                     , Cmd.none
                     )
 
                 Err error ->
-                    let
-                        _ =
-                            Debug.log "Failed to load tiers" error
-                    in
                     ( { model | error = Just "Failed to load subscription tiers", isLoading = False }
                     , Cmd.none
                     )
@@ -342,10 +314,6 @@ subscriptions _ =
 
 subscriptionTiersDecoder : Decoder (List SubscriptionTier)
 subscriptionTiersDecoder =
-    let
-        _ =
-            Debug.log "Decoding subscription tiers" ()
-    in
     field "tiers"
         (list
             (Decode.map6 SubscriptionTier

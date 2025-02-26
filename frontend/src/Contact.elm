@@ -4,7 +4,6 @@ import Browser
 import Browser.Events
 import Browser.Navigation as Nav
 import Date exposing (Date)
-import Debug
 import Dict exposing (Dict)
 import EmailScheduler exposing (EmailSchedule, PlanType(..), ScheduledEmail, getScheduledEmails, init, viewFutureActivity)
 import Html exposing (..)
@@ -382,9 +381,6 @@ update msg model =
                     case Date.fromIsoString contact.birthDate of
                         Ok birthDate ->
                             let
-                                _ =
-                                    Debug.log "Contact loaded with state" contact.state
-
                                 planType =
                                     case contact.planType of
                                         "Plan N" ->
@@ -405,20 +401,9 @@ update msg model =
                                 ( stateCarrierSettings, stateLicenses ) =
                                     case model.orgSettings of
                                         Just settings ->
-                                            let
-                                                _ =
-                                                    Debug.log "Using existing org settings"
-                                                        { stateCarrierSettings = settings.stateCarrierSettings
-                                                        , stateLicenses = settings.stateLicenses
-                                                        }
-                                            in
                                             ( settings.stateCarrierSettings, settings.stateLicenses )
 
                                         Nothing ->
-                                            let
-                                                _ =
-                                                    Debug.log "No org settings available" ()
-                                            in
                                             ( [], [] )
 
                                 newSchedule =
@@ -431,9 +416,6 @@ update msg model =
                                         contact.state
                                         stateCarrierSettings
                                         stateLicenses
-
-                                _ =
-                                    Debug.log "Created new schedule" newSchedule
                             in
                             ( { model | contact = Just contact, emailSchedule = newSchedule }
                             , Cmd.batch
@@ -464,9 +446,6 @@ update msg model =
 
                 newSchedule =
                     { currentSchedule | currentDate = today }
-
-                _ =
-                    Debug.log "Current date updated" (Date.toIsoString today)
             in
             ( { model | emailSchedule = newSchedule }
             , Cmd.none
@@ -735,12 +714,6 @@ update msg model =
 
         GotOrgSettings (Ok settings) ->
             let
-                _ =
-                    Debug.log "Received org settings"
-                        { stateCarrierSettings = settings.stateCarrierSettings
-                        , stateLicenses = settings.stateLicenses
-                        }
-
                 currentSchedule =
                     model.emailSchedule
 
@@ -749,9 +722,6 @@ update msg model =
                         | stateCarrierSettings = settings.stateCarrierSettings
                         , stateLicenses = settings.stateLicenses
                     }
-
-                _ =
-                    Debug.log "Updated email schedule" updatedSchedule
             in
             ( { model | orgSettings = Just settings, emailSchedule = updatedSchedule }
             , Cmd.none

@@ -4,7 +4,6 @@ import Browser
 import Browser.Navigation as Nav
 import Components.ProgressIndicator
 import Components.SetupLayout as SetupLayout
-import Debug
 import File exposing (File)
 import File.Select as Select
 import Html exposing (..)
@@ -239,10 +238,6 @@ init flags =
 
 fetchSettings : Cmd Msg
 fetchSettings =
-    let
-        _ =
-            Debug.log "Fetching settings" ()
-    in
     Http.get
         { url = "/api/settings"
         , expect = Http.expectJson GotSettings settingsDecoder
@@ -251,10 +246,6 @@ fetchSettings =
 
 fetchRecommendedGICombos : Cmd Msg
 fetchRecommendedGICombos =
-    let
-        _ =
-            Debug.log "Fetching GI recommendations" ()
-    in
     Http.get
         { url = "/api/settings/gi-recommendations"
         , expect = Http.expectJson GotRecommendedGICombos recommendationsDecoder
@@ -291,10 +282,6 @@ update msg model =
                                     "Bad status: " ++ String.fromInt status
 
                                 Http.BadBody message ->
-                                    let
-                                        _ =
-                                            Debug.log "Decoder error" message
-                                    in
                                     "Bad body: " ++ message
                     in
                     ( { model | status = Error errorMsg, isLoading = False }
@@ -607,19 +594,11 @@ update msg model =
         GotRecommendedGICombos result ->
             case result of
                 Ok combos ->
-                    let
-                        _ =
-                            Debug.log "Received GI recommendations" combos
-                    in
                     ( { model | recommendedGICombos = combos }
                     , Cmd.none
                     )
 
                 Err error ->
-                    let
-                        _ =
-                            Debug.log "Error getting GI recommendations" error
-                    in
                     ( { model | status = Error "Failed to load GI recommendations" }
                     , Cmd.none
                     )
@@ -731,7 +710,7 @@ saveSettings settings =
         { method = "PUT"
         , headers = []
         , url = "/api/settings/org"
-        , body = jsonBody (encodeSettings (settings |> Debug.log "settings"))
+        , body = jsonBody (encodeSettings settings)
         , expect = expectJson SettingsSaved settingsObjectDecoder
         , timeout = Nothing
         , tracker = Nothing
@@ -1334,9 +1313,6 @@ viewStateCarrierCell setting =
 settingsDecoder : Decoder SettingsResponse
 settingsDecoder =
     let
-        _ =
-            Debug.log "Running settingsDecoder" ()
-
         boolDecoder =
             Decode.oneOf
                 [ Decode.bool
@@ -1359,9 +1335,6 @@ settingsDecoder =
 settingsObjectDecoder : Decoder Settings
 settingsObjectDecoder =
     let
-        _ =
-            Debug.log "Running settingsObjectDecoder" ()
-
         stateCarrierSettingsDecoder =
             Decode.field "stateCarrierSettings" <|
                 Decode.oneOf
@@ -1395,10 +1368,6 @@ stateCarrierSettingDecoder =
 
 recommendationsDecoder : Decoder (List StateCarrierSetting)
 recommendationsDecoder =
-    let
-        _ =
-            Debug.log "Running recommendationsDecoder" ()
-    in
     Decode.list
         (Decode.map4 StateCarrierSetting
             (Decode.field "state" Decode.string)
