@@ -190,6 +190,15 @@ const startServer = async () => {
     // Log available environment variables (without values for security)
     logger.info(`Available environment variables: ${Object.keys(process.env).join(', ')}`)
     
+    // Try loading directly from process.env
+    if (!process.env.TURSO_DATABASE_URL || !process.env.TURSO_AUTH_TOKEN) {
+      logger.warn('Critical environment variables missing. Check Replit Secrets are properly set:')
+      logger.warn('Required: TURSO_DATABASE_URL, TURSO_AUTH_TOKEN')
+      logger.warn('Available env vars: ' + Object.keys(process.env).join(', '))
+    } else {
+      logger.info('Required environment variables found')
+    }
+    
     const db = new Database()
     logger.info('Database initialized successfully')
 
