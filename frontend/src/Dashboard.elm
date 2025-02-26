@@ -71,18 +71,18 @@ view model =
                         [ h3 [ class "text-lg font-semibold mb-4" ] [ text "Quote Results" ]
                         , div [ class "h-64" ]
                             [ viewChart model ]
-                        , div [ class "flex justify-center mt-4 space-x-6 text-sm text-gray-600" ]
+                        , div [ class "flex justify-center mt-16 space-x-8 text-sm text-gray-600 border-t border-gray-200 pt-8" ]
                             [ div [ class "flex items-center" ]
                                 [ div [ class "w-3 h-3 rounded-full bg-purple-600 mr-2" ] []
-                                , text "Sends"
+                                , text "Quotes Sent"
                                 ]
                             , div [ class "flex items-center" ]
-                                [ div [ class "w-3 h-3 rounded-full bg-purple-400 mr-2" ] []
-                                , text "Viewed"
+                                [ div [ class "w-3 h-3 rounded-full bg-pink-500 mr-2" ] []
+                                , text "Quotes Viewed"
                                 ]
                             , div [ class "flex items-center" ]
-                                [ div [ class "w-3 h-3 rounded-full bg-purple-200 mr-2" ] []
-                                , text "Follow Ups"
+                                [ div [ class "w-3 h-3 rounded-full bg-purple-300 mr-2" ] []
+                                , text "Follow-up Requests"
                                 ]
                             ]
                         ]
@@ -115,11 +115,13 @@ viewChart model =
     C.chart
         [ CA.height 300
         , CA.width 800
-        , CA.margin { top = 10, bottom = 30, left = 30, right = 10 }
+        , CA.margin { top = 10, bottom = 45, left = 30, right = 10 }
         ]
         [ C.xLabels
             [ CA.withGrid
             , CA.amount 12
+            , CA.fontSize 12
+            , CA.moveDown 35
             , CA.format
                 (\x ->
                     case round x of

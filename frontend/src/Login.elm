@@ -30,10 +30,15 @@ type alias LoginResponse =
     }
 
 
+type alias SessionCheckResponse =
+    { valid : Bool }
+
+
 type Msg
     = EmailChanged String
     | SubmitForm
     | GotLoginResponse (Result Http.Error LoginResponse)
+    | GotSessionCheck (Result Http.Error SessionCheckResponse)
     | LogOut
     | NoOp
 
@@ -65,12 +70,40 @@ update msg model =
 
             else
                 ( { model | status = Submitting }
-                , Http.post
-                    { url = "/api/auth/login"
-                    , body = Http.jsonBody (encodeLoginBody model.email)
-                    , expect = Http.expectJson GotLoginResponse loginResponseDecoder
+                , Http.get
+                    { url = "/api/auth/session"
+                    , expect = Http.expectJson GotSessionCheck sessionCheckDecoder
                     }
                 )
+
+        GotSessionCheck result ->
+            case result of
+                Ok response ->
+                    if response.valid then
+                        -- If session is valid, redirect to dashboard
+                        ( model
+                        , Nav.pushUrl model.key "/dashboard"
+                        )
+
+                    else
+                        -- If no valid session, proceed with login
+                        ( model
+                        , Http.post
+                            { url = "/api/auth/login"
+                            , body = Http.jsonBody (encodeLoginBody model.email)
+                            , expect = Http.expectJson GotLoginResponse loginResponseDecoder
+                            }
+                        )
+
+                Err _ ->
+                    -- On error checking session, proceed with normal login flow
+                    ( model
+                    , Http.post
+                        { url = "/api/auth/login"
+                        , body = Http.jsonBody (encodeLoginBody model.email)
+                        , expect = Http.expectJson GotLoginResponse loginResponseDecoder
+                        }
+                    )
 
         NoOp ->
             ( model, Cmd.none )
@@ -186,6 +219,12 @@ loginResponseDecoder : Decode.Decoder LoginResponse
 loginResponseDecoder =
     Decode.map LoginResponse
         (Decode.field "success" Decode.bool)
+
+
+sessionCheckDecoder : Decode.Decoder SessionCheckResponse
+sessionCheckDecoder =
+    Decode.map SessionCheckResponse
+        (Decode.field "valid" Decode.bool)
 
 
 subscriptions : Model -> Sub Msg

@@ -1391,8 +1391,12 @@ const startServer = async () => {
                 u.is_admin,
                 u.is_agent,
                 u.phone,
+                u.organization_id,
+                o.slug as organization_slug,
+                o.subscription_tier,
                 a.settings as agentSettings
               FROM users u
+              JOIN organizations o ON u.organization_id = o.id
               LEFT JOIN agent_settings a ON a.agent_id = u.id
               WHERE u.id = ?
             `,
@@ -1420,6 +1424,9 @@ const startServer = async () => {
               is_admin: Boolean(user.is_admin),
               is_agent: Boolean(user.is_agent),
               phone: user.phone || '',
+              organization_id: user.organization_id,
+              organization_slug: user.organization_slug,
+              subscription_tier: user.subscription_tier,
               agentSettings: user.agentSettings ? JSON.parse(user.agentSettings) : null
             }
           }
@@ -1759,6 +1766,60 @@ const startServer = async () => {
         } catch (e) {
           logger.error(`Error recording eligibility answers: ${e}`)
           throw new Error(String(e))
+        }
+      })
+      // Add profile update endpoint
+      .put('/api/profile', async ({ request, body, set }) => {
+        try {
+          const currentUser = await getUserFromSession(request)
+          if (!currentUser) {
+            set.status = 401
+            return {
+              success: false,
+              error: 'Not authenticated'
+            }
+          }
+
+          const { firstName, lastName, phone } = body as { 
+            firstName: string;
+            lastName: string;
+            phone: string;
+          }
+
+          // Get the libSQL client
+          const client = db.getClient()
+
+          // Update only allowed profile fields
+          const result = await client.execute({
+            sql: `UPDATE users 
+                  SET first_name = ?, 
+                      last_name = ?, 
+                      phone = ?
+                  WHERE id = ?
+                  RETURNING *`,
+            args: [firstName, lastName, phone, currentUser.id]
+          })
+
+          if (!result.rows || result.rows.length === 0) {
+            set.status = 404
+            return {
+              success: false,
+              error: 'User not found'
+            }
+          }
+
+          return {
+            success: true,
+            message: 'Profile updated successfully'
+          }
+
+        } catch (error) {
+          logger.error(`Error updating profile: ${error}`)
+          set.status = 500
+          return {
+            success: false,
+            error: String(error)
+          }
         }
       })
       .listen(8000)

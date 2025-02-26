@@ -2,6 +2,7 @@ module Main exposing (main)
 
 import AddAgent
 import Browser exposing (Document)
+import Browser.Events
 import Browser.Navigation as Nav
 import ChoosePlan
 import Compare
@@ -13,17 +14,20 @@ import Eligibility
 import Home
 import Html exposing (Html, button, div, h1, img, nav, p, text)
 import Html.Attributes exposing (alt, class, href, src)
-import Html.Events exposing (onClick)
+import Html.Events exposing (onClick, stopPropagationOn)
 import Http
 import Json.Decode as Decode exposing (Decoder)
 import Json.Decode.Pipeline as Pipeline
 import Json.Encode as E
 import Login
+import Logout
 import Profile
 import Quote
 import Schedule
 import Settings
 import Signup
+import Svg exposing (path, svg)
+import Svg.Attributes exposing (d, fill, viewBox)
 import TempLanding
 import Url exposing (Url)
 import Url.Parser as Parser exposing ((</>), (<?>), Parser, map, oneOf, s, string, top)
@@ -99,6 +103,7 @@ type alias Model =
     , currentUser : Maybe User
     , isSetup : Bool
     , intendedDestination : Maybe String
+    , showDropdown : Bool
     }
 
 
@@ -126,6 +131,7 @@ type Page
     | EligibilityPage Eligibility.Model
     | SchedulePage Schedule.Model
     | DashboardPage Dashboard.Model
+    | LogoutPage Logout.Model
 
 
 type Msg
@@ -152,6 +158,10 @@ type Msg
     | NoOp
     | GotCurrentUser (Result Http.Error CurrentUserResponse)
     | OrgFinalized (Result Http.Error ())
+    | LogoutMsg Logout.Msg
+    | ToggleDropdown
+    | CloseDropdown
+    | InitiateLogout
 
 
 type alias Flags =
@@ -214,6 +224,7 @@ init flags url key =
             , currentUser = Nothing
             , isSetup = False
             , intendedDestination = Nothing
+            , showDropdown = False
             }
 
         _ =
@@ -544,6 +555,11 @@ update msg model =
                             ( choosePlanModel, choosePlanCmd ) =
                                 ChoosePlan.init response.orgSlug response.session model.key
 
+                            -- Only set isSetup to True if we're being redirected to a setup route
+                            isInSetup =
+                                String.startsWith "/choose-plan" response.redirectUrl
+                                    || String.startsWith "/setup" response.redirectUrl
+
                             newModel =
                                 { model
                                     | session = Verified response.session
@@ -559,22 +575,19 @@ update msg model =
                                             , lastName = ""
                                             , subscriptionTier = ""
                                             }
-                                    , isSetup = True
+                                    , isSetup = isInSetup
                                 }
                         in
                         ( newModel
-                        , case model.intendedDestination of
-                            Just destination ->
-                                Cmd.batch
-                                    [ Nav.replaceUrl model.key destination
-                                    , Cmd.map ChoosePlanMsg choosePlanCmd
-                                    ]
+                        , Cmd.batch
+                            [ case model.intendedDestination of
+                                Just destination ->
+                                    Nav.replaceUrl model.key destination
 
-                            Nothing ->
-                                Cmd.batch
-                                    [ Nav.replaceUrl model.key "/choose-plan"
-                                    , Cmd.map ChoosePlanMsg choosePlanCmd
-                                    ]
+                                Nothing ->
+                                    Nav.replaceUrl model.key response.redirectUrl
+                            , fetchCurrentUser
+                            ]
                         )
 
                     else
@@ -828,6 +841,39 @@ update msg model =
                       -- Redirect to settings on error
                     )
 
+        LogoutMsg subMsg ->
+            case model.page of
+                LogoutPage logoutModel ->
+                    let
+                        ( newLogoutModel, logoutCmd ) =
+                            Logout.update subMsg logoutModel
+                    in
+                    ( { model | page = LogoutPage newLogoutModel }
+                    , Cmd.map LogoutMsg logoutCmd
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        ToggleDropdown ->
+            ( { model | showDropdown = not model.showDropdown }
+            , Cmd.none
+            )
+
+        CloseDropdown ->
+            ( { model | showDropdown = False }
+            , Cmd.none
+            )
+
+        InitiateLogout ->
+            let
+                ( logoutModel, logoutCmd ) =
+                    Logout.init model.key
+            in
+            ( { model | page = LogoutPage logoutModel }
+            , Cmd.map LogoutMsg logoutCmd
+            )
+
         NoOp ->
             ( model, Cmd.none )
 
@@ -975,6 +1021,15 @@ view model =
                     { title = dashboardView.title
                     , body = [ viewWithNav model (Html.map DashboardMsg (div [] dashboardView.body)) ]
                     }
+
+                LogoutPage logoutModel ->
+                    let
+                        logoutView =
+                            Logout.view logoutModel
+                    in
+                    { title = logoutView.title
+                    , body = List.map (Html.map LogoutMsg) logoutView.body
+                    }
     in
     viewPage
 
@@ -1030,20 +1085,53 @@ viewNavHeader model =
 
                         Nothing ->
                             text ""
-                    , if isAdmin model.currentUser then
-                        button
-                            [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:text-purple-600 transition-colors duration-200"
-                            , onClick (InternalLinkClicked "/settings")
+                    , div [ class "relative" ]
+                        [ button
+                            [ class "flex items-center space-x-2 px-3 py-1.5 text-gray-700 text-sm font-medium hover:text-purple-600 transition-colors duration-200"
+                            , onClick ToggleDropdown
+                            , stopPropagationOn "mousedown" (Decode.succeed ( NoOp, True ))
                             ]
-                            [ text "Settings" ]
+                            [ case model.currentUser of
+                                Just user ->
+                                    text (user.firstName ++ " " ++ user.lastName)
 
-                      else
-                        text ""
-                    , button
-                        [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:text-purple-600 transition-colors duration-200"
-                        , onClick (InternalLinkClicked "/profile")
+                                Nothing ->
+                                    text "Menu"
+                            , div [ class "w-4 h-4" ]
+                                [ svg [ viewBox "0 0 20 20", fill "currentColor" ]
+                                    [ path [ d "M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" ] []
+                                    ]
+                                ]
+                            ]
+                        , if model.showDropdown then
+                            div
+                                [ class "absolute right-0 mt-2 w-48 rounded-md shadow-lg py-1 bg-white ring-1 ring-black ring-opacity-5 z-50"
+                                , stopPropagationOn "mousedown" (Decode.succeed ( NoOp, True ))
+                                ]
+                                [ if isAdmin model.currentUser then
+                                    button
+                                        [ class "block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                                        , onClick (InternalLinkClicked "/settings")
+                                        ]
+                                        [ text "Settings" ]
+
+                                  else
+                                    text ""
+                                , button
+                                    [ class "block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                                    , onClick (InternalLinkClicked "/profile")
+                                    ]
+                                    [ text "Profile" ]
+                                , button
+                                    [ class "block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                                    , onClick InitiateLogout
+                                    ]
+                                    [ text "Log out" ]
+                                ]
+
+                          else
+                            text ""
                         ]
-                        [ text "Profile" ]
                     ]
                 ]
             ]
@@ -1093,57 +1181,71 @@ viewLoading =
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
-    case model.page of
-        LoadingPage ->
-            Sub.none
+    let
+        dropdownSub =
+            if model.showDropdown then
+                Browser.Events.onMouseDown (Decode.succeed CloseDropdown)
 
-        LoginPage pageModel ->
-            Sub.map LoginMsg (Login.subscriptions pageModel)
+            else
+                Sub.none
 
-        ContactsPage pageModel ->
-            Sub.map ContactsMsg (Contacts.subscriptions pageModel)
+        pageSubs =
+            case model.page of
+                LoadingPage ->
+                    Sub.none
 
-        TempLandingPage pageModel ->
-            Sub.map TempLandingMsg (TempLanding.subscriptions pageModel)
+                LoginPage pageModel ->
+                    Sub.map LoginMsg (Login.subscriptions pageModel)
 
-        SettingsPage pageModel ->
-            Sub.map SettingsMsg (Settings.subscriptions pageModel)
+                ContactsPage pageModel ->
+                    Sub.map ContactsMsg (Contacts.subscriptions pageModel)
 
-        Signup signupModel ->
-            Sub.map SignupMsg (Signup.subscriptions signupModel)
+                TempLandingPage pageModel ->
+                    Sub.map TempLandingMsg (TempLanding.subscriptions pageModel)
 
-        ChoosePlanPage pageModel ->
-            Sub.map ChoosePlanMsg (ChoosePlan.subscriptions pageModel)
+                SettingsPage pageModel ->
+                    Sub.map SettingsMsg (Settings.subscriptions pageModel)
 
-        AddAgentsPage pageModel ->
-            Sub.map AddAgentsMsg (AddAgent.subscriptions pageModel)
+                Signup signupModel ->
+                    Sub.map SignupMsg (Signup.subscriptions signupModel)
 
-        ProfilePage pageModel ->
-            Sub.map ProfileMsg (Profile.subscriptions pageModel)
+                ChoosePlanPage pageModel ->
+                    Sub.map ChoosePlanMsg (ChoosePlan.subscriptions pageModel)
 
-        HomePage pageModel ->
-            Sub.map HomeMsg (Home.subscriptions pageModel)
+                AddAgentsPage pageModel ->
+                    Sub.map AddAgentsMsg (AddAgent.subscriptions pageModel)
 
-        ContactPage pageModel ->
-            Sub.map ContactMsg (Contact.subscriptions pageModel)
+                ProfilePage pageModel ->
+                    Sub.map ProfileMsg (Profile.subscriptions pageModel)
 
-        ComparePage pageModel ->
-            Sub.map CompareMsg (Compare.subscriptions pageModel)
+                HomePage pageModel ->
+                    Sub.map HomeMsg (Home.subscriptions pageModel)
 
-        QuotePage pageModel ->
-            Sub.map QuoteMsg (Quote.subscriptions pageModel)
+                ContactPage pageModel ->
+                    Sub.map ContactMsg (Contact.subscriptions pageModel)
 
-        EligibilityPage pageModel ->
-            Sub.map EligibilityMsg (Eligibility.subscriptions pageModel)
+                ComparePage pageModel ->
+                    Sub.map CompareMsg (Compare.subscriptions pageModel)
 
-        SchedulePage pageModel ->
-            Sub.map ScheduleMsg (Schedule.subscriptions pageModel)
+                QuotePage pageModel ->
+                    Sub.map QuoteMsg (Quote.subscriptions pageModel)
 
-        DashboardPage pageModel ->
-            Sub.map DashboardMsg (Dashboard.subscriptions pageModel)
+                EligibilityPage pageModel ->
+                    Sub.map EligibilityMsg (Eligibility.subscriptions pageModel)
 
-        NotFoundPage ->
-            Sub.none
+                SchedulePage pageModel ->
+                    Sub.map ScheduleMsg (Schedule.subscriptions pageModel)
+
+                DashboardPage pageModel ->
+                    Sub.map DashboardMsg (Dashboard.subscriptions pageModel)
+
+                NotFoundPage ->
+                    Sub.none
+
+                LogoutPage pageModel ->
+                    Sub.map LogoutMsg (Logout.subscriptions pageModel)
+    in
+    Sub.batch [ dropdownSub, pageSubs ]
 
 
 getRouteAccess : Route -> RouteAccess
@@ -1439,7 +1541,7 @@ updatePage url ( model, cmd ) =
                             PublicRoute HomeRoute ->
                                 let
                                     ( homeModel, homeCmd ) =
-                                        Home.init ()
+                                        Home.init model.key
                                 in
                                 ( { model | page = HomePage homeModel }
                                 , Cmd.batch [ cmd, Cmd.map HomeMsg homeCmd ]

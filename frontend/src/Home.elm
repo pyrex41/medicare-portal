@@ -1,8 +1,12 @@
 module Home exposing (Model, Msg, init, subscriptions, update, view)
 
 import Browser
+import Browser.Navigation as Nav
 import Html exposing (..)
 import Html.Attributes exposing (..)
+import Html.Events exposing (onClick)
+import Http
+import Json.Decode as Decode
 
 
 
@@ -10,27 +14,91 @@ import Html.Attributes exposing (..)
 
 
 type alias Model =
-    {}
+    { key : Nav.Key
+    , sessionState : SessionState
+    }
 
 
-init : () -> ( Model, Cmd Msg )
-init _ =
-    ( {}, Cmd.none )
+type SessionState
+    = Unknown
+    | Checking
+    | Valid
+    | Invalid
+
+
+type Msg
+    = CheckSession
+    | GotSessionResponse (Result Http.Error SessionResponse)
+    | NavigateTo String
+
+
+type alias SessionResponse =
+    { valid : Bool }
+
+
+init : Nav.Key -> ( Model, Cmd Msg )
+init key =
+    ( { key = key
+      , sessionState = Unknown
+      }
+    , checkSession
+    )
+
+
+checkSession : Cmd Msg
+checkSession =
+    Http.get
+        { url = "/api/auth/session"
+        , expect = Http.expectJson GotSessionResponse sessionResponseDecoder
+        }
+
+
+sessionResponseDecoder : Decode.Decoder SessionResponse
+sessionResponseDecoder =
+    Decode.map SessionResponse
+        (Decode.field "valid" Decode.bool)
 
 
 
 -- UPDATE
 
 
-type Msg
-    = NoOp
-
-
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
-        NoOp ->
-            ( model, Cmd.none )
+        CheckSession ->
+            ( { model | sessionState = Checking }
+            , checkSession
+            )
+
+        GotSessionResponse result ->
+            case result of
+                Ok response ->
+                    ( { model
+                        | sessionState =
+                            if response.valid then
+                                Valid
+
+                            else
+                                Invalid
+                      }
+                    , Cmd.none
+                    )
+
+                Err _ ->
+                    ( { model | sessionState = Invalid }
+                    , Cmd.none
+                    )
+
+        NavigateTo path ->
+            case ( path, model.sessionState ) of
+                ( "/login", Valid ) ->
+                    -- If trying to go to login but already logged in, go to dashboard
+                    ( model, Nav.pushUrl model.key "/dashboard" )
+
+                _ ->
+                    -- Otherwise go to requested path
+                    ( model, Nav.pushUrl model.key path )
 
 
 
@@ -53,13 +121,13 @@ view model =
                             []
                         ]
                     , div [ class "flex items-center space-x-4" ]
-                        [ a
-                            [ href "/login"
+                        [ button
+                            [ onClick (NavigateTo "/login")
                             , class "text-gray-600 hover:text-gray-900 px-4 py-2 text-sm font-medium"
                             ]
                             [ text "Log in" ]
-                        , a
-                            [ href "/signup"
+                        , button
+                            [ onClick (NavigateTo "/signup")
                             , class "bg-[#0A0F4F] text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#1a1f5f] transition-colors duration-200"
                             ]
                             [ text "Sign up" ]
@@ -80,18 +148,18 @@ view model =
                             [ class "mt-6 text-lg text-gray-600 leading-relaxed" ]
                             [ text "Automatically engage clients in key moments of their medigap journey, and sit back as they enroll" ]
                         , div [ class "mt-10" ]
-                            [ a
-                                [ href "/signup"
+                            [ button
+                                [ onClick (NavigateTo "/signup")
                                 , class "inline-flex items-center px-6 py-3 rounded-lg text-base font-medium text-white bg-[#0A0F4F] hover:bg-[#1a1f5f] transition-colors duration-200"
                                 ]
                                 [ text "Sign up" ]
                             ]
                         ]
                     , div [ class "mt-16 relative sm:max-w-lg sm:mx-auto lg:mt-0 lg:max-w-none lg:mx-0 lg:col-span-6 lg:flex lg:items-center" ]
-                        [ div [ class "relative mx-auto w-full rounded-2xl shadow-xl overflow-hidden bg-gray-100 aspect-[4/3]" ]
+                        [ div [ class "relative mx-auto w-full rounded-2xl shadow-xl overflow-hidden bg-gray-100" ]
                             [ img
-                                [ src "/dashboard-preview.png"
-                                , class "w-full h-full object-cover"
+                                [ src "/images/dashboard.png"
+                                , class "w-full"
                                 , alt "Dashboard preview"
                                 ]
                                 []
