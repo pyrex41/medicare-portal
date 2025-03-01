@@ -1,5 +1,6 @@
 module Compare exposing
-    ( Model
+    ( CompareParams
+    , Model
     , Msg(..)
     , PlanType(..)
     , fetchPlans
@@ -35,6 +36,21 @@ import Url.Parser.Query as Query
 type PlanType
     = PlanG
     | PlanN
+
+
+type alias CompareParams =
+    { state : String
+    , zip : String
+    , county : String
+    , gender : String
+    , tobacco : Bool
+    , age : Int
+    , planType : String
+    , currentCarrier : Maybe String
+    , dateOfBirth : String
+    , quoteId : Maybe String
+    , trackingId : Maybe String
+    }
 
 
 type alias CoverageItem =
@@ -162,73 +178,59 @@ type alias Flags =
 -- INIT
 
 
-init : Nav.Key -> Maybe Url -> ( Model, Cmd Msg )
-init key maybeUrl =
+init : Nav.Key -> Maybe CompareParams -> ( Model, Cmd Msg )
+init key maybeParams =
     let
-        -- Default values
-        defaultState =
-            "TX"
+        -- Get values from params or use defaults
+        defaultParams =
+            { state = "TX"
+            , county = "Dallas"
+            , zip = "75001"
+            , age = 65
+            , gender = "M"
+            , tobacco = False
+            , planType = "G"
+            , currentCarrier = Nothing
+            , dateOfBirth = ""
+            , quoteId = Nothing
+            , trackingId = Nothing
+            }
 
-        defaultCounty =
-            "Dallas"
+        params =
+            maybeParams
+                |> Maybe.withDefault defaultParams
 
-        defaultZip =
-            "75001"
-
-        defaultAge =
-            65
-
-        defaultGender =
-            "M"
-
-        defaultTobacco =
-            False
-
-        -- Extract plan type from URL if available
+        -- Extract plan type directly from params
         initialPlanType =
-            case maybeUrl |> Debug.log "maybeUrl" of
-                Just url ->
-                    case url.query of
-                        Just queryString ->
-                            let
-                                queryParser =
-                                    Query.string "planType"
+            if params.planType == "N" then
+                PlanN
 
-                                parsedQuery =
-                                    UrlParser.parse (UrlParser.query queryParser) url
-                            in
-                            case parsedQuery of
-                                Just (Just planTypeValue) ->
-                                    -- Handle various formats of plan type
-                                    let
-                                        normalized =
-                                            String.toUpper (String.trim planTypeValue)
-                                    in
-                                    if String.contains "N" normalized then
-                                        PlanN
+            else
+                PlanG
 
-                                    else
-                                        PlanG
+        -- Ensure age is at least 65 for Medicare supplement plans
+        minimumAge =
+            if params.age < 65 then
+                65
 
-                                _ ->
-                                    PlanG
-
-                        Nothing ->
-                            PlanG
-
-                Nothing ->
-                    PlanG
+            else
+                params.age
 
         model =
             { isLoading = True
             , error = Nothing
             , plans = { planG = [], planN = [] }
-            , state = defaultState
-            , county = defaultCounty
-            , zip = defaultZip
-            , age = defaultAge
-            , gender = defaultGender
-            , tobacco = defaultTobacco
+            , state = params.state
+            , county = params.county
+            , zip = params.zip
+            , age = minimumAge
+            , gender =
+                if params.gender == "Male" || params.gender == "M" then
+                    "M"
+
+                else
+                    "F"
+            , tobacco = params.tobacco
             , selectedPlanType = initialPlanType
             , showReviewVideo = False
             , showQualificationVideo = False
@@ -238,9 +240,9 @@ init key maybeUrl =
             , showRatesVideo = False
             , key = key
             , showDiscount = False
-            , currentCarrier = Nothing
-            , dateOfBirth = ""
-            , quoteId = Nothing
+            , currentCarrier = params.currentCarrier
+            , dateOfBirth = params.dateOfBirth
+            , quoteId = params.quoteId
             , orgSettings = Nothing
             , currentDate = Nothing
             }

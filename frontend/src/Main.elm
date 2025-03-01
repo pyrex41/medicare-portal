@@ -5,7 +5,7 @@ import Browser exposing (Document)
 import Browser.Events
 import Browser.Navigation as Nav
 import ChoosePlan
-import Compare
+import Compare exposing (CompareParams)
 import Contact
 import Contacts
 import Dashboard
@@ -1549,32 +1549,24 @@ updatePage url ( model, cmd ) =
 
                             PublicRoute (CompareRoute params) ->
                                 let
-                                    ( compareModel, compareCmd ) =
-                                        Compare.init model.key Nothing
-
-                                    -- Update the model with the parameters
-                                    updatedCompareModel =
-                                        { compareModel
-                                            | state = params.state
-                                            , county = params.county
-                                            , zip = params.zip
-                                            , age = params.age
-                                            , gender = params.gender
-                                            , tobacco = params.tobacco
-                                            , selectedPlanType =
-                                                if params.planType == "N" then
-                                                    Compare.PlanN
-
-                                                else
-                                                    Compare.PlanG
-                                            , currentCarrier = params.currentCarrier
-                                            , dateOfBirth = params.dateOfBirth
-                                            , quoteId = params.quoteId
+                                    -- Convert the Main.elm params to a format Compare.elm expects
+                                    compareParams =
+                                        { state = params.state
+                                        , county = params.county
+                                        , zip = params.zip
+                                        , age = params.age
+                                        , gender = params.gender
+                                        , tobacco = params.tobacco
+                                        , planType = params.planType
+                                        , currentCarrier = params.currentCarrier
+                                        , dateOfBirth = params.dateOfBirth
+                                        , quoteId = params.quoteId
+                                        , trackingId = params.trackingId
                                         }
 
-                                    -- Fetch plans with the updated model
-                                    updatedCompareCmd =
-                                        Compare.fetchPlans updatedCompareModel
+                                    ( compareModel, compareCmd ) =
+                                        -- Pass the parsed params directly to Compare.init
+                                        Compare.init model.key (Just compareParams)
 
                                     trackingCmd =
                                         case params.trackingId of
@@ -1594,8 +1586,8 @@ updatePage url ( model, cmd ) =
                                             Nothing ->
                                                 Cmd.none
                                 in
-                                ( { model | page = ComparePage updatedCompareModel }
-                                , Cmd.batch [ cmd, Cmd.map CompareMsg updatedCompareCmd, trackingCmd ]
+                                ( { model | page = ComparePage compareModel }
+                                , Cmd.batch [ cmd, Cmd.map CompareMsg compareCmd, trackingCmd ]
                                 )
 
                             ProtectedRoute ContactsRoute ->
