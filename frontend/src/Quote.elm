@@ -26,6 +26,7 @@ type alias Model =
     , quoteId : Maybe String
     , error : Maybe String
     , currentCarrier : Maybe String
+    , planType : Maybe String
     }
 
 
@@ -45,6 +46,7 @@ type alias InitialValues =
     , tobacco : Maybe Bool
     , gender : Maybe String
     , quoteId : Maybe String
+    , planType : Maybe String
     }
 
 
@@ -70,6 +72,7 @@ init key initialValues =
             , quoteId = initialValues.quoteId
             , error = Nothing
             , currentCarrier = Nothing
+            , planType = initialValues.planType
             }
 
         commands =
@@ -170,7 +173,6 @@ update msg model =
                                 "false"
                             )
                          , Builder.string "age" age
-                         , Builder.string "planType" "G"
                          , Builder.string "dateOfBirth" model.dateOfBirth
                          ]
                             ++ (case model.quoteId of
@@ -186,6 +188,14 @@ update msg model =
 
                                     Nothing ->
                                         []
+                               )
+                            ++ (case model.planType of
+                                    Just planType ->
+                                        [ Builder.string "planType" planType ]
+
+                                    Nothing ->
+                                        [ Builder.string "planType" "G" ]
+                                -- Default to G if no plan type provided
                                )
                         )
             in

@@ -1,13 +1,27 @@
 First Name,Last Name,Email,Current Carrier,Plan Type,Effective Date,Birth Date,Tobacco User,Gender,ZIP Code,Phone Number
 John,Smith,john.smith@email.com,Humana,G,2023-01-01,1955-03-15,No,M,33401,(555) 123-4567
-Mary,Johnson,mary.j@email.com,UHC,N,02-15-2023,1948-07-22,No,F,75001,(555) 234-5678
+Mary,Johnson,mary.j@email.com,UHC,N,2023-02-01,1948-07-22,No,F,75001,(555) 234-5678
 Robert,Williams,rob.w@email.com,Aetna,G,2023-03-01,1952-11-30,Yes,M,85001,(555) 345-6789
-Patricia,Brown,pat.brown@email.com,Cigna,N,2023-01-15,1950-04-18,No,F,90001,(555) 456-7890
+Patricia,Brown,pat.brown@email.com,Cigna,N,2023-01-01,1950-04-18,No,F,90001,(555) 456-7890
 James,Davis,james.demail.com,Anthem,G,2023-02-01,1953-09-05,No,M,10001,(555) 567-8901
-Linda,Miller,linda.m@email.com,Humana,N,2023-03-15,1951-06-12,No,F,60601,(555) 678-9012
+Linda,Miller,linda.m@email.com,Humana,N,2023-03-01,1951-06-12,No,F,60601,(555) 678-9012
 Michael,Wilson,mike.w@email.com,United Healthcare,G,2023-01-01,1954-08-25,Yes,M,30301,(555) 789-0123
-Barbara,Moore,barb.moore@email.com,Aetna,N,2023-02-15,1949-12-03,No,F,27601,(55) 890-1234
+Barbara,Moore,barb.moore@email.com,Aetna,N,2023-02-01,1949-12-03,No,F,27601,(55) 890-1234
 William,Taylor,will.t@email.com,Cigna,G,2023-03-01,1956-02-28,No,M,43201,555-901-2345
-Elizabeth,Anderson,liz.a@email.com,Anthem,N,2023-01-15,1947-10-14,No,F,48201,5550123456
+Elizabeth,Anderson,liz.a@email.com,Anthem,N,2023-01-01,1947-10-14,No,F,48201,5550123456
 Carl,Weathers,cweathers@email.com,UnitegHealthcare,G,2023-01-01,1955-03-15,No,M,33401,(555) 123-4567
-Melinda,Craft,mcraft@email.com,UHC,N,02-35-2023,1948-07-22,No,F,75001,(555) 234-5678
+Melinda,Craft,mcraft@email.com,UHC,N,2023-02-01,1948-07-22,No,F,75001,(555) 234-5678
+Sarah,California,sarah.ca@example.com,Humana,G,2023-01-01,1953-03-10,No,F,90210,(555) 111-2222
+David,Idaho,david.id@example.com,UHC,N,2023-01-01,1954-03-15,No,M,83702,(555) 222-3333
+Jennifer,Illinois,jennifer.il@example.com,Aetna,G,2023-02-01,1955-03-20,No,F,60601,(555) 333-4444
+Thomas,Kentucky,thomas.ky@example.com,Cigna,N,2023-02-01,1956-03-25,No,M,40202,(555) 444-5555
+Jessica,Louisiana,jessica.la@example.com,Anthem,G,2023-03-01,1957-03-05,No,F,70112,(555) 555-6666
+Richard,Maryland,richard.md@example.com,Humana,N,2023-03-01,1958-03-12,No,M,21201,(555) 666-7777
+Susan,Nevada,susan.nv@example.com,UHC,G,2023-01-01,1959-03-18,No,F,89101,(555) 777-8888
+Joseph,Oklahoma,joseph.ok@example.com,Aetna,N,2023-01-01,1960-03-22,No,M,73102,(555) 888-9999
+Karen,Oregon,karen.or@example.com,Cigna,G,2023-02-01,1961-03-28,No,F,97201,(555) 999-0000
+Michael,Missouri,michael.mo@example.com,UHC,G,2023-03-01,1962-07-10,No,M,63101,(555) 111-3333
+Emily,Connecticut,emily.ct@example.com,Aetna,N,2023-01-01,1963-03-05,No,F,06101,(555) 222-4444
+Daniel,Massachusetts,daniel.ma@example.com,Cigna,G,2023-02-01,1964-03-12,No,M,02108,(555) 333-5555
+Olivia,NewYork,olivia.ny@example.com,Anthem,N,2023-02-01,1965-03-18,No,F,10001,(555) 444-6666
+Christopher,Washington,chris.wa@example.com,Humana,G,2023-03-01,1966-03-25,No,M,98101,(555) 555-7777

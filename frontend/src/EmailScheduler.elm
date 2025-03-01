@@ -29,6 +29,7 @@ Dependencies:
 
 -}
 
+import BirthdayRules exposing (canPresentDifferentPlanOnly, getDelayedEmailDate, getStateRule, isInBirthdayRuleWindow, isInContinuousOpenEnrollment)
 import Date exposing (Date)
 import Html exposing (Html, div, h2, span, table, tbody, td, text, th, thead, tr)
 import Html.Attributes exposing (class)
@@ -81,11 +82,13 @@ type alias ScheduledEmail =
 
   - `Scheduled`: The email is scheduled to be sent.
   - `Skipped reason`: The email was skipped, with a reason provided.
+  - `Delayed reason`: The email was delayed due to birthday rules, with a reason provided.
 
 -}
 type ScheduledEmailStatus
     = Scheduled
     | Skipped String
+    | Delayed String
 
 
 {-| Represents the type of scheduled email, associated with a plan type.
@@ -98,10 +101,10 @@ type ScheduledEmailStatus
 
 -}
 type ScheduledEmailType
-    = Birthday PlanType
-    | Anniversary PlanType
-    | NewYear PlanType
-    | OctoberBlast PlanType
+    = Birthday
+    | Anniversary
+    | NewYear
+    | OctoberBlast
     | NoEmails
 
 
@@ -189,6 +192,8 @@ isStateActive schedule =
   - The next New Year (January 1st).
   - The next October blast (October 1st).
     Emails within the first year of the effective date are skipped.
+    Emails for contacts in states with continuous open enrollment are skipped.
+    Emails for contacts in their birthday rule window are delayed.
 
 -}
 getScheduledEmails : EmailSchedule -> List ScheduledEmail
@@ -200,6 +205,13 @@ getScheduledEmails schedule =
           }
         ]
 
+    else if isInContinuousOpenEnrollment schedule.state then
+        [ { emailType = NoEmails
+          , scheduledTime = schedule.currentDate
+          , status = Skipped "Contact's state has continuous open enrollment"
+          }
+        ]
+
     else
         let
             -- Calculate the date one year after the effective date for status checks.
@@ -207,7 +219,7 @@ getScheduledEmails schedule =
             oneYearAfterEffective =
                 Date.add Date.Years 1 schedule.effectiveDate
 
-            -- Determine the next occurrence of an event based on the email type and base date.
+            -- Calculate the next occurrence of an event based on the email type and base date.
             nextOccurrence : ScheduledEmailType -> Date -> Date
             nextOccurrence emailType baseDate =
                 let
@@ -248,22 +260,22 @@ getScheduledEmails schedule =
 
                     result =
                         case emailType of
-                            Birthday _ ->
+                            Birthday ->
                                 Date.fromCalendarDate
                                     (nextBirthdayOrAnniversaryYear baseDate)
                                     (Date.month baseDate)
                                     (Date.day baseDate)
 
-                            Anniversary _ ->
+                            Anniversary ->
                                 Date.fromCalendarDate
                                     (nextBirthdayOrAnniversaryYear baseDate)
                                     (Date.month baseDate)
                                     (Date.day baseDate)
 
-                            NewYear _ ->
+                            NewYear ->
                                 nextNewYearDate
 
-                            OctoberBlast _ ->
+                            OctoberBlast ->
                                 Date.fromCalendarDate
                                     (if shouldUseNextYearForOctober then
                                         currentYear + 1
@@ -279,6 +291,90 @@ getScheduledEmails schedule =
                 in
                 result
 
+            -- Check if an email should be delayed due to birthday rules
+            checkBirthdayRuleDelay : ScheduledEmailType -> Date -> ( Date, ScheduledEmailStatus )
+            checkBirthdayRuleDelay emailType scheduledDate =
+                let
+                    -- Check if the scheduled date falls within a birthday rule window
+                    isScheduledDateInWindow : Date -> Date -> Bool
+                    isScheduledDateInWindow referenceDate dateToCheck =
+                        -- Get the rule for the state
+                        case getStateRule schedule.state of
+                            Just rule ->
+                                let
+                                    -- Calculate the start and end dates of the window for the scheduled year
+                                    scheduledYear =
+                                        Date.year dateToCheck
+
+                                    adjustedReferenceDate =
+                                        Date.fromCalendarDate scheduledYear (Date.month referenceDate) (Date.day referenceDate)
+
+                                    -- For Nevada, the window starts on the first day of the birth month
+                                    windowStartDate =
+                                        if rule.state == "NV" then
+                                            Date.fromCalendarDate scheduledYear (Date.month referenceDate) 1
+
+                                        else
+                                            -- For other states, subtract the days before birthday from the birthday
+                                            Date.add Date.Days -rule.daysBeforeBirthday adjustedReferenceDate
+
+                                    windowEndDate =
+                                        Date.add Date.Days rule.totalDays windowStartDate
+                                in
+                                -- Check if the scheduled date falls within the window
+                                Date.compare dateToCheck windowStartDate /= LT && Date.compare dateToCheck windowEndDate /= GT
+
+                            Nothing ->
+                                False
+                in
+                case emailType of
+                    Birthday ->
+                        -- For birthday emails, check if the state is Missouri (which doesn't have a birthday rule)
+                        if schedule.state == "MO" then
+                            -- Missouri only has anniversary rule, not birthday rule
+                            ( scheduledDate, Scheduled )
+                            -- For other states, check if the scheduled date falls within the birthday rule window
+
+                        else if isScheduledDateInWindow schedule.birthDate scheduledDate then
+                            -- If it does, delay until after the window
+                            let
+                                delayedDate =
+                                    getDelayedEmailDate schedule.state schedule.birthDate scheduledDate
+                            in
+                            ( delayedDate, Delayed "due to birthday rule window" )
+
+                        else
+                            ( scheduledDate, Scheduled )
+
+                    Anniversary ->
+                        -- For Missouri anniversary rule
+                        if schedule.state == "MO" then
+                            -- Check if the scheduled date falls within the anniversary rule window
+                            if isScheduledDateInWindow schedule.effectiveDate scheduledDate then
+                                -- If the contact already has Plan G and we're sending a Plan G email, delay it
+                                if schedule.planType == PlanG then
+                                    let
+                                        delayedDate =
+                                            getDelayedEmailDate schedule.state schedule.effectiveDate scheduledDate
+                                    in
+                                    ( delayedDate, Delayed "due to anniversary rule window" )
+
+                                else
+                                    -- If it's a different plan type, we can send it during the window
+                                    ( scheduledDate, Scheduled )
+
+                            else
+                                -- Outside the window, schedule normally
+                                ( scheduledDate, Scheduled )
+
+                        else
+                            -- For other states, no delay for anniversary emails
+                            ( scheduledDate, Scheduled )
+
+                    _ ->
+                        -- No delay for other email types
+                        ( scheduledDate, Scheduled )
+
             -- Create a scheduled email with the appropriate status.
             createScheduledEmail : ScheduledEmailType -> Date -> ScheduledEmail
             createScheduledEmail emailType baseDate =
@@ -286,6 +382,9 @@ getScheduledEmails schedule =
                     scheduledTime : Date
                     scheduledTime =
                         nextOccurrence emailType baseDate
+
+                    ( finalScheduledTime, birthdayRuleStatus ) =
+                        checkBirthdayRuleDelay emailType scheduledTime
 
                     status : ScheduledEmailStatus
                     status =
@@ -302,33 +401,35 @@ getScheduledEmails schedule =
                             Skipped "Within first year of effective date"
 
                         else
-                            Scheduled
+                            birthdayRuleStatus
                 in
                 { emailType = emailType
-                , scheduledTime = scheduledTime
+                , scheduledTime =
+                    if status == Delayed "due to birthday rule window" || status == Delayed "due to anniversary rule window" then
+                        finalScheduledTime
+
+                    else
+                        scheduledTime
                 , status = status
                 }
 
             -- Helper function to create plan-specific emails for each event type.
-            planSpecificEmail : (PlanType -> ScheduledEmailType) -> ScheduledEmail
-            planSpecificEmail constructor =
+            planSpecificEmail : ScheduledEmailType -> ScheduledEmail
+            planSpecificEmail emailType =
                 let
-                    emailType =
-                        constructor schedule.planType
-
                     baseDate =
                         case emailType of
-                            Birthday _ ->
+                            Birthday ->
                                 schedule.birthDate
 
-                            Anniversary _ ->
+                            Anniversary ->
                                 schedule.effectiveDate
 
-                            NewYear _ ->
+                            NewYear ->
                                 -- For New Year, we don't need a base date since we always use Jan 1
                                 Date.fromCalendarDate (Date.year schedule.currentDate) Jan 1
 
-                            OctoberBlast _ ->
+                            OctoberBlast ->
                                 -- For October blast, we don't need a base date since we always use Oct 1
                                 Date.fromCalendarDate (Date.year schedule.currentDate) Oct 1
 
@@ -344,11 +445,14 @@ getScheduledEmails schedule =
                 , planSpecificEmail OctoberBlast
                 ]
         in
-        -- Filter out past dates and sort by date in ascending order (closest dates first)
+        -- Include both scheduled and delayed emails, but filter out skipped ones
         List.filter
             (\email ->
                 case email.status of
                     Scheduled ->
+                        True
+
+                    Delayed _ ->
                         True
 
                     Skipped _ ->
@@ -373,21 +477,39 @@ getScheduledEmails schedule =
 -}
 viewFutureActivity : List ScheduledEmail -> Html msg
 viewFutureActivity scheduledEmails =
-    div [ class "mt-6" ]
-        [ h2 [ class "text-lg font-medium mb-4" ] [ text "Future Activity" ]
-        , table [ class "min-w-full" ]
+    div []
+        [ h2 [ class "text-lg font-medium text-gray-900 mb-4" ] [ text "Future Activity" ]
+        , table [ class "min-w-full divide-y divide-gray-300" ]
             [ thead [ class "bg-gray-50" ]
                 [ tr []
-                    [ th [ class "px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase" ]
-                        [ text "Type" ]
-                    , th [ class "px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase" ]
-                        [ text "Scheduled Date" ]
-                    , th [ class "px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase" ]
-                        [ text "Status" ]
+                    [ th [ class "px-3 py-3.5 text-left text-sm font-semibold text-gray-900" ] [ text "TYPE" ]
+                    , th [ class "px-3 py-3.5 text-left text-sm font-semibold text-gray-900" ] [ text "SCHEDULED DATE" ]
+                    , th [ class "px-3 py-3.5 text-left text-sm font-semibold text-gray-900" ] [ text "STATUS" ]
                     ]
                 ]
-            , tbody [ class "divide-y divide-gray-200" ]
-                (List.map viewScheduledEmail scheduledEmails)
+            , tbody [ class "divide-y divide-gray-200 bg-white" ]
+                (List.map
+                    (\email ->
+                        tr [ class "hover:bg-gray-50" ]
+                            [ td [ class "px-3 py-2 text-sm text-gray-900" ]
+                                [ text (scheduledEmailTypeToString email.emailType) ]
+                            , td [ class "px-3 py-2 text-sm text-gray-900" ]
+                                [ text (Date.format "MMMM ddd, yyyy" email.scheduledTime) ]
+                            , td [ class "px-3 py-2 text-sm" ]
+                                [ case email.status of
+                                    Scheduled ->
+                                        span [ class "text-green-600" ] [ text "Scheduled" ]
+
+                                    Skipped reason ->
+                                        span [ class "text-orange-600" ] [ text ("Skipped: " ++ reason) ]
+
+                                    Delayed reason ->
+                                        span [ class "text-blue-600" ] [ text ("Scheduled - Delayed " ++ reason) ]
+                                ]
+                            ]
+                    )
+                    scheduledEmails
+                )
             ]
         ]
 
@@ -412,6 +534,9 @@ viewScheduledEmail email =
 
                 Skipped reason ->
                     span [ class "text-orange-600" ] [ text ("Skipped: " ++ reason) ]
+
+                Delayed reason ->
+                    span [ class "text-blue-600" ] [ text ("Delayed " ++ reason) ]
             ]
         ]
 
@@ -424,31 +549,18 @@ viewScheduledEmail email =
 -}
 scheduledEmailTypeToString : ScheduledEmailType -> String
 scheduledEmailTypeToString emailType =
-    let
-        planString : PlanType -> String
-        planString plan =
-            case plan of
-                PlanN ->
-                    "Plan N"
-
-                PlanG ->
-                    "Plan G"
-
-                NoPlan ->
-                    "No Plan"
-    in
     case emailType of
-        Birthday plan ->
-            "Birthday (" ++ planString plan ++ ")"
+        Birthday ->
+            "Birthday"
 
-        Anniversary plan ->
-            "Anniversary (" ++ planString plan ++ ")"
+        Anniversary ->
+            "Anniversary"
 
-        NewYear plan ->
-            "New Year (" ++ planString plan ++ ")"
+        NewYear ->
+            "New Year"
 
-        OctoberBlast plan ->
-            "AEP Blast (" ++ planString plan ++ ")"
+        OctoberBlast ->
+            "AEP Blast"
 
         NoEmails ->
             "No Scheduled Emails"

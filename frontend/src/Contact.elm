@@ -679,7 +679,13 @@ update msg model =
 
         GotQuoteLink (Ok response) ->
             ( { model
-                | quoteUrl = Just ("/quote?id=" ++ response.quoteId)
+                | quoteUrl =
+                    case model.contact of
+                        Just contact ->
+                            Just ("/quote?id=" ++ response.quoteId ++ "&planType=" ++ contact.planType)
+
+                        Nothing ->
+                            Just ("/quote?id=" ++ response.quoteId)
                 , isGeneratingQuote = False
               }
             , Cmd.none
@@ -749,8 +755,18 @@ view model =
                         div []
                             [ viewHeader contact
                             , viewContactSummary contact model.quoteUrl model.isGeneratingQuote model.healthStatus model.followUps model.timeZone model.showAllFollowUps
-                            , div [ class "bg-white rounded-lg border border-gray-200 p-6 mb-8" ]
-                                [ viewFutureActivity (getScheduledEmails model.emailSchedule) ]
+                            , if model.orgSettings /= Nothing && isStateActive model.emailSchedule then
+                                div [ class "bg-white rounded-lg border border-gray-200 p-6 mb-8" ]
+                                    [ viewFutureActivity (getScheduledEmails model.emailSchedule) ]
+
+                              else
+                                div [ class "bg-white rounded-lg border border-gray-200 p-6 mb-8" ]
+                                    [ h2 [ class "text-lg font-medium mb-4" ] [ text "Future Activity" ]
+                                    , div [ class "flex justify-center items-center py-8" ]
+                                        [ viewSpinner
+                                        , span [ class "ml-3 text-gray-500" ] [ text "Loading future activities..." ]
+                                        ]
+                                    ]
                             , viewActivity model.activities
                             ]
 
@@ -799,6 +815,48 @@ viewHeader contact =
 
 viewContactSummary : Contact -> Maybe String -> Bool -> Maybe HealthStatus -> List FollowUpRequest -> Zone -> Bool -> Html Msg
 viewContactSummary contact quoteUrl isGeneratingQuote healthStatus followUps zone showAllFollowUps =
+    let
+        followUpsSection =
+            if not (List.isEmpty followUps) then
+                div [ class "bg-white rounded-lg border border-gray-200 p-6 mb-8" ]
+                    [ div [ class "flex justify-between items-center mb-6" ]
+                        [ h2 [ class "text-lg font-medium" ] [ text "Follow-up Requests" ] ]
+                    , div [ class "space-y-4" ]
+                        (List.take
+                            (if showAllFollowUps then
+                                List.length followUps
+
+                             else
+                                2
+                            )
+                            followUps
+                            |> List.map (viewFollowUpRequest zone)
+                        )
+                    , if not showAllFollowUps && List.length followUps > 2 then
+                        div [ class "mt-4 text-center" ]
+                            [ button
+                                [ class "text-sm text-purple-600 hover:text-purple-800"
+                                , onClick ToggleFollowUps
+                                ]
+                                [ text ("Show " ++ String.fromInt (List.length followUps - 2) ++ " More") ]
+                            ]
+
+                      else if showAllFollowUps then
+                        div [ class "mt-4 text-center" ]
+                            [ button
+                                [ class "text-sm text-purple-600 hover:text-purple-800"
+                                , onClick ToggleFollowUps
+                                ]
+                                [ text "Show Less" ]
+                            ]
+
+                      else
+                        text ""
+                    ]
+
+            else
+                text ""
+    in
     div []
         [ div [ class "bg-white rounded-lg border border-gray-200 p-6 mb-8" ]
             [ h2 [ class "text-lg font-medium mb-6" ] [ text "Contact Summary" ]
@@ -824,45 +882,7 @@ viewContactSummary contact quoteUrl isGeneratingQuote healthStatus followUps zon
                 , viewHealthStatusField healthStatus
                 ]
             ]
-        , if not (List.isEmpty followUps) then
-            div [ class "bg-white rounded-lg border border-gray-200 p-6 mb-8" ]
-                [ div [ class "flex justify-between items-center mb-6" ]
-                    [ h2 [ class "text-lg font-medium" ] [ text "Follow-up Requests" ] ]
-                , div [ class "space-y-4" ]
-                    (List.take
-                        (if showAllFollowUps then
-                            List.length followUps
-
-                         else
-                            2
-                        )
-                        followUps
-                        |> List.map (viewFollowUpRequest zone)
-                    )
-                , if not showAllFollowUps && List.length followUps > 2 then
-                    div [ class "mt-4 text-center" ]
-                        [ button
-                            [ class "text-sm text-purple-600 hover:text-purple-800"
-                            , onClick ToggleFollowUps
-                            ]
-                            [ text ("Show " ++ String.fromInt (List.length followUps - 2) ++ " More") ]
-                        ]
-
-                  else if showAllFollowUps then
-                    div [ class "mt-4 text-center" ]
-                        [ button
-                            [ class "text-sm text-purple-600 hover:text-purple-800"
-                            , onClick ToggleFollowUps
-                            ]
-                            [ text "Show Less" ]
-                        ]
-
-                  else
-                    text ""
-                ]
-
-          else
-            text ""
+        , followUpsSection
         ]
 
 
@@ -1615,3 +1635,21 @@ stringToPosix dateString =
         Err _ ->
             -- Default to Unix epoch if invalid date
             Date.fromCalendarDate 1970 Jan 1
+
+
+isStateActive : EmailSchedule -> Bool
+isStateActive schedule =
+    List.member schedule.state schedule.stateLicenses
+
+
+updateContact : Contact -> List Contact -> List Contact
+updateContact updated contacts =
+    List.map
+        (\contact ->
+            if contact.id == updated.id then
+                updated
+
+            else
+                contact
+        )
+        contacts

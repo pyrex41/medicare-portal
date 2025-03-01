@@ -6,7 +6,6 @@ import tailwindcss from '@tailwindcss/vite'
 export default defineConfig({
   plugins: [
     elmPlugin({
-      optimize: true,
       // Set a custom temp directory inside your project
       cwd: resolve(__dirname, 'elm-temp')
     }),

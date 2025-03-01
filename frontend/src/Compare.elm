@@ -1,8 +1,19 @@
-module Compare exposing (Model, Msg(..), init, subscriptions, update, view)
+module Compare exposing
+    ( Model
+    , Msg(..)
+    , PlanType(..)
+    , fetchPlans
+    , init
+    , subscriptions
+    , update
+    , view
+    )
 
+import BirthdayRules exposing (isInBirthdayRuleWindow)
 import Browser
 import Browser.Navigation as Nav
 import CarrierNaic exposing (carrierToNaics, carrierToString, naicToCarrier, stringToCarrier)
+import Date exposing (Date)
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (onClick)
@@ -10,7 +21,10 @@ import Http
 import Json.Decode as D exposing (Decoder)
 import Json.Decode.Pipeline as Pipeline
 import Json.Encode as E
+import Task
+import Time
 import Url exposing (Url)
+import Url.Parser as UrlParser
 import Url.Parser.Query as Query
 
 
@@ -85,7 +99,7 @@ type alias Model =
     , dateOfBirth : String
     , quoteId : Maybe String
     , orgSettings : Maybe Settings
-    , settingsLoaded : Bool
+    , currentDate : Maybe Date
     }
 
 
@@ -126,6 +140,8 @@ type Msg
     | NavigateTo String
     | ToggleDiscount
     | GotOrgSettings (Result Http.Error Settings)
+    | GotCurrentDate Date
+    | NoOp
 
 
 type alias Flags =
@@ -146,33 +162,74 @@ type alias Flags =
 -- INIT
 
 
-init : Flags -> Nav.Key -> ( Model, Cmd Msg )
-init flags key =
+init : Nav.Key -> Maybe Url -> ( Model, Cmd Msg )
+init key maybeUrl =
     let
-        defaultFlags =
-            { state = "TX"
-            , zip = "75201"
-            , county = "Dallas"
-            , gender = "Male"
-            , tobacco = False
-            , age = 65
-            , planType = "G"
-            , currentCarrier = Nothing
-            , dateOfBirth = ""
-            , quoteId = Nothing
-            }
+        -- Default values
+        defaultState =
+            "TX"
+
+        defaultCounty =
+            "Dallas"
+
+        defaultZip =
+            "75001"
+
+        defaultAge =
+            65
+
+        defaultGender =
+            "M"
+
+        defaultTobacco =
+            False
+
+        -- Extract plan type from URL if available
+        initialPlanType =
+            case maybeUrl |> Debug.log "maybeUrl" of
+                Just url ->
+                    case url.query of
+                        Just queryString ->
+                            let
+                                queryParser =
+                                    Query.string "planType"
+
+                                parsedQuery =
+                                    UrlParser.parse (UrlParser.query queryParser) url
+                            in
+                            case parsedQuery of
+                                Just (Just planTypeValue) ->
+                                    -- Handle various formats of plan type
+                                    let
+                                        normalized =
+                                            String.toUpper (String.trim planTypeValue)
+                                    in
+                                    if String.contains "N" normalized then
+                                        PlanN
+
+                                    else
+                                        PlanG
+
+                                _ ->
+                                    PlanG
+
+                        Nothing ->
+                            PlanG
+
+                Nothing ->
+                    PlanG
 
         model =
             { isLoading = True
             , error = Nothing
             , plans = { planG = [], planN = [] }
-            , state = flags.state
-            , county = flags.county
-            , zip = flags.zip
-            , age = flags.age
-            , gender = flags.gender
-            , tobacco = flags.tobacco
-            , selectedPlanType = defaultPlanType flags
+            , state = defaultState
+            , county = defaultCounty
+            , zip = defaultZip
+            , age = defaultAge
+            , gender = defaultGender
+            , tobacco = defaultTobacco
+            , selectedPlanType = initialPlanType
             , showReviewVideo = False
             , showQualificationVideo = False
             , showGvsNVideo = False
@@ -181,18 +238,22 @@ init flags key =
             , showRatesVideo = False
             , key = key
             , showDiscount = False
-            , currentCarrier = flags.currentCarrier
-            , dateOfBirth = flags.dateOfBirth
-            , quoteId = flags.quoteId
+            , currentCarrier = Nothing
+            , dateOfBirth = ""
+            , quoteId = Nothing
             , orgSettings = Nothing
-            , settingsLoaded = False
+            , currentDate = Nothing
             }
     in
     ( model
-    , Http.get
-        { url = "/api/settings"
-        , expect = Http.expectJson GotOrgSettings settingsDecoder
-        }
+    , Cmd.batch
+        [ fetchPlans model
+        , Http.get
+            { url = "/api/settings"
+            , expect = Http.expectJson GotOrgSettings settingsDecoder
+            }
+        , Task.perform GotCurrentDate Date.today
+        ]
     )
 
 
@@ -213,40 +274,45 @@ defaultPlanType flags =
 -- HTTP
 
 
-fetchPlans : Flags -> Model -> Cmd Msg
-fetchPlans flags model =
-    if model.settingsLoaded then
-        Http.request
-            { method = "POST"
-            , headers = []
-            , url = "/api/quotes"
-            , body = Http.jsonBody (buildPlansBody flags)
-            , expect = Http.expectJson GotPlans (plansDecoder model)
-            , timeout = Nothing
-            , tracker = Nothing
-            }
-
-    else
-        Cmd.none
+fetchPlans : Model -> Cmd Msg
+fetchPlans model =
+    Http.request
+        { method = "POST"
+        , headers = []
+        , url = "/api/quotes"
+        , body = Http.jsonBody (buildPlansBody model)
+        , expect = Http.expectJson GotPlans (plansDecoder model)
+        , timeout = Nothing
+        , tracker = Nothing
+        }
 
 
-buildPlansBody : Flags -> E.Value
-buildPlansBody flags =
+buildPlansBody : Model -> E.Value
+buildPlansBody model =
+    let
+        -- Ensure age is at least 65 for Medicare supplement plans
+        minimumAge =
+            if model.age < 65 then
+                65
+
+            else
+                model.age
+    in
     E.object
-        [ ( "zip_code", E.string flags.zip )
-        , ( "state", E.string flags.state )
-        , ( "county", E.string flags.county )
-        , ( "age", E.int flags.age )
+        [ ( "zip_code", E.string model.zip )
+        , ( "state", E.string model.state )
+        , ( "county", E.string model.county )
+        , ( "age", E.int minimumAge )
         , ( "gender"
           , E.string
-                (if flags.gender == "Male" then
+                (if model.gender == "Male" then
                     "M"
 
                  else
                     "F"
                 )
           )
-        , ( "tobacco", E.bool flags.tobacco )
+        , ( "tobacco", E.bool model.tobacco )
         , ( "plans", E.list E.string [ "G", "N" ] )
         , ( "carriers", E.string "supported" )
         ]
@@ -258,8 +324,11 @@ buildPlansBody flags =
 
 plansDecoder : Model -> Decoder Plans
 plansDecoder model =
-    D.list quoteResponseDecoder
-        |> D.map (\responses -> groupQuotesByPlan responses model)
+    D.oneOf
+        [ D.list quoteResponseDecoder
+            |> D.map (\responses -> groupQuotesByPlan responses model)
+        , D.succeed { planG = [], planN = [] }
+        ]
 
 
 type alias QuoteResponse =
@@ -307,16 +376,23 @@ groupQuotesByPlan responses model =
     let
         isCarrierSupported : String -> Bool
         isCarrierSupported naic =
-            case ( naicToCarrier naic, model.orgSettings ) of
-                ( Just carrier, Just settings ) ->
-                    let
-                        carrierStr =
-                            carrierToString carrier
-                    in
-                    List.member carrierStr settings.carrierContracts
+            -- Always consider carriers supported until settings are loaded
+            case model.orgSettings of
+                Nothing ->
+                    True
 
-                _ ->
-                    False
+                Just settings ->
+                    case naicToCarrier naic of
+                        Just carrier ->
+                            let
+                                carrierStr =
+                                    carrierToString carrier
+                            in
+                            List.member carrierStr settings.carrierContracts
+
+                        Nothing ->
+                            -- If we can't map the NAIC to a carrier, consider it supported
+                            True
 
         convertToPlan : QuoteResponse -> QuoteData -> Plan
         convertToPlan response quote =
@@ -358,23 +434,19 @@ groupQuotesByPlan responses model =
         allQuotes =
             List.concatMap
                 (\response ->
-                    if isCarrierSupported response.naic then
-                        List.concatMap
-                            (\quote ->
-                                let
-                                    upperPlan =
-                                        String.toUpper quote.plan
-                                in
-                                if List.member upperPlan [ "G", "N" ] then
-                                    [ convertToPlan response quote ]
+                    List.concatMap
+                        (\quote ->
+                            let
+                                upperPlan =
+                                    String.toUpper quote.plan
+                            in
+                            if List.member upperPlan [ "G", "N" ] then
+                                [ convertToPlan response quote ]
 
-                                else
-                                    []
-                            )
-                            response.quotes
-
-                    else
-                        []
+                            else
+                                []
+                        )
+                        response.quotes
                 )
                 responses
 
@@ -431,30 +503,11 @@ update msg model =
     case msg of
         GotOrgSettings (Ok settings) ->
             let
-                flags =
-                    { state = model.state
-                    , zip = model.zip
-                    , county = model.county
-                    , age = model.age
-                    , gender = model.gender
-                    , tobacco = model.tobacco
-                    , planType =
-                        case model.selectedPlanType of
-                            PlanG ->
-                                "G"
-
-                            PlanN ->
-                                "N"
-                    , currentCarrier = model.currentCarrier
-                    , dateOfBirth = model.dateOfBirth
-                    , quoteId = model.quoteId
-                    }
-
                 updatedModel =
-                    { model | orgSettings = Just settings, settingsLoaded = True }
+                    { model | orgSettings = Just settings }
             in
             ( updatedModel
-            , fetchPlans flags updatedModel
+            , fetchPlans updatedModel
             )
 
         GotOrgSettings (Err _) ->
@@ -470,9 +523,21 @@ update msg model =
         GotPlans result ->
             case result of
                 Ok plans ->
+                    let
+                        hasPlans =
+                            not (List.isEmpty plans.planG && List.isEmpty plans.planN)
+
+                        errorMsg =
+                            if not hasPlans then
+                                Just "No plans available for the selected criteria. Please try different parameters."
+
+                            else
+                                Nothing
+                    in
                     ( { model
                         | plans = plans
                         , isLoading = False
+                        , error = errorMsg
                       }
                     , Cmd.none
                     )
@@ -552,6 +617,12 @@ update msg model =
         NavigateTo path ->
             ( model, Nav.pushUrl model.key path )
 
+        GotCurrentDate date ->
+            ( { model | currentDate = Just date }, Cmd.none )
+
+        NoOp ->
+            ( model, Cmd.none )
+
 
 
 -- HELPERS
@@ -588,10 +659,6 @@ getSelectedPlans model =
                 Just naicList ->
                     List.filter
                         (\plan ->
-                            let
-                                _ =
-                                    not (List.member plan.naic naicList)
-                            in
                             not (List.member plan.naic naicList)
                         )
                         plans
@@ -663,7 +730,7 @@ view model =
                                 [ viewPlanToggle model ]
                             , div [ class "flex justify-center mt-4" ]
                                 [ viewPillButton "Learn About Plan G vs. Plan N" True OpenGvsNVideo ]
-                            , viewCarousel model
+                            , viewPlansCarousel model
                             ]
             ]
         , viewGvsNModal model
@@ -684,8 +751,19 @@ viewLoading =
 
 viewError : String -> Html Msg
 viewError error =
-    div [ class "text-center text-xl font-bold text-red-600 mt-8 p-4 bg-red-50 rounded-lg" ]
-        [ text error ]
+    div [ class "flex flex-col gap-6 text-center mx-auto max-w-3xl" ]
+        [ h1 [ class "text-2xl font-semibold text-[#1A1A1A] mb-2" ]
+            [ text "Unable to Load Plans" ]
+        , div [ class "text-center text-xl font-medium text-red-600 mt-8 p-4 bg-red-50 rounded-lg" ]
+            [ text error ]
+        , div [ class "mt-6 flex justify-center" ]
+            [ button
+                [ class "px-6 py-3 bg-[#0066FF] text-white rounded-lg hover:bg-blue-700 transition-colors"
+                , onClick (NavigateTo "/")
+                ]
+                [ text "Return to Home" ]
+            ]
+        ]
 
 
 viewPlanToggle : Model -> Html Msg
@@ -759,8 +837,8 @@ getPlanNName model =
             "Plan N"
 
 
-viewCarousel : Model -> Html Msg
-viewCarousel model =
+viewPlansCarousel : Model -> Html Msg
+viewPlansCarousel model =
     let
         currentPlans =
             getSelectedPlans model
@@ -771,13 +849,18 @@ viewCarousel model =
     div [ class "relative w-full max-w-[640px] mx-auto mt-8" ]
         [ div [ class "absolute left-1/2 transform -translate-x-1/2 -top-6 z-10" ]
             [ viewCarouselDots model totalCards ]
-        , div [ class "overflow-hidden" ]
-            [ div
-                [ class "flex transition-transform duration-300 ease-in-out"
-                , style "transform" ("translateX(-" ++ String.fromInt (model.currentCardIndex * 100) ++ "%)")
+        , if List.isEmpty currentPlans then
+            div [ class "text-center py-8" ]
+                [ p [ class "text-gray-500" ] [ text "No plans available to display." ] ]
+
+          else
+            div [ class "overflow-hidden" ]
+                [ div
+                    [ class "flex transition-transform duration-300 ease-in-out"
+                    , style "transform" ("translateX(-" ++ String.fromInt (model.currentCardIndex * 100) ++ "%)")
+                    ]
+                    (List.map (viewPlanCard model) currentPlans)
                 ]
-                (List.map (viewPlanCard model) currentPlans)
-            ]
         , viewCarouselControls model totalCards
         , div [ class "mt-8 text-center text-sm text-[#666666] max-w-lg mx-auto" ]
             [ p [ class "mb-2" ]
@@ -1097,3 +1180,20 @@ stateCarrierSettingDecoder =
         (D.field "carrier" D.string)
         (D.field "active" D.bool)
         (D.field "targetGI" D.bool)
+
+
+viewPlanList : Model -> PlanType -> List Plan -> Html Msg
+viewPlanList model planType plans =
+    let
+        filteredPlans =
+            plans
+    in
+    div []
+        [ if List.isEmpty filteredPlans then
+            div [ class "text-center py-8" ]
+                [ p [ class "text-gray-500" ] [ text "No plans available to display." ] ]
+
+          else
+            div [ class "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" ]
+                (List.map (viewPlanCard model) filteredPlans)
+        ]

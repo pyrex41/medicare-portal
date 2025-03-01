@@ -1,4 +1,4 @@
-module Main exposing (main)
+port module Main exposing (main)
 
 import AddAgent
 import Browser exposing (Document)
@@ -31,6 +31,14 @@ import TempLanding
 import Url exposing (Url)
 import Url.Parser as Parser exposing ((</>), (<?>), Parser, map, oneOf, s, string, top)
 import Url.Parser.Query as Query
+
+
+
+-- PORTS
+-- Send a message to JavaScript to clear the session cookie
+
+
+port clearSessionCookie : () -> Cmd msg
 
 
 type alias VerificationResponse =
@@ -274,7 +282,7 @@ type PublicPage
     | SignupRoute
     | VerifyRoute VerifyParams
     | CompareRoute CompareParams
-    | QuoteRoute ( Maybe String, Maybe String )
+    | QuoteRoute ( Maybe String, Maybe String, Maybe String )
     | EligibilityRoute ( Maybe String, Maybe String )
     | ScheduleRoute ( Maybe String, Maybe String, Maybe String )
 
@@ -375,9 +383,10 @@ routeParser =
         , map (PublicRoute << CompareRoute) (s "compare" <?> compareParamsParser)
         , map (PublicRoute << QuoteRoute)
             (s "quote"
-                <?> Query.map2 Tuple.pair
+                <?> Query.map3 (\id tid planType -> ( id, tid, planType ))
                         (Query.string "id")
                         (Query.string "tid")
+                        (Query.string "planType")
             )
         , map (PublicRoute << EligibilityRoute)
             (s "eligibility"
@@ -816,12 +825,15 @@ update msg model =
             )
 
         InitiateLogout ->
-            let
-                ( logoutModel, logoutCmd ) =
-                    Logout.init model.key
-            in
-            ( { model | page = LogoutPage logoutModel }
-            , Cmd.map LogoutMsg logoutCmd
+            ( { model
+                | session = NoSession
+                , currentUser = Nothing
+                , showDropdown = False
+              }
+            , Cmd.batch
+                [ clearSessionCookie ()
+                , Nav.pushUrl model.key "/"
+                ]
             )
 
         NoOp ->
@@ -987,8 +999,16 @@ view model =
 viewWithNav : Model -> Html Msg -> Html Msg
 viewWithNav model content =
     div []
-        [ viewNavHeader model
-        , content
+        [ if model.isSetup then
+            -- Don't show header during setup flow
+            content
+
+          else
+            -- Show header for regular pages
+            div []
+                [ viewNavHeader model
+                , content
+                ]
         ]
 
 
@@ -1110,7 +1130,7 @@ isAdmin maybeUser =
 
 viewNotFound : Browser.Document msg
 viewNotFound =
-    { title = "Not Found"
+    { title = "404 - Page Not Found"
     , body =
         [ div [ class "min-h-screen bg-gray-50 flex flex-col items-center justify-center" ]
             [ h1 [ class "text-4xl font-bold text-gray-900 mb-4" ]
@@ -1415,7 +1435,7 @@ updatePage url ( model, cmd ) =
                                     ]
                                 )
 
-                            PublicRoute (QuoteRoute ( maybeQuoteId, maybeTrackingId )) ->
+                            PublicRoute (QuoteRoute ( maybeQuoteId, maybeTrackingId, maybePlanType )) ->
                                 let
                                     initialValues =
                                         { zipCode = Nothing
@@ -1423,6 +1443,7 @@ updatePage url ( model, cmd ) =
                                         , tobacco = Nothing
                                         , gender = Nothing
                                         , quoteId = maybeQuoteId
+                                        , planType = maybePlanType
                                         }
 
                                     ( quoteModel, quoteCmd ) =
@@ -1528,21 +1549,32 @@ updatePage url ( model, cmd ) =
 
                             PublicRoute (CompareRoute params) ->
                                 let
-                                    flags =
-                                        { state = params.state
-                                        , zip = params.zip
-                                        , county = params.county
-                                        , gender = params.gender
-                                        , tobacco = params.tobacco
-                                        , age = params.age
-                                        , planType = params.planType
-                                        , currentCarrier = params.currentCarrier
-                                        , dateOfBirth = params.dateOfBirth
-                                        , quoteId = params.quoteId
+                                    ( compareModel, compareCmd ) =
+                                        Compare.init model.key Nothing
+
+                                    -- Update the model with the parameters
+                                    updatedCompareModel =
+                                        { compareModel
+                                            | state = params.state
+                                            , county = params.county
+                                            , zip = params.zip
+                                            , age = params.age
+                                            , gender = params.gender
+                                            , tobacco = params.tobacco
+                                            , selectedPlanType =
+                                                if params.planType == "N" then
+                                                    Compare.PlanN
+
+                                                else
+                                                    Compare.PlanG
+                                            , currentCarrier = params.currentCarrier
+                                            , dateOfBirth = params.dateOfBirth
+                                            , quoteId = params.quoteId
                                         }
 
-                                    ( compareModel, compareCmd ) =
-                                        Compare.init flags model.key
+                                    -- Fetch plans with the updated model
+                                    updatedCompareCmd =
+                                        Compare.fetchPlans updatedCompareModel
 
                                     trackingCmd =
                                         case params.trackingId of
@@ -1562,8 +1594,8 @@ updatePage url ( model, cmd ) =
                                             Nothing ->
                                                 Cmd.none
                                 in
-                                ( { model | page = ComparePage compareModel }
-                                , Cmd.batch [ cmd, Cmd.map CompareMsg compareCmd, trackingCmd ]
+                                ( { model | page = ComparePage updatedCompareModel }
+                                , Cmd.batch [ cmd, Cmd.map CompareMsg updatedCompareCmd, trackingCmd ]
                                 )
 
                             ProtectedRoute ContactsRoute ->
