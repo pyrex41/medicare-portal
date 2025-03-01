@@ -166,6 +166,7 @@ type alias UploadState =
     , converted_carriers_csv : Maybe String
     , stats : Maybe UploadStats
     , overwriteDuplicates : Bool
+    , selectedAgentId : Maybe Int
     }
 
 
@@ -195,6 +196,8 @@ type alias User =
     , organizationId : Int
     , isActive : Bool
     , phone : String
+    , carriers : List String
+    , stateLicenses : List String
     }
 
 
@@ -289,6 +292,7 @@ emptyUploadState =
     , converted_carriers_csv = Nothing
     , stats = Nothing
     , overwriteDuplicates = True
+    , selectedAgentId = Nothing
     }
 
 
@@ -349,6 +353,7 @@ type Msg
     | NavigateToContact Int
     | GotCarriers (Result Http.Error (List String))
     | GotAgents (Result Http.Error (List User))
+    | SelectUploadAgent Int
 
 
 type ContactFormField
@@ -951,7 +956,7 @@ update msg model =
                                 | showModal = CsvUploadModal { state | error = Nothing, errorCsv = Nothing, stats = Nothing }
                                 , isUploadingCsv = True
                               }
-                            , uploadCsv file state.overwriteDuplicates
+                            , uploadCsv file state.overwriteDuplicates state.selectedAgentId
                             )
 
                         Nothing ->
@@ -1114,10 +1119,53 @@ update msg model =
             ( model, Cmd.none )
 
         GotAgents (Ok agents) ->
+            let
+                _ =
+                    Debug.log "Raw agents data" agents
+
+                -- Also add some debug output for the first agent if available
+                _ =
+                    case List.head agents of
+                        Just agent ->
+                            Debug.log "First agent"
+                                { id = agent.id
+                                , name = agent.firstName ++ " " ++ agent.lastName
+                                , email = agent.email
+                                , isAdmin = agent.isAdmin
+                                , isAgent = agent.isAgent
+                                , carriers = agent.carriers
+                                , stateLicenses = agent.stateLicenses
+                                }
+
+                        Nothing ->
+                            Debug.log "No agents found"
+                                { id = 0
+                                , name = ""
+                                , email = ""
+                                , isAdmin = False
+                                , isAgent = False
+                                , carriers = []
+                                , stateLicenses = []
+                                }
+            in
             ( { model | agents = agents }, Cmd.none )
 
-        GotAgents (Err _) ->
+        GotAgents (Err error) ->
+            let
+                _ =
+                    Debug.log "Error loading agents" (Debug.toString error)
+            in
             ( model, Cmd.none )
+
+        SelectUploadAgent agentId ->
+            case model.showModal of
+                CsvUploadModal state ->
+                    ( { model | showModal = CsvUploadModal { state | selectedAgentId = Just agentId } }
+                    , Cmd.none
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
 
 
 
@@ -1213,7 +1261,7 @@ view model =
                         , col [ class "w-48" ] [] -- Email
                         , col [ class "w-32" ] [] -- Phone Number
                         , col [ class "w-16" ] [] -- State
-                        , col [ class "w-32" ] [] -- Contact Owner (optional)
+                        , col [ class "w-32" ] [] -- Assigned Agent
                         , col [ class "w-32" ] [] -- Current Carrier
                         , col [ class "w-28" ] [] -- Effective Date
                         , col [ class "w-20" ] [] -- Actions
@@ -1240,11 +1288,7 @@ view model =
                             , tableHeader "Email"
                             , tableHeader "Phone Number"
                             , tableHeader "State"
-                            , if isAdminOrAdminAgent model.currentUser then
-                                tableHeader "Contact Owner"
-
-                              else
-                                text ""
+                            , tableHeader "Assigned Agent"
                             , tableHeader "Current Carrier"
                             , tableHeader "Effective Date"
                             , tableHeader "Actions"
@@ -1255,7 +1299,7 @@ view model =
                             [ tr []
                                 [ td
                                     [ class "px-3 py-8 text-sm text-gray-500 text-center border-t border-gray-200"
-                                    , attribute "colspan" "9"
+                                    , attribute "colspan" "10"
                                     ]
                                     [ div [ class "flex items-center justify-center gap-3" ]
                                         [ viewSpinner
@@ -1269,7 +1313,7 @@ view model =
                             [ tr []
                                 [ td
                                     [ class "px-3 py-2 text-sm text-gray-500 text-center border-t border-gray-200"
-                                    , attribute "colspan" "9"
+                                    , attribute "colspan" "10"
                                     ]
                                     [ text "No contacts found" ]
                                 ]
@@ -1344,6 +1388,20 @@ viewTableRow model contact =
 
         initials =
             String.left 1 contact.firstName ++ String.left 1 contact.lastName
+
+        agentName =
+            case contact.contactOwner of
+                Just owner ->
+                    owner.firstName ++ " " ++ owner.lastName
+
+                Nothing ->
+                    case contact.agentId of
+                        Just _ ->
+                            -- If we have an agentId but no resolved owner, show "Agent #ID"
+                            "Agent #" ++ (Maybe.map String.fromInt contact.agentId |> Maybe.withDefault "")
+
+                        Nothing ->
+                            "Default"
     in
     [ tr [ class "hover:bg-gray-50 transition-colors duration-200" ]
         [ td
@@ -1373,12 +1431,8 @@ viewTableRow model contact =
             [ text (formatPhoneNumber contact.phoneNumber) ]
         , td [ class cellClass ]
             [ text contact.state ]
-        , if isAdminOrAdminAgent model.currentUser then
-            td [ class cellClass ]
-                [ text (Maybe.map .firstName contact.contactOwner |> Maybe.withDefault "Default") ]
-
-          else
-            text ""
+        , td [ class cellClass ]
+            [ text agentName ]
         , td [ class cellClass ]
             [ text contact.currentCarrier ]
         , td [ class cellClass ]
@@ -1562,7 +1616,7 @@ viewModals model =
             viewEditModal model model.isSubmittingForm
 
         CsvUploadModal state ->
-            viewCsvUploadModal state model.isUploadingCsv
+            viewCsvUploadModal state model.isUploadingCsv model
 
         DeleteConfirmModal ->
             viewDeleteConfirmModal model
@@ -1645,8 +1699,8 @@ viewEditModal model isSubmitting =
         ]
 
 
-viewCsvUploadModal : UploadState -> Bool -> Html Msg
-viewCsvUploadModal state isUploading =
+viewCsvUploadModal : UploadState -> Bool -> Model -> Html Msg
+viewCsvUploadModal state isUploading model =
     div [ class "fixed inset-0 bg-gray-500/75 flex items-center justify-center p-8" ]
         [ div [ class "bg-white rounded-xl p-10 max-w-2xl w-full mx-4 shadow-xl relative" ]
             [ button
@@ -1781,16 +1835,53 @@ viewCsvUploadModal state isUploading =
 
               else
                 text ""
-            , div [ class "mb-4 flex items-center space-x-2" ]
-                [ input
-                    [ type_ "checkbox"
-                    , checked state.overwriteDuplicates
-                    , onInput (\val -> ToggleOverwriteDuplicates (val == "true"))
-                    , class "rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+            , div [ class "mb-4 space-y-4" ]
+                [ div [ class "flex items-center space-x-2" ]
+                    [ input
+                        [ type_ "checkbox"
+                        , checked state.overwriteDuplicates
+                        , onInput (\val -> ToggleOverwriteDuplicates (val == "true"))
+                        , class "rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                        ]
+                        []
+                    , label [ class "text-sm text-gray-600" ]
+                        [ text "Overwrite existing contacts (matched on email address)" ]
                     ]
-                    []
-                , label [ class "text-sm text-gray-600" ]
-                    [ text "Overwrite existing contacts (matched on email address)" ]
+                , div [ class "form-group" ]
+                    [ Html.label [ class "block text-sm font-medium text-gray-700 mb-2" ]
+                        [ text "Assign to Agent" ]
+                    , div [ class "relative" ]
+                        [ if List.isEmpty model.agents then
+                            div [ class "p-2 text-gray-500 border rounded" ]
+                                [ text "Loading agents..." ]
+
+                          else
+                            let
+                                -- Simple agent dropdown options - show all available agents
+                                agentOptions =
+                                    List.map
+                                        (\agent ->
+                                            ( String.fromInt agent.id
+                                            , agent.firstName ++ " " ++ agent.lastName
+                                            )
+                                        )
+                                        model.agents
+                            in
+                            Html.select
+                                [ class "w-full px-4 py-3 bg-white border-[2.5px] border-purple-300 rounded-lg text-gray-700 placeholder-gray-400 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 focus:bg-white transition-all duration-200 appearance-none"
+                                , value (String.fromInt (Maybe.withDefault 0 state.selectedAgentId))
+                                , onInput (\val -> SelectUploadAgent (String.toInt val |> Maybe.withDefault 0))
+                                ]
+                                (List.map
+                                    (\( val, label ) ->
+                                        option [ value val ] [ text label ]
+                                    )
+                                    agentOptions
+                                )
+                        , div [ class "absolute inset-y-0 right-0 flex items-center px-2 pointer-events-none" ]
+                            [ viewIcon "M19 9l-7 7-7-7" ]
+                        ]
+                    ]
                 ]
             , div
                 [ class
@@ -1853,20 +1944,28 @@ dropDecoder toMsg =
         |> Decode.map (\file -> ( toMsg file, True ))
 
 
-uploadCsv : File -> Bool -> Cmd Msg
-uploadCsv file overwriteDuplicates =
+uploadCsv : File -> Bool -> Maybe Int -> Cmd Msg
+uploadCsv file overwriteDuplicates maybeAgentId =
     let
         body =
             Http.multipartBody
-                [ Http.filePart "file" file
-                , Http.stringPart "overwrite_duplicates"
+                ([ Http.filePart "file" file
+                 , Http.stringPart "overwrite_duplicates"
                     (if overwriteDuplicates then
                         "true"
 
                      else
                         "false"
                     )
-                ]
+                 ]
+                    ++ (case maybeAgentId of
+                            Just agentId ->
+                                [ Http.stringPart "agent_id" (String.fromInt agentId) ]
+
+                            Nothing ->
+                                []
+                       )
+                )
     in
     Http.post
         { url = "/api/contacts/upload"
@@ -2153,8 +2252,47 @@ viewContactForm model form updateMsg submitMsg buttonText isSubmitting =
         planTypeOptions =
             [ ( "", "Select a plan type" ), ( "Plan N", "Plan N" ), ( "Plan G", "Plan G" ), ( "Other", "Other" ) ]
 
+        -- Simple agent dropdown options - show all available agents
         agentOptions =
-            ( "", "Default" ) :: List.map (\agent -> ( String.fromInt agent.id, agent.firstName ++ " " ++ agent.lastName )) model.agents
+            if List.isEmpty model.agents then
+                -- If no agents loaded, use current user as fallback if they're an agent
+                case model.currentUser of
+                    Just user ->
+                        [ ( String.fromInt user.id, user.firstName ++ " " ++ user.lastName ) ]
+
+                    Nothing ->
+                        []
+
+            else
+                -- Just show all available agents
+                List.map
+                    (\agent ->
+                        ( String.fromInt agent.id, agent.firstName ++ " " ++ agent.lastName )
+                    )
+                    model.agents
+
+        -- Get the selected agent ID or default to first agent
+        defaultAgentId =
+            case List.head model.agents of
+                Just agent ->
+                    String.fromInt agent.id
+
+                Nothing ->
+                    -- Try current user as fallback
+                    case model.currentUser of
+                        Just user ->
+                            String.fromInt user.id
+
+                        Nothing ->
+                            ""
+
+        selectedAgentId =
+            case form.contactOwnerId of
+                Just id ->
+                    String.fromInt id
+
+                Nothing ->
+                    defaultAgentId
 
         emailField =
             div [ class "form-group relative" ]
@@ -2210,7 +2348,7 @@ viewContactForm model form updateMsg submitMsg buttonText isSubmitting =
             , viewFormInput "Phone Number" "text" form.phoneNumber PhoneNumber updateMsg True
             , viewFormSelect "Current Carrier" form.currentCarrier CurrentCarrier updateMsg carrierOptions
             , viewFormSelect "Plan Type" form.planType PlanType updateMsg planTypeOptions
-            , viewFormSelect "Contact Owner" (Maybe.map String.fromInt form.contactOwnerId |> Maybe.withDefault "") ContactOwnerId updateMsg agentOptions
+            , viewFormSelectWithValue "Assigned Agent" selectedAgentId ContactOwnerId updateMsg agentOptions
             , viewFormInput "Effective Date" "date" form.effectiveDate EffectiveDate updateMsg True
             , viewFormInput "Birth Date" "date" form.birthDate BirthDate updateMsg True
             , viewFormRadioGroup "Tobacco User"
@@ -2434,6 +2572,8 @@ userDecoder =
         |> Pipeline.required "organization_id" Decode.int
         |> Pipeline.required "is_active" Decode.bool
         |> Pipeline.required "phone" Decode.string
+        |> Pipeline.optional "carriers" (Decode.list Decode.string) []
+        |> Pipeline.optional "stateLicenses" (Decode.list Decode.string) []
 
 
 deleteContacts : List Int -> Cmd Msg
@@ -2676,7 +2816,7 @@ fetchAgents : Cmd Msg
 fetchAgents =
     Http.get
         { url = "/api/agents"
-        , expect = Http.expectJson GotAgents (Decode.list userDecoder)
+        , expect = Http.expectJson GotAgents (Decode.list agentDecoder)
         }
 
 
@@ -2733,3 +2873,43 @@ viewDeleteConfirmModal model =
                 ]
             ]
         ]
+
+
+
+-- Add a new function to allow setting a custom selected value
+
+
+viewFormSelectWithValue : String -> String -> ContactFormField -> (ContactFormField -> String -> Msg) -> List ( String, String ) -> Html Msg
+viewFormSelectWithValue labelText selectedValue field updateMsg options =
+    div [ class "form-group" ]
+        [ Html.label [ class "block text-sm font-medium text-gray-700 mb-2" ]
+            [ text labelText ]
+        , div [ class "relative" ]
+            [ Html.select
+                [ class "w-full px-4 py-3 bg-white border-[2.5px] border-purple-300 rounded-lg text-gray-700 placeholder-gray-400 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 focus:bg-white transition-all duration-200 appearance-none"
+                , value selectedValue
+                , onInput (updateMsg field)
+                ]
+                (List.map (\( val, txt ) -> option [ value val ] [ text txt ]) options)
+            , div [ class "absolute inset-y-0 right-0 flex items-center px-2 pointer-events-none" ]
+                [ viewIcon "M19 9l-7 7-7-7" ]
+            ]
+        ]
+
+
+agentDecoder : Decode.Decoder User
+agentDecoder =
+    Decode.succeed User
+        |> Pipeline.required "id" Decode.int
+        |> Pipeline.required "email" Decode.string
+        |> Pipeline.required "firstName" Decode.string
+        |> Pipeline.required "lastName" Decode.string
+        |> Pipeline.required "isAdmin" Decode.bool
+        |> Pipeline.required "isAgent" Decode.bool
+        |> Pipeline.optional "organizationId" Decode.int 0
+        -- Add default value for isActive since it's not in the API response
+        |> Pipeline.hardcoded True
+        -- Assume agents are active
+        |> Pipeline.optional "phone" Decode.string ""
+        |> Pipeline.optional "carriers" (Decode.list Decode.string) []
+        |> Pipeline.optional "stateLicenses" (Decode.list Decode.string) []

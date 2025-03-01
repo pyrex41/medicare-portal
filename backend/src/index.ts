@@ -1270,14 +1270,9 @@ const startServer = async () => {
             }
           }
 
-          // Add admin check
-          if (!currentUser.is_admin && !request.url.includes('/setup')) {
-            set.status = 403
-            return {
-              success: false,
-              error: 'Only administrators can view agents'
-            }
-          }
+          // Remove admin check - allow any authenticated user to fetch agents for their organization
+          // All users should be able to see the agent list for assignment purposes
+          logger.info(`GET /api/agents - Fetching agents for org ${currentUser.organization_id}`)
 
           // Get the libSQL client
           const client = db.getClient()
@@ -1298,13 +1293,16 @@ const startServer = async () => {
               LEFT JOIN agent_settings a ON u.id = a.agent_id
               WHERE u.organization_id = ?
               AND u.is_active = 1
+              AND u.is_agent = 1
               ORDER BY u.first_name, u.last_name
             `,
             args: [currentUser.organization_id]
           })
 
-          // Map the database results to the expected format
-          const agents = result.rows.map((row: DbRow) => {
+          logger.info(`GET /api/agents - Found ${result.rows.length} agents`)
+
+          // Map the database results to the expected format with camelCase field names
+          const agents = result.rows.map((row: any) => {
             const settings = row.settings ? JSON.parse(row.settings) : {
               stateLicenses: [],
               carrierContracts: [],
@@ -1317,13 +1315,14 @@ const startServer = async () => {
               lastName: row.last_name,
               email: row.email,
               phone: row.phone || '',
-              is_admin: Boolean(row.is_admin),
-              is_agent: Boolean(row.is_agent),
+              isAdmin: Boolean(row.is_admin),
+              isAgent: Boolean(row.is_agent),
               carriers: settings.carrierContracts || [],
               stateLicenses: settings.stateLicenses || []
             }
           })
 
+          logger.info(`GET /api/agents - Returning ${agents.length} agents`)
           return agents
 
         } catch (e) {
