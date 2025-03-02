@@ -1193,6 +1193,32 @@ const startServer = async () => {
 
           // Get the libSQL client
           const client = db.getClient()
+          
+          // Get organization settings to inherit carriers and state licenses
+          const orgSettingsResult = await client.execute({
+            sql: `SELECT org_settings FROM organizations WHERE id = ?`,
+            args: [currentUser.organization_id]
+          })
+          
+          let orgSettings = {
+            stateLicenses: [],
+            carrierContracts: [],
+            stateCarrierSettings: []
+          }
+          
+          if (orgSettingsResult.rows.length > 0 && orgSettingsResult.rows[0].org_settings) {
+            try {
+              const parsedSettings = JSON.parse(orgSettingsResult.rows[0].org_settings as string)
+              orgSettings = {
+                stateLicenses: parsedSettings.stateLicenses || [],
+                carrierContracts: parsedSettings.carrierContracts || [],
+                stateCarrierSettings: parsedSettings.stateCarrierSettings || []
+              }
+              logger.info(`Inherited org settings: ${orgSettings.carrierContracts.length} carriers, ${orgSettings.stateLicenses.length} state licenses`)
+            } catch (e) {
+              logger.error(`Error parsing org settings: ${e}`)
+            }
+          }
 
           // First create the user
           const userResult = await client.execute({
@@ -1221,7 +1247,7 @@ const startServer = async () => {
           const userId = userResult.rows[0].id
           logger.info(`Created new agent with ID: ${userId}`)
 
-          // Then create agent settings
+          // Then create agent settings - automatically inherit from organization
           await client.execute({
             sql: `INSERT INTO agent_settings (
               agent_id,
@@ -1230,9 +1256,9 @@ const startServer = async () => {
             args: [
               userId,
               JSON.stringify({
-                stateLicenses: newAgent.stateLicenses,
-                carrierContracts: newAgent.carriers,
-                stateCarrierSettings: [],
+                stateLicenses: orgSettings.stateLicenses,
+                carrierContracts: orgSettings.carrierContracts,
+                stateCarrierSettings: orgSettings.stateCarrierSettings,
                 emailSendBirthday: false,
                 emailSendPolicyAnniversary: false,
                 emailSendAep: false,
@@ -1241,7 +1267,7 @@ const startServer = async () => {
             ]
           })
 
-          logger.info(`Initialized settings for agent: ${userId}`)
+          logger.info(`Initialized settings for agent: ${userId} with inherited org settings`)
 
           return {
             success: true,
@@ -1310,7 +1336,7 @@ const startServer = async () => {
             }
 
             return {
-              id: row.id,
+              id: String(row.id),
               firstName: row.first_name,
               lastName: row.last_name,
               email: row.email,
@@ -1335,11 +1361,11 @@ const startServer = async () => {
         }
       })
       // Update PUT endpoint for updating agent details - moved here to be with other agent endpoints
-      .put('/api/agents/:id', async ({ params, body, request, set }: { 
-        params: { id: string }, 
+      .put('/api/agents/:id', async ({ params, body, request, set }: {
+        params: { id: string },
         body: AgentUpdate,
         request: Request,
-        set: { status: number }
+        set: any
       }) => {
         console.log('DEBUG: PUT handler hit', { params, path: request.url })
         logger.info(`Starting update for agent ${params.id}`)
@@ -1356,14 +1382,21 @@ const startServer = async () => {
             }
           }
 
-          // Check if user is an admin
-          if (!currentUser.is_admin) {
-            logger.error(`Authorization failed: User ${currentUser.id} is not an admin`)
+          // Allow users to update their own details or admins to update any agent
+          if (!currentUser.is_admin && currentUser.id.toString() !== params.id) {
+            logger.error(`Authorization failed: User ${currentUser.id} is not an admin and trying to update another user`)
             set.status = 403
             return {
               success: false,
-              error: 'Only administrators can update agents'
+              error: 'Only administrators can update other agents'
             }
+          }
+          
+          // If user is updating their own profile and trying to change admin status
+          if (!currentUser.is_admin && currentUser.id.toString() === params.id && body.is_admin !== Boolean(currentUser.is_admin)) {
+            logger.warn(`Security protection: User ${currentUser.id} attempted to change their own admin status`)
+            // Prevent users from changing their own admin status - keep it as is
+            body.is_admin = Boolean(currentUser.is_admin);
           }
 
           const agent = body
@@ -1466,6 +1499,119 @@ const startServer = async () => {
           return {
             success: false,
             error: dbError.message
+          }
+        }
+      })
+      // Add DELETE endpoint for agent deletion with contact reassignment
+      .delete('/api/agents/:id', async ({ params, request, set, query }: {
+        params: { id: string },
+        request: Request,
+        set: any,
+        query: { reassignTo?: string }
+      }) => {
+        try {
+          const currentUser = await getUserFromSession(request)
+          if (!currentUser) {
+            set.status = 401
+            return {
+              success: false,
+              error: 'You must be logged in to perform this action'
+            }
+          }
+
+          // Only admins can delete agents
+          if (!currentUser.is_admin) {
+            set.status = 403
+            return {
+              success: false,
+              error: 'Only administrators can delete agents'
+            }
+          }
+
+          const agentId = params.id
+          
+          // Prevent users from deleting themselves
+          if (String(currentUser.id) === agentId) {
+            set.status = 403
+            return {
+              success: false,
+              error: 'You cannot delete your own account'
+            }
+          }
+          
+          const reassignToAgentId = query.reassignTo
+
+          // Get the libSQL client
+          const client = db.getClient()
+
+          // Start a transaction to ensure consistency
+          await client.execute({ sql: 'BEGIN TRANSACTION' })
+
+          try {
+            // If reassignToAgentId is provided, reassign contacts to the new agent
+            if (reassignToAgentId && reassignToAgentId !== agentId) {
+              logger.info(`Reassigning contacts from agent ${agentId} to agent ${reassignToAgentId}`)
+              
+              // Update contacts to point to the new agent
+              await client.execute({
+                sql: `
+                  UPDATE contacts
+                  SET agent_id = ?
+                  WHERE agent_id = ?
+                `,
+                args: [reassignToAgentId, agentId]
+              })
+            } else {
+              // Set agent_id to NULL for contacts associated with this agent
+              logger.info(`Setting contacts from agent ${agentId} to have no assigned agent`)
+              
+              await client.execute({
+                sql: `
+                  UPDATE contacts
+                  SET agent_id = NULL
+                  WHERE agent_id = ?
+                `,
+                args: [agentId]
+              })
+            }
+
+            // Delete agent's settings
+            await client.execute({
+              sql: `
+                DELETE FROM agent_settings
+                WHERE agent_id = ?
+              `,
+              args: [agentId]
+            })
+
+            // Update the user record - don't delete it, just mark as inactive and not an agent
+            await client.execute({
+              sql: `
+                UPDATE users
+                SET is_active = 0, is_agent = 0
+                WHERE id = ?
+              `,
+              args: [agentId]
+            })
+
+            // Commit the transaction
+            await client.execute({ sql: 'COMMIT' })
+
+            return {
+              success: true,
+              message: 'Agent deleted successfully'
+            }
+          } catch (error) {
+            // Rollback on error
+            await client.execute({ sql: 'ROLLBACK' })
+            throw error
+          }
+        } catch (e) {
+          logger.error(`Error deleting agent: ${e}`)
+          set.status = 500
+          return {
+            success: false,
+            error: 'An error occurred while deleting the agent'
           }
         }
       })
