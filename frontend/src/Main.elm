@@ -833,6 +833,11 @@ update msg model =
             , Cmd.batch
                 [ clearSessionCookie ()
                 , Nav.pushUrl model.key "/"
+                , Http.post
+                    { url = "/api/auth/logout"
+                    , body = Http.emptyBody
+                    , expect = Http.expectWhatever (\_ -> NoOp)
+                    }
                 ]
             )
 
@@ -1592,8 +1597,29 @@ updatePage url ( model, cmd ) =
 
                             ProtectedRoute ContactsRoute ->
                                 let
+                                    -- Convert Main.elm User to Contacts.elm User format
+                                    contactsUser =
+                                        case model.currentUser of
+                                            Just user ->
+                                                Just
+                                                    { id = String.toInt user.id |> Maybe.withDefault 0
+                                                    , email = user.email
+                                                    , firstName = user.firstName
+                                                    , lastName = user.lastName
+                                                    , isAdmin = user.isAdmin
+                                                    , isAgent = user.isAgent
+                                                    , organizationId = String.toInt user.organizationId |> Maybe.withDefault 0
+                                                    , isActive = True -- Assume active
+                                                    , phone = "" -- Default empty
+                                                    , carriers = [] -- Default empty
+                                                    , stateLicenses = [] -- Default empty
+                                                    }
+
+                                            Nothing ->
+                                                Nothing
+
                                     ( contactsModel, contactsCmd ) =
-                                        Contacts.init model.key
+                                        Contacts.init model.key contactsUser
                                 in
                                 ( { model | page = ContactsPage contactsModel }
                                 , Cmd.batch [ cmd, Cmd.map ContactsMsg contactsCmd ]

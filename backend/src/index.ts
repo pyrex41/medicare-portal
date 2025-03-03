@@ -281,6 +281,7 @@ const startServer = async () => {
           const searchQuery = url.searchParams.get('search') || ''
           const carriers = (url.searchParams.get('carriers') || '').split(',').filter(Boolean)
           const states = (url.searchParams.get('states') || '').split(',').filter(Boolean)
+          const agents = (url.searchParams.get('agents') || '').split(',').filter(Boolean)
           
           // Build the SQL query with search and filter conditions
           let conditions = []
@@ -309,6 +310,23 @@ const startServer = async () => {
           if (states.length > 0) {
             conditions.push(`state IN (${states.map(() => '?').join(',')})`)
             params.push(...states)
+          }
+
+          // Add agent filter if agents are specified
+          if (agents.length > 0) {
+            // Handle special case: if agent list includes '0', include NULL agent_id values too
+            if (agents.includes('0')) {
+              const nonZeroAgents = agents.filter(id => id !== '0')
+              if (nonZeroAgents.length > 0) {
+                conditions.push(`(agent_id IN (${nonZeroAgents.map(() => '?').join(',')}) OR agent_id IS NULL)`)
+                params.push(...nonZeroAgents.map(Number))
+              } else {
+                conditions.push(`agent_id IS NULL`)
+              }
+            } else {
+              conditions.push(`agent_id IN (${agents.map(() => '?').join(',')})`)
+              params.push(...agents.map(Number))
+            }
           }
 
           // Construct the final query
@@ -643,6 +661,52 @@ const startServer = async () => {
           throw new Error(String(e))
         }
       })
+      // Add endpoint for reassigning contacts to a different agent
+      .put('/api/contacts/reassign', async ({ body, request }) => {
+        try {
+          const user = await getUserFromSession(request)
+          if (!user?.organization_id) {
+            throw new Error('No organization ID found in session')
+          }
+
+          // Only admins can reassign contacts
+          if (!user.is_admin) {
+            throw new Error('Only administrators can reassign contacts')
+          }
+
+          // Parse the request body
+          const { contact_ids, agent_id } = body as { contact_ids: number[], agent_id: number }
+          logger.info(`PUT /api/contacts/reassign - Attempting to reassign contacts with IDs: ${contact_ids} to agent ${agent_id} for org ${user.organization_id}`)
+
+          // Get org-specific database
+          const orgDb = await Database.getOrgDb(user.organization_id.toString())
+
+          // Create placeholders for SQL IN clause
+          const placeholders = contact_ids.map(() => '?').join(',')
+          
+          const query = `
+            UPDATE contacts 
+            SET agent_id = ?
+            WHERE id IN (${placeholders})
+            RETURNING id
+          `
+
+          const params = [agent_id, ...contact_ids]
+          const result = await orgDb.execute(query, params)
+          const updatedIds = result.rows?.map(row => row.id) || []
+
+          logger.info(`PUT /api/contacts/reassign - Successfully reassigned ${updatedIds.length} contacts to agent ${agent_id}`)
+
+            return {
+            success: true,
+            updated_ids: updatedIds,
+            message: `Successfully reassigned ${updatedIds.length} contacts to agent ${agent_id}`
+          }
+        } catch (e) {
+          logger.error(`Error reassigning contacts: ${e}`)
+          throw new Error(String(e))
+        }
+      })
       // Add file upload endpoint
       .post('/api/contacts/upload', async ({ body, request }) => {
         try {
@@ -656,12 +720,24 @@ const startServer = async () => {
           const orgDb = await Database.getOrgDb(user.organization_id.toString())
 
           // Extract file and overwrite flag from form data
-          const formData = body as { file: File, overwrite_duplicates: boolean | string }
+          const formData = body as { file: File, overwrite_duplicates: boolean | string, duplicateStrategy: string, agent_id?: string }
           const file = formData.file
-          // Convert string 'false'/'true' to boolean
-          const overwriteDuplicates = formData.overwrite_duplicates === 'true'
+          
+          // Get agent_id from form data or use current user's ID if they're an agent
+          const agentId = formData.agent_id ? parseInt(formData.agent_id, 10) : (user.is_agent ? user.id : null)
+          logger.info(`Using agent_id: ${agentId} for contact upload (from form: ${formData.agent_id}, user is agent: ${user.is_agent}, user id: ${user.id})`)
+          
+          // Support both naming conventions - overwrite_duplicates (old) and duplicateStrategy (new)
+          let overwriteDuplicates = false
+          if (formData.overwrite_duplicates !== undefined) {
+            // Convert string 'false'/'true' to boolean
+            overwriteDuplicates = formData.overwrite_duplicates === 'true' || formData.overwrite_duplicates === true
+          } else if (formData.duplicateStrategy !== undefined) {
+            // Support the new 'duplicateStrategy' parameter
+            overwriteDuplicates = formData.duplicateStrategy === 'overwrite'
+          }
 
-          logger.info(`Initial overwriteDuplicates value: ${overwriteDuplicates}, type: ${typeof overwriteDuplicates}, raw value: ${formData.overwrite_duplicates}`)
+          logger.info(`Initial overwriteDuplicates value: ${overwriteDuplicates}, type: ${typeof overwriteDuplicates}, raw overwrite_duplicates: ${formData.overwrite_duplicates}, raw duplicateStrategy: ${formData.duplicateStrategy}`)
 
           logger.info(`POST /api/contacts/upload - Processing CSV upload with overwriteDuplicates=${overwriteDuplicates}`)
 
@@ -701,9 +777,12 @@ const startServer = async () => {
               success: false,
               message: `Missing required columns: ${missingFields.join(', ')}`,
               error_csv: null,
+              converted_carriers_csv: null,
               total_rows: 0,
               error_rows: 0,
-              valid_rows: 0
+              valid_rows: 0,
+              converted_carrier_rows: 0,
+              supported_carriers: []
             }
           }
 
@@ -715,7 +794,7 @@ const startServer = async () => {
           // Get existing emails for duplicate checking
           let existingEmails = new Set<string>()
           const emailResults = await orgDb.fetchAll("SELECT email FROM contacts")
-          existingEmails = new Set(emailResults.map((row: any[]) => row[0].trim().toLowerCase()))
+          existingEmails = new Set(emailResults.map((row: any) => row[0]?.trim().toLowerCase()))
 
           logger.info(`Found ${existingEmails.size} existing emails in database`)
 
@@ -846,7 +925,8 @@ const startServer = async () => {
                 gender,
                 zipInfo.state,
                 zipCode,
-                phoneResult.standardized
+                phoneResult.standardized,
+                agentId  // Add agentId parameter
               ])
               validRows.push(row)
               
@@ -883,7 +963,8 @@ const startServer = async () => {
                   gender = ?,
                   state = ?,
                   zip_code = ?,
-                  phone_number = ?
+                  phone_number = ?,
+                  agent_id = ?
                 WHERE LOWER(email) = ?
               `
               
@@ -912,6 +993,7 @@ const startServer = async () => {
                     params[9], // state
                     params[10], // zip_code
                     params[11], // phone_number
+                    params[12], // agent_id
                     email     // for WHERE clause
                   ]
                   logger.info(`Update params: ${JSON.stringify(updateParams)}`)
@@ -924,8 +1006,8 @@ const startServer = async () => {
                     `INSERT INTO contacts (
                       first_name, last_name, email, current_carrier, plan_type,
                       effective_date, birth_date, tobacco_user, gender,
-                      state, zip_code, phone_number
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                      state, zip_code, phone_number, agent_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                     params
                   )
                   logger.info(`Successfully inserted new contact with email: ${email}`)
@@ -949,8 +1031,8 @@ const startServer = async () => {
                     `INSERT INTO contacts (
                       first_name, last_name, email, current_carrier, plan_type,
                       effective_date, birth_date, tobacco_user, gender,
-                      state, zip_code, phone_number
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                      state, zip_code, phone_number, agent_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                     params
                   )
                   insertedCount++
@@ -995,7 +1077,7 @@ const startServer = async () => {
             'SELECT name, aliases FROM carriers ORDER BY name'
           );
           
-          const supportedCarriers = carriersResult.rows.map(row => ({
+          const supportedCarriers = carriersResult.rows.map((row: any) => ({
             name: row.name,
             aliases: row.aliases ? JSON.parse(row.aliases) : []
           }));
@@ -1040,7 +1122,7 @@ const startServer = async () => {
           }
 
         } catch (e) {
-          logger.error(`Error processing CSV upload: ${e}`)
+          logger.error(`Error processing CSV upload: ${e.stack || e}`)
           return {
             success: false,
             message: String(e),
@@ -1191,6 +1273,12 @@ const startServer = async () => {
           const newAgent = body as NewAgentRequest
           logger.info(`Creating new agent: ${newAgent.email} (org: ${currentUser.organization_id})`)
 
+          // Ensure that the new user has at least one role
+          if (!newAgent.is_admin && !newAgent.is_agent) {
+            logger.warn(`Agent created without any roles. Defaulting to is_agent=true for: ${newAgent.email}`)
+            newAgent.is_agent = true
+          }
+
           // Get the libSQL client
           const client = db.getClient()
           
@@ -1284,6 +1372,133 @@ const startServer = async () => {
           }
         }
       })
+      // Add an alias endpoint for POST /api/agents/create to match frontend expectations
+      .post('/api/agents/create', async ({ body, request, set }) => {
+        try {
+          // Log the request to the alias endpoint
+          logger.info(`POST /api/agents/create - Using the same implementation as /api/agents`)
+          
+          // Get current user from session to determine their org
+          const currentUser = await getUserFromSession(request)
+          if (!currentUser) {
+            set.status = 401
+            return {
+              success: false,
+              error: 'You must be logged in to perform this action'
+            }
+          }
+
+          // Check if user is an admin
+          if (!currentUser.is_admin) {
+            set.status = 403
+            return {
+              success: false,
+              error: 'Only administrators can create new agents'
+            }
+          }
+
+          const newAgent = body as NewAgentRequest
+          logger.info(`Creating new agent via /api/agents/create: ${newAgent.email} (org: ${currentUser.organization_id})`)
+          
+          // Ensure that the new user has at least one role
+          if (!newAgent.is_admin && !newAgent.is_agent) {
+            logger.warn(`Agent created without any roles. Defaulting to is_agent=true for: ${newAgent.email}`)
+            newAgent.is_agent = true
+          }
+
+          // Get the libSQL client
+          const client = db.getClient()
+          
+          // Get organization settings to inherit carriers and state licenses
+          const orgSettingsResult = await client.execute({
+            sql: `SELECT org_settings FROM organizations WHERE id = ?`,
+            args: [currentUser.organization_id]
+          })
+          
+          let orgSettings = {
+            stateLicenses: [],
+            carrierContracts: [],
+            stateCarrierSettings: []
+          }
+          
+          if (orgSettingsResult.rows.length > 0 && orgSettingsResult.rows[0].org_settings) {
+            try {
+              const parsedSettings = JSON.parse(orgSettingsResult.rows[0].org_settings as string)
+              orgSettings = {
+                stateLicenses: parsedSettings.stateLicenses || [],
+                carrierContracts: parsedSettings.carrierContracts || [],
+                stateCarrierSettings: parsedSettings.stateCarrierSettings || []
+              }
+              logger.info(`Inherited org settings: ${orgSettings.carrierContracts.length} carriers, ${orgSettings.stateLicenses.length} state licenses`)
+            } catch (e) {
+              logger.error(`Error parsing org settings: ${e}`)
+            }
+          }
+
+          // First create the user
+          const userResult = await client.execute({
+            sql: `INSERT INTO users (
+              email, 
+              first_name, 
+              last_name, 
+              phone,
+              organization_id,
+              is_admin,
+              is_agent,
+              is_active
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+            RETURNING id`,
+            args: [
+              newAgent.email,
+              newAgent.firstName,
+              newAgent.lastName,
+              newAgent.phone,
+              currentUser.organization_id,
+              newAgent.is_admin ? 1 : 0,
+              newAgent.is_agent ? 1 : 0
+            ]
+          })
+
+          const userId = userResult.rows[0].id
+          logger.info(`Created new agent with ID: ${userId}`)
+
+          // Then create agent settings - automatically inherit from organization
+          await client.execute({
+            sql: `INSERT INTO agent_settings (
+              agent_id,
+              settings
+            ) VALUES (?, ?)`,
+            args: [
+              userId,
+              JSON.stringify({
+                stateLicenses: orgSettings.stateLicenses,
+                carrierContracts: orgSettings.carrierContracts,
+                stateCarrierSettings: orgSettings.stateCarrierSettings,
+                emailSendBirthday: false,
+                emailSendPolicyAnniversary: false,
+                emailSendAep: false,
+                smartSendEnabled: false
+              })
+            ]
+          })
+
+          logger.info(`Initialized settings for agent: ${userId} with inherited org settings`)
+
+          return {
+            success: true,
+            message: 'Agent created successfully',
+            id: userId
+          }
+
+        } catch (e) {
+          logger.error(`Error creating agent via /api/agents/create: ${e}`)
+          set.status = 500
+          return {
+            success: false,
+            error: String(e)
+          }
+        }
+      })
       // Add this GET endpoint within the app definition, near the POST /api/agents endpoint
       .get('/api/agents', async ({ request, set }) => {
         try {
@@ -1319,7 +1534,6 @@ const startServer = async () => {
               LEFT JOIN agent_settings a ON u.id = a.agent_id
               WHERE u.organization_id = ?
               AND u.is_active = 1
-              AND u.is_agent = 1
               ORDER BY u.first_name, u.last_name
             `,
             args: [currentUser.organization_id]
@@ -1392,11 +1606,19 @@ const startServer = async () => {
             }
           }
           
-          // If user is updating their own profile and trying to change admin status
-          if (!currentUser.is_admin && currentUser.id.toString() === params.id && body.is_admin !== Boolean(currentUser.is_admin)) {
-            logger.warn(`Security protection: User ${currentUser.id} attempted to change their own admin status`)
-            // Prevent users from changing their own admin status - keep it as is
-            body.is_admin = Boolean(currentUser.is_admin);
+          // Security protection: NEVER allow ANY user to remove their own admin status,
+          // even if they are an admin themselves
+          if (currentUser.id.toString() === params.id) {
+            // If this is a self-update and user is trying to change admin status
+            if (body.is_admin !== Boolean(currentUser.is_admin)) {
+              // If they're trying to REMOVE admin status
+              if (Boolean(currentUser.is_admin) && !body.is_admin) {
+                logger.warn(`Security protection: Admin user ${currentUser.id} attempted to remove their own admin status`)
+                // Prevent admin from removing their own admin status - keep it as is
+                body.is_admin = true;
+              }
+              // Note: We still allow non-admins to be promoted by an admin
+            }
           }
 
           const agent = body
@@ -1405,9 +1627,34 @@ const startServer = async () => {
           // Get the libSQL client
           const client = db.getClient()
 
-          // Update user details
-          const userUpdateResult = await client.execute({
-            sql: `UPDATE users 
+          // Determine if this is a self-update by a non-admin
+          const isSelfUpdate = currentUser.id.toString() === params.id && !currentUser.is_admin
+          
+          // Create dynamic SQL that excludes is_admin for self-updates
+          let sql, args
+          if (isSelfUpdate) {
+            // For self-updates, exclude is_admin from the update
+            sql = `UPDATE users 
+                  SET first_name = ?, 
+                      last_name = ?, 
+                      email = ?, 
+                      phone = ?,
+                      is_agent = ?
+                  WHERE id = ? AND organization_id = ?
+                  RETURNING *`
+            args = [
+              agent.firstName,
+              agent.lastName,
+              agent.email,
+              agent.phone,
+              agent.is_agent ? 1 : 0,
+              params.id,
+              currentUser.organization_id
+            ]
+            logger.info(`Self-update detected: excluding admin status from update for user ${params.id}`)
+          } else {
+            // For admin updates or other users, include all fields
+            sql = `UPDATE users 
                   SET first_name = ?, 
                       last_name = ?, 
                       email = ?, 
@@ -1415,8 +1662,8 @@ const startServer = async () => {
                       is_admin = ?,
                       is_agent = ?
                   WHERE id = ? AND organization_id = ?
-                  RETURNING *`,
-            args: [
+                  RETURNING *`
+            args = [
               agent.firstName,
               agent.lastName,
               agent.email,
@@ -1426,6 +1673,12 @@ const startServer = async () => {
               params.id,
               currentUser.organization_id
             ]
+          }
+
+          // Execute the update with the appropriate SQL and args
+          const userUpdateResult = await client.execute({
+            sql,
+            args
           })
 
           logger.info(`User update result: ${JSON.stringify(userUpdateResult.rows, null, 2)}`)
@@ -1541,70 +1794,81 @@ const startServer = async () => {
           
           const reassignToAgentId = query.reassignTo
 
-          // Get the libSQL client
+          // Get the main database client for user/agent operations
           const client = db.getClient()
 
-          // Start a transaction to ensure consistency
-          await client.execute({ sql: 'BEGIN TRANSACTION' })
+          // Also get the organization-specific database for contact operations
+          const orgDb = await Database.getOrgDb(currentUser.organization_id.toString())
 
+          // First handle contact operations in org database
           try {
+            // Using the transaction method instead of direct SQL commands
+            await orgDb.transaction(async (orgTx) => {
             // If reassignToAgentId is provided, reassign contacts to the new agent
             if (reassignToAgentId && reassignToAgentId !== agentId) {
               logger.info(`Reassigning contacts from agent ${agentId} to agent ${reassignToAgentId}`)
               
-              // Update contacts to point to the new agent
-              await client.execute({
-                sql: `
-                  UPDATE contacts
+                // Update contacts in the org-specific database
+                await orgTx.execute(
+                  `UPDATE contacts
                   SET agent_id = ?
-                  WHERE agent_id = ?
-                `,
-                args: [reassignToAgentId, agentId]
-              })
+                   WHERE agent_id = ?`,
+                  [reassignToAgentId, agentId]
+                )
             } else {
               // Set agent_id to NULL for contacts associated with this agent
               logger.info(`Setting contacts from agent ${agentId} to have no assigned agent`)
               
-              await client.execute({
-                sql: `
-                  UPDATE contacts
+                // Update contacts in the org-specific database
+                await orgTx.execute(
+                  `UPDATE contacts
                   SET agent_id = NULL
-                  WHERE agent_id = ?
-                `,
-                args: [agentId]
-              })
-            }
+                   WHERE agent_id = ?`,
+                  [agentId]
+                )
+              }
+            })
+            
+            logger.info(`Successfully updated contacts for agent ${agentId}`)
+            
+            // Now handle agent operations in the main database
+            await db.transaction(async (tx) => {
+              // First, check if the user has any other related records that need to be deleted
 
             // Delete agent's settings
-            await client.execute({
-              sql: `
-                DELETE FROM agent_settings
-                WHERE agent_id = ?
-              `,
-              args: [agentId]
+              await tx.execute(
+                `DELETE FROM agent_settings
+                 WHERE agent_id = ?`,
+                [agentId]
+              )
+              
+              // Check for any related records in other tables that might reference this user
+              // For example, delete from sessions table if it exists
+              await tx.execute(
+                `DELETE FROM sessions
+                 WHERE user_id = ?`,
+                [agentId]
+              )
+              
+              // IMPORTANT: Add any other related tables that might have foreign keys to users
+              
+              // Finally, completely delete the user record instead of just marking as inactive
+              await tx.execute(
+                `DELETE FROM users
+                 WHERE id = ?`,
+                [agentId]
+              )
             })
-
-            // Update the user record - don't delete it, just mark as inactive and not an agent
-            await client.execute({
-              sql: `
-                UPDATE users
-                SET is_active = 0, is_agent = 0
-                WHERE id = ?
-              `,
-              args: [agentId]
-            })
-
-            // Commit the transaction
-            await client.execute({ sql: 'COMMIT' })
+            
+            logger.info(`Successfully deleted agent ${agentId}`)
 
             return {
               success: true,
               message: 'Agent deleted successfully'
             }
           } catch (error) {
-            // Rollback on error
-            await client.execute({ sql: 'ROLLBACK' })
-            throw error
+            logger.error(`Error in agent deletion: ${error}`)
+            throw error;
           }
         } catch (e) {
           logger.error(`Error deleting agent: ${e}`)

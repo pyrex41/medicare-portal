@@ -36,7 +36,7 @@ import Url.Builder as Url
 main : Program () Model Msg
 main =
     Browser.application
-        { init = \flags url key -> init key
+        { init = \flags url key -> init key Nothing
         , view = \model -> { title = "Dashboard", body = [ view model ] }
         , update = update
         , subscriptions = subscriptions
@@ -78,6 +78,7 @@ type Modal
     | EditModal Contact
     | CsvUploadModal UploadState
     | DeleteConfirmModal
+    | ReassignAgentModal
 
 
 type alias Model =
@@ -148,6 +149,7 @@ type alias Filters =
     { carriers : List String
     , states : List String
     , ageRange : Maybe ( Int, Int )
+    , agents : List Int
     }
 
 
@@ -186,6 +188,13 @@ type alias DeleteResponse =
     }
 
 
+type alias ReassignResponse =
+    { success : Bool
+    , updatedIds : List Int
+    , message : String
+    }
+
+
 type alias User =
     { id : Int
     , email : String
@@ -213,9 +222,27 @@ type alias ContactsResponse =
     }
 
 
-init : Nav.Key -> ( Model, Cmd Msg )
-init key =
+init : Nav.Key -> Maybe User -> ( Model, Cmd Msg )
+init key maybeUser =
     let
+        -- Create filtered model if the user is an agent but not an admin
+        initialFilters =
+            case maybeUser of
+                Just user ->
+                    if user.isAgent && not user.isAdmin then
+                        -- Set initial filter to only show contacts assigned to this agent
+                        { carriers = []
+                        , states = []
+                        , ageRange = Nothing
+                        , agents = [ user.id ] -- Add the current agent ID to the filters
+                        }
+
+                    else
+                        emptyFilters
+
+                Nothing ->
+                    emptyFilters
+
         initialModel =
             { contacts = []
             , selectedContacts = []
@@ -225,7 +252,7 @@ init key =
             , editForm = emptyForm
             , sortColumn = Nothing
             , sortDirection = Ascending
-            , activeFilters = emptyFilters
+            , activeFilters = initialFilters -- Use our potentially filtered initial state
             , openFilter = Nothing
             , currentTime = Time.millisToPosix 0
             , isLoadingContacts = True
@@ -234,7 +261,7 @@ init key =
             , isSubmittingForm = False
             , isCheckingEmail = False
             , emailExists = False
-            , currentUser = Nothing
+            , currentUser = maybeUser -- Use the passed in user immediately
             , showProfileMenu = False
             , error = Nothing
             , saveOnUpdate = False
@@ -244,11 +271,28 @@ init key =
             , agents = []
             , key = key
             }
+
+        _ =
+            Debug.log "Contacts init with user"
+                { user = maybeUser
+                , hasAdmin =
+                    case maybeUser of
+                        Just user ->
+                            user.isAdmin
+
+                        Nothing ->
+                            False
+                }
     in
     ( initialModel
     , Cmd.batch
         [ fetchContacts initialModel
-        , fetchCurrentUser
+        , if maybeUser == Nothing then
+            -- Only fetch the user if not provided
+            fetchCurrentUser
+
+          else
+            Cmd.none
         , Task.perform GotCurrentTime Time.now
         , fetchCarriers
         , fetchAgents
@@ -280,19 +324,48 @@ emptyFilters =
     { carriers = []
     , states = []
     , ageRange = Nothing
+    , agents = []
     }
 
 
-emptyUploadState : UploadState
-emptyUploadState =
+emptyUploadState : Model -> UploadState
+emptyUploadState model =
+    -- Pre-assign the current user's agent ID if they are not an admin
+    let
+        selectedAgentId =
+            case model.currentUser of
+                Just user ->
+                    if user.isAgent && not user.isAdmin then
+                        -- For non-admin agents, pre-select their own ID
+                        Just user.id
+
+                    else
+                        -- For admins, leave it unselected initially
+                        Nothing
+
+                Nothing ->
+                    Nothing
+
+        -- For non-admin agents, always set overwriteDuplicates to false
+        overwriteOption =
+            case model.currentUser of
+                Just user ->
+                    not (user.isAgent && not user.isAdmin)
+
+                -- Only true for admin users
+                Nothing ->
+                    True
+
+        -- Default for when user is not yet loaded
+    in
     { dragOver = False
     , file = Nothing
     , error = Nothing
     , errorCsv = Nothing
     , converted_carriers_csv = Nothing
     , stats = Nothing
-    , overwriteDuplicates = True
-    , selectedAgentId = Nothing
+    , overwriteDuplicates = overwriteOption
+    , selectedAgentId = selectedAgentId
     }
 
 
@@ -354,6 +427,10 @@ type Msg
     | GotCarriers (Result Http.Error (List String))
     | GotAgents (Result Http.Error (List User))
     | SelectUploadAgent Int
+    | ShowReassignAgentModal
+    | SelectReassignAgent Int
+    | ReassignSelectedContacts
+    | ContactsReassigned (Result Http.Error ReassignResponse)
 
 
 type ContactFormField
@@ -376,6 +453,7 @@ type FilterType
     = CarrierFilter
     | StateFilter
     | AgeFilter
+    | AgentFilter
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -391,7 +469,7 @@ update msg model =
             ( { model | showModal = AddModal }, Cmd.none )
 
         ChooseMultipleContacts ->
-            ( { model | showModal = CsvUploadModal emptyUploadState }, Cmd.none )
+            ( { model | showModal = CsvUploadModal (emptyUploadState model) }, Cmd.none )
 
         ShowAddModal ->
             ( { model | showModal = AddModal }, Cmd.none )
@@ -521,6 +599,9 @@ update msg model =
                 DeleteConfirmModal ->
                     ( model, Cmd.none )
 
+                ReassignAgentModal ->
+                    ( model, Cmd.none )
+
         UpdateEditForm field value ->
             let
                 form =
@@ -596,6 +677,9 @@ update msg model =
                     ( model, Cmd.none )
 
                 DeleteConfirmModal ->
+                    ( model, Cmd.none )
+
+                ReassignAgentModal ->
                     ( model, Cmd.none )
 
         SubmitAddForm ->
@@ -788,6 +872,9 @@ update msg model =
                 DeleteConfirmModal ->
                     ( model, Cmd.none )
 
+                ReassignAgentModal ->
+                    ( model, Cmd.none )
+
         GotZipLookup (Err _) ->
             ( model, Cmd.none )
 
@@ -826,6 +913,11 @@ update msg model =
                         StateFilter ->
                             model.availableFilters.states
 
+                        AgentFilter ->
+                            model.agents
+                                |> List.filter (\agent -> agent.isAgent)
+                                |> List.map (\agent -> agent.firstName ++ " " ++ agent.lastName)
+
                         _ ->
                             []
 
@@ -840,6 +932,7 @@ update msg model =
                                     []
                             , states = model.activeFilters.states
                             , ageRange = model.activeFilters.ageRange
+                            , agents = model.activeFilters.agents
                             }
 
                         StateFilter ->
@@ -851,6 +944,21 @@ update msg model =
                                 else
                                     []
                             , ageRange = model.activeFilters.ageRange
+                            , agents = model.activeFilters.agents
+                            }
+
+                        AgentFilter ->
+                            { carriers = model.activeFilters.carriers
+                            , states = model.activeFilters.states
+                            , ageRange = model.activeFilters.ageRange
+                            , agents =
+                                if select then
+                                    model.agents
+                                        |> List.filter (\agent -> agent.isAgent)
+                                        |> List.map (\agent -> agent.id)
+
+                                else
+                                    []
                             }
 
                         _ ->
@@ -862,6 +970,7 @@ update msg model =
             ( updatedModel, fetchContacts updatedModel )
 
         CloseFilterDropdown ->
+            -- Only close the dropdown, don't prevent further events
             ( { model | openFilter = Nothing }, Cmd.none )
 
         GotCurrentTime time ->
@@ -904,7 +1013,7 @@ update msg model =
             ( model, Cmd.none )
 
         ShowCsvUploadModal ->
-            ( { model | showModal = CsvUploadModal emptyUploadState }, Cmd.none )
+            ( { model | showModal = CsvUploadModal (emptyUploadState model) }, Cmd.none )
 
         DragEnter ->
             case model.showModal of
@@ -956,7 +1065,7 @@ update msg model =
                                 | showModal = CsvUploadModal { state | error = Nothing, errorCsv = Nothing, stats = Nothing }
                                 , isUploadingCsv = True
                               }
-                            , uploadCsv file state.overwriteDuplicates state.selectedAgentId
+                            , uploadCsv file state.overwriteDuplicates state.selectedAgentId model
                             )
 
                         Nothing ->
@@ -967,8 +1076,22 @@ update msg model =
 
         CsvUploaded (Ok response) ->
             let
+                _ =
+                    Debug.log "CSV Upload Response" response
+
                 errorMessage =
-                    if String.startsWith "Missing required columns:" response.message then
+                    if response.success then
+                        "CSV uploaded successfully with "
+                            ++ String.fromInt response.validRows
+                            ++ " contacts."
+                            ++ (if response.errorRows > 0 then
+                                    " There were " ++ String.fromInt response.errorRows ++ " errors."
+
+                                else
+                                    ""
+                               )
+
+                    else if String.startsWith "Missing required columns:" response.message then
                         let
                             missingColumns =
                                 String.dropLeft (String.length "Missing required columns:") response.message
@@ -982,10 +1105,14 @@ update msg model =
                     else
                         response.message
 
+                -- Check if the message contains information about duplicates
+                hasDuplicatesMessage =
+                    String.contains "duplicate" response.message || String.contains "existing contact" response.message
+
                 currentModal =
                     case model.showModal of
                         CsvUploadModal state ->
-                            if response.success && response.errorRows == 0 then
+                            if response.success && response.errorRows == 0 && not hasDuplicatesMessage then
                                 NoModal
 
                             else
@@ -1023,19 +1150,35 @@ update msg model =
 
         CsvUploaded (Err httpError) ->
             let
+                _ =
+                    Debug.log "CSV Upload Error" httpError
+
                 errorMessage =
                     case httpError of
-                        Http.BadStatus 400 ->
-                            "The CSV format is invalid. Please check that all required columns are present and data is in the correct format."
+                        Http.BadUrl url ->
+                            "Invalid URL: " ++ url
+
+                        Http.BadStatus statusCode ->
+                            if statusCode == 400 then
+                                "The CSV format is invalid. Please check that all required columns are present and data is in the correct format."
+
+                            else if statusCode == 413 then
+                                "The file is too large. Please try a smaller file or split your data into multiple uploads."
+
+                            else if statusCode == 403 then
+                                "You don't have permission to upload contacts. Please contact your administrator."
+
+                            else
+                                "Server error (status " ++ String.fromInt statusCode ++ "). Please try again later."
+
+                        Http.BadBody responseBody ->
+                            "The server response was not in the expected format: " ++ responseBody
 
                         Http.NetworkError ->
                             "Network error. Please check your connection and try again."
 
                         Http.Timeout ->
                             "The upload timed out. Please try again."
-
-                        _ ->
-                            "An unexpected error occurred while uploading the CSV. Please try again."
             in
             case model.showModal of
                 CsvUploadModal state ->
@@ -1102,6 +1245,15 @@ update msg model =
                     ( model, Cmd.none )
 
         GotCurrentUser (Ok user) ->
+            let
+                _ =
+                    Debug.log "Current user loaded"
+                        { id = user.id
+                        , email = user.email
+                        , isAdmin = user.isAdmin
+                        , isAgent = user.isAgent
+                        }
+            in
             ( { model | currentUser = Just user }, Cmd.none )
 
         GotCurrentUser (Err _) ->
@@ -1121,32 +1273,22 @@ update msg model =
         GotAgents (Ok agents) ->
             let
                 _ =
-                    Debug.log "Raw agents data" agents
+                    Debug.log "Agents loaded"
+                        { count = List.length agents
+                        , firstAgent =
+                            case List.head agents of
+                                Just agent ->
+                                    { id = agent.id
+                                    , email = agent.email
+                                    , firstName = agent.firstName
+                                    , lastName = agent.lastName
+                                    , isAdmin = agent.isAdmin
+                                    , isAgent = agent.isAgent
+                                    }
 
-                -- Also add some debug output for the first agent if available
-                _ =
-                    case List.head agents of
-                        Just agent ->
-                            Debug.log "First agent"
-                                { id = agent.id
-                                , name = agent.firstName ++ " " ++ agent.lastName
-                                , email = agent.email
-                                , isAdmin = agent.isAdmin
-                                , isAgent = agent.isAgent
-                                , carriers = agent.carriers
-                                , stateLicenses = agent.stateLicenses
-                                }
-
-                        Nothing ->
-                            Debug.log "No agents found"
-                                { id = 0
-                                , name = ""
-                                , email = ""
-                                , isAdmin = False
-                                , isAgent = False
-                                , carriers = []
-                                , stateLicenses = []
-                                }
+                                Nothing ->
+                                    { id = 0, email = "", firstName = "", lastName = "", isAdmin = False, isAgent = False }
+                        }
             in
             ( { model | agents = agents }, Cmd.none )
 
@@ -1167,6 +1309,60 @@ update msg model =
                 _ ->
                     ( model, Cmd.none )
 
+        ShowReassignAgentModal ->
+            let
+                _ =
+                    Debug.log "ShowReassignAgentModal triggered"
+                        { selectedContactsCount = List.length model.selectedContacts }
+            in
+            ( { model | showModal = ReassignAgentModal }, Cmd.none )
+
+        SelectReassignAgent agentId ->
+            let
+                updatedForm =
+                    model.editForm
+
+                updatedFormWithAgent =
+                    { updatedForm | contactOwnerId = Just agentId }
+            in
+            ( { model | editForm = updatedFormWithAgent }
+            , Cmd.none
+            )
+
+        ReassignSelectedContacts ->
+            if List.isEmpty model.selectedContacts then
+                ( model, Cmd.none )
+
+            else
+                case model.editForm.contactOwnerId of
+                    Just agentId ->
+                        if agentId == 0 then
+                            -- If "Default" (0) is selected, pass null for agent_id
+                            ( { model | showModal = NoModal }
+                            , reassignContacts model.selectedContacts 0
+                            )
+
+                        else
+                            -- Normal agent reassignment
+                            ( { model | showModal = NoModal }
+                            , reassignContacts model.selectedContacts agentId
+                            )
+
+                    Nothing ->
+                        ( { model | error = Just "Please select an agent to reassign contacts to" }
+                        , Cmd.none
+                        )
+
+        ContactsReassigned (Ok response) ->
+            let
+                updatedModel =
+                    { model | showModal = NoModal, selectedContacts = [], editForm = emptyForm }
+            in
+            ( updatedModel, fetchContacts updatedModel )
+
+        ContactsReassigned (Err _) ->
+            ( { model | error = Just "Failed to reassign contacts", showModal = NoModal }, Cmd.none )
+
 
 
 -- TODO: Handle error
@@ -1185,75 +1381,81 @@ view model =
                 , statsCard "Emails Clicked" "425"
                 , statsCard "Quotes Created" "385"
                 ]
-            , -- Filters and Actions
-              div [ class "flex justify-between items-center mb-6" ]
-                [ div [ class "flex items-center gap-4" ]
-                    [ h1 [ class "text-lg font-semibold" ] [ text "Contacts " ]
-                    , span [ class "text-sm text-gray-500" ]
-                        [ text ("(" ++ String.fromInt (List.length model.contacts) ++ ")") ]
-                    ]
-                , div [ class "flex items-center gap-3" ]
-                    [ if not (List.isEmpty model.selectedContacts) then
-                        button
-                            [ class "px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 transition-colors duration-200 flex items-center gap-2"
-                            , onClick ShowDeleteConfirmModal
-                            ]
-                            [ if model.isDeletingContacts then
-                                viewSpinner
-
-                              else
-                                text ("Delete " ++ String.fromInt (List.length model.selectedContacts) ++ " Selected")
-                            ]
-
-                      else
-                        text ""
-                    , div [ class "relative" ]
-                        [ button
-                            [ class "inline-flex items-center gap-2 px-3 py-2 border rounded-lg text-sm text-gray-700 hover:bg-gray-50"
-                            , onClick (ToggleFilterDropdown CarrierFilter)
-                            ]
-                            [ text "Carrier"
-                            , viewIcon "M19 9l-7 7-7-7"
-                            ]
-                        , if model.openFilter == Just CarrierFilter then
-                            viewFilterDropdown model CarrierFilter
-
-                          else
-                            text ""
-                        ]
-                    , div [ class "relative" ]
-                        [ button
-                            [ class "inline-flex items-center gap-2 px-3 py-2 border rounded-lg text-sm text-gray-700 hover:bg-gray-50"
-                            , onClick (ToggleFilterDropdown StateFilter)
-                            ]
-                            [ text "State"
-                            , viewIcon "M19 9l-7 7-7-7"
-                            ]
-                        , if model.openFilter == Just StateFilter then
-                            viewFilterDropdown model StateFilter
-
-                          else
-                            text ""
-                        ]
-                    , div [ class "relative" ]
-                        [ input
-                            [ class "w-64 px-4 py-2 border rounded-lg text-sm placeholder-gray-500 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                            , placeholder "Search contacts..."
-                            , value model.searchQuery
-                            , onInput UpdateSearchQuery
-                            ]
-                            []
-                        ]
-                    , button
-                        [ class "px-4 py-2 bg-black text-white rounded-lg text-sm hover:bg-gray-800 transition-colors"
-                        , onClick ShowContactChoiceModal
-                        ]
-                        [ text "+ Add Contact" ]
-                    ]
-                ]
             , -- Table Container with overflow handling
               div [ class "overflow-x-auto" ]
-                [ table [ class "min-w-full border-separate border-spacing-0" ]
+                [ -- Contacts header and filters moved below the stat cards but above the table
+                  div [ class "flex justify-between items-center mb-6" ]
+                    [ div [ class "flex items-center gap-4" ]
+                        [ h1 [ class "text-lg font-semibold" ] [ text "Contacts " ]
+                        , span [ class "text-sm text-gray-500" ]
+                            [ text ("(" ++ String.fromInt (List.length model.contacts) ++ ")") ]
+                        ]
+                    , div [ class "flex items-center gap-3" ]
+                        [ -- Only show Agent filter for admins
+                          if isAdminOrAdminAgent model.currentUser then
+                            div [ class "relative" ]
+                                [ button
+                                    [ class "inline-flex items-center gap-2 px-3 py-2 border rounded-lg text-sm text-gray-700 hover:bg-gray-50"
+                                    , onClick (ToggleFilterDropdown AgentFilter)
+                                    ]
+                                    [ text "Agent"
+                                    , viewIcon "M19 9l-7 7-7-7"
+                                    ]
+                                , if model.openFilter == Just AgentFilter then
+                                    viewFilterDropdown model AgentFilter
+
+                                  else
+                                    text ""
+                                ]
+
+                          else
+                            text ""
+                        , div [ class "relative" ]
+                            [ button
+                                [ class "inline-flex items-center gap-2 px-3 py-2 border rounded-lg text-sm text-gray-700 hover:bg-gray-50"
+                                , onClick (ToggleFilterDropdown CarrierFilter)
+                                ]
+                                [ text "Carrier"
+                                , viewIcon "M19 9l-7 7-7-7"
+                                ]
+                            , if model.openFilter == Just CarrierFilter then
+                                viewFilterDropdown model CarrierFilter
+
+                              else
+                                text ""
+                            ]
+                        , div [ class "relative" ]
+                            [ button
+                                [ class "inline-flex items-center gap-2 px-3 py-2 border rounded-lg text-sm text-gray-700 hover:bg-gray-50"
+                                , onClick (ToggleFilterDropdown StateFilter)
+                                ]
+                                [ text "State"
+                                , viewIcon "M19 9l-7 7-7-7"
+                                ]
+                            , if model.openFilter == Just StateFilter then
+                                viewFilterDropdown model StateFilter
+
+                              else
+                                text ""
+                            ]
+                        , div [ class "relative" ]
+                            [ input
+                                [ class "w-64 px-4 py-2 border rounded-lg text-sm placeholder-gray-500 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                , placeholder "Search contacts..."
+                                , value model.searchQuery
+                                , onInput UpdateSearchQuery
+                                ]
+                                []
+                            ]
+                        , -- Add the add contact button with a different style
+                          button
+                            [ class "px-3 py-2 bg-black text-white rounded-lg text-sm hover:bg-gray-800 transition-colors"
+                            , onClick ShowContactChoiceModal
+                            ]
+                            [ text "+ Add Contact" ]
+                        ]
+                    ]
+                , table [ class "min-w-full border-separate border-spacing-0" ]
                     [ colgroup []
                         [ col [ class "w-12" ] [] -- Checkbox
                         , col [ class "w-48" ] [] -- Name
@@ -1336,6 +1538,17 @@ view model =
 
 viewBulkActionBar : Model -> Html Msg
 viewBulkActionBar model =
+    let
+        isAdmin =
+            isAdminOrAdminAgent model.currentUser
+
+        _ =
+            Debug.log "Bottom action bar"
+                { selectedContactsCount = List.length model.selectedContacts
+                , showingReassignButton = isAdmin
+                , currentUserAvailable = model.currentUser /= Nothing
+                }
+    in
     div
         [ class "fixed bottom-0 inset-x-0 bg-white border-t border-gray-200 shadow-lg transform transition-all duration-200" ]
         [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4" ]
@@ -1350,9 +1563,19 @@ viewBulkActionBar model =
                         , onClick DeselectAllContacts
                         ]
                         [ text "Cancel" ]
+                    , if isAdmin then
+                        -- Reassign button (only for admins)
+                        button
+                            [ class "px-4 py-2 bg-purple-600 text-white text-sm font-medium rounded-lg hover:bg-purple-700 transition-colors duration-200 mr-2"
+                            , onClick ShowReassignAgentModal
+                            ]
+                            [ text "Reassign Agent" ]
+
+                      else
+                        text ""
                     , button
                         [ class "px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 transition-colors duration-200"
-                        , onClick DeleteSelectedContacts
+                        , onClick ShowDeleteConfirmModal
                         ]
                         [ if model.isDeletingContacts then
                             viewSpinner
@@ -1396,9 +1619,20 @@ viewTableRow model contact =
 
                 Nothing ->
                     case contact.agentId of
-                        Just _ ->
-                            -- If we have an agentId but no resolved owner, show "Agent #ID"
-                            "Agent #" ++ (Maybe.map String.fromInt contact.agentId |> Maybe.withDefault "")
+                        Just agentId ->
+                            -- Try to find the agent in our agents list
+                            let
+                                matchingAgent =
+                                    List.filter (\agent -> agent.id == agentId) model.agents
+                                        |> List.head
+                            in
+                            case matchingAgent of
+                                Just agent ->
+                                    agent.firstName ++ " " ++ agent.lastName
+
+                                Nothing ->
+                                    -- Fallback if agent not found in list
+                                    "Agent #" ++ String.fromInt agentId
 
                         Nothing ->
                             "Default"
@@ -1621,6 +1855,9 @@ viewModals model =
         DeleteConfirmModal ->
             viewDeleteConfirmModal model
 
+        ReassignAgentModal ->
+            viewReassignAgentModal model
+
 
 viewContactChoiceModal : Html Msg
 viewContactChoiceModal =
@@ -1764,6 +2001,7 @@ viewCsvUploadModal state isUploading model =
                               else
                                 text ""
                             , if stats.converted_carrier_rows > 0 then
+                                -- Rest of error display (unchanged)
                                 div [ class "p-4 bg-yellow-50 border border-yellow-200 rounded-lg" ]
                                     [ div [ class "flex items-start" ]
                                         [ div [ class "flex-shrink-0" ]
@@ -1836,17 +2074,39 @@ viewCsvUploadModal state isUploading model =
               else
                 text ""
             , div [ class "mb-4 space-y-4" ]
-                [ div [ class "flex items-center space-x-2" ]
-                    [ input
-                        [ type_ "checkbox"
-                        , checked state.overwriteDuplicates
-                        , onInput (\val -> ToggleOverwriteDuplicates (val == "true"))
-                        , class "rounded border-gray-300 text-purple-600 focus:ring-purple-500"
-                        ]
-                        []
-                    , label [ class "text-sm text-gray-600" ]
-                        [ text "Overwrite existing contacts (matched on email address)" ]
-                    ]
+                [ -- Only show overwrite checkbox for admins
+                  case model.currentUser of
+                    Just user ->
+                        if user.isAdmin then
+                            div [ class "flex items-center space-x-2" ]
+                                [ input
+                                    [ type_ "checkbox"
+                                    , checked state.overwriteDuplicates
+                                    , onInput (\val -> ToggleOverwriteDuplicates (val == "true"))
+                                    , class "rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                                    ]
+                                    []
+                                , label [ class "text-sm text-gray-600" ]
+                                    [ text "Overwrite existing contacts (matched on email address)" ]
+                                ]
+
+                        else
+                            -- For non-admin agents, don't show the overwrite option
+                            text ""
+
+                    Nothing ->
+                        -- Show checkbox if user info isn't loaded yet
+                        div [ class "flex items-center space-x-2" ]
+                            [ input
+                                [ type_ "checkbox"
+                                , checked state.overwriteDuplicates
+                                , onInput (\val -> ToggleOverwriteDuplicates (val == "true"))
+                                , class "rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                                ]
+                                []
+                            , label [ class "text-sm text-gray-600" ]
+                                [ text "Overwrite existing contacts (matched on email address)" ]
+                            ]
                 , div [ class "form-group" ]
                     [ Html.label [ class "block text-sm font-medium text-gray-700 mb-2" ]
                         [ text "Assign to Agent" ]
@@ -1856,30 +2116,83 @@ viewCsvUploadModal state isUploading model =
                                 [ text "Loading agents..." ]
 
                           else
-                            let
-                                -- Simple agent dropdown options - show all available agents
-                                agentOptions =
-                                    List.map
-                                        (\agent ->
-                                            ( String.fromInt agent.id
-                                            , agent.firstName ++ " " ++ agent.lastName
+                            case model.currentUser of
+                                Just user ->
+                                    if user.isAgent && not user.isAdmin then
+                                        -- For non-admin agents, show their name as fixed value
+                                        let
+                                            agentName =
+                                                model.agents
+                                                    |> List.filter (\agent -> agent.id == user.id)
+                                                    |> List.head
+                                                    |> Maybe.map (\agent -> agent.firstName ++ " " ++ agent.lastName)
+                                                    |> Maybe.withDefault (user.firstName ++ " " ++ user.lastName)
+                                        in
+                                        div [ class "w-full px-4 py-3 bg-gray-100 border-[2.5px] border-gray-300 rounded-lg text-gray-700" ]
+                                            [ text agentName ]
+
+                                    else
+                                        -- For admins, show dropdown with all agents
+                                        let
+                                            agentOptions =
+                                                List.map
+                                                    (\agent ->
+                                                        ( String.fromInt agent.id
+                                                        , agent.firstName ++ " " ++ agent.lastName
+                                                        )
+                                                    )
+                                                    model.agents
+                                        in
+                                        Html.select
+                                            [ class "w-full px-4 py-3 bg-white border-[2.5px] border-purple-300 rounded-lg text-gray-700 placeholder-gray-400 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 focus:bg-white transition-all duration-200 appearance-none"
+                                            , value (String.fromInt (Maybe.withDefault 0 state.selectedAgentId))
+                                            , onInput (\val -> SelectUploadAgent (String.toInt val |> Maybe.withDefault 0))
+                                            ]
+                                            (List.map
+                                                (\( val, label ) ->
+                                                    option [ value val ] [ text label ]
+                                                )
+                                                agentOptions
                                             )
+
+                                Nothing ->
+                                    -- Default when user is not loaded yet
+                                    let
+                                        agentOptions =
+                                            List.map
+                                                (\agent ->
+                                                    ( String.fromInt agent.id
+                                                    , agent.firstName ++ " " ++ agent.lastName
+                                                    )
+                                                )
+                                                model.agents
+                                    in
+                                    Html.select
+                                        [ class "w-full px-4 py-3 bg-white border-[2.5px] border-purple-300 rounded-lg text-gray-700 placeholder-gray-400 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 focus:bg-white transition-all duration-200 appearance-none"
+                                        , value (String.fromInt (Maybe.withDefault 0 state.selectedAgentId))
+                                        , onInput (\val -> SelectUploadAgent (String.toInt val |> Maybe.withDefault 0))
+                                        ]
+                                        (List.map
+                                            (\( val, label ) ->
+                                                option [ value val ] [ text label ]
+                                            )
+                                            agentOptions
                                         )
-                                        model.agents
-                            in
-                            Html.select
-                                [ class "w-full px-4 py-3 bg-white border-[2.5px] border-purple-300 rounded-lg text-gray-700 placeholder-gray-400 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 focus:bg-white transition-all duration-200 appearance-none"
-                                , value (String.fromInt (Maybe.withDefault 0 state.selectedAgentId))
-                                , onInput (\val -> SelectUploadAgent (String.toInt val |> Maybe.withDefault 0))
-                                ]
-                                (List.map
-                                    (\( val, label ) ->
-                                        option [ value val ] [ text label ]
-                                    )
-                                    agentOptions
-                                )
-                        , div [ class "absolute inset-y-0 right-0 flex items-center px-2 pointer-events-none" ]
-                            [ viewIcon "M19 9l-7 7-7-7" ]
+                        , case model.currentUser of
+                            Just user ->
+                                if user.isAgent && not user.isAdmin then
+                                    -- No dropdown icon for non-admin agents
+                                    text ""
+
+                                else
+                                    -- Show dropdown icon for admins
+                                    div [ class "absolute inset-y-0 right-0 flex items-center px-2 pointer-events-none" ]
+                                        [ viewIcon "M19 9l-7 7-7-7" ]
+
+                            Nothing ->
+                                -- Show dropdown icon when user is not loaded yet
+                                div [ class "absolute inset-y-0 right-0 flex items-center px-2 pointer-events-none" ]
+                                    [ viewIcon "M19 9l-7 7-7-7" ]
                         ]
                     ]
                 ]
@@ -1898,26 +2211,25 @@ viewCsvUploadModal state isUploading model =
                 , preventDefaultOn "dragleave" (Decode.succeed ( DragLeave, True ))
                 , preventDefaultOn "drop" (dropDecoder FileDrop)
                 ]
-                [ viewIcon "M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
-                , div [ class "mt-4 text-center" ]
-                    [ text "Drag and drop your CSV file here, or "
+                [ div [ class "text-gray-500 text-center" ]
+                    [ span [ class "block text-lg font-medium mb-2" ]
+                        [ text "Drag and drop your CSV file here, or " ]
                     , button
-                        [ class "text-purple-500 hover:text-purple-700 hover:underline"
+                        [ class "text-purple-600 font-semibold hover:text-purple-700 focus:outline-none focus:underline"
                         , onClick ClickedSelectFile
                         ]
                         [ text "browse" ]
-                    ]
-                , case state.file of
-                    Just file ->
-                        div [ class "mt-4 text-sm text-gray-600" ]
-                            [ text ("Selected: " ++ File.name file) ]
+                    , if state.file /= Nothing then
+                        div [ class "mt-4 text-sm bg-green-50 text-green-800 px-3 py-2 rounded-lg" ]
+                            [ text ("File selected: " ++ (Maybe.map File.name state.file |> Maybe.withDefault "")) ]
 
-                    Nothing ->
+                      else
                         text ""
+                    ]
                 ]
             , div [ class "mt-8 flex justify-end space-x-4" ]
                 [ button
-                    [ class "px-6 py-3 bg-white text-gray-700 text-sm font-medium rounded-lg border-2 border-gray-200 hover:border-gray-300 hover:bg-gray-50 transition-colors duration-200 focus:ring-4 focus:ring-purple-100"
+                    [ class "px-6 py-3 bg-gray-100 text-gray-600 text-sm font-medium rounded-lg hover:bg-gray-200 transition-colors duration-200 focus:ring-4 focus:ring-gray-200"
                     , onClick CloseModal
                     ]
                     [ text "Cancel" ]
@@ -1944,14 +2256,37 @@ dropDecoder toMsg =
         |> Decode.map (\file -> ( toMsg file, True ))
 
 
-uploadCsv : File -> Bool -> Maybe Int -> Cmd Msg
-uploadCsv file overwriteDuplicates maybeAgentId =
+uploadCsv : File -> Bool -> Maybe Int -> Model -> Cmd Msg
+uploadCsv file overwriteDuplicates maybeAgentId model =
     let
+        -- For non-admin agents, always enforce overwriteDuplicates=false
+        actualOverwriteValue =
+            case model.currentUser of
+                Just user ->
+                    if user.isAgent && not user.isAdmin then
+                        False
+                        -- Always force false for non-admin agents
+
+                    else
+                        overwriteDuplicates
+
+                -- Use the provided value for admins
+                Nothing ->
+                    overwriteDuplicates
+
+        -- Use the provided value if user is not loaded
         body =
             Http.multipartBody
                 ([ Http.filePart "file" file
+                 , Http.stringPart "duplicateStrategy"
+                    (if actualOverwriteValue then
+                        "overwrite"
+
+                     else
+                        "skip"
+                    )
                  , Http.stringPart "overwrite_duplicates"
-                    (if overwriteDuplicates then
+                    (if actualOverwriteValue then
                         "true"
 
                      else
@@ -2050,12 +2385,15 @@ subscriptions model =
 
             DeleteConfirmModal ->
                 Browser.Events.onKeyDown (Decode.map HandleKeyDown (Decode.field "key" Decode.string))
-        , case model.openFilter of
-            Just _ ->
-                Browser.Events.onMouseDown (Decode.succeed CloseFilterDropdown)
 
-            Nothing ->
-                Sub.none
+            ReassignAgentModal ->
+                Browser.Events.onKeyDown (Decode.map HandleKeyDown (Decode.field "key" Decode.string))
+        , if model.openFilter /= Nothing then
+            -- Only listen for clicks outside when a dropdown is open
+            Browser.Events.onMouseDown (Decode.succeed CloseFilterDropdown)
+
+          else
+            Sub.none
         ]
 
 
@@ -2116,6 +2454,7 @@ filterContacts filters searchQuery currentTime contacts =
         |> filterByList .currentCarrier filters.carriers
         |> filterByList .state filters.states
         |> filterByAge filters.ageRange
+        |> filterByAgents filters.agents
 
 
 filterBySearch : String -> List Contact -> List Contact
@@ -2172,6 +2511,9 @@ toggleFilter filters filterType value =
 
         AgeFilter ->
             { filters | ageRange = toggleAgeRange filters.ageRange value }
+
+        AgentFilter ->
+            { filters | agents = toggleAgentList filters.agents (String.toInt value |> Maybe.withDefault 0) }
 
 
 toggleList : List String -> String -> List String
@@ -2610,9 +2952,28 @@ isAdminOrAdminAgent : Maybe User -> Bool
 isAdminOrAdminAgent maybeUser =
     case maybeUser of
         Just user ->
-            user.isAdmin || (user.isAgent && user.isAdmin)
+            let
+                isAdmin =
+                    user.isAdmin
+
+                _ =
+                    Debug.log "User admin status check - DETAILED"
+                        { userId = user.id
+                        , email = user.email
+                        , firstName = user.firstName
+                        , lastName = user.lastName
+                        , isAdmin = isAdmin
+                        , isAgent = user.isAgent
+                        }
+            in
+            isAdmin
 
         Nothing ->
+            -- If no user is available yet, default to false
+            let
+                _ =
+                    Debug.log "Admin check failed - DETAILED" "No current user found - defaulting to non-admin"
+            in
             False
 
 
@@ -2664,6 +3025,11 @@ fetchContacts model =
             [ ( "search", model.searchQuery )
             , ( "states", String.join "," model.activeFilters.states )
             , ( "carriers", String.join "," model.activeFilters.carriers )
+            , ( "agents"
+              , model.activeFilters.agents
+                    |> List.map String.fromInt
+                    |> String.join ","
+              )
             ]
                 |> List.filter (\( _, value ) -> not (String.isEmpty value))
                 |> List.map (\( key, value ) -> Url.string key value)
@@ -2720,6 +3086,17 @@ viewFilterDropdown model filterType =
                 StateFilter ->
                     model.availableFilters.states
 
+                AgentFilter ->
+                    -- Add "Default" option for unassigned contacts
+                    "Default"
+                        :: (model.agents
+                                |> List.filter (\agent -> agent.isAgent)
+                                |> List.map
+                                    (\agent ->
+                                        agent.firstName ++ " " ++ agent.lastName
+                                    )
+                           )
+
                 _ ->
                     []
 
@@ -2731,6 +3108,10 @@ viewFilterDropdown model filterType =
                 StateFilter ->
                     model.activeFilters.states
 
+                AgentFilter ->
+                    model.activeFilters.agents
+                        |> List.map String.fromInt
+
                 _ ->
                     []
 
@@ -2739,7 +3120,9 @@ viewFilterDropdown model filterType =
     in
     div
         [ class "absolute left-0 mt-2 w-48 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-10"
-        , stopPropagationOn "mousedown" (Decode.succeed ( CloseFilterDropdown, True ))
+
+        -- IMPORTANT: This mousedown handler prevents the dropdown from closing when clicking inside it
+        , Html.Events.stopPropagationOn "mousedown" (Decode.succeed ( NoOp, True ))
         ]
         [ div [ class "py-1" ]
             [ div [ class "p-2 border-b border-gray-200" ]
@@ -2759,22 +3142,59 @@ viewFilterDropdown model filterType =
                     [ text "Clear Filters" ]
                 ]
             , div [ class "max-h-48 overflow-y-auto p-2" ]
-                (List.map
-                    (\option ->
+                (case filterType of
+                    AgentFilter ->
+                        -- Special handling for agent filter since it's using IDs
+                        -- First add the Default option (agentId = 0 means unassigned/default)
                         label
                             [ class "flex items-center space-x-2 py-1" ]
                             [ input
                                 [ type_ "checkbox"
-                                , checked (List.member option activeFilters)
-                                , onClick (ToggleFilter filterType option)
+                                , checked (List.member 0 model.activeFilters.agents)
+                                , onClick (ToggleFilter filterType (String.fromInt 0))
                                 , class "rounded border-gray-300 text-purple-600 focus:ring-purple-500"
                                 ]
                                 []
                             , span [ class "text-sm text-gray-600" ]
-                                [ text option ]
+                                [ text "Default" ]
                             ]
-                    )
-                    options
+                            :: (model.agents
+                                    |> List.filter (\agent -> agent.isAgent)
+                                    |> List.map
+                                        (\agent ->
+                                            label
+                                                [ class "flex items-center space-x-2 py-1" ]
+                                                [ input
+                                                    [ type_ "checkbox"
+                                                    , checked (List.member agent.id model.activeFilters.agents)
+                                                    , onClick (ToggleFilter filterType (String.fromInt agent.id))
+                                                    , class "rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                                                    ]
+                                                    []
+                                                , span [ class "text-sm text-gray-600" ]
+                                                    [ text (agent.firstName ++ " " ++ agent.lastName) ]
+                                                ]
+                                        )
+                               )
+
+                    _ ->
+                        -- Original handling for other filters
+                        List.map
+                            (\option ->
+                                label
+                                    [ class "flex items-center space-x-2 py-1" ]
+                                    [ input
+                                        [ type_ "checkbox"
+                                        , checked (List.member option activeFilters)
+                                        , onClick (ToggleFilter filterType option)
+                                        , class "rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                                        ]
+                                        []
+                                    , span [ class "text-sm text-gray-600" ]
+                                        [ text option ]
+                                    ]
+                            )
+                            options
                 )
             ]
         ]
@@ -2900,7 +3320,23 @@ viewFormSelectWithValue labelText selectedValue field updateMsg options =
 agentDecoder : Decode.Decoder User
 agentDecoder =
     Decode.succeed User
-        |> Pipeline.required "id" Decode.int
+        |> Pipeline.required "id"
+            (Decode.oneOf
+                [ -- Try to decode as an integer directly
+                  Decode.int
+                , -- If that fails, try to decode as a string and convert to int
+                  Decode.string
+                    |> Decode.andThen
+                        (\str ->
+                            case String.toInt str of
+                                Just intVal ->
+                                    Decode.succeed intVal
+
+                                Nothing ->
+                                    Decode.fail ("Could not convert agent ID string to integer: " ++ str)
+                        )
+                ]
+            )
         |> Pipeline.required "email" Decode.string
         |> Pipeline.required "firstName" Decode.string
         |> Pipeline.required "lastName" Decode.string
@@ -2913,3 +3349,152 @@ agentDecoder =
         |> Pipeline.optional "phone" Decode.string ""
         |> Pipeline.optional "carriers" (Decode.list Decode.string) []
         |> Pipeline.optional "stateLicenses" (Decode.list Decode.string) []
+
+
+viewReassignAgentModal : Model -> Html Msg
+viewReassignAgentModal model =
+    let
+        _ =
+            Debug.log "ReassignAgentModal"
+                { agentsCount = List.length model.agents
+                , selectedContactsCount = List.length model.selectedContacts
+                , selectedAgentId = model.editForm.contactOwnerId
+                }
+
+        -- Filter to only include actual agents
+        agentList =
+            model.agents
+                |> List.filter (\user -> user.isAgent)
+
+        -- Add a "Default" option (NULL agent_id)
+        agentOptions =
+            ( 0, "Default" )
+                :: List.map
+                    (\agent ->
+                        ( agent.id
+                        , agent.firstName ++ " " ++ agent.lastName
+                        )
+                    )
+                    agentList
+
+        _ =
+            Debug.log "Filtered agent list for reassign"
+                { totalAgents = List.length model.agents
+                , actualAgents = List.length agentList
+                , agentOptions = agentOptions
+                }
+    in
+    div [ class "fixed inset-0 bg-gray-500/75 flex items-center justify-center p-8" ]
+        [ div [ class "bg-white rounded-xl p-10 max-w-2xl w-full mx-4 shadow-xl relative" ]
+            [ button
+                [ class "absolute top-4 right-4 text-gray-400 hover:text-gray-600 transition-colors duration-200"
+                , onClick CloseModal
+                ]
+                [ viewIcon "M6 18L18 6M6 6l12 12" ]
+            , h2 [ class "text-2xl font-semibold text-gray-900 mb-8" ]
+                [ text "Reassign Contacts" ]
+            , div [ class "mb-6 text-sm text-gray-600" ]
+                [ text "Select an agent to reassign the selected contacts to." ]
+            , div [ class "form-group" ]
+                [ Html.label [ class "block text-sm font-medium text-gray-700 mb-2" ]
+                    [ text "Select Agent" ]
+                , div [ class "relative" ]
+                    [ if List.isEmpty model.agents then
+                        div [ class "p-2 text-gray-500 border rounded" ]
+                            [ text "Loading agents..." ]
+
+                      else
+                        Html.select
+                            [ class "w-full px-4 py-3 bg-white border-[2.5px] border-purple-300 rounded-lg text-gray-700 placeholder-gray-400 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 focus:bg-white transition-all duration-200 appearance-none"
+                            , value (String.fromInt (Maybe.withDefault 0 model.editForm.contactOwnerId))
+                            , onInput (\val -> SelectReassignAgent (String.toInt val |> Maybe.withDefault 0))
+                            ]
+                            (List.map
+                                (\( val, label ) ->
+                                    option [ value (String.fromInt val) ] [ text label ]
+                                )
+                                agentOptions
+                            )
+                    , div [ class "absolute inset-y-0 right-0 flex items-center px-2 pointer-events-none" ]
+                        [ viewIcon "M19 9l-7 7-7-7" ]
+                    ]
+                ]
+            , div [ class "mt-8 flex justify-end space-x-4" ]
+                [ button
+                    [ class "px-6 py-3 bg-white text-gray-700 text-sm font-medium rounded-lg border-2 border-gray-200 hover:border-gray-300 hover:bg-gray-50 transition-colors duration-200 focus:ring-4 focus:ring-purple-100"
+                    , onClick CloseModal
+                    ]
+                    [ text "Cancel" ]
+                , button
+                    [ class "px-6 py-3 bg-purple-500 text-white text-sm font-medium rounded-lg hover:bg-purple-600 transition-colors duration-200 focus:ring-4 focus:ring-purple-200"
+                    , onClick ReassignSelectedContacts
+                    ]
+                    [ text "Reassign" ]
+                ]
+            ]
+        ]
+
+
+reassignContacts : List Int -> Int -> Cmd Msg
+reassignContacts contactIds agentId =
+    Http.request
+        { method = "PUT"
+        , headers = []
+        , url = "/api/contacts/reassign"
+        , body =
+            Http.jsonBody
+                (Encode.object
+                    [ ( "contact_ids", Encode.list Encode.int contactIds )
+                    , ( "agent_id"
+                      , if agentId == 0 then
+                            -- Send null for Default option
+                            Encode.null
+
+                        else
+                            Encode.int agentId
+                      )
+                    ]
+                )
+        , expect = Http.expectJson ContactsReassigned reassignResponseDecoder
+        , timeout = Nothing
+        , tracker = Nothing
+        }
+
+
+reassignResponseDecoder : Decode.Decoder ReassignResponse
+reassignResponseDecoder =
+    Decode.succeed ReassignResponse
+        |> Pipeline.required "success" Decode.bool
+        |> Pipeline.required "updated_ids" (Decode.list Decode.int)
+        |> Pipeline.required "message" Decode.string
+
+
+toggleAgentList : List Int -> Int -> List Int
+toggleAgentList list value =
+    if List.member value list then
+        List.filter (\v -> v /= value) list
+
+    else
+        value :: list
+
+
+
+-- Add the filterByAgents function
+
+
+filterByAgents : List Int -> List Contact -> List Contact
+filterByAgents agentIds contacts =
+    if List.isEmpty agentIds then
+        contacts
+
+    else
+        List.filter
+            (\contact ->
+                case contact.agentId of
+                    Just agentId ->
+                        List.member agentId agentIds
+
+                    Nothing ->
+                        False
+            )
+            contacts
