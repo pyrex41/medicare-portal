@@ -5,6 +5,7 @@ import Chart as C
 import Chart.Attributes as CA
 import Chart.Events as CE
 import Chart.Item as CI
+import Components.LimitBanner as LimitBanner exposing (LimitWarning(..))
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (..)
@@ -12,7 +13,9 @@ import Time
 
 
 type alias Model =
-    { hovering : Maybe Point }
+    { hovering : Maybe Point
+    , showLimitBanner : Bool
+    }
 
 
 type alias Point =
@@ -32,11 +35,14 @@ type alias ChartData =
 type Msg
     = OnHover (Maybe Point)
     | NoOp
+    | CloseLimitBanner
 
 
 init : () -> ( Model, Cmd Msg )
 init _ =
-    ( { hovering = Nothing }
+    ( { hovering = Nothing
+      , showLimitBanner = True
+      }
     , Cmd.none
     )
 
@@ -49,6 +55,11 @@ update msg model =
             , Cmd.none
             )
 
+        CloseLimitBanner ->
+            ( { model | showLimitBanner = False }
+            , Cmd.none
+            )
+
         NoOp ->
             ( model, Cmd.none )
 
@@ -58,7 +69,12 @@ view model =
     { title = "Dashboard"
     , body =
         [ div [ class "p-6 max-w-7xl mx-auto" ]
-            [ div [ class "grid grid-cols-3 gap-6" ]
+            [ if model.showLimitBanner then
+                LimitBanner.viewLimitBanner (Just (AgentLimit 2 1)) CloseLimitBanner
+
+              else
+                text ""
+            , div [ class "grid grid-cols-3 gap-6" ]
                 [ -- Stats cards
                   viewStatsCard "Quotes Sent" "912" "text-purple-600"
                 , viewStatsCard "Quotes Viewed" "912" "text-purple-600"

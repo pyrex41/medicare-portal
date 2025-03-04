@@ -2,6 +2,7 @@ module ChoosePlan exposing (Model, Msg(..), init, subscriptions, update, view, v
 
 import Browser exposing (Document)
 import Browser.Navigation as Nav
+import Components.LimitBanner as LimitBanner exposing (LimitWarning(..))
 import Components.SetupLayout as SetupLayout
 import Debug
 import Html exposing (Html, button, div, h1, h2, h3, input, label, li, p, span, text, ul)
@@ -44,6 +45,7 @@ type alias Model =
     , currentTier : Maybe String
     , currentAgentLimit : Int
     , currentContactLimit : Int
+    , showTrialBanner : Bool
     }
 
 
@@ -62,6 +64,11 @@ type Msg
     | ProcessPayment
     | CancelPayment
     | GotCurrentSubscription (Result Http.Error { tierId : String, agentLimit : Int, contactLimit : Int })
+    | ConfirmPlan
+    | GotConfirmation (Result Http.Error { success : Bool, redirectUrl : String })
+    | NoOp
+    | NavigateTo String
+    | CloseBanner
 
 
 init : String -> String -> Nav.Key -> Bool -> ( Model, Cmd Msg )
@@ -81,6 +88,7 @@ init orgSlug session key showChangePlan =
       , currentTier = Nothing
       , currentAgentLimit = 0
       , currentContactLimit = 0
+      , showTrialBanner = True
       }
     , Cmd.batch
         [ fetchSubscriptionTiers
@@ -223,7 +231,9 @@ update msg model =
                     )
 
         SelectPlan plan ->
-            ( { model | selectedPlan = Just plan }, Cmd.none )
+            ( { model | selectedPlan = Just plan }
+            , Cmd.none
+            )
 
         SetExtraAgents value ->
             let
@@ -365,22 +375,14 @@ update msg model =
         ProcessPayment ->
             case model.selectedPlan of
                 Just planId ->
-                    let
-                        _ =
-                            Debug.log "ProcessPayment with plan" planId
+                    if model.showChangePlan && not (hasChanges model) then
+                        -- No changes, show an error
+                        ( { model | error = Just "No changes made to your subscription." }
+                        , Cmd.none
+                        )
 
-                        _ =
-                            Debug.log "showChangePlan" model.showChangePlan
-
-                        _ =
-                            Debug.log "hasChanges" (hasChanges model)
-                    in
-                    if planId == "enterprise" then
+                    else if planId == "enterprise" then
                         -- For Enterprise plans, always redirect to contact form
-                        let
-                            _ =
-                                Debug.log "Redirecting to enterprise contact" "/enterprise-contact"
-                        in
                         ( model
                         , Nav.pushUrl model.key "/enterprise-contact"
                         )
@@ -422,6 +424,49 @@ update msg model =
                     , Cmd.none
                     )
 
+        ConfirmPlan ->
+            let
+                plan =
+                    model.selectedPlan |> Maybe.withDefault "basic"
+            in
+            ( { model | isLoading = True }
+            , Http.post
+                { url = "/api/choose-plan"
+                , body =
+                    Http.jsonBody
+                        (Encode.object
+                            [ ( "plan", Encode.string plan )
+                            , ( "orgSlug", Encode.string model.orgSlug )
+                            ]
+                        )
+                , expect = Http.expectJson GotConfirmation confirmationDecoder
+                }
+            )
+
+        GotConfirmation (Ok response) ->
+            if response.success then
+                ( model
+                , Nav.pushUrl model.key response.redirectUrl
+                )
+
+            else
+                ( { model | isLoading = False, error = Just "Failed to update plan. Please try again." }
+                , Cmd.none
+                )
+
+        GotConfirmation (Err _) ->
+            ( { model | isLoading = False, error = Just "Failed to connect to server. Please try again." }
+            , Cmd.none
+            )
+
+        NavigateTo url ->
+            ( model
+            , Nav.pushUrl model.key url
+            )
+
+        CloseBanner ->
+            ( { model | showTrialBanner = False }, Cmd.none )
+
         _ ->
             ( model, Cmd.none )
 
@@ -435,10 +480,18 @@ view model =
         else
             "Choose Plan - Medicare Max"
     , body =
-        [ if model.showChangePlan then
+        [ if model.showTrialBanner then
+            getPlanLimitBanner model
+
+          else
+            text ""
+        , if model.showChangePlan then
+            -- Change Plan is not part of setup flow, but a standalone page
+            -- Return just the content portion which will be wrapped by Main.elm
             viewChangePlan model
 
           else
+            -- This is the setup flow which uses a different layout
             SetupLayout.view SetupLayout.PlanSelection
                 (case model.selectedPlan of
                     Just "basic" ->
@@ -1011,3 +1064,56 @@ hasChanges model =
             model.extraAgents > 0 || model.extraContacts > 0
     in
     planChanged || resourcesChanged
+
+
+
+-- Add the confirmation decoder
+
+
+confirmationDecoder : Decoder { success : Bool, redirectUrl : String }
+confirmationDecoder =
+    Decode.map2 (\success redirectUrl -> { success = success, redirectUrl = redirectUrl })
+        (Decode.field "success" Decode.bool)
+        (Decode.field "redirectUrl" Decode.string)
+
+
+
+-- New function to provide the appropriate banner based on subscription context
+
+
+getPlanLimitBanner : Model -> Html Msg
+getPlanLimitBanner model =
+    -- When user is on trial plan
+    if model.currentTier == Just "trial" then
+        LimitBanner.viewLimitBanner
+            (Just (TrialEnding "June 15, 2024"))
+            CloseBanner
+        -- When user has exceeded agent limit on current plan
+
+    else if model.currentAgentLimit > 0 && model.extraAgents > model.currentAgentLimit then
+        LimitBanner.viewLimitBanner
+            (Just (AgentLimit (model.currentAgentLimit + model.extraAgents) model.currentAgentLimit))
+            CloseBanner
+        -- When user is on basic plan (which only allows 1 agent)
+
+    else if model.currentTier == Just "basic" then
+        LimitBanner.viewLimitBanner
+            (Just
+                (CustomWarning
+                    "Basic Plan Limitations"
+                    "Your current Basic plan only supports 1 agent. Please upgrade to a higher tier plan to add more agents."
+                )
+            )
+            CloseBanner
+        -- When approaching contact limit (subscription data from API)
+
+    else if model.currentContactLimit > 0 && model.extraContacts >= (model.currentContactLimit * 1 // 10) then
+        LimitBanner.viewLimitBanner
+            (Just (ContactLimit (model.currentContactLimit + model.extraContacts) model.currentContactLimit))
+            CloseBanner
+        -- Default for new users or when no specific warning is needed
+
+    else
+        LimitBanner.viewLimitBanner
+            (Just (TrialEnding "June 15, 2024"))
+            CloseBanner

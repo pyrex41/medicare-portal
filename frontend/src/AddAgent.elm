@@ -2162,15 +2162,15 @@ viewEmailStatus status =
                     [ -- Checkmark icon
                       svg
                         [ Svg.Attributes.class "h-4 w-4 mr-1"
-                        , fill "none"
-                        , viewBox "0 0 24 24"
-                        , stroke "currentColor"
+                        , Svg.Attributes.fill "none"
+                        , Svg.Attributes.viewBox "0 0 24 24"
+                        , Svg.Attributes.stroke "currentColor"
                         ]
                         [ path
                             [ Svg.Attributes.strokeLinecap "round"
                             , Svg.Attributes.strokeLinejoin "round"
                             , Svg.Attributes.strokeWidth "2"
-                            , d "M5 13l4 4L19 7"
+                            , Svg.Attributes.d "M5 13l4 4L19 7"
                             ]
                             []
                         ]
@@ -2182,15 +2182,15 @@ viewEmailStatus status =
                     [ -- X icon
                       svg
                         [ Svg.Attributes.class "h-4 w-4 mr-1"
-                        , fill "none"
-                        , viewBox "0 0 24 24"
-                        , stroke "currentColor"
+                        , Svg.Attributes.fill "none"
+                        , Svg.Attributes.viewBox "0 0 24 24"
+                        , Svg.Attributes.stroke "currentColor"
                         ]
                         [ path
                             [ Svg.Attributes.strokeLinecap "round"
                             , Svg.Attributes.strokeLinejoin "round"
                             , Svg.Attributes.strokeWidth "2"
-                            , d "M6 18L18 6M6 6l12 12"
+                            , Svg.Attributes.d "M6 18L18 6M6 6l12 12"
                             ]
                             []
                         ]

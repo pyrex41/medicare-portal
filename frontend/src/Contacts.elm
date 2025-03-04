@@ -10,6 +10,7 @@ module Contacts exposing
 import Browser
 import Browser.Events
 import Browser.Navigation as Nav
+import Components.LimitBanner as LimitBanner exposing (LimitWarning(..))
 import File exposing (File)
 import File.Download
 import File.Select as Select
@@ -108,6 +109,7 @@ type alias Model =
     , carriers : List String
     , agents : List User
     , key : Nav.Key
+    , showLimitBanner : Bool
     }
 
 
@@ -270,6 +272,7 @@ init key maybeUser =
             , carriers = []
             , agents = []
             , key = key
+            , showLimitBanner = True
             }
 
         _ =
@@ -431,6 +434,7 @@ type Msg
     | SelectReassignAgent Int
     | ReassignSelectedContacts
     | ContactsReassigned (Result Http.Error ReassignResponse)
+    | CloseLimitBanner
 
 
 type ContactFormField
@@ -1363,6 +1367,9 @@ update msg model =
         ContactsReassigned (Err _) ->
             ( { model | error = Just "Failed to reassign contacts", showModal = NoModal }, Cmd.none )
 
+        CloseLimitBanner ->
+            ( { model | showLimitBanner = False }, Cmd.none )
+
 
 
 -- TODO: Handle error
@@ -1374,7 +1381,13 @@ view : Model -> Html Msg
 view model =
     div [ class "min-h-screen bg-white" ]
         [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" ]
-            [ -- Stats Section
+            [ -- Limit banner - use our reusable component
+              if model.showLimitBanner then
+                getLimitBanner model
+
+              else
+                text ""
+            , -- Stats Section
               div [ class "grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4 mb-8" ]
                 [ statsCard "Total Contacts" (String.fromInt (List.length model.contacts))
                 , statsCard "Emails Sent" "1824"
@@ -3498,3 +3511,56 @@ filterByAgents agentIds contacts =
                         False
             )
             contacts
+
+
+
+-- Replace the old contact limit banner functions with this more streamlined one
+
+
+getLimitBanner : Model -> Html Msg
+getLimitBanner model =
+    let
+        -- For demo purposes, using fixed values - in a real app these would come from the user's subscription data
+        currentContacts =
+            List.length model.contacts
+
+        contactLimit =
+            1000
+
+        currentAgents =
+            2
+
+        agentLimit =
+            1
+    in
+    if currentAgents > agentLimit then
+        -- Show agent limit warning
+        LimitBanner.viewLimitBanner
+            (Just (AgentLimit currentAgents agentLimit))
+            CloseLimitBanner
+
+    else if currentContacts >= contactLimit then
+        -- Show contact limit reached warning
+        LimitBanner.viewLimitBanner
+            (Just (ContactLimit currentContacts contactLimit))
+            CloseLimitBanner
+
+    else if currentContacts >= (contactLimit * 9 // 10) then
+        -- Show approaching contact limit warning (90%+)
+        LimitBanner.viewLimitBanner
+            (Just
+                (CustomWarning
+                    "Contact Limit Approaching"
+                    ("You have "
+                        ++ String.fromInt currentContacts
+                        ++ " contacts out of your plan limit of "
+                        ++ String.fromInt contactLimit
+                        ++ ". Please upgrade your plan soon to avoid disruption."
+                    )
+                )
+            )
+            CloseLimitBanner
+
+    else
+        -- No warnings needed
+        text ""
