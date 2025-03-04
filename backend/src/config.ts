@@ -1,4 +1,3 @@
-
 import { config as dotenvConfig } from 'dotenv'
 import { resolve } from 'path'
 import { logger } from './logger'
@@ -40,7 +39,21 @@ export const config = {
   PUBLIC_URL: process.env.PUBLIC_URL || (process.env.NODE_ENV === 'development' 
     ? 'http://localhost:5173'
     : 'http://localhost:3000'),
-  // Add other config values here
+  stripe: {
+    secretKey: process.env.STRIPE_SECRET_KEY || '',
+    publishableKey: process.env.STRIPE_PUBLISHABLE_KEY || '',
+    webhookSecret: process.env.STRIPE_WEBHOOK_SECRET || '',
+    prices: {
+      basic: process.env.STRIPE_PRICE_BASIC || '',
+      pro: process.env.STRIPE_PRICE_PRO || '',
+      enterprise: process.env.STRIPE_PRICE_ENTERPRISE || '',
+      extraAgent: process.env.STRIPE_PRICE_EXTRA_AGENT || '',
+      extraContact: process.env.STRIPE_PRICE_EXTRA_CONTACT || '',
+    }
+  },
+  stripeApiKey: process.env.STRIPE_API_KEY,
+  stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
+  clientUrl: process.env.CLIENT_URL || 'http://localhost:3000',
 }
 
 // Log loaded config (safely)

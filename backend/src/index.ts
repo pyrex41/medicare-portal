@@ -13,6 +13,7 @@ import { settingsRoutes } from './routes/settings'
 import { organizationRoutes } from './routes/organizations'
 import { createBrandRoutes } from './routes/brand'
 import { quotesRoutes } from './routes/quotes'
+import { createStripeRoutes } from './routes/stripe'
 import { errorHandler } from './middleware/error'
 import { getUserFromSession } from './services/auth'
 import { join } from 'path'
@@ -1151,6 +1152,8 @@ const startServer = async () => {
       .use(createBrandRoutes())
       // Add quotes routes
       .use(quotesRoutes)
+      // Add Stripe routes
+      .use(createStripeRoutes())
       // In production, serve the frontend static files
       .use(process.env.NODE_ENV === 'production' 
         ? async (app) => {
@@ -1281,6 +1284,39 @@ const startServer = async () => {
 
           // Get the libSQL client
           const client = db.getClient()
+          
+          // Check if the organization has reached its agent limit
+          const orgLimitResult = await client.execute({
+            sql: `
+              SELECT 
+                o.agent_limit, 
+                COUNT(u.id) as current_agent_count
+              FROM 
+                organizations o
+              LEFT JOIN 
+                users u ON o.id = u.organization_id AND (u.is_agent = 1 OR u.is_admin = 1) AND u.is_active = 1
+              WHERE 
+                o.id = ?
+              GROUP BY 
+                o.id
+            `,
+            args: [currentUser.organization_id]
+          })
+          
+          if (orgLimitResult.rows.length > 0) {
+            const { agent_limit, current_agent_count } = orgLimitResult.rows[0]
+            
+            if (Number(current_agent_count) >= Number(agent_limit)) {
+              logger.warn(`Organization ${currentUser.organization_id} has reached its agent limit (${agent_limit}). Cannot create new agent.`)
+              set.status = 403
+              return {
+                success: false,
+                error: `You have reached your plan's agent limit (${agent_limit}). Please upgrade your plan to add more agents.`
+              }
+            }
+            
+            logger.info(`Organization has ${current_agent_count}/${agent_limit} agents (before adding new agent)`)
+          }
           
           // Get organization settings to inherit carriers and state licenses
           const orgSettingsResult = await client.execute({

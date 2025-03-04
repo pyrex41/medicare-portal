@@ -4,12 +4,15 @@ import AddAgent
 import Browser exposing (Document)
 import Browser.Events
 import Browser.Navigation as Nav
+import ChangePlan
 import ChoosePlan
 import Compare exposing (CompareParams)
+import Components.AccountStatusBanner as AccountStatusBanner
 import Contact
 import Contacts
 import Dashboard
 import Eligibility
+import EnterpriseContact.EnterpriseContact as EnterpriseContact
 import Home
 import Html exposing (Html, button, div, h1, img, nav, p, text)
 import Html.Attributes exposing (alt, class, href, src)
@@ -99,6 +102,32 @@ type alias User =
     , firstName : String
     , lastName : String
     , subscriptionTier : String
+    , accountStatus : Maybe AccountStatusBanner.AccountStatusDetails
+    }
+
+
+
+-- Account status types
+
+
+type alias AccountStatus =
+    String
+
+
+type alias AccountStatusDetails =
+    { status : AccountStatus
+    , message : String
+    , organizationId : Int
+    , organizationName : String
+    , organizationSlug : String
+    , subscriptionTier : String
+    , subscriptionStatus : String
+    , agentLimit : Int
+    , contactLimit : Int
+    , currentAgentCount : Int
+    , currentContactCount : Int
+    , billingCycleEnd : Maybe String
+    , paymentFailureCount : Int
     }
 
 
@@ -111,6 +140,8 @@ type alias Model =
     , isSetup : Bool
     , intendedDestination : Maybe String
     , showDropdown : Bool
+    , showStatusBanner : Bool
+    , enterpriseContactState : EnterpriseContact.Model
     }
 
 
@@ -128,6 +159,7 @@ type Page
     | SettingsPage Settings.Model
     | Signup Signup.Model
     | ChoosePlanPage ChoosePlan.Model
+    | ChangePlanPage ChangePlan.Model
     | AddAgentsPage AddAgent.Model
     | ProfilePage Profile.Model
     | LoadingPage
@@ -139,6 +171,7 @@ type Page
     | SchedulePage Schedule.Model
     | DashboardPage Dashboard.Model
     | LogoutPage Logout.Model
+    | EnterpriseContactPage EnterpriseContact.Model
 
 
 type Msg
@@ -151,6 +184,7 @@ type Msg
     | SettingsMsg Settings.Msg
     | SignupMsg Signup.Msg
     | ChoosePlanMsg ChoosePlan.Msg
+    | ChangePlanMsg ChangePlan.Msg
     | AddAgentsMsg AddAgent.Msg
     | GotVerification (Result Http.Error VerificationResponse)
     | GotSession (Result Http.Error SessionResponse)
@@ -169,6 +203,9 @@ type Msg
     | ToggleDropdown
     | CloseDropdown
     | InitiateLogout
+    | GotAccountStatus (Result Http.Error AccountStatusResponse)
+    | CloseStatusBanner
+    | EnterpriseContactMsg EnterpriseContact.Msg
 
 
 type alias Flags =
@@ -201,6 +238,37 @@ main =
         }
 
 
+type alias AccountStatusResponse =
+    { success : Bool
+    , status : AccountStatusDetails
+    }
+
+
+accountStatusDecoder : Decoder AccountStatusDetails
+accountStatusDecoder =
+    Decode.succeed AccountStatusDetails
+        |> Pipeline.required "status" Decode.string
+        |> Pipeline.required "message" Decode.string
+        |> Pipeline.required "organizationId" Decode.int
+        |> Pipeline.required "organizationName" Decode.string
+        |> Pipeline.required "organizationSlug" Decode.string
+        |> Pipeline.required "subscriptionTier" Decode.string
+        |> Pipeline.required "subscriptionStatus" Decode.string
+        |> Pipeline.required "agentLimit" Decode.int
+        |> Pipeline.required "contactLimit" Decode.int
+        |> Pipeline.required "currentAgentCount" Decode.int
+        |> Pipeline.required "currentContactCount" Decode.int
+        |> Pipeline.optional "billingCycleEnd" (Decode.nullable Decode.string) Nothing
+        |> Pipeline.required "paymentFailureCount" Decode.int
+
+
+accountStatusResponseDecoder : Decoder AccountStatusResponse
+accountStatusResponseDecoder =
+    Decode.succeed AccountStatusResponse
+        |> Pipeline.required "success" Decode.bool
+        |> Pipeline.required "status" accountStatusDecoder
+
+
 init : Flags -> Url.Url -> Nav.Key -> ( Model, Cmd Msg )
 init flags url key =
     let
@@ -221,6 +289,8 @@ init flags url key =
             , isSetup = False
             , intendedDestination = Nothing
             , showDropdown = False
+            , showStatusBanner = True
+            , enterpriseContactState = Tuple.first <| EnterpriseContact.init ()
             }
 
         checkSession =
@@ -268,6 +338,7 @@ type alias CompareParamsPartial2 =
 type Route
     = PublicRoute PublicPage
     | ProtectedRoute ProtectedPage
+    | AdminRoute AdminPage
     | SetupRoute SetupPage
     | NotFound
 
@@ -289,12 +360,17 @@ type PublicPage
 
 type ProtectedPage
     = ContactsRoute
-    | SettingsRoute
     | ProfileRoute
     | TempLandingRoute
-    | AgentsRoute
     | ContactRoute String
     | DashboardRoute
+    | ChangePlanRoute
+    | EnterpriseContactRoute
+
+
+type AdminPage
+    = SettingsRoute
+    | AgentsRoute
 
 
 type SetupPage
@@ -394,18 +470,13 @@ routeParser =
                         (Query.string "id")
                         (Query.string "tid")
             )
-        , map (PublicRoute << ScheduleRoute)
-            (s "schedule"
-                <?> Query.map3 (\id status tid -> ( id, status, tid ))
-                        (Query.string "id")
-                        (Query.string "status")
-                        (Query.string "tid")
-            )
+        , map (ProtectedRoute ChangePlanRoute) (s "change-plan")
+        , map (ProtectedRoute EnterpriseContactRoute) (s "enterprise-contact")
         , map (ProtectedRoute ContactsRoute) (s "contacts")
-        , map (ProtectedRoute SettingsRoute) (s "settings")
+        , map (AdminRoute SettingsRoute) (s "settings")
         , map (ProtectedRoute ProfileRoute) (s "profile")
         , map (ProtectedRoute TempLandingRoute) (s "templanding")
-        , map (ProtectedRoute AgentsRoute) (s "add-agents")
+        , map (AdminRoute AgentsRoute) (s "add-agents")
         , map (ProtectedRoute DashboardRoute) (s "dashboard")
         , map (\id -> ProtectedRoute (ContactRoute id)) (s "contact" </> string)
         , map (\progress -> SetupRoute (ChoosePlanRoute progress))
@@ -523,6 +594,20 @@ update msg model =
                 _ ->
                     ( model, Cmd.none )
 
+        ChangePlanMsg subMsg ->
+            case model.page of
+                ChangePlanPage pageModel ->
+                    let
+                        ( updatedPageModel, updatedCmd ) =
+                            ChangePlan.update subMsg pageModel
+                    in
+                    ( { model | page = ChangePlanPage updatedPageModel }
+                    , Cmd.map ChangePlanMsg updatedCmd
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
+
         AddAgentsMsg subMsg ->
             case model.page of
                 AddAgentsPage pageModel ->
@@ -543,7 +628,7 @@ update msg model =
                     if response.success then
                         let
                             ( choosePlanModel, choosePlanCmd ) =
-                                ChoosePlan.init response.orgSlug response.session model.key
+                                ChoosePlan.init response.orgSlug response.session model.key False
 
                             -- Only set isSetup to True if we're being redirected to a setup route
                             isInSetup =
@@ -564,6 +649,7 @@ update msg model =
                                             , firstName = ""
                                             , lastName = ""
                                             , subscriptionTier = ""
+                                            , accountStatus = Nothing
                                             }
                                     , isSetup = isInSetup
                                 }
@@ -601,6 +687,7 @@ update msg model =
                                 , firstName = response.firstName
                                 , lastName = response.lastName
                                 , subscriptionTier = ""
+                                , accountStatus = Nothing
                                 }
 
                             -- Only set isSetup to True if we're in the middle of setup
@@ -775,18 +862,51 @@ update msg model =
                                         , firstName = user.firstName
                                         , lastName = user.lastName
                                         , subscriptionTier = user.subscriptionTier
+                                        , accountStatus = Nothing -- Will fetch this separately
                                         }
 
                                 newModel =
                                     { model | currentUser = currentUser }
+
+                                -- Fetch account status after user is loaded
+                                cmd =
+                                    fetchAccountStatus user.organizationSlug
                             in
-                            updatePage model.url ( newModel, Cmd.none )
+                            updatePage model.url ( newModel, cmd )
 
                         Nothing ->
                             updatePage model.url ( model, Cmd.none )
 
                 Err error ->
                     updatePage model.url ( model, Cmd.none )
+
+        GotAccountStatus result ->
+            case result of
+                Ok response ->
+                    if response.success then
+                        -- Update user with account status
+                        let
+                            updatedUser =
+                                model.currentUser
+                                    |> Maybe.map
+                                        (\user ->
+                                            { user | accountStatus = Just response.status }
+                                        )
+                        in
+                        ( { model | currentUser = updatedUser }
+                        , Cmd.none
+                        )
+
+                    else
+                        ( model, Cmd.none )
+
+                Err _ ->
+                    ( model, Cmd.none )
+
+        CloseStatusBanner ->
+            ( { model | showStatusBanner = False }
+            , Cmd.none
+            )
 
         OrgFinalized result ->
             case result of
@@ -840,6 +960,20 @@ update msg model =
                     }
                 ]
             )
+
+        EnterpriseContactMsg subMsg ->
+            case model.page of
+                EnterpriseContactPage pageModel ->
+                    let
+                        ( newPageModel, newCmd ) =
+                            EnterpriseContact.update subMsg pageModel
+                    in
+                    ( { model | page = EnterpriseContactPage newPageModel }
+                    , Cmd.map EnterpriseContactMsg newCmd
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
 
         NoOp ->
             ( model, Cmd.none )
@@ -903,13 +1037,24 @@ view model =
                     , body = [ viewWithNav model (Html.map ChoosePlanMsg (div [] choosePlanView.body)) ]
                     }
 
+                ChangePlanPage changePlanModel ->
+                    ChangePlan.view changePlanModel
+                        |> mapDocument ChangePlanMsg
+
                 AddAgentsPage addAgentModel ->
                     let
                         addAgentView =
                             AddAgent.view addAgentModel
                     in
                     { title = addAgentView.title
-                    , body = [ viewWithNav model (Html.map AddAgentsMsg (div [] addAgentView.body)) ]
+                    , body =
+                        if addAgentModel.isSetup then
+                            -- In setup flow, don't show the header
+                            [ Html.map AddAgentsMsg (div [] addAgentView.body) ]
+
+                        else
+                            -- Not in setup flow, show the header
+                            [ viewWithNav model (Html.map AddAgentsMsg (div [] addAgentView.body)) ]
                     }
 
                 ProfilePage profileModel ->
@@ -997,6 +1142,15 @@ view model =
                     { title = logoutView.title
                     , body = List.map (Html.map LogoutMsg) logoutView.body
                     }
+
+                EnterpriseContactPage enterpriseContactModel ->
+                    let
+                        enterpriseContactView =
+                            EnterpriseContact.view enterpriseContactModel
+                    in
+                    { title = enterpriseContactView.title
+                    , body = [ viewWithNav model (Html.map EnterpriseContactMsg (div [] enterpriseContactView.body)) ]
+                    }
     in
     viewPage
 
@@ -1012,9 +1166,27 @@ viewWithNav model content =
             -- Show header for regular pages
             div []
                 [ viewNavHeader model
+                , viewAccountStatusBanner model
                 , content
                 ]
         ]
+
+
+viewAccountStatusBanner : Model -> Html Msg
+viewAccountStatusBanner model =
+    if model.showStatusBanner then
+        case model.currentUser of
+            Just user ->
+                -- Show banner if user has account status information
+                AccountStatusBanner.view user.accountStatus CloseStatusBanner
+
+            Nothing ->
+                -- No user, no banner
+                text ""
+
+    else
+        -- Banner was closed
+        text ""
 
 
 viewNavHeader : Model -> Html Msg
@@ -1092,6 +1264,20 @@ viewNavHeader model =
 
                                   else
                                     text ""
+                                , if isAdmin model.currentUser then
+                                    button
+                                        [ class "block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                                        , onClick (InternalLinkClicked "/add-agents")
+                                        ]
+                                        [ text "Agents" ]
+
+                                  else
+                                    text ""
+                                , button
+                                    [ class "block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                                    , onClick (InternalLinkClicked "/change-plan")
+                                    ]
+                                    [ text "Change Plan" ]
                                 , button
                                     [ class "block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
                                     , onClick (InternalLinkClicked "/profile")
@@ -1187,6 +1373,9 @@ subscriptions model =
                 ChoosePlanPage pageModel ->
                     Sub.map ChoosePlanMsg (ChoosePlan.subscriptions pageModel)
 
+                ChangePlanPage pageModel ->
+                    Sub.map ChangePlanMsg (ChangePlan.subscriptions pageModel)
+
                 AddAgentsPage pageModel ->
                     Sub.map AddAgentsMsg (AddAgent.subscriptions pageModel)
 
@@ -1219,12 +1408,15 @@ subscriptions model =
 
                 LogoutPage pageModel ->
                     Sub.map LogoutMsg (Logout.subscriptions pageModel)
+
+                EnterpriseContactPage pageModel ->
+                    Sub.none
     in
     Sub.batch [ dropdownSub, pageSubs ]
 
 
-getRouteAccess : Route -> RouteAccess
-getRouteAccess route =
+routeAccessType : Route -> RouteAccess
+routeAccessType route =
     case route of
         PublicRoute _ ->
             Public
@@ -1232,6 +1424,10 @@ getRouteAccess route =
         ProtectedRoute _ ->
             Protected
 
+        AdminRoute _ ->
+            Protected
+
+        -- Still Protected, but we'll check admin status separately
         SetupRoute _ ->
             Setup
 
@@ -1261,6 +1457,7 @@ userDecoder =
         |> Pipeline.required "firstName" Decode.string
         |> Pipeline.required "lastName" Decode.string
         |> Pipeline.required "subscription_tier" Decode.string
+        |> Pipeline.optional "accountStatus" (Decode.nullable accountStatusDecoder) Nothing
 
 
 type SetupStep
@@ -1345,6 +1542,28 @@ redirectToSetupStep model =
             ( model, Nav.pushUrl model.key "/contacts" )
 
 
+shouldRedirectAdminRoute : Route -> Model -> Maybe String
+shouldRedirectAdminRoute route model =
+    case route of
+        AdminRoute _ ->
+            case model.currentUser of
+                Just user ->
+                    if user.isAdmin then
+                        Nothing
+                        -- Admin user, no redirect needed
+
+                    else
+                        Just "/contacts"
+
+                -- Non-admin user, redirect to contacts
+                Nothing ->
+                    Just "/login"
+
+        -- Not logged in, redirect to login
+        _ ->
+            Nothing
+
+
 shouldRedirectToLogin : Route -> Model -> Bool
 shouldRedirectToLogin route model =
     case route of
@@ -1353,6 +1572,14 @@ shouldRedirectToLogin route model =
 
         NotFound ->
             False
+
+        AdminRoute _ ->
+            case model.session of
+                Verified _ ->
+                    False
+
+                _ ->
+                    True
 
         _ ->
             case model.session of
@@ -1377,15 +1604,14 @@ shouldRedirectToSetup route model =
             NotFound ->
                 False
 
+            AdminRoute _ ->
+                getSetupStep model /= Complete
+
             ProtectedRoute _ ->
                 getSetupStep model /= Complete
 
     else
         False
-
-
-
--- Not in setup mode, no need to redirect
 
 
 updatePage : Url -> ( Model, Cmd Msg ) -> ( Model, Cmd Msg )
@@ -1399,467 +1625,495 @@ updatePage url ( model, cmd ) =
         _ ->
             case Parser.parse routeParser url of
                 Just route ->
-                    if shouldRedirectToLogin route model then
-                        ( { model
-                            | intendedDestination = Just (Url.toString url)
-                            , page = LoginPage (Login.init model.key False |> Tuple.first)
-                          }
-                        , Nav.pushUrl model.key "/login"
-                        )
+                    case shouldRedirectAdminRoute route model of
+                        Just redirectUrl ->
+                            ( model, Nav.pushUrl model.key redirectUrl )
 
-                    else if shouldRedirectToSetup route model then
-                        redirectToSetupStep model
-
-                    else
-                        case route of
-                            PublicRoute (EligibilityRoute ( maybeQuoteId, maybeTrackingId )) ->
-                                let
-                                    ( eligibilityModel, eligibilityCmd ) =
-                                        Eligibility.init model.key maybeQuoteId
-                                in
-                                ( { model | page = EligibilityPage eligibilityModel }
-                                , Cmd.batch
-                                    [ cmd
-                                    , Cmd.map EligibilityMsg eligibilityCmd
-                                    , case maybeTrackingId of
-                                        Just tid ->
-                                            Http.post
-                                                { url = "/api/contact-events"
-                                                , body =
-                                                    Http.jsonBody
-                                                        (E.object
-                                                            [ ( "tracking_id", E.string tid )
-                                                            , ( "event_type", E.string "eligibility_opened" )
-                                                            ]
-                                                        )
-                                                , expect = Http.expectWhatever (\_ -> NoOp)
-                                                }
-
-                                        Nothing ->
-                                            Cmd.none
-                                    ]
+                        Nothing ->
+                            if shouldRedirectToLogin route model then
+                                ( { model
+                                    | intendedDestination = Just (Url.toString url)
+                                    , page = LoginPage (Login.init model.key False |> Tuple.first)
+                                  }
+                                , Nav.pushUrl model.key "/login"
                                 )
 
-                            PublicRoute (QuoteRoute ( maybeQuoteId, maybeTrackingId, maybePlanType )) ->
-                                let
-                                    initialValues =
-                                        { zipCode = Nothing
-                                        , dateOfBirth = Nothing
-                                        , tobacco = Nothing
-                                        , gender = Nothing
-                                        , quoteId = maybeQuoteId
-                                        , planType = maybePlanType
-                                        }
+                            else if shouldRedirectToSetup route model then
+                                redirectToSetupStep model
 
-                                    ( quoteModel, quoteCmd ) =
-                                        Quote.init model.key initialValues
-                                in
-                                ( { model | page = QuotePage quoteModel }
-                                , Cmd.batch
-                                    [ cmd
-                                    , Cmd.map QuoteMsg quoteCmd
-                                    , case maybeTrackingId of
-                                        Just tid ->
-                                            Http.post
-                                                { url = "/api/contact-events"
-                                                , body =
-                                                    Http.jsonBody
-                                                        (E.object
-                                                            [ ( "tracking_id", E.string tid )
-                                                            , ( "event_type", E.string "quote_opened" )
-                                                            ]
-                                                        )
-                                                , expect = Http.expectWhatever (\_ -> NoOp)
-                                                }
-
-                                        Nothing ->
-                                            Cmd.none
-                                    ]
-                                )
-
-                            PublicRoute (ScheduleRoute ( quoteId, status, trackingId )) ->
-                                let
-                                    ( scheduleModel, scheduleCmd ) =
-                                        Schedule.init model.key quoteId status
-                                in
-                                ( { model | page = SchedulePage scheduleModel }
-                                , Cmd.batch
-                                    [ cmd
-                                    , Cmd.map ScheduleMsg scheduleCmd
-                                    , case trackingId of
-                                        Just tid ->
-                                            Http.post
-                                                { url = "/api/contact-events"
-                                                , body =
-                                                    Http.jsonBody
-                                                        (E.object
-                                                            [ ( "tracking_id", E.string tid )
-                                                            , ( "event_type", E.string "followup_requested" )
-                                                            , ( "metadata"
-                                                              , E.object
-                                                                    [ ( "status", E.string (Maybe.withDefault "generic" status) )
+                            else
+                                case route of
+                                    PublicRoute (EligibilityRoute ( maybeQuoteId, maybeTrackingId )) ->
+                                        let
+                                            ( eligibilityModel, eligibilityCmd ) =
+                                                Eligibility.init model.key maybeQuoteId
+                                        in
+                                        ( { model | page = EligibilityPage eligibilityModel }
+                                        , Cmd.batch
+                                            [ cmd
+                                            , Cmd.map EligibilityMsg eligibilityCmd
+                                            , case maybeTrackingId of
+                                                Just tid ->
+                                                    Http.post
+                                                        { url = "/api/contact-events"
+                                                        , body =
+                                                            Http.jsonBody
+                                                                (E.object
+                                                                    [ ( "tracking_id", E.string tid )
+                                                                    , ( "event_type", E.string "eligibility_opened" )
                                                                     ]
-                                                              )
-                                                            ]
-                                                        )
-                                                , expect = Http.expectWhatever (\_ -> NoOp)
-                                                }
-
-                                        Nothing ->
-                                            Cmd.none
-                                    ]
-                                )
-
-                            PublicRoute HomeRoute ->
-                                let
-                                    ( homeModel, homeCmd ) =
-                                        Home.init model.key
-                                in
-                                ( { model | page = HomePage homeModel }
-                                , Cmd.batch [ cmd, Cmd.map HomeMsg homeCmd ]
-                                )
-
-                            PublicRoute LoginRoute ->
-                                let
-                                    ( loginModel, loginCmd ) =
-                                        Login.init model.key False
-                                in
-                                ( { model | page = LoginPage loginModel }
-                                , Cmd.batch [ cmd, Cmd.map LoginMsg loginCmd ]
-                                )
-
-                            PublicRoute (VerifyRoute (VerifyParams orgSlug token)) ->
-                                let
-                                    verifyUrl =
-                                        "/api/auth/verify/" ++ orgSlug ++ "/" ++ token
-
-                                    verifyRequest =
-                                        Http.get
-                                            { url = verifyUrl
-                                            , expect = Http.expectJson GotVerification verificationDecoder
-                                            }
-                                in
-                                ( model
-                                , Cmd.batch [ cmd, verifyRequest ]
-                                )
-
-                            PublicRoute SignupRoute ->
-                                let
-                                    ( signupModel, signupCmd ) =
-                                        Signup.init
-                                in
-                                ( { model | page = Signup signupModel }
-                                , Cmd.batch [ cmd, Cmd.map SignupMsg signupCmd ]
-                                )
-
-                            PublicRoute (CompareRoute params) ->
-                                let
-                                    -- Convert the Main.elm params to a format Compare.elm expects
-                                    compareParams =
-                                        { state = params.state
-                                        , county = params.county
-                                        , zip = params.zip
-                                        , age = params.age
-                                        , gender = params.gender
-                                        , tobacco = params.tobacco
-                                        , planType = params.planType
-                                        , currentCarrier = params.currentCarrier
-                                        , dateOfBirth = params.dateOfBirth
-                                        , quoteId = params.quoteId
-                                        , trackingId = params.trackingId
-                                        }
-
-                                    ( compareModel, compareCmd ) =
-                                        -- Pass the parsed params directly to Compare.init
-                                        Compare.init model.key (Just compareParams)
-
-                                    trackingCmd =
-                                        case params.trackingId of
-                                            Just tid ->
-                                                Http.post
-                                                    { url = "/api/contact-events"
-                                                    , body =
-                                                        Http.jsonBody
-                                                            (E.object
-                                                                [ ( "tracking_id", E.string tid )
-                                                                , ( "event_type", E.string "compare_opened" )
-                                                                ]
-                                                            )
-                                                    , expect = Http.expectWhatever (\_ -> NoOp)
-                                                    }
-
-                                            Nothing ->
-                                                Cmd.none
-                                in
-                                ( { model | page = ComparePage compareModel }
-                                , Cmd.batch [ cmd, Cmd.map CompareMsg compareCmd, trackingCmd ]
-                                )
-
-                            ProtectedRoute ContactsRoute ->
-                                let
-                                    -- Convert Main.elm User to Contacts.elm User format
-                                    contactsUser =
-                                        case model.currentUser of
-                                            Just user ->
-                                                Just
-                                                    { id = String.toInt user.id |> Maybe.withDefault 0
-                                                    , email = user.email
-                                                    , firstName = user.firstName
-                                                    , lastName = user.lastName
-                                                    , isAdmin = user.isAdmin
-                                                    , isAgent = user.isAgent
-                                                    , organizationId = String.toInt user.organizationId |> Maybe.withDefault 0
-                                                    , isActive = True -- Assume active
-                                                    , phone = "" -- Default empty
-                                                    , carriers = [] -- Default empty
-                                                    , stateLicenses = [] -- Default empty
-                                                    }
-
-                                            Nothing ->
-                                                Nothing
-
-                                    ( contactsModel, contactsCmd ) =
-                                        Contacts.init model.key contactsUser
-                                in
-                                ( { model | page = ContactsPage contactsModel }
-                                , Cmd.batch [ cmd, Cmd.map ContactsMsg contactsCmd ]
-                                )
-
-                            ProtectedRoute SettingsRoute ->
-                                let
-                                    ( settingsModel, settingsCmd ) =
-                                        case model.currentUser of
-                                            Just user ->
-                                                Settings.init
-                                                    { isSetup = False
-                                                    , key = model.key
-                                                    , currentUser =
-                                                        Just
-                                                            { id = user.id
-                                                            , email = user.email
-                                                            , isAdmin = user.isAdmin
-                                                            , isAgent = user.isAgent
-                                                            , organizationSlug = user.organizationSlug
-                                                            , organizationId = user.organizationId
-                                                            }
-                                                    , planType = "basic" -- Default to basic plan if not in setup flow
-                                                    }
-
-                                            Nothing ->
-                                                Settings.init
-                                                    { isSetup = False
-                                                    , key = model.key
-                                                    , currentUser = Nothing
-                                                    , planType = "basic"
-                                                    }
-                                in
-                                ( { model | page = SettingsPage settingsModel }
-                                , Cmd.batch [ cmd, Cmd.map SettingsMsg settingsCmd ]
-                                )
-
-                            ProtectedRoute ProfileRoute ->
-                                let
-                                    ( profileModel, profileCmd ) =
-                                        Profile.init ()
-                                in
-                                ( { model | page = ProfilePage profileModel }
-                                , Cmd.batch [ cmd, Cmd.map ProfileMsg profileCmd ]
-                                )
-
-                            ProtectedRoute TempLandingRoute ->
-                                let
-                                    ( tempLandingModel, tempLandingCmd ) =
-                                        TempLanding.init ()
-                                in
-                                ( { model | page = TempLandingPage tempLandingModel }
-                                , Cmd.batch [ cmd, Cmd.map TempLandingMsg tempLandingCmd ]
-                                )
-
-                            ProtectedRoute AgentsRoute ->
-                                if isBasicPlan model then
-                                    ( model, Nav.pushUrl model.key "/settings" )
-
-                                else
-                                    let
-                                        planType =
-                                            case model.currentUser of
-                                                Just user ->
-                                                    user.organizationSlug
+                                                                )
+                                                        , expect = Http.expectWhatever (\_ -> NoOp)
+                                                        }
 
                                                 Nothing ->
-                                                    "basic"
+                                                    Cmd.none
+                                            ]
+                                        )
 
-                                        ( addAgentsModel, addAgentsCmd ) =
-                                            case model.currentUser of
-                                                Just user ->
-                                                    AddAgent.init
-                                                        True
-                                                        model.key
-                                                        (Just
-                                                            { id = user.id
+                                    PublicRoute (QuoteRoute ( maybeQuoteId, maybeTrackingId, maybePlanType )) ->
+                                        let
+                                            initialValues =
+                                                { zipCode = Nothing
+                                                , dateOfBirth = Nothing
+                                                , tobacco = Nothing
+                                                , gender = Nothing
+                                                , quoteId = maybeQuoteId
+                                                , planType = maybePlanType
+                                                }
+
+                                            ( quoteModel, quoteCmd ) =
+                                                Quote.init model.key initialValues
+                                        in
+                                        ( { model | page = QuotePage quoteModel }
+                                        , Cmd.batch
+                                            [ cmd
+                                            , Cmd.map QuoteMsg quoteCmd
+                                            , case maybeTrackingId of
+                                                Just tid ->
+                                                    Http.post
+                                                        { url = "/api/contact-events"
+                                                        , body =
+                                                            Http.jsonBody
+                                                                (E.object
+                                                                    [ ( "tracking_id", E.string tid )
+                                                                    , ( "event_type", E.string "quote_opened" )
+                                                                    ]
+                                                                )
+                                                        , expect = Http.expectWhatever (\_ -> NoOp)
+                                                        }
+
+                                                Nothing ->
+                                                    Cmd.none
+                                            ]
+                                        )
+
+                                    PublicRoute (ScheduleRoute ( quoteId, status, trackingId )) ->
+                                        let
+                                            ( scheduleModel, scheduleCmd ) =
+                                                Schedule.init model.key quoteId status
+                                        in
+                                        ( { model | page = SchedulePage scheduleModel }
+                                        , Cmd.batch
+                                            [ cmd
+                                            , Cmd.map ScheduleMsg scheduleCmd
+                                            , case trackingId of
+                                                Just tid ->
+                                                    Http.post
+                                                        { url = "/api/contact-events"
+                                                        , body =
+                                                            Http.jsonBody
+                                                                (E.object
+                                                                    [ ( "tracking_id", E.string tid )
+                                                                    , ( "event_type", E.string "followup_requested" )
+                                                                    , ( "metadata"
+                                                                      , E.object
+                                                                            [ ( "status", E.string (Maybe.withDefault "generic" status) )
+                                                                            ]
+                                                                      )
+                                                                    ]
+                                                                )
+                                                        , expect = Http.expectWhatever (\_ -> NoOp)
+                                                        }
+
+                                                Nothing ->
+                                                    Cmd.none
+                                            ]
+                                        )
+
+                                    PublicRoute HomeRoute ->
+                                        let
+                                            ( homeModel, homeCmd ) =
+                                                Home.init model.key
+                                        in
+                                        ( { model | page = HomePage homeModel }
+                                        , Cmd.batch [ cmd, Cmd.map HomeMsg homeCmd ]
+                                        )
+
+                                    PublicRoute LoginRoute ->
+                                        let
+                                            ( loginModel, loginCmd ) =
+                                                Login.init model.key False
+                                        in
+                                        ( { model | page = LoginPage loginModel }
+                                        , Cmd.batch [ cmd, Cmd.map LoginMsg loginCmd ]
+                                        )
+
+                                    PublicRoute (VerifyRoute (VerifyParams orgSlug token)) ->
+                                        let
+                                            verifyUrl =
+                                                "/api/auth/verify/" ++ orgSlug ++ "/" ++ token
+
+                                            verifyRequest =
+                                                Http.get
+                                                    { url = verifyUrl
+                                                    , expect = Http.expectJson GotVerification verificationDecoder
+                                                    }
+                                        in
+                                        ( model
+                                        , Cmd.batch [ cmd, verifyRequest ]
+                                        )
+
+                                    PublicRoute SignupRoute ->
+                                        let
+                                            ( signupModel, signupCmd ) =
+                                                Signup.init
+                                        in
+                                        ( { model | page = Signup signupModel }
+                                        , Cmd.batch [ cmd, Cmd.map SignupMsg signupCmd ]
+                                        )
+
+                                    PublicRoute (CompareRoute params) ->
+                                        let
+                                            -- Convert the Main.elm params to a format Compare.elm expects
+                                            compareParams =
+                                                { state = params.state
+                                                , county = params.county
+                                                , zip = params.zip
+                                                , age = params.age
+                                                , gender = params.gender
+                                                , tobacco = params.tobacco
+                                                , planType = params.planType
+                                                , currentCarrier = params.currentCarrier
+                                                , dateOfBirth = params.dateOfBirth
+                                                , quoteId = params.quoteId
+                                                , trackingId = params.trackingId
+                                                }
+
+                                            ( compareModel, compareCmd ) =
+                                                -- Pass the parsed params directly to Compare.init
+                                                Compare.init model.key (Just compareParams)
+
+                                            trackingCmd =
+                                                case params.trackingId of
+                                                    Just tid ->
+                                                        Http.post
+                                                            { url = "/api/contact-events"
+                                                            , body =
+                                                                Http.jsonBody
+                                                                    (E.object
+                                                                        [ ( "tracking_id", E.string tid )
+                                                                        , ( "event_type", E.string "compare_opened" )
+                                                                        ]
+                                                                    )
+                                                            , expect = Http.expectWhatever (\_ -> NoOp)
+                                                            }
+
+                                                    Nothing ->
+                                                        Cmd.none
+                                        in
+                                        ( { model | page = ComparePage compareModel }
+                                        , Cmd.batch [ cmd, Cmd.map CompareMsg compareCmd, trackingCmd ]
+                                        )
+
+                                    ProtectedRoute ContactsRoute ->
+                                        let
+                                            -- Convert Main.elm User to Contacts.elm User format
+                                            contactsUser =
+                                                case model.currentUser of
+                                                    Just user ->
+                                                        Just
+                                                            { id = String.toInt user.id |> Maybe.withDefault 0
                                                             , email = user.email
                                                             , firstName = user.firstName
                                                             , lastName = user.lastName
                                                             , isAdmin = user.isAdmin
                                                             , isAgent = user.isAgent
-                                                            , phone = ""
+                                                            , organizationId = String.toInt user.organizationId |> Maybe.withDefault 0
+                                                            , isActive = True -- Assume active
+                                                            , phone = "" -- Default empty
+                                                            , carriers = [] -- Default empty
+                                                            , stateLicenses = [] -- Default empty
                                                             }
-                                                        )
-                                                        planType
+
+                                                    Nothing ->
+                                                        Nothing
+
+                                            ( contactsModel, contactsCmd ) =
+                                                Contacts.init model.key contactsUser
+                                        in
+                                        ( { model | page = ContactsPage contactsModel }
+                                        , Cmd.batch [ cmd, Cmd.map ContactsMsg contactsCmd ]
+                                        )
+
+                                    ProtectedRoute ProfileRoute ->
+                                        let
+                                            ( profileModel, profileCmd ) =
+                                                Profile.init ()
+                                        in
+                                        ( { model | page = ProfilePage profileModel }
+                                        , Cmd.batch [ cmd, Cmd.map ProfileMsg profileCmd ]
+                                        )
+
+                                    ProtectedRoute TempLandingRoute ->
+                                        let
+                                            ( tempLandingModel, tempLandingCmd ) =
+                                                TempLanding.init ()
+                                        in
+                                        ( { model | page = TempLandingPage tempLandingModel }
+                                        , Cmd.batch [ cmd, Cmd.map TempLandingMsg tempLandingCmd ]
+                                        )
+
+                                    ProtectedRoute (ContactRoute id) ->
+                                        let
+                                            ( contactModel, contactCmd ) =
+                                                Contact.init model.key id
+                                        in
+                                        ( { model | page = ContactPage contactModel }
+                                        , Cmd.batch [ cmd, Cmd.map ContactMsg contactCmd ]
+                                        )
+
+                                    ProtectedRoute DashboardRoute ->
+                                        let
+                                            ( dashboardModel, dashboardCmd ) =
+                                                Dashboard.init ()
+                                        in
+                                        ( { model | page = DashboardPage dashboardModel }
+                                        , Cmd.batch [ cmd, Cmd.map DashboardMsg dashboardCmd ]
+                                        )
+
+                                    ProtectedRoute ChangePlanRoute ->
+                                        let
+                                            ( changePlanModel, changePlanCmd ) =
+                                                ChangePlan.init
+                                                    { key = model.key
+                                                    , session = extractSession model.session
+                                                    , orgSlug = model.currentUser |> Maybe.map .organizationSlug |> Maybe.withDefault ""
+                                                    }
+                                        in
+                                        ( { model | page = ChangePlanPage changePlanModel }
+                                        , Cmd.map ChangePlanMsg changePlanCmd
+                                        )
+
+                                    ProtectedRoute EnterpriseContactRoute ->
+                                        let
+                                            ( enterpriseContactModel, enterpriseContactCmd ) =
+                                                EnterpriseContact.init ()
+                                        in
+                                        ( { model | page = EnterpriseContactPage enterpriseContactModel }
+                                        , Cmd.batch [ cmd, Cmd.map EnterpriseContactMsg enterpriseContactCmd ]
+                                        )
+
+                                    SetupRoute (ChoosePlanRoute progress) ->
+                                        let
+                                            ( choosePlanModel, choosePlanCmd ) =
+                                                case model.currentUser of
+                                                    Just user ->
+                                                        ChoosePlan.init
+                                                            user.organizationSlug
+                                                            (case model.session of
+                                                                Verified s ->
+                                                                    s
+
+                                                                _ ->
+                                                                    ""
+                                                            )
+                                                            model.key
+                                                            False
+
+                                                    Nothing ->
+                                                        -- This case should not happen as we check for auth before
+                                                        ChoosePlan.init "" "" model.key False
+                                        in
+                                        ( { model | page = ChoosePlanPage choosePlanModel }
+                                        , Cmd.batch [ cmd, Cmd.map ChoosePlanMsg choosePlanCmd ]
+                                        )
+
+                                    SetupRoute (SetupSettingsRoute progress) ->
+                                        let
+                                            planType =
+                                                case progress of
+                                                    Just p ->
+                                                        case p.plan of
+                                                            Just plan ->
+                                                                plan
+
+                                                            Nothing ->
+                                                                "basic"
+
+                                                    Nothing ->
+                                                        "basic"
+
+                                            ( settingsModel, settingsCmd ) =
+                                                case model.currentUser of
+                                                    Just user ->
+                                                        Settings.init
+                                                            { isSetup = True
+                                                            , key = model.key
+                                                            , currentUser =
+                                                                Just
+                                                                    { id = user.id
+                                                                    , email = user.email
+                                                                    , isAdmin = user.isAdmin
+                                                                    , isAgent = user.isAgent
+                                                                    , organizationSlug = user.organizationSlug
+                                                                    , organizationId = user.organizationId
+                                                                    }
+                                                            , planType = planType
+                                                            }
+
+                                                    Nothing ->
+                                                        Settings.init
+                                                            { isSetup = True
+                                                            , key = model.key
+                                                            , currentUser = Nothing
+                                                            , planType = planType
+                                                            }
+                                        in
+                                        ( { model | page = SettingsPage settingsModel }
+                                        , Cmd.batch [ cmd, Cmd.map SettingsMsg settingsCmd ]
+                                        )
+
+                                    SetupRoute (AddAgentsRoute progress) ->
+                                        let
+                                            planType =
+                                                case progress of
+                                                    Just setupProgress ->
+                                                        case setupProgress.plan of
+                                                            Just plan ->
+                                                                plan
+
+                                                            Nothing ->
+                                                                "basic"
+
+                                                    Nothing ->
+                                                        "basic"
+                                        in
+                                        if planType == "basic" then
+                                            case model.currentUser of
+                                                Just user ->
+                                                    ( model
+                                                    , Cmd.batch
+                                                        [ finalizeOrganization user.organizationId
+                                                        , Nav.pushUrl model.key "/dashboard"
+                                                        ]
+                                                    )
 
                                                 Nothing ->
-                                                    AddAgent.init True model.key Nothing planType
-                                    in
-                                    ( { model | page = AddAgentsPage addAgentsModel }
-                                    , Cmd.batch [ cmd, Cmd.map AddAgentsMsg addAgentsCmd ]
-                                    )
+                                                    ( model, Nav.pushUrl model.key "/dashboard" )
 
-                            ProtectedRoute (ContactRoute id) ->
-                                let
-                                    ( contactModel, contactCmd ) =
-                                        Contact.init model.key id
-                                in
-                                ( { model | page = ContactPage contactModel }
-                                , Cmd.batch [ cmd, Cmd.map ContactMsg contactCmd ]
-                                )
+                                        else
+                                            let
+                                                ( addAgentsModel, addAgentsCmd ) =
+                                                    case model.currentUser of
+                                                        Just user ->
+                                                            AddAgent.init
+                                                                False
+                                                                model.key
+                                                                (Just
+                                                                    { id = user.id
+                                                                    , email = user.email
+                                                                    , firstName = user.firstName
+                                                                    , lastName = user.lastName
+                                                                    , isAdmin = user.isAdmin
+                                                                    , isAgent = user.isAgent
+                                                                    , phone = ""
+                                                                    }
+                                                                )
+                                                                planType
 
-                            ProtectedRoute DashboardRoute ->
-                                let
-                                    ( dashboardModel, dashboardCmd ) =
-                                        Dashboard.init ()
-                                in
-                                ( { model | page = DashboardPage dashboardModel }
-                                , Cmd.batch [ cmd, Cmd.map DashboardMsg dashboardCmd ]
-                                )
-
-                            SetupRoute (ChoosePlanRoute progress) ->
-                                let
-                                    ( choosePlanModel, choosePlanCmd ) =
-                                        case model.currentUser of
-                                            Just user ->
-                                                ChoosePlan.init
-                                                    user.organizationSlug
-                                                    (case model.session of
-                                                        Verified s ->
-                                                            s
-
-                                                        _ ->
-                                                            ""
-                                                    )
-                                                    model.key
-
-                                            Nothing ->
-                                                -- This case should not happen as we check for auth before
-                                                ChoosePlan.init "" "" model.key
-                                in
-                                ( { model | page = ChoosePlanPage choosePlanModel }
-                                , Cmd.batch [ cmd, Cmd.map ChoosePlanMsg choosePlanCmd ]
-                                )
-
-                            SetupRoute (SetupSettingsRoute progress) ->
-                                let
-                                    planType =
-                                        case progress of
-                                            Just p ->
-                                                case p.plan of
-                                                    Just plan ->
-                                                        plan
-
-                                                    Nothing ->
-                                                        "basic"
-
-                                            Nothing ->
-                                                "basic"
-
-                                    ( settingsModel, settingsCmd ) =
-                                        case model.currentUser of
-                                            Just user ->
-                                                Settings.init
-                                                    { isSetup = True
-                                                    , key = model.key
-                                                    , currentUser =
-                                                        Just
-                                                            { id = user.id
-                                                            , email = user.email
-                                                            , isAdmin = user.isAdmin
-                                                            , isAgent = user.isAgent
-                                                            , organizationSlug = user.organizationSlug
-                                                            , organizationId = user.organizationId
-                                                            }
-                                                    , planType = planType
-                                                    }
-
-                                            Nothing ->
-                                                Settings.init
-                                                    { isSetup = True
-                                                    , key = model.key
-                                                    , currentUser = Nothing
-                                                    , planType = planType
-                                                    }
-                                in
-                                ( { model | page = SettingsPage settingsModel }
-                                , Cmd.batch [ cmd, Cmd.map SettingsMsg settingsCmd ]
-                                )
-
-                            SetupRoute (AddAgentsRoute progress) ->
-                                let
-                                    planType =
-                                        case progress of
-                                            Just setupProgress ->
-                                                case setupProgress.plan of
-                                                    Just plan ->
-                                                        plan
-
-                                                    Nothing ->
-                                                        "basic"
-
-                                            Nothing ->
-                                                "basic"
-                                in
-                                if planType == "basic" then
-                                    case model.currentUser of
-                                        Just user ->
-                                            ( model
-                                            , Cmd.batch
-                                                [ finalizeOrganization user.organizationId
-                                                , Nav.pushUrl model.key "/dashboard"
-                                                ]
+                                                        Nothing ->
+                                                            AddAgent.init False model.key Nothing planType
+                                            in
+                                            ( { model | page = AddAgentsPage addAgentsModel }
+                                            , Cmd.batch [ cmd, Cmd.map AddAgentsMsg addAgentsCmd ]
                                             )
 
-                                        Nothing ->
-                                            ( model, Nav.pushUrl model.key "/dashboard" )
+                                    NotFound ->
+                                        ( { model | page = NotFoundPage }
+                                        , cmd
+                                        )
 
-                                else
-                                    let
-                                        ( addAgentModel, addAgentCmd ) =
-                                            case model.currentUser of
-                                                Just user ->
-                                                    AddAgent.init
-                                                        True
-                                                        model.key
-                                                        (Just
-                                                            { id = user.id
-                                                            , email = user.email
-                                                            , firstName = user.firstName
-                                                            , lastName = user.lastName
-                                                            , isAdmin = user.isAdmin
-                                                            , isAgent = user.isAgent
-                                                            , phone = ""
+                                    AdminRoute SettingsRoute ->
+                                        let
+                                            ( settingsModel, settingsCmd ) =
+                                                case model.currentUser of
+                                                    Just user ->
+                                                        Settings.init
+                                                            { isSetup = False
+                                                            , key = model.key
+                                                            , currentUser =
+                                                                Just
+                                                                    { id = user.id
+                                                                    , email = user.email
+                                                                    , isAdmin = user.isAdmin
+                                                                    , isAgent = user.isAgent
+                                                                    , organizationSlug = user.organizationSlug
+                                                                    , organizationId = user.organizationId
+                                                                    }
+                                                            , planType = "basic" -- Default to basic plan if not in setup flow
                                                             }
-                                                        )
-                                                        planType
 
-                                                Nothing ->
-                                                    AddAgent.init True model.key Nothing planType
-                                    in
-                                    ( { model | page = AddAgentsPage addAgentModel }
-                                    , Cmd.batch [ cmd, Cmd.map AddAgentsMsg addAgentCmd ]
-                                    )
+                                                    Nothing ->
+                                                        Settings.init
+                                                            { isSetup = False
+                                                            , key = model.key
+                                                            , currentUser = Nothing
+                                                            , planType = "basic"
+                                                            }
+                                        in
+                                        ( { model | page = SettingsPage settingsModel }
+                                        , Cmd.batch [ cmd, Cmd.map SettingsMsg settingsCmd ]
+                                        )
 
-                            NotFound ->
-                                ( { model | page = NotFoundPage }
-                                , cmd
-                                )
+                                    AdminRoute AgentsRoute ->
+                                        if isBasicPlan model then
+                                            ( model, Nav.pushUrl model.key "/settings" )
+
+                                        else
+                                            let
+                                                planType =
+                                                    case model.currentUser of
+                                                        Just user ->
+                                                            user.organizationSlug
+
+                                                        Nothing ->
+                                                            "basic"
+
+                                                ( addAgentsModel, addAgentsCmd ) =
+                                                    case model.currentUser of
+                                                        Just user ->
+                                                            AddAgent.init
+                                                                False
+                                                                model.key
+                                                                (Just
+                                                                    { id = user.id
+                                                                    , email = user.email
+                                                                    , firstName = user.firstName
+                                                                    , lastName = user.lastName
+                                                                    , isAdmin = user.isAdmin
+                                                                    , isAgent = user.isAgent
+                                                                    , phone = ""
+                                                                    }
+                                                                )
+                                                                planType
+
+                                                        Nothing ->
+                                                            AddAgent.init False model.key Nothing planType
+                                            in
+                                            ( { model | page = AddAgentsPage addAgentsModel }
+                                            , Cmd.batch [ cmd, Cmd.map AddAgentsMsg addAgentsCmd ]
+                                            )
 
                 Nothing ->
                     ( { model | page = NotFoundPage }
@@ -1878,6 +2132,14 @@ fetchCurrentUser =
     Http.get
         { url = "/api/me"
         , expect = Http.expectJson GotCurrentUser currentUserResponseDecoder
+        }
+
+
+fetchAccountStatus : String -> Cmd Msg
+fetchAccountStatus orgSlug =
+    Http.get
+        { url = "/api/organizations/" ++ orgSlug ++ "/account-status"
+        , expect = Http.expectJson GotAccountStatus accountStatusResponseDecoder
         }
 
 
@@ -1909,3 +2171,28 @@ finalizeOrganization orgId =
         , body = Http.emptyBody
         , expect = Http.expectWhatever OrgFinalized
         }
+
+
+
+-- Helper function to extract session string from SessionState
+
+
+extractSession : SessionState -> String
+extractSession sessionState =
+    case sessionState of
+        Verified session ->
+            session
+
+        _ ->
+            ""
+
+
+
+-- Helper function to map Document msg to Document Msg
+
+
+mapDocument : (msg -> Msg) -> Browser.Document msg -> Browser.Document Msg
+mapDocument toMsg document =
+    { title = document.title
+    , body = List.map (Html.map toMsg) document.body
+    }

@@ -6,6 +6,8 @@ import { sendMagicLink } from '../services/email';
 import { generateToken, getUserFromSession } from '../services/auth';
 import { logger } from '../logger';
 import { AuthService } from '../services/auth';
+import { config } from '../config';
+import sgMail from '@sendgrid/mail';
 
 // Update the validation schema to include slug rules
 const signupSchema = z.object({
@@ -299,6 +301,86 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
       return { success: false, error: 'Failed to fetch subscription tiers' };
     }
   })
+  .get('/organizations/:orgSlug/subscription', async ({ params, request, set }) => {
+    try {
+      const db = new Database();
+      const orgSlug = params.orgSlug;
+      
+      logger.info(`GET /organizations/${orgSlug}/subscription - Request received`);
+      
+      // Get session cookie for debugging
+      const sessionCookie = request.headers.get('cookie');
+      logger.info(`Session cookie: ${sessionCookie ? 'Present' : 'Missing'}`);
+      
+      // Get current user from session to determine their org
+      const currentUser = await getUserFromSession(request);
+      logger.info(`User authentication result: ${currentUser ? `Authenticated as ${currentUser.email}` : 'Not authenticated'}`);
+      
+      if (!currentUser) {
+        set.status = 401;
+        logger.error('Subscription fetch failed: User not authenticated');
+        return {
+          success: false,
+          error: 'You must be logged in to perform this action'
+        };
+      }
+
+      // Log request information for debugging
+      logger.info(`Fetching subscription - orgSlug: ${orgSlug}, userId: ${currentUser.id}, orgId: ${currentUser.organization_id}`);
+      
+      // Get organization details
+      const orgResult = await db.query<{ 
+        id: number,
+        subscription_tier: string,
+        agent_limit: number,
+        contact_limit: number
+      }>(
+        'SELECT id, subscription_tier, agent_limit, contact_limit FROM organizations WHERE slug = ?',
+        [orgSlug]
+      );
+
+      if (!orgResult || orgResult.length === 0) {
+        set.status = 404;
+        logger.error(`Subscription fetch failed: Organization not found - ${orgSlug}`);
+        return {
+          success: false,
+          error: 'Organization not found'
+        };
+      }
+
+      const organization = orgResult[0];
+      
+      // Verify user has permission for this org
+      if (organization.id !== currentUser.organization_id) {
+        logger.error(`Subscription fetch failed: Permission denied - User from org ${currentUser.organization_id} attempted to access org ${organization.id}`);
+        set.status = 403;
+        return {
+          success: false,
+          error: 'You do not have permission to view this organization'
+        };
+      }
+      
+      // Set up the response with subscription details
+      const response = {
+        success: true,
+        tierId: organization.subscription_tier,
+        agentLimit: organization.agent_limit,
+        contactLimit: organization.contact_limit
+      };
+
+      logger.info(`Successfully fetched subscription for org ${organization.id}: tier=${organization.subscription_tier}, agents=${organization.agent_limit}, contacts=${organization.contact_limit}`);
+      
+      return response;
+      
+    } catch (error) {
+      logger.error(`Error fetching organization subscription: ${error}`);
+      set.status = 500;
+      return {
+        success: false,
+        error: 'Failed to fetch subscription details'
+      };
+    }
+  })
   .post('/organizations/:orgSlug/subscription', async ({ params: { orgSlug }, body, request, set }) => {
     try {
       const db = new Database();
@@ -317,10 +399,15 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
       logger.info(`Updating subscription - orgSlug: ${orgSlug}, userId: ${currentUser.organization_id}, body: ${JSON.stringify(body)}`);
 
       // First verify this user belongs to the organization they're trying to update
-      const orgResult = await db.fetchAll(
-        'SELECT id FROM organizations WHERE slug = ?',
+      const orgResult = await db.query<{ 
+        id: number,
+        stripe_customer_id: string | null,
+        stripe_subscription_id: string | null,
+        name: string
+      }>(
+        'SELECT id, stripe_customer_id, stripe_subscription_id, name FROM organizations WHERE slug = ?',
         [orgSlug]
-      )
+      );
 
       if (!orgResult || orgResult.length === 0) {
         set.status = 404
@@ -330,11 +417,11 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
         }
       }
 
-      const organizationId = orgResult[0][0]
+      const organization = orgResult[0];
 
       // Verify user has permission for this org
-      if (organizationId !== currentUser.organization_id) {
-        logger.error(`User from org ${currentUser.organization_id} attempted to update org ${organizationId}`)
+      if (organization.id !== currentUser.organization_id) {
+        logger.error(`User from org ${currentUser.organization_id} attempted to update org ${organization.id}`)
         set.status = 403
         return {
           success: false,
@@ -342,37 +429,79 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
         }
       }
 
-      // Type assertion for body
-      const { tierId } = body as { tierId: string }
+      // Parse the request body
+      const { tierId, extraAgents = 0, extraContacts = 0 } = body as { 
+        tierId: string, 
+        extraAgents?: number, 
+        extraContacts?: number 
+      };
       
-      // Update subscription using the verified organization ID
-      await db.execute(
-        `UPDATE organizations 
-         SET subscription_tier = ?
-         WHERE id = ?`,
-        [tierId, organizationId]
-      )
-
-      // Set up the Turso database after subscription is saved
-      const baseUrl = process.env.PUBLIC_URL || 'http://localhost:5173';
-      const setupDbResponse = await fetch(`${baseUrl}/api/organizations/${orgSlug}/setup-database`, {
-        method: 'POST',
-        headers: {
-          'Cookie': request.headers.get('cookie') || ''
+      // Import the Stripe service here to avoid circular dependencies
+      const { createOrUpdateSubscription } = await import('../services/stripe');
+      
+      try {
+        // Get user's email for Stripe customer
+        const userResult = await db.query<{ email: string }>(
+          'SELECT email FROM users WHERE id = ?',
+          [currentUser.id]
+        );
+        
+        if (!userResult || userResult.length === 0) {
+          throw new Error('User not found');
         }
-      });
+        
+        // Create or update the Stripe subscription
+        const stripeResult = await createOrUpdateSubscription({
+          tierId: tierId as 'basic' | 'pro' | 'enterprise',
+          organizationId: organization.id,
+          email: userResult[0].email,
+          extraAgents,
+          extraContacts,
+          stripeCustomerId: organization.stripe_customer_id || undefined
+        });
+        
+        // Update organization with Stripe IDs and subscription tier
+        await db.execute(
+          `UPDATE organizations 
+           SET subscription_tier = ?, 
+               stripe_customer_id = ?, 
+               stripe_subscription_id = ?
+           WHERE id = ?`,
+          [tierId, stripeResult.customerId, stripeResult.subscriptionId, organization.id]
+        );
+        
+        // Set up the Turso database after subscription is saved
+        const baseUrl = process.env.PUBLIC_URL || 'http://localhost:5173';
+        const setupDbResponse = await fetch(`${baseUrl}/api/organizations/${orgSlug}/setup-database`, {
+          method: 'POST',
+          headers: {
+            'Cookie': request.headers.get('cookie') || ''
+          }
+        });
 
-      if (!setupDbResponse.ok) {
-        logger.error(`Failed to set up database for org ${organizationId}`);
-      } else {
-        logger.info(`Successfully set up database for org ${organizationId}`);
-      }
+        if (!setupDbResponse.ok) {
+          logger.error(`Failed to set up database for org ${organization.id}`);
+        } else {
+          logger.info(`Successfully set up database for org ${organization.id}`);
+        }
 
-      logger.info(`Successfully updated subscription for org ${organizationId} to tier ${tierId}`)
+        logger.info(`Successfully updated subscription for org ${organization.id} to tier ${tierId}`);
 
-      return {
-        success: true,
-        message: 'Subscription updated successfully'
+        // Return the client secret for frontend payment completion
+        return {
+          success: true,
+          message: 'Subscription updated successfully',
+          clientSecret: stripeResult.clientSecret,
+          publishableKey: config.stripe.publishableKey
+        };
+        
+      } catch (stripeError) {
+        logger.error(`Stripe subscription error: ${stripeError}`);
+        set.status = 400;
+        return {
+          success: false,
+          error: 'Failed to process subscription payment'
+        };
       }
 
     } catch (e) {
@@ -439,6 +568,184 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
       return {
         success: false,
         message: `Failed to create database: ${errorMessage}`
+      };
+    }
+  })
+  // Get organization account status
+  .get('/organizations/:orgSlug/account-status', async ({ params, set, request }) => {
+    try {
+      const db = new Database();
+      
+      // Authenticate the request
+      const currentUser = await getUserFromSession(request);
+      if (!currentUser) {
+        set.status = 401;
+        return {
+          success: false,
+          error: 'You must be logged in to perform this action'
+        };
+      }
+      
+      // Get organization ID from slug
+      const orgResult = await db.query<{ id: number }>(
+        'SELECT id FROM organizations WHERE slug = ?',
+        [params.orgSlug]
+      );
+      
+      if (!orgResult || orgResult.length === 0) {
+        set.status = 404;
+        return {
+          success: false,
+          error: 'Organization not found'
+        };
+      }
+      
+      const organizationId = orgResult[0].id;
+      
+      // Verify user has permission to access this organization
+      if (organizationId !== currentUser.organization_id) {
+        set.status = 403;
+        return {
+          success: false,
+          error: 'You do not have permission to access this organization'
+        };
+      }
+      
+      // Import the subscription service
+      const { checkAccountStatus } = await import('../services/subscription');
+      
+      // Check account status
+      const statusDetails = await checkAccountStatus(organizationId);
+      
+      return {
+        success: true,
+        status: statusDetails
+      };
+      
+    } catch (error) {
+      logger.error(`Error checking account status: ${error}`);
+      set.status = 500;
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  })
+  
+  // Stripe webhook handler
+  .post('/stripe-webhook', async ({ body, set, request }) => {
+    try {
+      const signature = request.headers.get('stripe-signature');
+      
+      if (!signature) {
+        set.status = 400;
+        return { success: false, error: 'Stripe signature missing' };
+      }
+      
+      // Import Stripe to verify the webhook
+      const Stripe = await import('stripe');
+      const stripe = new Stripe.default(config.stripe.secretKey, {
+        apiVersion: '2023-10-16',
+      });
+      
+      const event = stripe.webhooks.constructEvent(
+        JSON.stringify(body),
+        signature,
+        config.stripe.webhookSecret
+      );
+      
+      // Import the Stripe service to handle the webhook
+      const { handleStripeWebhook } = await import('../services/stripe');
+      await handleStripeWebhook(event);
+      
+      logger.info(`Processed Stripe webhook: ${event.type}`);
+      return { success: true };
+      
+    } catch (error) {
+      logger.error(`Error processing Stripe webhook: ${error}`);
+      set.status = 400;
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  })
+  // Add interface for enterprise contact form data
+  .post('/enterprise-contact', async ({ body, set, request }: { 
+    body: { name: string; email: string; phone: string; company: string; companySize?: string; message?: string }, 
+    set: { status: number },
+    request: Request 
+  }) => {
+    try {
+      const { name, email, phone, company, companySize, message } = body;
+      
+      // Validate required fields
+      if (!name || !email || !phone || !company) {
+        set.status = 400;
+        return { success: false, error: 'Missing required fields' };
+      }
+      
+      // Try to get user/organization info from session if available
+      let orgInfo = "";
+      try {
+        const user = await getUserFromSession(request);
+        if (user) {
+          orgInfo = `
+          <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee;">
+            <p><strong>User is logged in with the following details:</strong></p>
+            <p>Organization: ${user.organization_name} (ID: ${user.organization_id})</p>
+            <p>User: ${user.first_name} ${user.last_name} (${user.email})</p>
+          </div>`;
+        }
+      } catch (sessionError) {
+        // Just log the error but continue - the session info is optional
+        logger.warn(`Unable to get session info: ${sessionError}`);
+      }
+      
+      // Format the email content
+      const emailContent = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #333;">New Enterprise Plan Inquiry</h2>
+          
+          <div style="margin: 20px 0; background-color: #f7f7f7; padding: 20px; border-radius: 5px;">
+            <p><strong>Name:</strong> ${name}</p>
+            <p><strong>Email:</strong> ${email}</p>
+            <p><strong>Phone:</strong> ${phone}</p>
+            <p><strong>Company:</strong> ${company}</p>
+            <p><strong>Company Size:</strong> ${companySize || 'Not specified'}</p>
+            <p><strong>Message:</strong></p>
+            <p style="white-space: pre-line;">${message || 'No message provided'}</p>
+          </div>
+          ${orgInfo}
+          <p style="color: #666; font-size: 14px;">
+            This inquiry was submitted through the Enterprise Contact form on the MedicareMax portal.
+          </p>
+        </div>
+      `;
+      
+      // Configure email
+      const msg = {
+        to: ['information@medicaremax.ai', 'reuben.brooks@medicaremax.ai'],
+        from: process.env.SENDGRID_FROM_EMAIL || 'information@medicaremax.ai',
+        subject: `Enterprise Plan Inquiry from ${name} at ${company}`,
+        text: `New Enterprise Plan Inquiry:\n\nName: ${name}\nEmail: ${email}\nPhone: ${phone}\nCompany: ${company}\nCompany Size: ${companySize || 'Not specified'}\n\nMessage: ${message || 'No message provided'}\n\n${orgInfo ? `User is logged in from organization: ${orgInfo}` : ''}\n\nThis inquiry was submitted through the Enterprise Contact form on the MedicareMax portal.`,
+        html: emailContent
+      };
+      
+      // Send the email
+      await sgMail.send(msg);
+      
+      // Log successful submission
+      logger.info(`Enterprise plan inquiry submitted by ${name} from ${company}`);
+      
+      // Return success response
+      return { success: true };
+    } catch (error) {
+      logger.error(`Error processing enterprise contact submission: ${error}`);
+      set.status = 500;
+      return { 
+        success: false, 
+        error: 'Failed to process your request. Please try again later.' 
       };
     }
   }); 

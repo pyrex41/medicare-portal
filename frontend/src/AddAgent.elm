@@ -302,6 +302,7 @@ view model =
             "Manage Agents"
     , body =
         [ if model.isSetup then
+            -- Show setup UI with sidebar
             SetupLayout.view SetupLayout.AgentSetup
                 (model.planType == "basic")
                 [ div [ class "max-w-3xl mx-auto pb-24" ]
@@ -312,12 +313,15 @@ view model =
                 ]
 
           else
-            div [ class "min-h-screen bg-gray-50" ]
-                [ viewHeader
-                , div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 pb-24" ]
-                    [ viewAgentsList model
+            -- Show regular UI without sidebar
+            div [ class "min-h-screen bg-gray-50 pb-24" ]
+                [ div [ class "max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8" ]
+                    [ viewNormalHeader
+                    , div [ class "bg-white shadow rounded-lg p-6" ]
+                        [ viewAgentsList model
+                        ]
                     ]
-                , viewBottomBar model
+                , text "" -- No bottom bar in regular mode
                 ]
         , viewDeleteConfirmationModal model
         ]
@@ -349,23 +353,9 @@ viewSetupHeader model =
 
 viewNormalHeader : Html Msg
 viewNormalHeader =
-    h1 [ class "text-2xl font-semibold text-gray-900 mb-6" ]
-        [ text "Add Agent" ]
-
-
-viewHeader : Html msg
-viewHeader =
-    nav [ class "bg-white border-b border-gray-200" ]
-        [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8" ]
-            [ div [ class "flex justify-between h-16" ]
-                [ div [ class "flex" ]
-                    [ div [ class "flex-shrink-0 flex items-center" ]
-                        [ h1 [ class "text-xl font-semibold text-purple-600" ]
-                            [ text "Manage Agents" ]
-                        ]
-                    ]
-                ]
-            ]
+    div [ class "mb-8 flex justify-center items-center" ]
+        [ h1 [ class "text-2xl font-semibold text-gray-900" ]
+            [ text "Manage Agents" ]
         ]
 
 
