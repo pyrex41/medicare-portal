@@ -1571,18 +1571,23 @@ shouldRedirectToSetup route model =
     if model.isSetup then
         case route of
             SetupRoute _ ->
+                -- Already in a setup route, no redirect needed
                 False
 
             PublicRoute _ ->
+                -- Public routes are always accessible
                 False
 
             NotFound ->
+                -- Not found routes don't redirect
                 False
 
             AdminRoute _ ->
+                -- Admin routes redirect if setup is not complete
                 getSetupStep model /= Complete
 
             ProtectedRoute _ ->
+                -- Protected routes redirect if setup is not complete
                 getSetupStep model /= Complete
 
     else
@@ -1605,43 +1610,47 @@ updatePage url ( model, cmd ) =
             case Parser.parse routeParser url of
                 Just route ->
                     let
+                        -- Update isSetup based on the route
+                        modelWithUpdatedSetup =
+                            updateIsSetup model route
+
                         adminRedirect =
-                            shouldRedirectAdminRoute route model
+                            shouldRedirectAdminRoute route modelWithUpdatedSetup
                                 |> Debug.log "adminRedirect"
                     in
                     case adminRedirect of
                         Just redirectUrl ->
-                            ( model, Nav.pushUrl model.key redirectUrl )
+                            ( modelWithUpdatedSetup, Nav.pushUrl modelWithUpdatedSetup.key redirectUrl )
 
                         Nothing ->
                             let
                                 needsLogin =
-                                    shouldRedirectToLogin route model
+                                    shouldRedirectToLogin route modelWithUpdatedSetup
                                         |> Debug.log "needsLogin"
 
                                 needsSetup =
-                                    shouldRedirectToSetup route model
+                                    shouldRedirectToSetup route modelWithUpdatedSetup
                                         |> Debug.log "needsSetup"
                             in
                             if needsLogin then
-                                ( { model
+                                ( { modelWithUpdatedSetup
                                     | intendedDestination = Just (Url.toString url)
-                                    , page = LoginPage (Login.init model.key False |> Tuple.first)
+                                    , page = LoginPage (Login.init modelWithUpdatedSetup.key False |> Tuple.first)
                                   }
-                                , Nav.pushUrl model.key "/login"
+                                , Nav.pushUrl modelWithUpdatedSetup.key "/login"
                                 )
 
                             else if needsSetup then
-                                redirectToSetupStep model
+                                redirectToSetupStep modelWithUpdatedSetup
 
                             else
                                 case route of
                                     PublicRoute (EligibilityRoute ( maybeQuoteId, maybeTrackingId )) ->
                                         let
                                             ( eligibilityModel, eligibilityCmd ) =
-                                                Eligibility.init model.key maybeQuoteId
+                                                Eligibility.init modelWithUpdatedSetup.key maybeQuoteId
                                         in
-                                        ( { model | page = EligibilityPage eligibilityModel }
+                                        ( { modelWithUpdatedSetup | page = EligibilityPage eligibilityModel }
                                         , Cmd.batch
                                             [ cmd
                                             , Cmd.map EligibilityMsg eligibilityCmd
@@ -1676,9 +1685,9 @@ updatePage url ( model, cmd ) =
                                                 }
 
                                             ( quoteModel, quoteCmd ) =
-                                                Quote.init model.key initialValues
+                                                Quote.init modelWithUpdatedSetup.key initialValues
                                         in
-                                        ( { model | page = QuotePage quoteModel }
+                                        ( { modelWithUpdatedSetup | page = QuotePage quoteModel }
                                         , Cmd.batch
                                             [ cmd
                                             , Cmd.map QuoteMsg quoteCmd
@@ -1704,9 +1713,9 @@ updatePage url ( model, cmd ) =
                                     PublicRoute (ScheduleRoute ( quoteId, status, trackingId )) ->
                                         let
                                             ( scheduleModel, scheduleCmd ) =
-                                                Schedule.init model.key quoteId status
+                                                Schedule.init modelWithUpdatedSetup.key quoteId status
                                         in
-                                        ( { model | page = SchedulePage scheduleModel }
+                                        ( { modelWithUpdatedSetup | page = SchedulePage scheduleModel }
                                         , Cmd.batch
                                             [ cmd
                                             , Cmd.map ScheduleMsg scheduleCmd
@@ -1737,18 +1746,18 @@ updatePage url ( model, cmd ) =
                                     PublicRoute HomeRoute ->
                                         let
                                             ( homeModel, homeCmd ) =
-                                                Home.init model.key
+                                                Home.init modelWithUpdatedSetup.key
                                         in
-                                        ( { model | page = HomePage homeModel }
+                                        ( { modelWithUpdatedSetup | page = HomePage homeModel }
                                         , Cmd.batch [ cmd, Cmd.map HomeMsg homeCmd ]
                                         )
 
                                     PublicRoute LoginRoute ->
                                         let
                                             ( loginModel, loginCmd ) =
-                                                Login.init model.key False
+                                                Login.init modelWithUpdatedSetup.key False
                                         in
-                                        ( { model | page = LoginPage loginModel }
+                                        ( { modelWithUpdatedSetup | page = LoginPage loginModel }
                                         , Cmd.batch [ cmd, Cmd.map LoginMsg loginCmd ]
                                         )
 
@@ -1763,7 +1772,7 @@ updatePage url ( model, cmd ) =
                                                     , expect = Http.expectJson GotVerification verificationDecoder
                                                     }
                                         in
-                                        ( model
+                                        ( modelWithUpdatedSetup
                                         , Cmd.batch [ cmd, verifyRequest ]
                                         )
 
@@ -1772,7 +1781,7 @@ updatePage url ( model, cmd ) =
                                             ( signupModel, signupCmd ) =
                                                 Signup.init
                                         in
-                                        ( { model | page = Signup signupModel }
+                                        ( { modelWithUpdatedSetup | page = Signup signupModel }
                                         , Cmd.batch [ cmd, Cmd.map SignupMsg signupCmd ]
                                         )
 
@@ -1795,7 +1804,7 @@ updatePage url ( model, cmd ) =
 
                                             ( compareModel, compareCmd ) =
                                                 -- Pass the parsed params directly to Compare.init
-                                                Compare.init model.key (Just compareParams)
+                                                Compare.init modelWithUpdatedSetup.key (Just compareParams)
 
                                             trackingCmd =
                                                 case params.trackingId of
@@ -1815,7 +1824,7 @@ updatePage url ( model, cmd ) =
                                                     Nothing ->
                                                         Cmd.none
                                         in
-                                        ( { model | page = ComparePage compareModel }
+                                        ( { modelWithUpdatedSetup | page = ComparePage compareModel }
                                         , Cmd.batch [ cmd, Cmd.map CompareMsg compareCmd, trackingCmd ]
                                         )
 
@@ -1823,7 +1832,7 @@ updatePage url ( model, cmd ) =
                                         let
                                             -- Convert Main.elm User to Contacts.elm User format
                                             contactsUser =
-                                                case model.currentUser of
+                                                case modelWithUpdatedSetup.currentUser of
                                                     Just user ->
                                                         Just
                                                             { id = String.toInt user.id |> Maybe.withDefault 0
@@ -1843,9 +1852,9 @@ updatePage url ( model, cmd ) =
                                                         Nothing
 
                                             ( contactsModel, contactsCmd ) =
-                                                Contacts.init model.key contactsUser
+                                                Contacts.init modelWithUpdatedSetup.key contactsUser
                                         in
-                                        ( { model | page = ContactsPage contactsModel }
+                                        ( { modelWithUpdatedSetup | page = ContactsPage contactsModel }
                                         , Cmd.batch [ cmd, Cmd.map ContactsMsg contactsCmd ]
                                         )
 
@@ -1854,7 +1863,7 @@ updatePage url ( model, cmd ) =
                                             ( profileModel, profileCmd ) =
                                                 Profile.init ()
                                         in
-                                        ( { model | page = ProfilePage profileModel }
+                                        ( { modelWithUpdatedSetup | page = ProfilePage profileModel }
                                         , Cmd.batch [ cmd, Cmd.map ProfileMsg profileCmd ]
                                         )
 
@@ -1863,16 +1872,16 @@ updatePage url ( model, cmd ) =
                                             ( tempLandingModel, tempLandingCmd ) =
                                                 TempLanding.init ()
                                         in
-                                        ( { model | page = TempLandingPage tempLandingModel }
+                                        ( { modelWithUpdatedSetup | page = TempLandingPage tempLandingModel }
                                         , Cmd.batch [ cmd, Cmd.map TempLandingMsg tempLandingCmd ]
                                         )
 
                                     ProtectedRoute (ContactRoute id) ->
                                         let
                                             ( contactModel, contactCmd ) =
-                                                Contact.init model.key id
+                                                Contact.init modelWithUpdatedSetup.key id
                                         in
-                                        ( { model | page = ContactPage contactModel }
+                                        ( { modelWithUpdatedSetup | page = ContactPage contactModel }
                                         , Cmd.batch [ cmd, Cmd.map ContactMsg contactCmd ]
                                         )
 
@@ -1881,7 +1890,7 @@ updatePage url ( model, cmd ) =
                                             ( dashboardModel, dashboardCmd ) =
                                                 Dashboard.init ()
                                         in
-                                        ( { model | page = DashboardPage dashboardModel }
+                                        ( { modelWithUpdatedSetup | page = DashboardPage dashboardModel }
                                         , Cmd.batch [ cmd, Cmd.map DashboardMsg dashboardCmd ]
                                         )
 
@@ -1889,37 +1898,37 @@ updatePage url ( model, cmd ) =
                                         let
                                             ( changePlanModel, changePlanCmd ) =
                                                 ChangePlan.init
-                                                    { key = model.key
-                                                    , session = extractSession model.session
-                                                    , orgSlug = model.currentUser |> Maybe.map .organizationSlug |> Maybe.withDefault ""
+                                                    { key = modelWithUpdatedSetup.key
+                                                    , session = extractSession modelWithUpdatedSetup.session
+                                                    , orgSlug = modelWithUpdatedSetup.currentUser |> Maybe.map .organizationSlug |> Maybe.withDefault ""
                                                     }
                                         in
-                                        ( { model | page = ChangePlanPage changePlanModel }
+                                        ( { modelWithUpdatedSetup | page = ChangePlanPage changePlanModel }
                                         , Cmd.map ChangePlanMsg changePlanCmd
                                         )
 
                                     SetupRoute (ChoosePlanRoute progress) ->
                                         let
                                             ( choosePlanModel, choosePlanCmd ) =
-                                                case model.currentUser of
+                                                case modelWithUpdatedSetup.currentUser of
                                                     Just user ->
                                                         ChoosePlan.init
                                                             user.organizationSlug
-                                                            (case model.session of
+                                                            (case modelWithUpdatedSetup.session of
                                                                 Verified s ->
                                                                     s
 
                                                                 _ ->
                                                                     ""
                                                             )
-                                                            model.key
+                                                            modelWithUpdatedSetup.key
                                                             False
 
                                                     Nothing ->
                                                         -- This case should not happen as we check for auth before
-                                                        ChoosePlan.init "" "" model.key False
+                                                        ChoosePlan.init "" "" modelWithUpdatedSetup.key False
                                         in
-                                        ( { model | page = ChoosePlanPage choosePlanModel }
+                                        ( { modelWithUpdatedSetup | page = ChoosePlanPage choosePlanModel }
                                         , Cmd.batch [ cmd, Cmd.map ChoosePlanMsg choosePlanCmd ]
                                         )
 
@@ -1939,11 +1948,11 @@ updatePage url ( model, cmd ) =
                                                         "basic"
 
                                             ( settingsModel, settingsCmd ) =
-                                                case model.currentUser of
+                                                case modelWithUpdatedSetup.currentUser of
                                                     Just user ->
                                                         Settings.init
                                                             { isSetup = True
-                                                            , key = model.key
+                                                            , key = modelWithUpdatedSetup.key
                                                             , currentUser =
                                                                 Just
                                                                     { id = user.id
@@ -1959,12 +1968,12 @@ updatePage url ( model, cmd ) =
                                                     Nothing ->
                                                         Settings.init
                                                             { isSetup = True
-                                                            , key = model.key
+                                                            , key = modelWithUpdatedSetup.key
                                                             , currentUser = Nothing
                                                             , planType = planType
                                                             }
                                         in
-                                        ( { model | page = SettingsPage settingsModel }
+                                        ( { modelWithUpdatedSetup | page = SettingsPage settingsModel }
                                         , Cmd.batch [ cmd, Cmd.map SettingsMsg settingsCmd ]
                                         )
 
@@ -1984,26 +1993,26 @@ updatePage url ( model, cmd ) =
                                                         "basic"
                                         in
                                         if planType == "basic" then
-                                            case model.currentUser of
+                                            case modelWithUpdatedSetup.currentUser of
                                                 Just user ->
-                                                    ( model
+                                                    ( modelWithUpdatedSetup
                                                     , Cmd.batch
                                                         [ finalizeOrganization user.organizationId
-                                                        , Nav.pushUrl model.key "/dashboard"
+                                                        , Nav.pushUrl modelWithUpdatedSetup.key "/dashboard"
                                                         ]
                                                     )
 
                                                 Nothing ->
-                                                    ( model, Nav.pushUrl model.key "/dashboard" )
+                                                    ( modelWithUpdatedSetup, Nav.pushUrl modelWithUpdatedSetup.key "/dashboard" )
 
                                         else
                                             let
                                                 ( addAgentsModel, addAgentsCmd ) =
-                                                    case model.currentUser of
+                                                    case modelWithUpdatedSetup.currentUser of
                                                         Just user ->
                                                             AddAgent.init
                                                                 False
-                                                                model.key
+                                                                modelWithUpdatedSetup.key
                                                                 (Just
                                                                     { id = user.id
                                                                     , email = user.email
@@ -2017,25 +2026,25 @@ updatePage url ( model, cmd ) =
                                                                 planType
 
                                                         Nothing ->
-                                                            AddAgent.init False model.key Nothing planType
+                                                            AddAgent.init False modelWithUpdatedSetup.key Nothing planType
                                             in
-                                            ( { model | page = AddAgentsPage addAgentsModel }
+                                            ( { modelWithUpdatedSetup | page = AddAgentsPage addAgentsModel }
                                             , Cmd.batch [ cmd, Cmd.map AddAgentsMsg addAgentsCmd ]
                                             )
 
                                     NotFound ->
-                                        ( { model | page = NotFoundPage }
+                                        ( { modelWithUpdatedSetup | page = NotFoundPage }
                                         , cmd
                                         )
 
                                     AdminRoute SettingsRoute ->
                                         let
                                             ( settingsModel, settingsCmd ) =
-                                                case model.currentUser of
+                                                case modelWithUpdatedSetup.currentUser of
                                                     Just user ->
                                                         Settings.init
                                                             { isSetup = False
-                                                            , key = model.key
+                                                            , key = modelWithUpdatedSetup.key
                                                             , currentUser =
                                                                 Just
                                                                     { id = user.id
@@ -2051,23 +2060,23 @@ updatePage url ( model, cmd ) =
                                                     Nothing ->
                                                         Settings.init
                                                             { isSetup = False
-                                                            , key = model.key
+                                                            , key = modelWithUpdatedSetup.key
                                                             , currentUser = Nothing
                                                             , planType = "basic"
                                                             }
                                         in
-                                        ( { model | page = SettingsPage settingsModel }
+                                        ( { modelWithUpdatedSetup | page = SettingsPage settingsModel }
                                         , Cmd.batch [ cmd, Cmd.map SettingsMsg settingsCmd ]
                                         )
 
                                     AdminRoute AgentsRoute ->
-                                        if isBasicPlan model then
-                                            ( model, Nav.pushUrl model.key "/settings" )
+                                        if isBasicPlan modelWithUpdatedSetup then
+                                            ( modelWithUpdatedSetup, Nav.pushUrl modelWithUpdatedSetup.key "/settings" )
 
                                         else
                                             let
                                                 planType =
-                                                    case model.currentUser of
+                                                    case modelWithUpdatedSetup.currentUser of
                                                         Just user ->
                                                             user.organizationSlug
 
@@ -2075,11 +2084,11 @@ updatePage url ( model, cmd ) =
                                                             "basic"
 
                                                 ( addAgentsModel, addAgentsCmd ) =
-                                                    case model.currentUser of
+                                                    case modelWithUpdatedSetup.currentUser of
                                                         Just user ->
                                                             AddAgent.init
                                                                 False
-                                                                model.key
+                                                                modelWithUpdatedSetup.key
                                                                 (Just
                                                                     { id = user.id
                                                                     , email = user.email
@@ -2093,14 +2102,19 @@ updatePage url ( model, cmd ) =
                                                                 planType
 
                                                         Nothing ->
-                                                            AddAgent.init False model.key Nothing planType
+                                                            AddAgent.init False modelWithUpdatedSetup.key Nothing planType
                                             in
-                                            ( { model | page = AddAgentsPage addAgentsModel }
+                                            ( { modelWithUpdatedSetup | page = AddAgentsPage addAgentsModel }
                                             , Cmd.batch [ cmd, Cmd.map AddAgentsMsg addAgentsCmd ]
                                             )
 
                 Nothing ->
-                    ( { model | page = NotFoundPage }
+                    let
+                        -- Handle the case where routeParser doesn't match
+                        modelWithUpdatedSetup =
+                            model
+                    in
+                    ( { modelWithUpdatedSetup | page = NotFoundPage }
                     , cmd
                     )
 
@@ -2180,3 +2194,24 @@ mapDocument toMsg document =
     { title = document.title
     , body = List.map (Html.map toMsg) document.body
     }
+
+
+
+-- Update the isSetup flag based on the current URL and route
+
+
+updateIsSetup : Model -> Route -> Model
+updateIsSetup model route =
+    let
+        -- Determine if we're in setup mode based on the route
+        newIsSetup =
+            case route of
+                SetupRoute _ ->
+                    True
+
+                _ ->
+                    -- For non-setup routes, only keep isSetup = True if we're in the middle
+                    -- of setup flow (haven't completed it yet)
+                    model.isSetup && (getSetupStep model /= Complete)
+    in
+    { model | isSetup = newIsSetup }

@@ -493,6 +493,7 @@ view model =
           else
             -- This is the setup flow which uses a different layout
             SetupLayout.view SetupLayout.PlanSelection
+                -- For plan selection, we determine basic vs pro based on what the user has selected
                 (case model.selectedPlan of
                     Just "basic" ->
                         True

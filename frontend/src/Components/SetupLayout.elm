@@ -2,7 +2,7 @@ module Components.SetupLayout exposing (SetupStep(..), view)
 
 import Components.ProgressIndicator as ProgressIndicator
 import Html exposing (..)
-import Html.Attributes exposing (..)
+import Html.Attributes exposing (class, style)
 
 
 type SetupStep
@@ -78,21 +78,65 @@ viewProgressIndicator currentStep isBasicPlan =
             , isCompleted = isStepComplete currentStep info.step
             , isActive = info.step == currentStep
             }
+
+        -- Calculate progress percentage for the progress bar
+        totalSteps =
+            List.length steps
+
+        currentStepIndex =
+            case currentStep of
+                PlanSelection ->
+                    0
+
+                OrganizationSetup ->
+                    1
+
+                AgentSetup ->
+                    2
+
+        progressPercentage =
+            String.fromInt (min 100 (ceiling (toFloat (currentStepIndex * 100) / toFloat (totalSteps - 1))))
+
+        progressBar =
+            div [ class "px-8 mt-4" ]
+                [ div [ class "h-1 w-full bg-gray-200 rounded overflow-hidden" ]
+                    [ div
+                        [ class "h-full bg-[#03045e] transition-all duration-300"
+                        , style "width" (progressPercentage ++ "%")
+                        ]
+                        []
+                    ]
+                , div [ class "mt-2 text-xs text-gray-500 flex justify-between" ]
+                    [ span [] [ text "Setup Progress" ]
+                    , span [] [ text (progressPercentage ++ "%") ]
+                    ]
+                ]
     in
-    ProgressIndicator.view (List.map makeStep steps)
+    div []
+        [ ProgressIndicator.view (List.map makeStep steps)
+        , progressBar
+        ]
 
 
 isStepComplete : SetupStep -> SetupStep -> Bool
 isStepComplete currentStep step =
     case ( currentStep, step ) of
         ( PlanSelection, _ ) ->
+            -- When on plan selection, no steps are completed
             False
 
         ( OrganizationSetup, PlanSelection ) ->
+            -- When on org settings, plan selection is completed
             True
 
         ( OrganizationSetup, _ ) ->
+            -- Other steps aren't completed yet
+            False
+
+        ( AgentSetup, AgentSetup ) ->
+            -- The current step isn't completed
             False
 
         ( AgentSetup, _ ) ->
+            -- When on agent setup, all previous steps are completed
             True

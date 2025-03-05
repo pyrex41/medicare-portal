@@ -15,7 +15,7 @@ type alias Step =
 
 view : List Step -> Html msg
 view steps =
-    div [ class "fixed left-0 top-0 bottom-0 w-[280px] bg-white border-r border-[#eaecf0]" ]
+    div [ class "fixed left-0 top-0 bottom-0 w-[280px] bg-white border-r border-[#eaecf0] overflow-y-auto" ]
         [ div [ class "flex flex-col h-full px-8 py-8" ]
             [ -- Logo
               div [ class "mb-14" ]
