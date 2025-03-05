@@ -506,7 +506,9 @@ update msg model =
                     )
 
         InternalLinkClicked frag ->
-            ( model, Nav.pushUrl model.key frag )
+            ( { model | showDropdown = False }
+            , Nav.pushUrl model.key frag
+            )
 
         UrlChanged url ->
             ( { model | url = url }

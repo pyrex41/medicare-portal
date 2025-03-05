@@ -536,9 +536,9 @@ viewChangePlan model =
                                        )
                                     ++ " plan with "
                                     ++ String.fromInt model.currentAgentLimit
-                                    ++ " agents and "
+                                    ++ " agent seats and "
                                     ++ String.fromInt model.currentContactLimit
-                                    ++ " contacts."
+                                    ++ " clients."
                                 )
                             ]
                         ]
@@ -582,7 +582,7 @@ viewChangePlan model =
                                     [ label [ class "block text-sm font-medium text-gray-700" ]
                                         [ text "Extra Agents" ]
                                     , p [ class "text-xs text-gray-500" ]
-                                        [ text "Add more agents beyond your plan's included limit ($20/agent/month)" ]
+                                        [ text "Add more agent seats beyond your plan's included limit ($20/agent seat/month)" ]
                                     , div [ class "flex items-center" ]
                                         [ button
                                             [ class "bg-gray-200 px-3 py-1 rounded-l-md hover:bg-gray-300"
@@ -607,9 +607,9 @@ viewChangePlan model =
                                     ]
                                 , div [ class "space-y-2" ]
                                     [ label [ class "block text-sm font-medium text-gray-700" ]
-                                        [ text "Extra Contacts" ]
+                                        [ text "Extra Clients" ]
                                     , p [ class "text-xs text-gray-500" ]
-                                        [ text "Add more contacts beyond your plan's included limit ($50/5,000 contacts/month)" ]
+                                        [ text "Add more clients beyond your plan's included limit ($50/5,000 clients/month)" ]
                                     , div [ class "flex items-center" ]
                                         [ button
                                             [ class "bg-gray-200 px-3 py-1 rounded-l-md hover:bg-gray-300"
@@ -728,7 +728,7 @@ viewPlanSelection model =
                         [ label [ class "block text-sm font-medium text-gray-700" ]
                             [ text "Extra Agents" ]
                         , p [ class "text-xs text-gray-500" ]
-                            [ text "Add more agents beyond your plan's included limit ($20/agent/month)" ]
+                            [ text "Add more agent seats beyond your plan's included limit ($20/agent seat/month)" ]
                         , div [ class "flex items-center" ]
                             [ button
                                 [ class "bg-gray-200 px-3 py-1 rounded-l-md hover:bg-gray-300"
@@ -753,9 +753,9 @@ viewPlanSelection model =
                         ]
                     , div [ class "space-y-2" ]
                         [ label [ class "block text-sm font-medium text-gray-700" ]
-                            [ text "Extra Contacts" ]
+                            [ text "Extra Clients" ]
                         , p [ class "text-xs text-gray-500" ]
-                            [ text "Add more contacts beyond your plan's included limit ($50/5,000 contacts/month)" ]
+                            [ text "Add more clients beyond your plan's included limit ($50/5,000 clients/month)" ]
                         , div [ class "flex items-center" ]
                             [ button
                                 [ class "bg-gray-200 px-3 py-1 rounded-l-md hover:bg-gray-300"
@@ -841,13 +841,13 @@ viewPlanOption id name price features agentLimit contactLimit selectedPlan =
                     div [ class "text-gray-600" ]
                         [ text
                             (if id == "pro" then
-                                "Starts with up to " ++ String.fromInt agentLimit ++ " agents"
+                                "Starts with up to " ++ String.fromInt agentLimit ++ " agent seats"
 
                              else if agentLimit == -1 then
-                                "Unlimited agents"
+                                "Unlimited agent seats"
 
                              else
-                                "Up to " ++ String.fromInt agentLimit ++ " agents"
+                                "Up to " ++ String.fromInt agentLimit ++ " agent seats"
                             )
                         ]
 
@@ -857,13 +857,13 @@ viewPlanOption id name price features agentLimit contactLimit selectedPlan =
                     div [ class "text-gray-600" ]
                         [ text
                             (if id == "pro" then
-                                "Starts with up to " ++ String.fromInt contactLimit ++ " contacts"
+                                "Starts with up to " ++ String.fromInt contactLimit ++ " clients"
 
                              else if contactLimit == -1 then
-                                "Unlimited contacts"
+                                "Unlimited clients"
 
                              else
-                                "Up to " ++ String.fromInt contactLimit ++ " contacts"
+                                "Up to " ++ String.fromInt contactLimit ++ " clients"
                             )
                         ]
 
@@ -983,8 +983,9 @@ filterTiers tiers =
                             == "basic"
                             || tier.id
                             == "enterprise"
-                            || -- Keep only the $99 Pro plan
-                               (tier.id == "pro" && tier.price == "$99/mo")
+                            || -- Keep any Pro plan
+                               tier.id
+                            == "pro"
                     )
 
         -- Make sure we have the base tiers
@@ -999,13 +1000,13 @@ filterTiers tiers =
 
         -- Default tiers to add if missing
         defaultBasic =
-            SubscriptionTier "basic" "Basic" "$49/mo" 1 1000 [ "1 agent", "Up to 1,000 contacts", "Email support" ]
+            SubscriptionTier "basic" "Solo" "$49/mo" 1 1000 [ "1 Agent Seat", "Up to 1,000 Clients", "Analytics Dashboard", "Quote Tool", "Customizable Booking Options", "Access to our Smart Send Technology" ]
 
         defaultPro =
-            SubscriptionTier "pro" "Pro" "$99/mo" 5 10000 [ "5 agents", "Up to 10,000 contacts", "Email & chat support", "Advanced analytics" ]
+            SubscriptionTier "pro" "Agency / Solo+" "$99/mo" 5 5000 [ "Everything in the Solo package plus:", "5 Agent Seats", "Up to 5,000 Clients", "Admin and Organization Settings", "Organization Wide Analytics" ]
 
         defaultEnterprise =
-            SubscriptionTier "enterprise" "Enterprise" "Contact Us" 10 20000 [ "10+ agents", "Unlimited contacts", "Priority support", "Custom solutions", "Dedicated account manager" ]
+            SubscriptionTier "enterprise" "Enterprise" "Contact Us" 10 30000 [ "Everything in Solo & Agency Packages", "10+ Agent Seats", "Up to 30,000+ Clients", "24/7 Platform Support", "White-Labeled Quote Tool and Dashboard" ]
 
         -- Add default tiers if missing
         tiersWithDefaults =
