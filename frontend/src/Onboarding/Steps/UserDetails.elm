@@ -279,7 +279,7 @@ view model =
     div [ class "space-y-8" ]
         [ div [ class "mb-8" ]
             [ h1 [ class "text-2xl font-semibold text-gray-900" ]
-                [ text "Your Details" ]
+                [ text "Personal Details" ]
             , p [ class "text-gray-600 mt-2" ]
                 [ text "Tell us about yourself" ]
             ]

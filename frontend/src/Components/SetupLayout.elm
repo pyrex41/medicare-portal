@@ -41,8 +41,23 @@ viewProgressIndicator currentStep isBasicPlan =
               }
             , { step = OrganizationSetup
               , icon = "2"
-              , title = "Agency Settings"
-              , description = "Configure your agency"
+              , title = "Personal Details"
+              , description = "Enter your information"
+              }
+            , { step = OrganizationSetup
+              , icon = "3"
+              , title = "Company Details"
+              , description = "Agency information"
+              }
+            , { step = OrganizationSetup
+              , icon = "4"
+              , title = "Licensing Settings"
+              , description = "States and carriers"
+              }
+            , { step = OrganizationSetup
+              , icon = "5"
+              , title = "Payment"
+              , description = "Complete setup"
               }
             ]
 
@@ -54,13 +69,28 @@ viewProgressIndicator currentStep isBasicPlan =
               }
             , { step = OrganizationSetup
               , icon = "2"
-              , title = "Organization Settings"
-              , description = "Configure your organization"
+              , title = "Personal Details"
+              , description = "Enter your information"
+              }
+            , { step = OrganizationSetup
+              , icon = "3"
+              , title = "Company Details"
+              , description = "Agency information"
+              }
+            , { step = OrganizationSetup
+              , icon = "4"
+              , title = "Licensing Settings"
+              , description = "States and carriers"
               }
             , { step = AgentSetup
-              , icon = "3"
+              , icon = "5"
               , title = "Add Team Members"
               , description = "Invite your team"
+              }
+            , { step = OrganizationSetup
+              , icon = "6"
+              , title = "Payment"
+              , description = "Complete setup"
               }
             ]
 

@@ -19,6 +19,7 @@ import Json.Decode as Decode
 import Json.Encode as Encode
 import Onboarding.Steps.AddAgents as AddAgents
 import Onboarding.Steps.CompanyDetails as CompanyDetails
+import Onboarding.Steps.EnterpriseForm as EnterpriseForm
 import Onboarding.Steps.LicensingSettings as LicensingSettings
 import Onboarding.Steps.Payment as Payment
 import Onboarding.Steps.PlanSelection as PlanSelection
@@ -36,6 +37,7 @@ type Step
     | LicensingSettingsStep
     | AddAgentsStep
     | PaymentStep
+    | EnterpriseFormStep
 
 
 type alias Model =
@@ -46,6 +48,7 @@ type alias Model =
     , licensingSettingsModel : LicensingSettings.Model
     , addAgentsModel : Maybe AddAgents.Model -- Optional, only for Pro plans
     , paymentModel : Payment.Model
+    , enterpriseFormModel : Maybe EnterpriseForm.Model -- Optional, only for Enterprise plan
     , key : Nav.Key
     , orgSlug : String
     , session : String
@@ -72,6 +75,18 @@ init key orgSlug session initialStep =
 
         ( paymentModel, paymentCmd ) =
             Payment.init key orgSlug
+
+        -- Initialize enterprise form model if needed
+        ( enterpriseFormModel, enterpriseFormCmd ) =
+            if initialStep == EnterpriseFormStep then
+                let
+                    ( model, cmd ) =
+                        EnterpriseForm.init key
+                in
+                ( Just model, Cmd.map EnterpriseFormMsg cmd )
+
+            else
+                ( Nothing, Cmd.none )
     in
     ( { step = initialStep
       , planSelectionModel = planSelectionModel
@@ -80,6 +95,7 @@ init key orgSlug session initialStep =
       , licensingSettingsModel = licensingSettingsModel
       , addAgentsModel = Nothing -- Will be initialized if needed
       , paymentModel = paymentModel
+      , enterpriseFormModel = enterpriseFormModel -- Now initialized if needed
       , key = key
       , orgSlug = orgSlug
       , session = session
@@ -93,6 +109,7 @@ init key orgSlug session initialStep =
         , Cmd.map CompanyDetailsMsg companyDetailsCmd
         , Cmd.map LicensingSettingsMsg licensingSettingsCmd
         , Cmd.map PaymentMsg paymentCmd
+        , enterpriseFormCmd -- Add the enterprise form command if needed
         ]
     )
 
@@ -108,11 +125,13 @@ type Msg
     | LicensingSettingsMsg LicensingSettings.Msg
     | AddAgentsMsg AddAgents.Msg
     | PaymentMsg Payment.Msg
+    | EnterpriseFormMsg EnterpriseForm.Msg
     | NavigateToStep Step
     | SkipStep
     | CompleteOnboarding
     | OnboardingCompleted (Result Http.Error ())
     | GotError String
+    | NoOp
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -140,13 +159,26 @@ update msg model =
                     else
                         model.addAgentsModel
 
-                newStep =
+                -- Handle enterprise plan selection
+                ( enterpriseFormModel, enterpriseFormCmd, navigationCmd ) =
                     case outMsg of
-                        PlanSelection.NextStep ->
-                            UserDetailsStep
+                        PlanSelection.SelectedPlan "enterprise" ->
+                            let
+                                ( newModel, cmd ) =
+                                    EnterpriseForm.init model.key
+                            in
+                            ( Just newModel, Cmd.map EnterpriseFormMsg cmd, Nav.pushUrl model.key (getStepUrl EnterpriseFormStep) )
 
                         _ ->
-                            model.step
+                            ( model.enterpriseFormModel
+                            , Cmd.none
+                            , case outMsg of
+                                PlanSelection.NextStep ->
+                                    Nav.pushUrl model.key (getStepUrl UserDetailsStep)
+
+                                _ ->
+                                    Cmd.none
+                            )
 
                 outCmd =
                     case outMsg of
@@ -166,11 +198,13 @@ update msg model =
                 | planSelectionModel = updatedPlanModel
                 , isBasicPlan = newIsBasicPlan
                 , addAgentsModel = addAgentsModel
-                , step = newStep
+                , enterpriseFormModel = enterpriseFormModel
               }
             , Cmd.batch
                 [ Cmd.map PlanSelectionMsg planCmd
                 , outCmd
+                , enterpriseFormCmd
+                , navigationCmd
                 ]
             )
 
@@ -179,13 +213,13 @@ update msg model =
                 ( updatedUserDetailsModel, userDetailsCmd, outMsg ) =
                     UserDetails.update subMsg model.userDetailsModel
 
-                newStep =
+                navigationCmd =
                     case outMsg of
                         UserDetails.NextStep ->
-                            CompanyDetailsStep
+                            Nav.pushUrl model.key (getStepUrl CompanyDetailsStep)
 
                         _ ->
-                            model.step
+                            Cmd.none
 
                 outCmd =
                     case outMsg of
@@ -198,10 +232,11 @@ update msg model =
                         UserDetails.ShowError err ->
                             Cmd.none
             in
-            ( { model | userDetailsModel = updatedUserDetailsModel, step = newStep }
+            ( { model | userDetailsModel = updatedUserDetailsModel }
             , Cmd.batch
                 [ Cmd.map UserDetailsMsg userDetailsCmd
                 , outCmd
+                , navigationCmd
                 ]
             )
 
@@ -210,13 +245,13 @@ update msg model =
                 ( updatedCompanyDetailsModel, companyDetailsCmd, outMsg ) =
                     CompanyDetails.update subMsg model.companyDetailsModel
 
-                newStep =
+                navigationCmd =
                     case outMsg of
                         CompanyDetails.NextStep ->
-                            LicensingSettingsStep
+                            Nav.pushUrl model.key (getStepUrl LicensingSettingsStep)
 
                         _ ->
-                            model.step
+                            Cmd.none
 
                 outCmd =
                     case outMsg of
@@ -229,10 +264,11 @@ update msg model =
                         CompanyDetails.ShowError err ->
                             Cmd.none
             in
-            ( { model | companyDetailsModel = updatedCompanyDetailsModel, step = newStep }
+            ( { model | companyDetailsModel = updatedCompanyDetailsModel }
             , Cmd.batch
                 [ Cmd.map CompanyDetailsMsg companyDetailsCmd
                 , outCmd
+                , navigationCmd
                 ]
             )
 
@@ -241,18 +277,18 @@ update msg model =
                 ( updatedLicensingSettingsModel, licensingSettingsCmd, outMsg ) =
                     LicensingSettings.update subMsg model.licensingSettingsModel
 
-                newStep =
+                navigationCmd =
                     case outMsg of
                         LicensingSettings.NextStep ->
                             if model.isBasicPlan then
                                 -- Skip AddAgentsStep for basic plan
-                                PaymentStep
+                                Nav.pushUrl model.key (getStepUrl PaymentStep)
 
                             else
-                                AddAgentsStep
+                                Nav.pushUrl model.key (getStepUrl AddAgentsStep)
 
                         _ ->
-                            model.step
+                            Cmd.none
 
                 outCmd =
                     case outMsg of
@@ -265,10 +301,11 @@ update msg model =
                         LicensingSettings.ShowError err ->
                             Cmd.none
             in
-            ( { model | licensingSettingsModel = updatedLicensingSettingsModel, step = newStep }
+            ( { model | licensingSettingsModel = updatedLicensingSettingsModel }
             , Cmd.batch
                 [ Cmd.map LicensingSettingsMsg licensingSettingsCmd
                 , outCmd
+                , navigationCmd
                 ]
             )
 
@@ -279,13 +316,13 @@ update msg model =
                         ( updatedAddAgentsModel, addAgentsCmd, outMsg ) =
                             AddAgents.update subMsg addAgentsModel
 
-                        newStep =
+                        navigationCmd =
                             case outMsg of
                                 AddAgents.NextStep ->
-                                    PaymentStep
+                                    Nav.pushUrl model.key (getStepUrl PaymentStep)
 
                                 _ ->
-                                    model.step
+                                    Cmd.none
 
                         outCmd =
                             case outMsg of
@@ -298,10 +335,11 @@ update msg model =
                                 AddAgents.ShowError err ->
                                     Cmd.none
                     in
-                    ( { model | addAgentsModel = Just updatedAddAgentsModel, step = newStep }
+                    ( { model | addAgentsModel = Just updatedAddAgentsModel }
                     , Cmd.batch
                         [ Cmd.map AddAgentsMsg addAgentsCmd
                         , outCmd
+                        , navigationCmd
                         ]
                     )
 
@@ -331,8 +369,52 @@ update msg model =
                 ]
             )
 
+        EnterpriseFormMsg subMsg ->
+            case model.enterpriseFormModel of
+                Just enterpriseFormModel ->
+                    let
+                        ( updatedEnterpriseFormModel, enterpriseFormCmd, outMsg ) =
+                            EnterpriseForm.update subMsg enterpriseFormModel
+
+                        navigationCmd =
+                            case outMsg of
+                                EnterpriseForm.BackToPlanSelection ->
+                                    Nav.pushUrl model.key (getStepUrl PlanSelectionStep)
+
+                                _ ->
+                                    Cmd.none
+
+                        outCmd =
+                            case outMsg of
+                                EnterpriseForm.NoOutMsg ->
+                                    Cmd.none
+
+                                EnterpriseForm.BackToPlanSelection ->
+                                    Cmd.none
+
+                                EnterpriseForm.ShowError err ->
+                                    Cmd.none
+                    in
+                    ( { model | enterpriseFormModel = Just updatedEnterpriseFormModel }
+                    , Cmd.batch
+                        [ Cmd.map EnterpriseFormMsg enterpriseFormCmd
+                        , outCmd
+                        , navigationCmd
+                        ]
+                    )
+
+                Nothing ->
+                    -- If the model doesn't exist, create it
+                    let
+                        ( enterpriseFormModel, enterpriseFormCmd ) =
+                            EnterpriseForm.init model.key
+                    in
+                    ( { model | enterpriseFormModel = Just enterpriseFormModel }
+                    , Cmd.map EnterpriseFormMsg enterpriseFormCmd
+                    )
+
         NavigateToStep step ->
-            ( { model | step = step }, Cmd.none )
+            ( model, Nav.pushUrl model.key (getStepUrl step) )
 
         SkipStep ->
             let
@@ -360,9 +442,13 @@ update msg model =
                         PaymentStep ->
                             PaymentStep
 
+                        EnterpriseFormStep ->
+                            -- Can't skip enterprise form
+                            EnterpriseFormStep
+
                 -- Can't skip payment
             in
-            ( { model | step = nextStep }, Cmd.none )
+            ( model, Nav.pushUrl model.key (getStepUrl nextStep) )
 
         CompleteOnboarding ->
             ( { model | isLoading = True }
@@ -372,9 +458,16 @@ update msg model =
         OnboardingCompleted result ->
             case result of
                 Ok _ ->
-                    -- Redirect to dashboard on successful completion
+                    -- Redirect to login page with success message after completion
                     ( { model | isLoading = False }
-                    , Nav.pushUrl model.key "/dashboard"
+                    , Cmd.batch
+                        [ Nav.pushUrl model.key "/login?signup=success"
+                        , Http.post
+                            { url = "/api/auth/logout"
+                            , body = Http.emptyBody
+                            , expect = Http.expectWhatever (\_ -> NoOp)
+                            }
+                        ]
                     )
 
                 Err _ ->
@@ -384,6 +477,9 @@ update msg model =
 
         GotError errorMsg ->
             ( { model | error = Just errorMsg, isLoading = False }, Cmd.none )
+
+        NoOp ->
+            ( model, Cmd.none )
 
 
 
@@ -440,6 +536,15 @@ viewCurrentStep model =
         PaymentStep ->
             Html.map PaymentMsg (Payment.view model.paymentModel)
 
+        EnterpriseFormStep ->
+            case model.enterpriseFormModel of
+                Just enterpriseFormModel ->
+                    Html.map EnterpriseFormMsg (EnterpriseForm.view enterpriseFormModel)
+
+                Nothing ->
+                    div [ class "text-center p-8" ]
+                        [ text "Error: Enterprise Form model not initialized." ]
+
 
 
 -- UTILS
@@ -452,7 +557,7 @@ getStepTitle step =
             "Choose Your Plan - Onboarding"
 
         UserDetailsStep ->
-            "Your Details - Onboarding"
+            "Personal Details - Onboarding"
 
         CompanyDetailsStep ->
             "Company Details - Onboarding"
@@ -466,6 +571,9 @@ getStepTitle step =
         PaymentStep ->
             "Payment - Onboarding"
 
+        EnterpriseFormStep ->
+            "Enterprise Form - Onboarding"
+
 
 mapStepToSetupStep : Step -> SetupLayout.SetupStep
 mapStepToSetupStep step =
@@ -474,10 +582,10 @@ mapStepToSetupStep step =
             SetupLayout.PlanSelection
 
         UserDetailsStep ->
-            SetupLayout.UserDetailsStep
+            SetupLayout.OrganizationSetup
 
         CompanyDetailsStep ->
-            SetupLayout.CompanyDetailsStep
+            SetupLayout.OrganizationSetup
 
         LicensingSettingsStep ->
             SetupLayout.OrganizationSetup
@@ -486,7 +594,10 @@ mapStepToSetupStep step =
             SetupLayout.AgentSetup
 
         PaymentStep ->
-            SetupLayout.PaymentStep
+            SetupLayout.OrganizationSetup
+
+        EnterpriseFormStep ->
+            SetupLayout.OrganizationSetup
 
 
 
@@ -661,6 +772,12 @@ subscriptions model =
             Nothing ->
                 Sub.none
         , Sub.map PaymentMsg (Payment.subscriptions model.paymentModel)
+        , case model.enterpriseFormModel of
+            Just enterpriseFormModel ->
+                Sub.map EnterpriseFormMsg (EnterpriseForm.subscriptions enterpriseFormModel)
+
+            Nothing ->
+                Sub.none
         ]
 
 
@@ -688,3 +805,34 @@ encodeStateCarrierSetting setting =
         , ( "active", Encode.bool setting.active )
         , ( "targetGI", Encode.bool setting.targetGI )
         ]
+
+
+
+-- Helper function to get URL for a step
+
+
+getStepUrl : Step -> String
+getStepUrl step =
+    "/onboarding/"
+        ++ (case step of
+                PlanSelectionStep ->
+                    "plan"
+
+                UserDetailsStep ->
+                    "personal"
+
+                CompanyDetailsStep ->
+                    "company"
+
+                LicensingSettingsStep ->
+                    "licensing"
+
+                AddAgentsStep ->
+                    "agents"
+
+                PaymentStep ->
+                    "payment"
+
+                EnterpriseFormStep ->
+                    "enterprise"
+           )

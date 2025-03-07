@@ -109,14 +109,7 @@ update msg model =
                     Debug.log "Navigating to signup"
             in
             ( model
-            , Cmd.batch
-                [ Nav.pushUrl model.key "/signup"
-                , Http.post
-                    { url = "/api/auth/logout"
-                    , body = Http.emptyBody
-                    , expect = Http.expectWhatever (\_ -> NoOp)
-                    }
-                ]
+            , Nav.pushUrl model.key "/onboarding/plan"
             )
 
         NoOp ->

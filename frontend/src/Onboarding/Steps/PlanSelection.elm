@@ -158,10 +158,10 @@ update msg model =
             case model.selectedPlan of
                 Just planId ->
                     if planId == "enterprise" then
-                        -- For Enterprise, we'll handle this differently
+                        -- For Enterprise, redirect to the Enterprise form
                         ( model
                         , Cmd.none
-                        , ShowError "Enterprise plans require contacting sales"
+                        , SelectedPlan "enterprise"
                         )
 
                     else

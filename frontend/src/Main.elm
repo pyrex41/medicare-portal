@@ -23,6 +23,7 @@ import Json.Decode.Pipeline as Pipeline
 import Json.Encode as E
 import Login
 import Logout
+import Onboarding.Onboarding as Onboarding
 import Profile
 import Quote
 import Schedule
@@ -34,6 +35,20 @@ import TempLanding
 import Url exposing (Url)
 import Url.Parser as Parser exposing ((</>), (<?>), Parser, map, oneOf, s, string, top)
 import Url.Parser.Query as Query
+
+
+
+-- ONBOARDING STEP TYPES
+
+
+type OnboardingStep
+    = PlanStep
+    | PersonalStep
+    | CompanyStep
+    | LicensingStep
+    | AgentsStep
+    | PaymentStep
+    | EnterpriseStep
 
 
 
@@ -175,6 +190,7 @@ type Page
     | SchedulePage Schedule.Model
     | DashboardPage Dashboard.Model
     | LogoutPage Logout.Model
+    | OnboardingPage Onboarding.Model
 
 
 type Msg
@@ -203,6 +219,7 @@ type Msg
     | GotCurrentUser (Result Http.Error CurrentUserResponse)
     | OrgFinalized (Result Http.Error ())
     | LogoutMsg Logout.Msg
+    | OnboardingMsg Onboarding.Msg
     | ToggleDropdown
     | CloseDropdown
     | InitiateLogout
@@ -352,6 +369,7 @@ type PublicPage
     = HomeRoute
     | LoginRoute
     | SignupRoute
+    | OnboardingRoute OnboardingStep
     | VerifyRoute VerifyParams
     | CompareRoute CompareParams
     | QuoteRoute ( Maybe String, Maybe String, Maybe String )
@@ -454,6 +472,14 @@ routeParser =
         [ map (PublicRoute HomeRoute) top
         , map (PublicRoute LoginRoute) (s "login")
         , map (PublicRoute SignupRoute) (s "signup")
+        , map (PublicRoute (OnboardingRoute PlanStep)) (s "onboarding" </> s "plan")
+        , map (PublicRoute (OnboardingRoute PersonalStep)) (s "onboarding" </> s "personal")
+        , map (PublicRoute (OnboardingRoute CompanyStep)) (s "onboarding" </> s "company")
+        , map (PublicRoute (OnboardingRoute LicensingStep)) (s "onboarding" </> s "licensing")
+        , map (PublicRoute (OnboardingRoute AgentsStep)) (s "onboarding" </> s "agents")
+        , map (PublicRoute (OnboardingRoute PaymentStep)) (s "onboarding" </> s "payment")
+        , map (PublicRoute (OnboardingRoute EnterpriseStep)) (s "onboarding" </> s "enterprise")
+        , map (PublicRoute (OnboardingRoute PlanStep)) (s "onboarding") -- Default to plan step
         , map (\orgSlug -> \token -> PublicRoute (VerifyRoute (VerifyParams orgSlug token)))
             (s "auth" </> s "verify" </> string </> string)
         , map (PublicRoute << CompareRoute) (s "compare" <?> compareParamsParser)
@@ -964,6 +990,20 @@ update msg model =
         NoOp ->
             ( model, Cmd.none )
 
+        OnboardingMsg subMsg ->
+            case model.page of
+                OnboardingPage pageModel ->
+                    let
+                        ( newPageModel, newCmd ) =
+                            Onboarding.update subMsg pageModel
+                    in
+                    ( { model | page = OnboardingPage newPageModel }
+                    , Cmd.map OnboardingMsg newCmd
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
+
 
 view : Model -> Browser.Document Msg
 view model =
@@ -1132,6 +1172,15 @@ view model =
                     in
                     { title = logoutView.title
                     , body = List.map (Html.map LogoutMsg) logoutView.body
+                    }
+
+                OnboardingPage pageModel ->
+                    let
+                        onboardingView =
+                            Onboarding.view pageModel
+                    in
+                    { title = onboardingView.title
+                    , body = [ Html.map OnboardingMsg (div [] onboardingView.body) ]
                     }
     in
     viewPage
@@ -1377,6 +1426,9 @@ subscriptions model =
 
                 LogoutPage pageModel ->
                     Sub.map LogoutMsg (Logout.subscriptions pageModel)
+
+                OnboardingPage pageModel ->
+                    Sub.map OnboardingMsg (Onboarding.subscriptions pageModel)
     in
     Sub.batch [ dropdownSub, pageSubs ]
 
@@ -1775,10 +1827,26 @@ updatePage url ( model, cmd ) =
                                     PublicRoute SignupRoute ->
                                         let
                                             ( signupModel, signupCmd ) =
-                                                Signup.init
+                                                Signup.init modelWithUpdatedSetup.key
                                         in
                                         ( { modelWithUpdatedSetup | page = Signup signupModel }
                                         , Cmd.batch [ cmd, Cmd.map SignupMsg signupCmd ]
+                                        )
+
+                                    PublicRoute (OnboardingRoute step) ->
+                                        let
+                                            ( onboardingModel, onboardingCmd ) =
+                                                Onboarding.init
+                                                    modelWithUpdatedSetup.key
+                                                    (modelWithUpdatedSetup.currentUser
+                                                        |> Maybe.map .organizationSlug
+                                                        |> Maybe.withDefault ""
+                                                    )
+                                                    (extractSession modelWithUpdatedSetup.session)
+                                                    (onboardingStepToStep step)
+                                        in
+                                        ( { modelWithUpdatedSetup | page = OnboardingPage onboardingModel }
+                                        , Cmd.batch [ cmd, Cmd.map OnboardingMsg onboardingCmd ]
                                         )
 
                                     PublicRoute (CompareRoute params) ->
@@ -2211,3 +2279,32 @@ updateIsSetup model route =
                     model.isSetup && (getSetupStep model /= Complete)
     in
     { model | isSetup = newIsSetup }
+
+
+
+-- Convert Main.OnboardingStep to Onboarding.Step
+
+
+onboardingStepToStep : OnboardingStep -> Onboarding.Step
+onboardingStepToStep step =
+    case step of
+        PlanStep ->
+            Onboarding.PlanSelectionStep
+
+        PersonalStep ->
+            Onboarding.UserDetailsStep
+
+        CompanyStep ->
+            Onboarding.CompanyDetailsStep
+
+        LicensingStep ->
+            Onboarding.LicensingSettingsStep
+
+        AgentsStep ->
+            Onboarding.AddAgentsStep
+
+        PaymentStep ->
+            Onboarding.PaymentStep
+
+        EnterpriseStep ->
+            Onboarding.EnterpriseFormStep

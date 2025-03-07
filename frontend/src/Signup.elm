@@ -1,6 +1,7 @@
 module Signup exposing (Model, Msg(..), init, subscriptions, update, view)
 
 import Browser
+import Browser.Navigation as Nav
 import Components.ProgressIndicator as ProgressIndicator exposing (Step)
 import Html exposing (..)
 import Html.Attributes exposing (..)
@@ -28,6 +29,7 @@ type alias Model =
     , orgNameStatus : OrgNameStatus
     , emailStatus : EmailStatus
     , currentStep : SignupStep
+    , key : Nav.Key
     }
 
 
@@ -83,8 +85,8 @@ type SignupStep
     | SetupPayment
 
 
-init : ( Model, Cmd Msg )
-init =
+init : Nav.Key -> ( Model, Cmd Msg )
+init key =
     ( { organizationName = ""
       , adminFirstName = ""
       , adminLastName = ""
@@ -95,6 +97,7 @@ init =
       , orgNameStatus = NotChecked
       , emailStatus = EmailNotChecked
       , currentStep = AccountSetup
+      , key = key
       }
     , Cmd.none
     )
@@ -198,7 +201,7 @@ update msg model =
         SubmitForm ->
             if isFormValid model then
                 ( { model | isSubmitting = True }
-                , submitForm model
+                , Nav.pushUrl model.key "/onboarding"
                 )
 
             else
