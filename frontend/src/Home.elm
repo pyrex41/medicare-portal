@@ -7,6 +7,7 @@ import Html.Attributes exposing (..)
 import Html.Events exposing (onClick)
 import Http
 import Json.Decode as Decode
+import Ports exposing (clearSessionCookie)
 
 
 
@@ -30,6 +31,8 @@ type Msg
     = CheckSession
     | GotSessionResponse (Result Http.Error SessionResponse)
     | NavigateTo String
+    | NavigateSignup
+    | NoOp
 
 
 type alias SessionResponse =
@@ -100,6 +103,25 @@ update msg model =
                     -- Otherwise go to requested path
                     ( model, Nav.pushUrl model.key path )
 
+        NavigateSignup ->
+            let
+                _ =
+                    Debug.log "Navigating to signup"
+            in
+            ( model
+            , Cmd.batch
+                [ Nav.pushUrl model.key "/signup"
+                , Http.post
+                    { url = "/api/auth/logout"
+                    , body = Http.emptyBody
+                    , expect = Http.expectWhatever (\_ -> NoOp)
+                    }
+                ]
+            )
+
+        NoOp ->
+            ( model, Cmd.none )
+
 
 
 -- VIEW
@@ -127,7 +149,7 @@ view model =
                             ]
                             [ text "Log in" ]
                         , button
-                            [ onClick (NavigateTo "/signup")
+                            [ onClick NavigateSignup
                             , class "bg-[#0A0F4F] text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#1a1f5f] transition-colors duration-200"
                             ]
                             [ text "Sign up" ]
@@ -149,7 +171,7 @@ view model =
                             [ text "Automatically engage clients in key moments of their medigap journey, and sit back as they enroll" ]
                         , div [ class "mt-10" ]
                             [ button
-                                [ onClick (NavigateTo "/signup")
+                                [ onClick NavigateSignup
                                 , class "inline-flex items-center px-6 py-3 rounded-lg text-base font-medium text-white bg-[#0A0F4F] hover:bg-[#1a1f5f] transition-colors duration-200"
                                 ]
                                 [ text "Sign up" ]

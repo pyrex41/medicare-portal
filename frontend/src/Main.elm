@@ -1,4 +1,4 @@
-port module Main exposing (main)
+module Main exposing (main)
 
 import AddAgent
 import Browser exposing (Document)
@@ -39,9 +39,6 @@ import Url.Parser.Query as Query
 
 -- PORTS
 -- Send a message to JavaScript to clear the session cookie
-
-
-port clearSessionCookie : () -> Cmd msg
 
 
 type alias VerificationResponse =
@@ -955,8 +952,7 @@ update msg model =
                 , showDropdown = False
               }
             , Cmd.batch
-                [ clearSessionCookie ()
-                , Nav.pushUrl model.key "/"
+                [ Nav.pushUrl model.key "/"
                 , Http.post
                     { url = "/api/auth/logout"
                     , body = Http.emptyBody

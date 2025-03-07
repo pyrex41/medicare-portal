@@ -16,15 +16,6 @@ const getCookie = (name: string) => {
   return null
 }
 
-// Function to delete a cookie by setting its expiration date to the past
-const deleteCookie = (name: string) => {
-  // Delete with various path and domain combinations to ensure it's removed
-  document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;`
-  document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; domain=${window.location.hostname};`
-  document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; domain=.${window.location.hostname};`
-  console.log(`Cookie '${name}' deletion attempted`)
-}
-
 const sessionCookie = getCookie('session')
 console.log('Found session cookie:', sessionCookie)
 
@@ -38,30 +29,7 @@ try {
     }
   })
 
-  // Add any ports here if needed
-  // app.ports.sendToJs.subscribe((data) => {
-  //   console.log('From Elm:', data)
-  // })
-  
-  // Port to clear the session cookie when logging out
-  if (app.ports && app.ports.clearSessionCookie) {
-    app.ports.clearSessionCookie.subscribe(() => {
-      console.log('Clearing session cookie from JS')
-      console.log('Current cookies before deletion:', document.cookie)
-      deleteCookie('session')
-      
-      // Check if cookie was deleted
-      setTimeout(() => {
-        console.log('Cookies after deletion attempt:', document.cookie)
-        const stillExists = getCookie('session')
-        if (stillExists) {
-          console.warn('Session cookie still exists after deletion attempt:', stillExists)
-        } else {
-          console.log('Session cookie successfully deleted')
-        }
-      }, 100)
-    })
-  }
+
   
   // Stripe integration ports
   if (app.ports) {
