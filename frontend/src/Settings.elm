@@ -451,25 +451,6 @@ update msg model =
 
                                     else
                                         []
-                                , stateCarrierSettings =
-                                    if checked then
-                                        -- Create settings for all state/carrier combinations
-                                        List.concatMap
-                                            (\state ->
-                                                List.map
-                                                    (\carrier ->
-                                                        { state = state
-                                                        , carrier = carrier
-                                                        , active = True
-                                                        , targetGI = False
-                                                        }
-                                                    )
-                                                    settings.carrierContracts
-                                            )
-                                            allStates
-
-                                    else
-                                        []
                             }
                     in
                     ( { model | orgSettings = Just newSettings }
@@ -488,25 +469,6 @@ update msg model =
                                 | carrierContracts =
                                     if checked then
                                         allCarriers
-
-                                    else
-                                        []
-                                , stateCarrierSettings =
-                                    if checked then
-                                        -- Create settings for all state/carrier combinations
-                                        List.concatMap
-                                            (\state ->
-                                                List.map
-                                                    (\carrier ->
-                                                        { state = state
-                                                        , carrier = carrier
-                                                        , active = True
-                                                        , targetGI = False
-                                                        }
-                                                    )
-                                                    allCarriers
-                                            )
-                                            settings.stateLicenses
 
                                     else
                                         []
@@ -792,7 +754,7 @@ viewSetupHeader =
 
 viewNormalHeader : Html Msg
 viewNormalHeader =
-    h1 [ class "text-2xl font-semibold text-gray-900 mb-6" ]
+    h1 [ class "text-2xl font-semibold text-[#03045E] mb-6" ]
         [ text "Organization Settings" ]
 
 
@@ -800,7 +762,7 @@ viewBottomBar : Model -> Html Msg
 viewBottomBar model =
     div
         [ class """sticky bottom-0 left-0 right-0 bg-white border-t border-gray-200 
-                  px-4 py-4 sm:px-6 lg:px-8 flex justify-between items-center
+                  px-4 py-4 sm:px-6 lg:px-8 flex justify-end items-center
                   mt-8"""
         ]
         [ case model.error of
@@ -810,12 +772,6 @@ viewBottomBar model =
 
             Nothing ->
                 text ""
-        , button
-            [ class """px-4 py-2 text-sm font-medium text-white bg-blue-600 
-                      rounded-md hover:bg-blue-700"""
-            , onClick FinishSetup
-            ]
-            [ text "Next: Go to Dashboard" ]
         ]
 
 

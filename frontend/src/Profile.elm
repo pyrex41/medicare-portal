@@ -34,6 +34,7 @@ type alias User =
     , phone : String
     , isAdmin : Bool
     , isAgent : Bool
+    , calendarUrl : String
     }
 
 
@@ -102,6 +103,9 @@ update msg model =
 
                                 "phone" ->
                                     { user | phone = String.filter Char.isDigit value }
+
+                                "calendarUrl" ->
+                                    { user | calendarUrl = value }
 
                                 _ ->
                                     user
@@ -227,6 +231,7 @@ viewBasicInfo user =
             , viewField "Last Name" "text" user.lastName "lastName"
             , viewField "Email" "email" user.email "email"
             , viewField "Phone" "tel" user.phone "phone"
+            , viewField "Calendar URL" "url" user.calendarUrl "calendarUrl"
             ]
         , viewRoleInfo user
         ]
@@ -338,6 +343,7 @@ userDecoder =
         |> Pipeline.required "phone" Decode.string
         |> Pipeline.required "is_admin" Decode.bool
         |> Pipeline.required "is_agent" Decode.bool
+        |> Pipeline.optional "calendar_url" Decode.string ""
 
 
 
@@ -351,6 +357,7 @@ encodeUser user =
         , ( "lastName", Encode.string user.lastName )
         , ( "email", Encode.string user.email )
         , ( "phone", Encode.string user.phone )
+        , ( "calendar_url", Encode.string user.calendarUrl )
         ]
 
 
