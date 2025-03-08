@@ -180,7 +180,58 @@ viewContent model =
         case model.currentUser of
             Just user ->
                 div [ class "bg-white shadow rounded-lg p-6 space-y-6" ]
-                    [ viewTutorialLink
+                    [ div [ class "mb-4 flex justify-end space-x-4" ]
+                        [ button
+                            [ class "flex items-center text-sm text-blue-600 hover:text-blue-800"
+                            , onClick (NavigateTo "/dashboard?payment_success=true")
+                            ]
+                            [ div [ class "mr-2" ]
+                                [ svg
+                                    [ SvgAttr.class "h-5 w-5"
+                                    , SvgAttr.viewBox "0 0 20 20"
+                                    , SvgAttr.fill "currentColor"
+                                    ]
+                                    [ path
+                                        [ SvgAttr.d "M10 12a2 2 0 100-4 2 2 0 000 4z" ]
+                                        []
+                                    , path
+                                        [ SvgAttr.fillRule "evenodd"
+                                        , SvgAttr.d "M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z"
+                                        , SvgAttr.clipRule "evenodd"
+                                        ]
+                                        []
+                                    ]
+                                ]
+                            , text "Watch Setup Tutorial"
+                            ]
+                        , if user.isAdmin then
+                            button
+                                [ class "flex items-center text-sm text-purple-600 hover:text-purple-800"
+                                , onClick (NavigateTo "/subscription")
+                                ]
+                                [ div [ class "mr-2" ]
+                                    [ svg
+                                        [ SvgAttr.class "h-5 w-5"
+                                        , SvgAttr.viewBox "0 0 20 20"
+                                        , SvgAttr.fill "currentColor"
+                                        ]
+                                        [ path
+                                            [ SvgAttr.d "M4 4a2 2 0 00-2 2v1h16V6a2 2 0 00-2-2H4z" ]
+                                            []
+                                        , path
+                                            [ SvgAttr.fillRule "evenodd"
+                                            , SvgAttr.d "M18 9H2v5a2 2 0 002 2h12a2 2 0 002-2V9zM4 13a1 1 0 011-1h1a1 1 0 110 2H5a1 1 0 01-1-1zm5-1a1 1 0 100 2h1a1 1 0 100-2H9z"
+                                            , SvgAttr.clipRule "evenodd"
+                                            ]
+                                            []
+                                        ]
+                                    ]
+                                , text "Subscription & Payments"
+                                ]
+
+                          else
+                            text ""
+                        ]
                     , viewBasicInfo user
                     , viewSaveButton model
                     ]
@@ -188,35 +239,6 @@ viewContent model =
             Nothing ->
                 div [ class "text-center text-gray-600" ]
                     [ text "Failed to load profile" ]
-
-
-viewTutorialLink : Html Msg
-viewTutorialLink =
-    div [ class "mb-4 flex justify-end" ]
-        [ button
-            [ class "flex items-center text-sm text-blue-600 hover:text-blue-800"
-            , onClick (NavigateTo "/dashboard?payment_success=true")
-            ]
-            [ div [ class "mr-2" ]
-                [ svg
-                    [ SvgAttr.class "h-5 w-5"
-                    , SvgAttr.viewBox "0 0 20 20"
-                    , SvgAttr.fill "currentColor"
-                    ]
-                    [ path
-                        [ SvgAttr.d "M10 12a2 2 0 100-4 2 2 0 000 4z" ]
-                        []
-                    , path
-                        [ SvgAttr.fillRule "evenodd"
-                        , SvgAttr.d "M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z"
-                        , SvgAttr.clipRule "evenodd"
-                        ]
-                        []
-                    ]
-                ]
-            , text "Watch Setup Tutorial"
-            ]
-        ]
 
 
 viewBasicInfo : User -> Html Msg
@@ -244,7 +266,7 @@ viewField label inputType value field =
             [ text label ]
         , input
             [ type_ inputType
-            , class "mt-1 px-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-500"
+            , class "mt-1 px-3.5 py-2.5 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-500"
             , Html.Attributes.value
                 (if field == "phone" then
                     formatPhoneNumber value
@@ -396,10 +418,10 @@ formatPhoneNumber phone =
 formatRole : User -> String
 formatRole user =
     if user.isAdmin && user.isAgent then
-        "Admin Agent"
+        "Admin"
 
     else if user.isAdmin then
-        "Administrator"
+        "Admin"
 
     else if user.isAgent then
         "Agent"
