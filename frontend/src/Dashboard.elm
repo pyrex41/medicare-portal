@@ -15,6 +15,7 @@ import Time
 type alias Model =
     { hovering : Maybe Point
     , showLimitBanner : Bool
+    , showTutorialModal : Bool
     }
 
 
@@ -36,12 +37,20 @@ type Msg
     = OnHover (Maybe Point)
     | NoOp
     | CloseLimitBanner
+    | CloseTutorialModal
+    | OpenTutorialModal
 
 
-init : () -> ( Model, Cmd Msg )
-init _ =
+type alias Flags =
+    { isPostPayment : Maybe Bool
+    }
+
+
+init : Flags -> ( Model, Cmd Msg )
+init flags =
     ( { hovering = Nothing
       , showLimitBanner = True
+      , showTutorialModal = Maybe.withDefault False flags.isPostPayment
       }
     , Cmd.none
     )
@@ -60,6 +69,16 @@ update msg model =
             , Cmd.none
             )
 
+        CloseTutorialModal ->
+            ( { model | showTutorialModal = False }
+            , Cmd.none
+            )
+
+        OpenTutorialModal ->
+            ( { model | showTutorialModal = True }
+            , Cmd.none
+            )
+
         NoOp ->
             ( model, Cmd.none )
 
@@ -71,6 +90,11 @@ view model =
         [ div [ class "p-6 max-w-7xl mx-auto" ]
             [ if model.showLimitBanner then
                 LimitBanner.viewLimitBanner (Just (AgentLimit 2 1)) CloseLimitBanner
+
+              else
+                text ""
+            , if model.showTutorialModal then
+                viewTutorialModal
 
               else
                 text ""
@@ -89,15 +113,15 @@ view model =
                             [ viewChart model ]
                         , div [ class "flex justify-center mt-16 space-x-8 text-sm text-gray-600 border-t border-gray-200 pt-8" ]
                             [ div [ class "flex items-center" ]
-                                [ div [ class "w-3 h-3 rounded-full bg-purple-600 mr-2" ] []
+                                [ div [ class "w-3 h-3 rounded-full bg-[#DCE2E5] mr-2" ] []
                                 , text "Quotes Sent"
                                 ]
                             , div [ class "flex items-center" ]
-                                [ div [ class "w-3 h-3 rounded-full bg-pink-500 mr-2" ] []
+                                [ div [ class "w-3 h-3 rounded-full bg-[#53389E] mr-2" ] []
                                 , text "Quotes Viewed"
                                 ]
                             , div [ class "flex items-center" ]
-                                [ div [ class "w-3 h-3 rounded-full bg-purple-300 mr-2" ] []
+                                [ div [ class "w-3 h-3 rounded-full bg-[#03045E] mr-2" ] []
                                 , text "Follow-up Requests"
                                 ]
                             ]
@@ -118,11 +142,43 @@ view model =
     }
 
 
+viewTutorialModal : Html Msg
+viewTutorialModal =
+    div [ class "fixed inset-0 z-50 bg-gray-600 bg-opacity-50 flex items-center justify-center" ]
+        [ div [ class "bg-white p-6 rounded-lg shadow-lg max-w-2xl w-full" ]
+            [ div [ class "flex justify-between items-center mb-4" ]
+                [ h2 [ class "text-xl font-semibold text-[#03045E]" ] [ text "Welcome to MedicareMax!" ]
+                , button
+                    [ class "text-gray-400 hover:text-gray-600", onClick CloseTutorialModal ]
+                    [ text "×" ]
+                ]
+            , div [ class "mb-6" ]
+                [ iframe
+                    [ src "https://www.youtube.com/embed/dQw4w9WgXcQ" -- Replace with actual tutorial video
+                    , class "w-full h-96"
+                    , attribute "allowfullscreen" ""
+                    , attribute "frameborder" "0"
+                    ]
+                    []
+                ]
+            , p [ class "mb-4 text-gray-600" ]
+                [ text "This quick setup tutorial will help you get started with MedicareMax and show you how to make the most of its features." ]
+            , div [ class "flex justify-end" ]
+                [ button
+                    [ class "px-4 py-2 bg-[#03045E] text-white rounded-md hover:bg-opacity-90"
+                    , onClick CloseTutorialModal
+                    ]
+                    [ text "Close" ]
+                ]
+            ]
+        ]
+
+
 viewStatsCard : String -> String -> String -> Html Msg
 viewStatsCard title value colorClass =
     div [ class "bg-white rounded-lg shadow p-6" ]
         [ div [ class "text-gray-600 text-sm" ] [ text title ]
-        , div [ class ("text-4xl font-bold mt-2 " ++ colorClass) ] [ text value ]
+        , div [ class "text-4xl font-bold mt-2 text-[#03045E]" ] [ text value ]
         ]
 
 
@@ -184,9 +240,9 @@ viewChart model =
         , C.yLabels [ CA.withGrid ]
         , C.bars []
             [ C.stacked
-                [ C.bar .sends [ CA.color CA.purple ]
-                , C.bar .views [ CA.color CA.pink ]
-                , C.bar .followUps [ CA.color CA.purple, CA.opacity 0.4 ]
+                [ C.bar .sends [ CA.color "#DCE2E5" ]
+                , C.bar .views [ CA.color "#53389E" ]
+                , C.bar .followUps [ CA.color "#03045E" ]
                 ]
             ]
             chartData

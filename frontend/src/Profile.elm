@@ -59,6 +59,7 @@ type Msg
     | SaveProfile
     | ProfileSaved (Result Http.Error ())
     | NavigateTo String
+    | WatchTutorial
 
 
 type alias CurrentUserResponse =
@@ -141,6 +142,9 @@ update msg model =
         NavigateTo path ->
             ( model, Cmd.none )
 
+        WatchTutorial ->
+            ( model, Cmd.none )
+
 
 
 -- Main.elm will handle the actual navigation
@@ -172,13 +176,43 @@ viewContent model =
         case model.currentUser of
             Just user ->
                 div [ class "bg-white shadow rounded-lg p-6 space-y-6" ]
-                    [ viewBasicInfo user
+                    [ viewTutorialLink
+                    , viewBasicInfo user
                     , viewSaveButton model
                     ]
 
             Nothing ->
                 div [ class "text-center text-gray-600" ]
                     [ text "Failed to load profile" ]
+
+
+viewTutorialLink : Html Msg
+viewTutorialLink =
+    div [ class "mb-4 flex justify-end" ]
+        [ button
+            [ class "flex items-center text-sm text-blue-600 hover:text-blue-800"
+            , onClick (NavigateTo "/dashboard?payment_success=true")
+            ]
+            [ div [ class "mr-2" ]
+                [ svg
+                    [ SvgAttr.class "h-5 w-5"
+                    , SvgAttr.viewBox "0 0 20 20"
+                    , SvgAttr.fill "currentColor"
+                    ]
+                    [ path
+                        [ SvgAttr.d "M10 12a2 2 0 100-4 2 2 0 000 4z" ]
+                        []
+                    , path
+                        [ SvgAttr.fillRule "evenodd"
+                        , SvgAttr.d "M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z"
+                        , SvgAttr.clipRule "evenodd"
+                        ]
+                        []
+                    ]
+                ]
+            , text "Watch Setup Tutorial"
+            ]
+        ]
 
 
 viewBasicInfo : User -> Html Msg

@@ -462,12 +462,17 @@ view steps =
             [ -- Logo
               div [ class "mb-14" ]
                 [ div [ class "flex items-center" ]
-                    [ img
-                        [ src "/images/medicare-max-logo.png"
-                        , class "h-8 w-auto"
-                        , alt "Medicare Max logo"
+                    [ a
+                        [ href "/"
+                        , class "cursor-pointer"
                         ]
-                        []
+                        [ img
+                            [ src "/images/medicare-max-logo.png"
+                            , class "h-8 w-auto"
+                            , alt "Medicare Max logo"
+                            ]
+                            []
+                        ]
                     ]
                 ]
 
@@ -540,10 +545,10 @@ type alias StepInfo =
     }
 
 
-view : SetupStep -> Bool -> List (Html msg) -> Html msg
-view currentStep isBasicPlan content =
+view : SetupStep -> Bool -> Int -> List (Html msg) -> Html msg
+view currentStep isBasicPlan stepNumber content =
     div [ class "min-h-screen bg-gray-50 flex" ]
-        [ viewProgressIndicator currentStep isBasicPlan
+        [ viewProgressIndicator currentStep isBasicPlan stepNumber
         , div [ class "flex-1 ml-[280px] pb-24" ]
             [ div [ class "max-w-3xl mx-auto py-6 px-4 sm:px-6 lg:px-8" ]
                 content
@@ -551,8 +556,8 @@ view currentStep isBasicPlan content =
         ]
 
 
-viewProgressIndicator : SetupStep -> Bool -> Html msg
-viewProgressIndicator currentStep isBasicPlan =
+viewProgressIndicator : SetupStep -> Bool -> Int -> Html msg
+viewProgressIndicator currentStep isBasicPlan stepNumber =
     let
         basicSteps =
             [ { step = PlanSelection
@@ -622,12 +627,12 @@ viewProgressIndicator currentStep isBasicPlan =
             else
                 multiAgentSteps
 
-        makeStep info =
+        makeStep index info =
             { icon = info.icon
             , title = info.title
             , description = info.description
-            , isCompleted = isStepComplete currentStep info.step
-            , isActive = info.step == currentStep
+            , isCompleted = isStepComplete currentStep info.step index stepNumber
+            , isActive = info.step == currentStep && index == stepNumber
             }
 
         -- Calculate progress percentage for the progress bar
@@ -640,10 +645,10 @@ viewProgressIndicator currentStep isBasicPlan =
                     0
 
                 OrganizationSetup ->
-                    1
+                    stepNumber
 
                 AgentSetup ->
-                    2
+                    stepNumber
 
         progressPercentage =
             String.fromInt (min 100 (ceiling (toFloat (currentStepIndex * 100) / toFloat (totalSteps - 1))))
@@ -664,13 +669,13 @@ viewProgressIndicator currentStep isBasicPlan =
                 ]
     in
     div []
-        [ ProgressIndicator.view (List.map makeStep steps)
+        [ ProgressIndicator.view (List.indexedMap makeStep steps)
         , progressBar
         ]
 
 
-isStepComplete : SetupStep -> SetupStep -> Bool
-isStepComplete currentStep step =
+isStepComplete : SetupStep -> SetupStep -> Int -> Int -> Bool
+isStepComplete currentStep step stepIndex currentStepNumber =
     case ( currentStep, step ) of
         ( PlanSelection, _ ) ->
             -- When on plan selection, no steps are completed
@@ -679,6 +684,10 @@ isStepComplete currentStep step =
         ( OrganizationSetup, PlanSelection ) ->
             -- When on org settings, plan selection is completed
             True
+
+        ( OrganizationSetup, OrganizationSetup ) ->
+            -- For org setup steps, complete those before the current one
+            stepIndex < currentStepNumber
 
         ( OrganizationSetup, _ ) ->
             -- Other steps aren't completed yet
@@ -4058,7 +4067,6 @@ type alias Model =
     , lastName : String
     , email : String
     , phone : String
-    , bookingLink : String
     , isLoading : Bool
     , error : Maybe String
     , key : Nav.Key
@@ -4080,7 +4088,6 @@ init key orgSlug =
       , lastName = ""
       , email = ""
       , phone = ""
-      , bookingLink = ""
       , isLoading = False
       , error = Nothing
       , key = key
@@ -4106,7 +4113,6 @@ type Msg
     | UpdateLastName String
     | UpdateEmail String
     | UpdatePhone String
-    | UpdateBookingLink String
     | NextStepClicked
     | GotUserDetails (Result Http.Error UserDetailsResponse)
     | UserDetailsSaved (Result Http.Error SignupResponse)
@@ -4127,7 +4133,6 @@ type alias UserDetailsResponse =
     , lastName : String
     , email : String
     , phone : String
-    , bookingLink : String
     }
 
 
@@ -4171,9 +4176,6 @@ update msg model =
         UpdatePhone value ->
             -- Store only the digits, but display formatted version
             ( { model | phone = String.filter Char.isDigit value }, Cmd.none, NoOutMsg )
-
-        UpdateBookingLink value ->
-            ( { model | bookingLink = value }, Cmd.none, NoOutMsg )
 
         EmailBlurred ->
             if String.isEmpty (String.trim model.email) then
@@ -4251,7 +4253,6 @@ update msg model =
                         , lastName = response.lastName
                         , email = response.email
                         , phone = response.phone
-                        , bookingLink = response.bookingLink
                         , isLoading = False
                       }
                     , Cmd.none
@@ -4374,24 +4375,6 @@ view model =
                                     ]
                                     []
                                 ]
-                            ]
-                        , div []
-                            [ label [ class "block text-sm font-medium text-gray-700" ]
-                                [ text "Booking Link (Optional)" ]
-                            , div [ class "mt-1 flex rounded-md shadow-sm" ]
-                                [ span [ class "inline-flex items-center px-3 rounded-l-md border border-r-0 border-gray-300 bg-gray-50 text-gray-500 text-sm" ]
-                                    [ text "URL" ]
-                                , input
-                                    [ type_ "text"
-                                    , class "flex-1 min-w-0 block w-full px-3 py-2 rounded-none rounded-r-md border-gray-300 focus:ring-blue-500 focus:border-blue-500"
-                                    , value model.bookingLink
-                                    , onInput UpdateBookingLink
-                                    , placeholder "https://calendly.com/yourusername"
-                                    ]
-                                    []
-                                ]
-                            , p [ class "mt-2 text-sm text-gray-500" ]
-                                [ text "Add your Calendly or other booking link to make it easy for clients to schedule with you." ]
                             ]
                         ]
                     ]
@@ -4686,13 +4669,11 @@ handleEmailCheckResponse response =
 userDetailsDecoder : Decode.Decoder UserDetailsResponse
 userDetailsDecoder =
     Decode.field "user"
-        (Decode.map5 UserDetailsResponse
+        (Decode.map4 UserDetailsResponse
             (Decode.field "firstName" Decode.string)
             (Decode.field "lastName" Decode.string)
             (Decode.field "email" Decode.string)
             (Decode.field "phone" Decode.string)
-            (Decode.succeed "")
-         -- bookingLink is not included in /api/me response
         )
 
 
@@ -5252,6 +5233,7 @@ view model =
         [ div []
             [ SetupLayout.view (mapStepToSetupStep model.step)
                 model.isBasicPlan
+                (getStepNumber model.step)
                 [ div [ class "max-w-3xl mx-auto" ]
                     [ case model.error of
                         Just errorMsg ->
@@ -5420,9 +5402,6 @@ encodeOnboardingData model =
         phone =
             model.userDetailsModel.phone
 
-        bookingLink =
-            model.userDetailsModel.bookingLink
-
         -- Company details
         agencyName =
             model.companyDetailsModel.agencyName
@@ -5476,7 +5455,6 @@ encodeOnboardingData model =
                 , ( "lastName", Encode.string lastName )
                 , ( "email", Encode.string email )
                 , ( "phone", Encode.string phone )
-                , ( "bookingLink", Encode.string bookingLink )
                 ]
           )
         , ( "company"
@@ -5595,6 +5573,35 @@ getStepUrl step =
                 EnterpriseFormStep ->
                     "enterprise"
            )
+
+
+
+-- Helper function to convert the step to a number for progress tracking
+
+
+getStepNumber : Step -> Int
+getStepNumber step =
+    case step of
+        PlanSelectionStep ->
+            0
+
+        UserDetailsStep ->
+            1
+
+        CompanyDetailsStep ->
+            2
+
+        LicensingSettingsStep ->
+            3
+
+        AddAgentsStep ->
+            4
+
+        PaymentStep ->
+            5
+
+        EnterpriseFormStep ->
+            6
 
 ================
 File: src/Accept.elm
@@ -6113,6 +6120,8 @@ view model =
             -- Show setup UI with sidebar
             SetupLayout.view SetupLayout.AgentSetup
                 (model.planType == "basic")
+                4
+                -- Using 4 for AddAgent as it's typically the 5th step (0-indexed)
                 [ div [ class "max-w-3xl mx-auto pb-24" ]
                     [ viewSetupHeader model
                     , viewAgentsList model
@@ -9438,6 +9447,8 @@ view model =
                     _ ->
                         False
                 )
+                0
+                -- Using 0 for PlanSelection as it's the first step
                 [ if model.isLoading then
                     viewLoading
 
@@ -12941,7 +12952,7 @@ import File exposing (File)
 import File.Download
 import File.Select as Select
 import Html exposing (Html, button, col, colgroup, details, div, h1, h2, h3, input, label, nav, option, p, select, span, summary, table, tbody, td, text, th, thead, tr)
-import Html.Attributes exposing (attribute, checked, class, placeholder, required, title, type_, value)
+import Html.Attributes exposing (attribute, checked, class, disabled, placeholder, required, selected, title, type_, value)
 import Html.Events exposing (on, onClick, onInput, onSubmit, preventDefaultOn, stopPropagationOn)
 import Http
 import Json.Decode as Decode exposing (Decoder, bool, int, nullable, string)
@@ -13171,12 +13182,28 @@ init key maybeUser =
                 Nothing ->
                     emptyFilters
 
+        -- Set default contact owner to current user if they are an agent
+        defaultOwnerId =
+            case maybeUser of
+                Just user ->
+                    if user.isAgent then
+                        Just user.id
+
+                    else
+                        Nothing
+
+                Nothing ->
+                    Nothing
+
+        initialAddForm =
+            { emptyForm | contactOwnerId = defaultOwnerId }
+
         initialModel =
             { contacts = []
             , selectedContacts = []
             , showModal = NoModal
             , searchQuery = ""
-            , addForm = emptyForm
+            , addForm = initialAddForm
             , editForm = emptyForm
             , sortColumn = Nothing
             , sortDirection = Ascending
@@ -14593,7 +14620,12 @@ viewTableRow model contact =
                 [ div [ class "h-8 w-8 rounded-full bg-purple-100 flex items-center justify-center text-sm text-purple-700 font-medium uppercase" ]
                     [ text initials ]
                 , div [ class "ml-3 text-sm text-gray-900" ]
-                    [ text (contact.firstName ++ " " ++ contact.lastName) ]
+                    [ button
+                        [ class "text-left text-gray-900 hover:text-purple-600 transition-colors duration-200"
+                        , onClick (NavigateToContact contact.id)
+                        ]
+                        [ text (contact.firstName ++ " " ++ contact.lastName) ]
+                    ]
                 ]
             ]
         , td [ class cellClass ]
@@ -14846,7 +14878,7 @@ viewContactChoiceModal =
 viewAddModal : Model -> Bool -> Html Msg
 viewAddModal model isSubmitting =
     div [ class "fixed inset-0 bg-gray-500/75 flex items-center justify-center p-8" ]
-        [ div [ class "bg-white rounded-xl p-10 max-w-5xl w-full mx-4 shadow-xl relative" ]
+        [ div [ class "bg-white rounded-xl p-10 max-w-lg w-full mx-4 shadow-xl relative overflow-y-auto flex flex-col max-h-[90vh]" ]
             [ button
                 [ class "absolute top-4 right-4 text-gray-400 hover:text-gray-600 transition-colors duration-200"
                 , onClick CloseModal
@@ -14862,7 +14894,7 @@ viewAddModal model isSubmitting =
 viewEditModal : Model -> Bool -> Html Msg
 viewEditModal model isSubmitting =
     div [ class "fixed inset-0 bg-gray-500/75 flex items-center justify-center p-8" ]
-        [ div [ class "bg-white rounded-xl p-10 max-w-5xl w-full mx-4 shadow-xl relative" ]
+        [ div [ class "bg-white rounded-xl p-10 max-w-lg w-full mx-4 shadow-xl relative overflow-y-auto flex flex-col max-h-[90vh]" ]
             [ button
                 [ class "absolute top-4 right-4 text-gray-400 hover:text-gray-600 transition-colors duration-200"
                 , onClick CloseModal
@@ -14870,7 +14902,8 @@ viewEditModal model isSubmitting =
                 [ viewIcon "M6 18L18 6M6 6l12 12" ]
             , h2 [ class "text-2xl font-semibold text-gray-900 mb-8" ]
                 [ text "Edit Client" ]
-            , viewContactForm model model.editForm UpdateEditForm SubmitEditForm "Save Changes" isSubmitting
+            , div [ class "flex-grow overflow-y-auto pr-2" ]
+                [ viewContactForm model model.editForm UpdateEditForm SubmitEditForm "Save Changes" isSubmitting ]
             ]
         ]
 
@@ -16249,7 +16282,9 @@ viewFormSelectWithValue labelText selectedValue field updateMsg options =
                 , value selectedValue
                 , onInput (updateMsg field)
                 ]
-                (List.map (\( val, txt ) -> option [ value val ] [ text txt ]) options)
+                (option [ value "", disabled True, selected (selectedValue == "") ] [ text "Select an Agent" ]
+                    :: List.map (\( val, txt ) -> option [ value val ] [ text txt ]) options
+                )
             , div [ class "absolute inset-y-0 right-0 flex items-center px-2 pointer-events-none" ]
                 [ viewIcon "M19 9l-7 7-7-7" ]
             ]
@@ -18021,6 +18056,7 @@ File: src/Login.elm
 ================
 module Login exposing (Model, Msg, init, subscriptions, update, view)
 
+import Basics
 import Browser.Navigation as Nav
 import Html exposing (..)
 import Html.Attributes exposing (..)
@@ -18028,6 +18064,7 @@ import Html.Events exposing (onClick, onInput, onSubmit)
 import Http
 import Json.Decode as Decode
 import Json.Encode as Encode
+import Time
 
 
 type alias Model =
@@ -18035,6 +18072,7 @@ type alias Model =
     , status : Status
     , isLoggedIn : Bool
     , key : Nav.Key
+    , resendAvailableAt : Maybe Time.Posix
     }
 
 
@@ -18062,6 +18100,8 @@ type Msg
     | GotSessionCheck (Result Http.Error SessionCheckResponse)
     | LogOut
     | NoOp
+    | CheckResendAvailable Time.Posix
+    | ResendLink
 
 
 init : Nav.Key -> Bool -> ( Model, Cmd Msg )
@@ -18070,6 +18110,7 @@ init key isLoggedIn =
       , status = Idle
       , isLoggedIn = isLoggedIn
       , key = key
+      , resendAvailableAt = Nothing
       }
     , Cmd.none
     )
@@ -18108,7 +18149,16 @@ update msg model =
 
                     else
                         -- If no valid session, proceed with login
-                        ( model
+                        let
+                            -- Set resend cooldown to 60 seconds from now
+                            now =
+                                Time.millisToPosix 0
+
+                            -- Placeholder, would normally use actual current time
+                            cooldownTime =
+                                Time.millisToPosix (Time.posixToMillis now + 60000)
+                        in
+                        ( { model | resendAvailableAt = Just cooldownTime }
                         , Http.post
                             { url = "/api/auth/login"
                             , body = Http.jsonBody (encodeLoginBody model.email)
@@ -18118,7 +18168,16 @@ update msg model =
 
                 Err _ ->
                     -- On error checking session, proceed with normal login flow
-                    ( model
+                    let
+                        -- Set resend cooldown to 60 seconds from now
+                        now =
+                            Time.millisToPosix 0
+
+                        -- Placeholder, would normally use actual current time
+                        cooldownTime =
+                            Time.millisToPosix (Time.posixToMillis now + 60000)
+                    in
+                    ( { model | resendAvailableAt = Just cooldownTime }
                     , Http.post
                         { url = "/api/auth/login"
                         , body = Http.jsonBody (encodeLoginBody model.email)
@@ -18159,6 +18218,21 @@ update msg model =
                     , Cmd.none
                     )
 
+        CheckResendAvailable currentTime ->
+            case model.resendAvailableAt of
+                Just availableAt ->
+                    if Time.posixToMillis currentTime >= Time.posixToMillis availableAt then
+                        ( { model | resendAvailableAt = Nothing }, Cmd.none )
+
+                    else
+                        ( model, Cmd.none )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        ResendLink ->
+            update SubmitForm model
+
 
 viewLoginForm : Model -> { title : String, body : List (Html Msg) }
 viewLoginForm model =
@@ -18167,7 +18241,7 @@ viewLoginForm model =
         [ div [ class "min-h-screen bg-gray-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8" ]
             [ div [ class "sm:mx-auto sm:w-full sm:max-w-md" ]
                 [ h2 [ class "mt-6 text-center text-3xl font-extrabold text-gray-900" ]
-                    [ text "Sign in to your account" ]
+                    [ text "Welcome Back To MedicareMax" ]
                 ]
             , div [ class "mt-8 sm:mx-auto sm:w-full sm:max-w-md" ]
                 [ div [ class "bg-white py-8 px-4 shadow sm:rounded-lg sm:px-10" ]
@@ -18196,7 +18270,12 @@ viewLoginForm model =
                                 [ text "Send login link" ]
                             ]
                         ]
-                    , viewStatus model.status
+                    , viewStatus model.status model
+                    , div [ class "mt-4 text-center text-sm" ]
+                        [ text "Not Yet a MedicareMax User? "
+                        , a [ href "/signup", class "font-medium text-indigo-600 hover:text-indigo-500" ]
+                            [ text "Sign Up Here" ]
+                        ]
                     ]
                 ]
             ]
@@ -18204,15 +18283,17 @@ viewLoginForm model =
     }
 
 
-viewStatus : Status -> Html msg
-viewStatus status =
+viewStatus : Status -> Model -> Html Msg
+viewStatus status model =
     case status of
         LinkSent ->
             div [ class "mt-4 p-4 bg-green-50 rounded-md" ]
-                [ p [ class "text-sm text-green-700 text-center space-y-2" ]
-                    [ p [] [ text "You will receive an email if you are a registered agent." ]
-                    , p [] [ text "Check your email for the login link!" ]
+                [ p [ class "text-sm text-green-700 text-center" ]
+                    [ p [ class "mb-2" ] [ text "If your email is registered, you'll receive a login link soon." ]
+                    , p [] [ text "Check your inbox and spam folder." ]
                     ]
+                , div [ class "mt-2 text-center" ]
+                    [ viewResendLink model ]
                 ]
 
         Failed error ->
@@ -18227,6 +18308,37 @@ viewStatus status =
 
         _ ->
             text ""
+
+
+viewResendLink : Model -> Html Msg
+viewResendLink model =
+    case model.resendAvailableAt of
+        Just availableAt ->
+            let
+                currentTime =
+                    Time.millisToPosix 0
+
+                -- Placeholder, would normally use actual current time
+                diff =
+                    Basics.max 0 ((Time.posixToMillis availableAt - Time.posixToMillis currentTime) // 1000)
+            in
+            if diff <= 0 then
+                button
+                    [ onClick ResendLink
+                    , class "text-sm text-blue-600 hover:text-blue-800 underline"
+                    ]
+                    [ text "Resend link" ]
+
+            else
+                span [ class "text-sm text-gray-600" ]
+                    [ text ("Resend link in " ++ String.fromInt diff ++ " seconds") ]
+
+        Nothing ->
+            button
+                [ onClick ResendLink
+                , class "text-sm text-blue-600 hover:text-blue-800 underline"
+                ]
+                [ text "Resend link" ]
 
 
 encodeLoginBody : String -> Encode.Value
@@ -18249,8 +18361,13 @@ sessionCheckDecoder =
 
 
 subscriptions : Model -> Sub Msg
-subscriptions _ =
-    Sub.none
+subscriptions model =
+    case model.resendAvailableAt of
+        Just _ ->
+            Time.every 1000 CheckResendAvailable
+
+        Nothing ->
+            Sub.none
 
 
 view : Model -> { title : String, body : List (Html Msg) }
@@ -18365,7 +18482,7 @@ import Dashboard
 import Debug
 import Eligibility
 import Home
-import Html exposing (Html, button, div, h1, img, nav, p, text)
+import Html exposing (Html, a, button, div, h1, img, nav, p, text)
 import Html.Attributes exposing (alt, class, href, src)
 import Html.Events exposing (onClick, stopPropagationOn)
 import Http
@@ -19560,8 +19677,11 @@ viewNavHeader model =
             [ div [ class "flex justify-between h-16" ]
                 [ div [ class "flex items-center space-x-4" ]
                     [ div [ class "shrink-0 flex items-center" ]
-                        [ button
-                            [ onClick (InternalLinkClicked "/") ]
+                        [ a
+                            [ href "#"
+                            , onClick (InternalLinkClicked "/")
+                            , class "cursor-pointer"
+                            ]
                             [ img
                                 [ src "/images/medicare-max-logo.png"
                                 , class "h-8 w-auto mr-8"
@@ -20684,6 +20804,13 @@ const getCookie = (name: string) => {
 const sessionCookie = getCookie('session')
 console.log('Found session cookie:', sessionCookie)
 
+// Add favicon link to head
+const faviconLink = document.createElement('link');
+faviconLink.rel = 'icon';
+faviconLink.href = '/images/medicare-max-logo.png';
+faviconLink.type = 'image/png';
+document.head.appendChild(faviconLink);
+
 try {
   // @ts-ignore - Will be used for ports in the future
   const app = Elm.Main.init({
@@ -21379,7 +21506,7 @@ update msg model =
                         )
             in
             ( model
-            , Nav.pushUrl model.key compareUrl
+            , Nav.pushUrl model.key "/contacts"
             )
 
 
@@ -22669,6 +22796,7 @@ view model =
         [ if model.isSetup then
             SetupLayout.view SetupLayout.OrganizationSetup
                 (model.planType == "basic")
+                5
                 [ if model.isLoading then
                     viewLoading
 

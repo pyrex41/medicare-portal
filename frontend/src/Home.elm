@@ -108,6 +108,7 @@ update msg model =
                 _ =
                     Debug.log "Navigating to signup"
             in
+            -- Direct navigation to onboarding plan
             ( model
             , Nav.pushUrl model.key "/onboarding/plan"
             )
