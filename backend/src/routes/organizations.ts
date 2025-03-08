@@ -748,4 +748,79 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
         error: 'Failed to process your request. Please try again later.' 
       };
     }
+  })
+  // Add endpoint for enterprise inquiry during onboarding
+  .post('/enterprise-inquiry', async ({ body, set, request }: { 
+    body: { companyName: string; contactName: string; email: string; phone: string; message?: string }, 
+    set: { status: number },
+    request: Request 
+  }) => {
+    try {
+      const { companyName, contactName, email, phone, message } = body;
+      
+      // Validate required fields
+      if (!companyName || !contactName || !email || !phone) {
+        set.status = 400;
+        return { success: false, error: 'Missing required fields' };
+      }
+      
+      // Try to get user/organization info from session if available
+      let orgInfo = "";
+      try {
+        const user = await getUserFromSession(request);
+        if (user) {
+          orgInfo = `
+          <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee;">
+            <p><strong>User is logged in with the following details:</strong></p>
+            <p>Organization: ${user.organization_name} (ID: ${user.organization_id})</p>
+            <p>User: ${user.first_name} ${user.last_name} (${user.email})</p>
+          </div>`;
+        }
+      } catch (sessionError) {
+        // Just log the error but continue - the session info is optional
+        logger.warn(`Unable to get session info: ${sessionError}`);
+      }
+      
+      // Format the email content
+      const emailContent = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #333;">New Enterprise Plan Inquiry (Onboarding)</h2>
+          
+          <div style="margin: 20px 0; background-color: #f7f7f7; padding: 20px; border-radius: 5px;">
+            <p><strong>Company:</strong> ${companyName}</p>
+            <p><strong>Contact Name:</strong> ${contactName}</p>
+            <p><strong>Email:</strong> ${email}</p>
+            <p><strong>Phone:</strong> ${phone}</p>
+            <p><strong>Message:</strong></p>
+            <p style="white-space: pre-line;">${message || 'No message provided'}</p>
+          </div>
+          ${orgInfo}
+          <p style="color: #666; font-size: 14px;">
+            This inquiry was submitted through the Enterprise Form during the onboarding process on MedicareMax.
+          </p>
+        </div>
+      `;
+      
+      // Configure email
+      const msg = {
+        to: ['information@medicaremax.ai', 'reuben.brooks@medicaremax.ai'],
+        from: process.env.SENDGRID_FROM_EMAIL || 'information@medicaremax.ai',
+        subject: `Enterprise Plan Inquiry from ${contactName} at ${companyName} (Onboarding)`,
+        text: `New Enterprise Plan Inquiry (Onboarding):\n\nCompany: ${companyName}\nContact Name: ${contactName}\nEmail: ${email}\nPhone: ${phone}\n\nMessage: ${message || 'No message provided'}\n\n${orgInfo ? `User is logged in from organization: ${orgInfo}` : ''}\n\nThis inquiry was submitted through the Enterprise Form during onboarding on MedicareMax.`,
+        html: emailContent
+      };
+      
+      // Send the email
+      await sgMail.send(msg);
+      
+      // Log successful submission
+      logger.info(`Enterprise plan inquiry (onboarding) submitted by ${contactName} from ${companyName}`);
+      
+      // Return success response
+      return { success: true };
+    } catch (error) {
+      logger.error(`Error processing enterprise inquiry submission: ${error}`);
+      set.status = 500;
+      return { success: false, error: 'Failed to process inquiry' };
+    }
   }); 

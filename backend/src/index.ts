@@ -14,6 +14,7 @@ import { organizationRoutes } from './routes/organizations'
 import { createBrandRoutes } from './routes/brand'
 import { quotesRoutes } from './routes/quotes'
 import { createStripeRoutes } from './routes/stripe'
+import { createOnboardingRoutes } from './routes/onboarding'
 import { errorHandler } from './middleware/error'
 import { getUserFromSession } from './services/auth'
 import { join } from 'path'
@@ -1154,6 +1155,8 @@ const startServer = async () => {
       .use(quotesRoutes)
       // Add Stripe routes
       .use(createStripeRoutes())
+      // Add onboarding routes
+      .use(createOnboardingRoutes())
       // In production, serve the frontend static files
       .use(process.env.NODE_ENV === 'production' 
         ? async (app) => {
