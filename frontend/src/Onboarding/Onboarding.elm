@@ -22,7 +22,7 @@ import Onboarding.Steps.CompanyDetails as CompanyDetails
 import Onboarding.Steps.EnterpriseForm as EnterpriseForm
 import Onboarding.Steps.LicensingSettings as LicensingSettings
 import Onboarding.Steps.Payment as Payment
-import Onboarding.Steps.PlanSelection as PlanSelection
+import Onboarding.Steps.PlanSelection as PlanSelection exposing (fetchSubscriptionTiers)
 import Onboarding.Steps.UserDetails as UserDetails
 
 
@@ -376,13 +376,26 @@ update msg model =
                         ( updatedEnterpriseFormModel, enterpriseFormCmd, outMsg ) =
                             EnterpriseForm.update subMsg enterpriseFormModel
 
-                        navigationCmd =
-                            case outMsg of
-                                EnterpriseForm.BackToPlanSelection ->
-                                    Nav.pushUrl model.key (getStepUrl PlanSelectionStep)
+                        -- Check if we're navigating back to plan selection
+                        isNavigatingBackToPlans =
+                            outMsg == EnterpriseForm.BackToPlanSelection
 
-                                _ ->
-                                    Cmd.none
+                        -- Navigate back to plan selection if requested
+                        navigationCmd =
+                            if isNavigatingBackToPlans then
+                                Nav.pushUrl model.key (getStepUrl PlanSelectionStep)
+
+                            else
+                                Cmd.none
+
+                        -- Create a command to reload plan data if we're navigating back
+                        reloadPlanDataCmd =
+                            if isNavigatingBackToPlans then
+                                -- Fetch subscription tiers again to ensure they're loaded
+                                Cmd.map PlanSelectionMsg fetchSubscriptionTiers
+
+                            else
+                                Cmd.none
 
                         outCmd =
                             case outMsg of
@@ -400,6 +413,7 @@ update msg model =
                         [ Cmd.map EnterpriseFormMsg enterpriseFormCmd
                         , outCmd
                         , navigationCmd
+                        , reloadPlanDataCmd
                         ]
                     )
 

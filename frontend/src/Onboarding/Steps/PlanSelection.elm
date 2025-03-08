@@ -2,6 +2,7 @@ module Onboarding.Steps.PlanSelection exposing
     ( Model
     , Msg
     , OutMsg(..)
+    , fetchSubscriptionTiers
     , init
     , subscriptions
     , update
@@ -16,6 +17,8 @@ import Html.Events exposing (..)
 import Http
 import Json.Decode as Decode exposing (Decoder, field)
 import Json.Encode as Encode
+import Process
+import Task
 
 
 
@@ -64,7 +67,12 @@ init key orgSlug session =
       , orgSlug = orgSlug
       , session = session
       }
-    , fetchSubscriptionTiers
+    , Cmd.batch
+        [ fetchSubscriptionTiers
+        , -- Add a timeout to clear loading state after 5 seconds
+          Process.sleep 5000
+            |> Task.perform (\_ -> LoadingTimeout)
+        ]
     )
 
 
@@ -79,6 +87,7 @@ type Msg
     | GotTiers (Result Http.Error (List SubscriptionTier))
     | SubscriptionSaved (Result Http.Error SubscriptionResponse)
     | NextStepClicked
+    | LoadingTimeout
     | NoOp
 
 
@@ -177,6 +186,17 @@ update msg model =
                     , Cmd.none
                     , ShowError "Please select a plan"
                     )
+
+        LoadingTimeout ->
+            -- If we're still loading after the timeout, clear the loading state
+            if model.isLoading then
+                ( { model | isLoading = False, error = Just "Could not load subscription tiers. Please try refreshing the page." }
+                , Cmd.none
+                , ShowError "Could not load subscription tiers. Please try refreshing the page."
+                )
+
+            else
+                ( model, Cmd.none, NoOutMsg )
 
         NoOp ->
             ( model, Cmd.none, NoOutMsg )
@@ -286,10 +306,13 @@ viewPlanOption id name price features agentLimit contactLimit selectedPlan =
                     div [ class "text-gray-600" ]
                         [ text
                             (if id == "pro" then
-                                "Starts with up to " ++ String.fromInt agentLimit ++ " agent seats"
+                                "5+ agent seats"
 
                              else if agentLimit == -1 then
                                 "Unlimited agent seats"
+
+                             else if agentLimit == 1 then
+                                "1 agent seat"
 
                              else
                                 "Up to " ++ String.fromInt agentLimit ++ " agent seats"
@@ -297,15 +320,19 @@ viewPlanOption id name price features agentLimit contactLimit selectedPlan =
                         ]
 
                   else
-                    text ""
+                    div [ class "text-gray-600" ]
+                        [ text "Custom agent seats" ]
                 , if id /= "enterprise" then
                     div [ class "text-gray-600" ]
                         [ text
                             (if id == "pro" then
-                                "Starts with up to " ++ String.fromInt contactLimit ++ " clients"
+                                "5,000+ clients"
 
                              else if contactLimit == -1 then
                                 "Unlimited clients"
+
+                             else if contactLimit == 1000 then
+                                "1,000 clients"
 
                              else
                                 "Up to " ++ String.fromInt contactLimit ++ " clients"
@@ -313,7 +340,8 @@ viewPlanOption id name price features agentLimit contactLimit selectedPlan =
                         ]
 
                   else
-                    text ""
+                    div [ class "text-gray-600" ]
+                        [ text "Unlimited clients" ]
                 ]
             , div [ class "mt-4" ]
                 [ p [ class "text-sm font-medium text-gray-900 mb-2" ] [ text "Features:" ]
