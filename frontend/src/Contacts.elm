@@ -1902,13 +1902,13 @@ viewContactChoiceModal =
                 , onClick CloseModal
                 ]
                 [ viewIcon "M6 18L18 6M6 6l12 12" ]
-            , h2 [ class "text-2xl font-semibold text-gray-900 mb-8" ]
+            , h2 [ class "text-2xl font-semibold text-gray-900 mb-2" ]
                 [ text "Add Contacts" ]
             , div [ class "text-sm text-gray-600 mb-8" ]
                 [ text "Select how you want to add your new contacts." ]
             , div [ class "grid grid-cols-2 gap-6" ]
                 [ div
-                    [ class "p-6 border-2 border-gray-200 rounded-lg hover:border-purple-400 cursor-pointer transition-colors"
+                    [ class "p-6 border-2 border-gray-200 rounded-lg hover:border-[#03045E] hover:bg-[#03045E]/5 cursor-pointer transition-colors"
                     , onClick ChooseSingleContact
                     ]
                     [ div [ class "flex items-center mb-4" ]
@@ -1921,7 +1921,7 @@ viewContactChoiceModal =
                         [ text "Individual Form" ]
                     ]
                 , div
-                    [ class "p-6 border-2 border-gray-200 rounded-lg hover:border-purple-400 cursor-pointer transition-colors"
+                    [ class "p-6 border-2 border-gray-200 rounded-lg hover:border-[#03045E] hover:bg-[#03045E]/5 cursor-pointer transition-colors"
                     , onClick ChooseMultipleContacts
                     ]
                     [ div [ class "flex items-center mb-4" ]
@@ -1949,7 +1949,8 @@ viewAddModal model isSubmitting =
                 [ viewIcon "M6 18L18 6M6 6l12 12" ]
             , h2 [ class "text-2xl font-semibold text-gray-900 mb-8" ]
                 [ text "Add New Client" ]
-            , viewContactForm model model.addForm UpdateAddForm SubmitAddForm "Add Client" isSubmitting
+            , div [ class "flex-grow overflow-y-auto pr-2" ]
+                [ viewContactForm model model.addForm UpdateAddForm SubmitAddForm "Add Client" isSubmitting ]
             ]
         ]
 
