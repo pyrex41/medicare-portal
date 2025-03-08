@@ -757,6 +757,7 @@ view model =
         [ if model.isSetup then
             SetupLayout.view SetupLayout.OrganizationSetup
                 (model.planType == "basic")
+                5
                 [ if model.isLoading then
                     viewLoading
 

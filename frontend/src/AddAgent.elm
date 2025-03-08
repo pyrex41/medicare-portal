@@ -305,6 +305,8 @@ view model =
             -- Show setup UI with sidebar
             SetupLayout.view SetupLayout.AgentSetup
                 (model.planType == "basic")
+                4
+                -- Using 4 for AddAgent as it's typically the 5th step (0-indexed)
                 [ div [ class "max-w-3xl mx-auto pb-24" ]
                     [ viewSetupHeader model
                     , viewAgentsList model

@@ -507,6 +507,7 @@ view model =
         [ div []
             [ SetupLayout.view (mapStepToSetupStep model.step)
                 model.isBasicPlan
+                (getStepNumber model.step)
                 [ div [ class "max-w-3xl mx-auto" ]
                     [ case model.error of
                         Just errorMsg ->
@@ -675,9 +676,6 @@ encodeOnboardingData model =
         phone =
             model.userDetailsModel.phone
 
-        bookingLink =
-            model.userDetailsModel.bookingLink
-
         -- Company details
         agencyName =
             model.companyDetailsModel.agencyName
@@ -731,7 +729,6 @@ encodeOnboardingData model =
                 , ( "lastName", Encode.string lastName )
                 , ( "email", Encode.string email )
                 , ( "phone", Encode.string phone )
-                , ( "bookingLink", Encode.string bookingLink )
                 ]
           )
         , ( "company"
@@ -850,3 +847,32 @@ getStepUrl step =
                 EnterpriseFormStep ->
                     "enterprise"
            )
+
+
+
+-- Helper function to convert the step to a number for progress tracking
+
+
+getStepNumber : Step -> Int
+getStepNumber step =
+    case step of
+        PlanSelectionStep ->
+            0
+
+        UserDetailsStep ->
+            1
+
+        CompanyDetailsStep ->
+            2
+
+        LicensingSettingsStep ->
+            3
+
+        AddAgentsStep ->
+            4
+
+        PaymentStep ->
+            5
+
+        EnterpriseFormStep ->
+            6

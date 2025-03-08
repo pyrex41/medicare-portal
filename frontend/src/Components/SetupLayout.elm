@@ -19,10 +19,10 @@ type alias StepInfo =
     }
 
 
-view : SetupStep -> Bool -> List (Html msg) -> Html msg
-view currentStep isBasicPlan content =
+view : SetupStep -> Bool -> Int -> List (Html msg) -> Html msg
+view currentStep isBasicPlan stepNumber content =
     div [ class "min-h-screen bg-gray-50 flex" ]
-        [ viewProgressIndicator currentStep isBasicPlan
+        [ viewProgressIndicator currentStep isBasicPlan stepNumber
         , div [ class "flex-1 ml-[280px] pb-24" ]
             [ div [ class "max-w-3xl mx-auto py-6 px-4 sm:px-6 lg:px-8" ]
                 content
@@ -30,8 +30,8 @@ view currentStep isBasicPlan content =
         ]
 
 
-viewProgressIndicator : SetupStep -> Bool -> Html msg
-viewProgressIndicator currentStep isBasicPlan =
+viewProgressIndicator : SetupStep -> Bool -> Int -> Html msg
+viewProgressIndicator currentStep isBasicPlan stepNumber =
     let
         basicSteps =
             [ { step = PlanSelection
@@ -101,12 +101,12 @@ viewProgressIndicator currentStep isBasicPlan =
             else
                 multiAgentSteps
 
-        makeStep info =
+        makeStep index info =
             { icon = info.icon
             , title = info.title
             , description = info.description
-            , isCompleted = isStepComplete currentStep info.step
-            , isActive = info.step == currentStep
+            , isCompleted = isStepComplete currentStep info.step index stepNumber
+            , isActive = info.step == currentStep && index == stepNumber
             }
 
         -- Calculate progress percentage for the progress bar
@@ -119,10 +119,10 @@ viewProgressIndicator currentStep isBasicPlan =
                     0
 
                 OrganizationSetup ->
-                    1
+                    stepNumber
 
                 AgentSetup ->
-                    2
+                    stepNumber
 
         progressPercentage =
             String.fromInt (min 100 (ceiling (toFloat (currentStepIndex * 100) / toFloat (totalSteps - 1))))
@@ -143,13 +143,13 @@ viewProgressIndicator currentStep isBasicPlan =
                 ]
     in
     div []
-        [ ProgressIndicator.view (List.map makeStep steps)
+        [ ProgressIndicator.view (List.indexedMap makeStep steps)
         , progressBar
         ]
 
 
-isStepComplete : SetupStep -> SetupStep -> Bool
-isStepComplete currentStep step =
+isStepComplete : SetupStep -> SetupStep -> Int -> Int -> Bool
+isStepComplete currentStep step stepIndex currentStepNumber =
     case ( currentStep, step ) of
         ( PlanSelection, _ ) ->
             -- When on plan selection, no steps are completed
@@ -158,6 +158,10 @@ isStepComplete currentStep step =
         ( OrganizationSetup, PlanSelection ) ->
             -- When on org settings, plan selection is completed
             True
+
+        ( OrganizationSetup, OrganizationSetup ) ->
+            -- For org setup steps, complete those before the current one
+            stepIndex < currentStepNumber
 
         ( OrganizationSetup, _ ) ->
             -- Other steps aren't completed yet

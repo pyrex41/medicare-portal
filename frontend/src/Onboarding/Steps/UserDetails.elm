@@ -30,7 +30,6 @@ type alias Model =
     , lastName : String
     , email : String
     , phone : String
-    , bookingLink : String
     , isLoading : Bool
     , error : Maybe String
     , key : Nav.Key
@@ -52,7 +51,6 @@ init key orgSlug =
       , lastName = ""
       , email = ""
       , phone = ""
-      , bookingLink = ""
       , isLoading = False
       , error = Nothing
       , key = key
@@ -78,7 +76,6 @@ type Msg
     | UpdateLastName String
     | UpdateEmail String
     | UpdatePhone String
-    | UpdateBookingLink String
     | NextStepClicked
     | GotUserDetails (Result Http.Error UserDetailsResponse)
     | UserDetailsSaved (Result Http.Error SignupResponse)
@@ -99,7 +96,6 @@ type alias UserDetailsResponse =
     , lastName : String
     , email : String
     , phone : String
-    , bookingLink : String
     }
 
 
@@ -143,9 +139,6 @@ update msg model =
         UpdatePhone value ->
             -- Store only the digits, but display formatted version
             ( { model | phone = String.filter Char.isDigit value }, Cmd.none, NoOutMsg )
-
-        UpdateBookingLink value ->
-            ( { model | bookingLink = value }, Cmd.none, NoOutMsg )
 
         EmailBlurred ->
             if String.isEmpty (String.trim model.email) then
@@ -223,7 +216,6 @@ update msg model =
                         , lastName = response.lastName
                         , email = response.email
                         , phone = response.phone
-                        , bookingLink = response.bookingLink
                         , isLoading = False
                       }
                     , Cmd.none
@@ -346,24 +338,6 @@ view model =
                                     ]
                                     []
                                 ]
-                            ]
-                        , div []
-                            [ label [ class "block text-sm font-medium text-gray-700" ]
-                                [ text "Booking Link (Optional)" ]
-                            , div [ class "mt-1 flex rounded-md shadow-sm" ]
-                                [ span [ class "inline-flex items-center px-3 rounded-l-md border border-r-0 border-gray-300 bg-gray-50 text-gray-500 text-sm" ]
-                                    [ text "URL" ]
-                                , input
-                                    [ type_ "text"
-                                    , class "flex-1 min-w-0 block w-full px-3 py-2 rounded-none rounded-r-md border-gray-300 focus:ring-blue-500 focus:border-blue-500"
-                                    , value model.bookingLink
-                                    , onInput UpdateBookingLink
-                                    , placeholder "https://calendly.com/yourusername"
-                                    ]
-                                    []
-                                ]
-                            , p [ class "mt-2 text-sm text-gray-500" ]
-                                [ text "Add your Calendly or other booking link to make it easy for clients to schedule with you." ]
                             ]
                         ]
                     ]
@@ -658,13 +632,11 @@ handleEmailCheckResponse response =
 userDetailsDecoder : Decode.Decoder UserDetailsResponse
 userDetailsDecoder =
     Decode.field "user"
-        (Decode.map5 UserDetailsResponse
+        (Decode.map4 UserDetailsResponse
             (Decode.field "firstName" Decode.string)
             (Decode.field "lastName" Decode.string)
             (Decode.field "email" Decode.string)
             (Decode.field "phone" Decode.string)
-            (Decode.succeed "")
-         -- bookingLink is not included in /api/me response
         )
 
 

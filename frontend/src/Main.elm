@@ -14,7 +14,7 @@ import Dashboard
 import Debug
 import Eligibility
 import Home
-import Html exposing (Html, button, div, h1, img, nav, p, text)
+import Html exposing (Html, a, button, div, h1, img, nav, p, text)
 import Html.Attributes exposing (alt, class, href, src)
 import Html.Events exposing (onClick, stopPropagationOn)
 import Http
@@ -1209,8 +1209,11 @@ viewNavHeader model =
             [ div [ class "flex justify-between h-16" ]
                 [ div [ class "flex items-center space-x-4" ]
                     [ div [ class "shrink-0 flex items-center" ]
-                        [ button
-                            [ onClick (InternalLinkClicked "/") ]
+                        [ a
+                            [ href "#"
+                            , onClick (InternalLinkClicked "/")
+                            , class "cursor-pointer"
+                            ]
                             [ img
                                 [ src "/images/medicare-max-logo.png"
                                 , class "h-8 w-auto mr-8"

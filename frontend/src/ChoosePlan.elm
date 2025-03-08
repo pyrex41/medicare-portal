@@ -501,6 +501,8 @@ view model =
                     _ ->
                         False
                 )
+                0
+                -- Using 0 for PlanSelection as it's the first step
                 [ if model.isLoading then
                     viewLoading
 

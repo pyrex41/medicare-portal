@@ -1,5 +1,6 @@
 module Login exposing (Model, Msg, init, subscriptions, update, view)
 
+import Basics
 import Browser.Navigation as Nav
 import Html exposing (..)
 import Html.Attributes exposing (..)
@@ -7,6 +8,7 @@ import Html.Events exposing (onClick, onInput, onSubmit)
 import Http
 import Json.Decode as Decode
 import Json.Encode as Encode
+import Time
 
 
 type alias Model =
@@ -14,6 +16,7 @@ type alias Model =
     , status : Status
     , isLoggedIn : Bool
     , key : Nav.Key
+    , resendAvailableAt : Maybe Time.Posix
     }
 
 
@@ -41,6 +44,8 @@ type Msg
     | GotSessionCheck (Result Http.Error SessionCheckResponse)
     | LogOut
     | NoOp
+    | CheckResendAvailable Time.Posix
+    | ResendLink
 
 
 init : Nav.Key -> Bool -> ( Model, Cmd Msg )
@@ -49,6 +54,7 @@ init key isLoggedIn =
       , status = Idle
       , isLoggedIn = isLoggedIn
       , key = key
+      , resendAvailableAt = Nothing
       }
     , Cmd.none
     )
@@ -87,7 +93,16 @@ update msg model =
 
                     else
                         -- If no valid session, proceed with login
-                        ( model
+                        let
+                            -- Set resend cooldown to 60 seconds from now
+                            now =
+                                Time.millisToPosix 0
+
+                            -- Placeholder, would normally use actual current time
+                            cooldownTime =
+                                Time.millisToPosix (Time.posixToMillis now + 60000)
+                        in
+                        ( { model | resendAvailableAt = Just cooldownTime }
                         , Http.post
                             { url = "/api/auth/login"
                             , body = Http.jsonBody (encodeLoginBody model.email)
@@ -97,7 +112,16 @@ update msg model =
 
                 Err _ ->
                     -- On error checking session, proceed with normal login flow
-                    ( model
+                    let
+                        -- Set resend cooldown to 60 seconds from now
+                        now =
+                            Time.millisToPosix 0
+
+                        -- Placeholder, would normally use actual current time
+                        cooldownTime =
+                            Time.millisToPosix (Time.posixToMillis now + 60000)
+                    in
+                    ( { model | resendAvailableAt = Just cooldownTime }
                     , Http.post
                         { url = "/api/auth/login"
                         , body = Http.jsonBody (encodeLoginBody model.email)
@@ -138,6 +162,21 @@ update msg model =
                     , Cmd.none
                     )
 
+        CheckResendAvailable currentTime ->
+            case model.resendAvailableAt of
+                Just availableAt ->
+                    if Time.posixToMillis currentTime >= Time.posixToMillis availableAt then
+                        ( { model | resendAvailableAt = Nothing }, Cmd.none )
+
+                    else
+                        ( model, Cmd.none )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        ResendLink ->
+            update SubmitForm model
+
 
 viewLoginForm : Model -> { title : String, body : List (Html Msg) }
 viewLoginForm model =
@@ -146,7 +185,7 @@ viewLoginForm model =
         [ div [ class "min-h-screen bg-gray-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8" ]
             [ div [ class "sm:mx-auto sm:w-full sm:max-w-md" ]
                 [ h2 [ class "mt-6 text-center text-3xl font-extrabold text-gray-900" ]
-                    [ text "Sign in to your account" ]
+                    [ text "Welcome Back To MedicareMax" ]
                 ]
             , div [ class "mt-8 sm:mx-auto sm:w-full sm:max-w-md" ]
                 [ div [ class "bg-white py-8 px-4 shadow sm:rounded-lg sm:px-10" ]
@@ -175,7 +214,12 @@ viewLoginForm model =
                                 [ text "Send login link" ]
                             ]
                         ]
-                    , viewStatus model.status
+                    , viewStatus model.status model
+                    , div [ class "mt-4 text-center text-sm" ]
+                        [ text "Not Yet a MedicareMax User? "
+                        , a [ href "/signup", class "font-medium text-indigo-600 hover:text-indigo-500" ]
+                            [ text "Sign Up Here" ]
+                        ]
                     ]
                 ]
             ]
@@ -183,15 +227,17 @@ viewLoginForm model =
     }
 
 
-viewStatus : Status -> Html msg
-viewStatus status =
+viewStatus : Status -> Model -> Html Msg
+viewStatus status model =
     case status of
         LinkSent ->
             div [ class "mt-4 p-4 bg-green-50 rounded-md" ]
-                [ p [ class "text-sm text-green-700 text-center space-y-2" ]
-                    [ p [] [ text "You will receive an email if you are a registered agent." ]
-                    , p [] [ text "Check your email for the login link!" ]
+                [ p [ class "text-sm text-green-700 text-center" ]
+                    [ p [ class "mb-2" ] [ text "If your email is registered, you'll receive a login link soon." ]
+                    , p [] [ text "Check your inbox and spam folder." ]
                     ]
+                , div [ class "mt-2 text-center" ]
+                    [ viewResendLink model ]
                 ]
 
         Failed error ->
@@ -206,6 +252,37 @@ viewStatus status =
 
         _ ->
             text ""
+
+
+viewResendLink : Model -> Html Msg
+viewResendLink model =
+    case model.resendAvailableAt of
+        Just availableAt ->
+            let
+                currentTime =
+                    Time.millisToPosix 0
+
+                -- Placeholder, would normally use actual current time
+                diff =
+                    Basics.max 0 ((Time.posixToMillis availableAt - Time.posixToMillis currentTime) // 1000)
+            in
+            if diff <= 0 then
+                button
+                    [ onClick ResendLink
+                    , class "text-sm text-blue-600 hover:text-blue-800 underline"
+                    ]
+                    [ text "Resend link" ]
+
+            else
+                span [ class "text-sm text-gray-600" ]
+                    [ text ("Resend link in " ++ String.fromInt diff ++ " seconds") ]
+
+        Nothing ->
+            button
+                [ onClick ResendLink
+                , class "text-sm text-blue-600 hover:text-blue-800 underline"
+                ]
+                [ text "Resend link" ]
 
 
 encodeLoginBody : String -> Encode.Value
@@ -228,8 +305,13 @@ sessionCheckDecoder =
 
 
 subscriptions : Model -> Sub Msg
-subscriptions _ =
-    Sub.none
+subscriptions model =
+    case model.resendAvailableAt of
+        Just _ ->
+            Time.every 1000 CheckResendAvailable
+
+        Nothing ->
+            Sub.none
 
 
 view : Model -> { title : String, body : List (Html Msg) }

@@ -20,12 +20,17 @@ view steps =
             [ -- Logo
               div [ class "mb-14" ]
                 [ div [ class "flex items-center" ]
-                    [ img
-                        [ src "/images/medicare-max-logo.png"
-                        , class "h-8 w-auto"
-                        , alt "Medicare Max logo"
+                    [ a
+                        [ href "/"
+                        , class "cursor-pointer"
                         ]
-                        []
+                        [ img
+                            [ src "/images/medicare-max-logo.png"
+                            , class "h-8 w-auto"
+                            , alt "Medicare Max logo"
+                            ]
+                            []
+                        ]
                     ]
                 ]
 

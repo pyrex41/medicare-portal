@@ -15,7 +15,7 @@ import File exposing (File)
 import File.Download
 import File.Select as Select
 import Html exposing (Html, button, col, colgroup, details, div, h1, h2, h3, input, label, nav, option, p, select, span, summary, table, tbody, td, text, th, thead, tr)
-import Html.Attributes exposing (attribute, checked, class, placeholder, required, title, type_, value)
+import Html.Attributes exposing (attribute, checked, class, disabled, placeholder, required, selected, title, type_, value)
 import Html.Events exposing (on, onClick, onInput, onSubmit, preventDefaultOn, stopPropagationOn)
 import Http
 import Json.Decode as Decode exposing (Decoder, bool, int, nullable, string)
@@ -245,12 +245,28 @@ init key maybeUser =
                 Nothing ->
                     emptyFilters
 
+        -- Set default contact owner to current user if they are an agent
+        defaultOwnerId =
+            case maybeUser of
+                Just user ->
+                    if user.isAgent then
+                        Just user.id
+
+                    else
+                        Nothing
+
+                Nothing ->
+                    Nothing
+
+        initialAddForm =
+            { emptyForm | contactOwnerId = defaultOwnerId }
+
         initialModel =
             { contacts = []
             , selectedContacts = []
             , showModal = NoModal
             , searchQuery = ""
-            , addForm = emptyForm
+            , addForm = initialAddForm
             , editForm = emptyForm
             , sortColumn = Nothing
             , sortDirection = Ascending
@@ -1667,7 +1683,12 @@ viewTableRow model contact =
                 [ div [ class "h-8 w-8 rounded-full bg-purple-100 flex items-center justify-center text-sm text-purple-700 font-medium uppercase" ]
                     [ text initials ]
                 , div [ class "ml-3 text-sm text-gray-900" ]
-                    [ text (contact.firstName ++ " " ++ contact.lastName) ]
+                    [ button
+                        [ class "text-left text-gray-900 hover:text-purple-600 transition-colors duration-200"
+                        , onClick (NavigateToContact contact.id)
+                        ]
+                        [ text (contact.firstName ++ " " ++ contact.lastName) ]
+                    ]
                 ]
             ]
         , td [ class cellClass ]
@@ -1920,7 +1941,7 @@ viewContactChoiceModal =
 viewAddModal : Model -> Bool -> Html Msg
 viewAddModal model isSubmitting =
     div [ class "fixed inset-0 bg-gray-500/75 flex items-center justify-center p-8" ]
-        [ div [ class "bg-white rounded-xl p-10 max-w-5xl w-full mx-4 shadow-xl relative" ]
+        [ div [ class "bg-white rounded-xl p-10 max-w-lg w-full mx-4 shadow-xl relative overflow-y-auto flex flex-col max-h-[90vh]" ]
             [ button
                 [ class "absolute top-4 right-4 text-gray-400 hover:text-gray-600 transition-colors duration-200"
                 , onClick CloseModal
@@ -1936,7 +1957,7 @@ viewAddModal model isSubmitting =
 viewEditModal : Model -> Bool -> Html Msg
 viewEditModal model isSubmitting =
     div [ class "fixed inset-0 bg-gray-500/75 flex items-center justify-center p-8" ]
-        [ div [ class "bg-white rounded-xl p-10 max-w-5xl w-full mx-4 shadow-xl relative" ]
+        [ div [ class "bg-white rounded-xl p-10 max-w-lg w-full mx-4 shadow-xl relative overflow-y-auto flex flex-col max-h-[90vh]" ]
             [ button
                 [ class "absolute top-4 right-4 text-gray-400 hover:text-gray-600 transition-colors duration-200"
                 , onClick CloseModal
@@ -1944,7 +1965,8 @@ viewEditModal model isSubmitting =
                 [ viewIcon "M6 18L18 6M6 6l12 12" ]
             , h2 [ class "text-2xl font-semibold text-gray-900 mb-8" ]
                 [ text "Edit Client" ]
-            , viewContactForm model model.editForm UpdateEditForm SubmitEditForm "Save Changes" isSubmitting
+            , div [ class "flex-grow overflow-y-auto pr-2" ]
+                [ viewContactForm model model.editForm UpdateEditForm SubmitEditForm "Save Changes" isSubmitting ]
             ]
         ]
 
@@ -3323,7 +3345,9 @@ viewFormSelectWithValue labelText selectedValue field updateMsg options =
                 , value selectedValue
                 , onInput (updateMsg field)
                 ]
-                (List.map (\( val, txt ) -> option [ value val ] [ text txt ]) options)
+                (option [ value "", disabled True, selected (selectedValue == "") ] [ text "Select an Agent" ]
+                    :: List.map (\( val, txt ) -> option [ value val ] [ text txt ]) options
+                )
             , div [ class "absolute inset-y-0 right-0 flex items-center px-2 pointer-events-none" ]
                 [ viewIcon "M19 9l-7 7-7-7" ]
             ]
