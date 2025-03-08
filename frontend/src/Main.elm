@@ -1242,12 +1242,12 @@ viewNavHeader model =
                             ]
                         ]
                     , button
-                        [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:text-purple-600 transition-colors duration-200"
+                        [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:bg-[#DCE2E5] rounded-md transition-colors duration-200"
                         , onClick (InternalLinkClicked "/dashboard")
                         ]
                         [ text "Dashboard" ]
                     , button
-                        [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:text-purple-600 transition-colors duration-200"
+                        [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:bg-[#DCE2E5] rounded-md transition-colors duration-200"
                         , onClick (InternalLinkClicked "/contacts")
                         ]
                         [ text "Contacts" ]
@@ -1257,7 +1257,7 @@ viewNavHeader model =
                         Just user ->
                             if user.isAdmin && user.subscriptionTier /= "basic" then
                                 button
-                                    [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:text-purple-600 transition-colors duration-200"
+                                    [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:bg-[#DCE2E5] rounded-md transition-colors duration-200"
                                     , onClick (InternalLinkClicked "/add-agents")
                                     ]
                                     [ text "Manage Agents" ]
@@ -1269,7 +1269,7 @@ viewNavHeader model =
                             text ""
                     , div [ class "relative" ]
                         [ button
-                            [ class "flex items-center space-x-2 px-3 py-1.5 text-gray-700 text-sm font-medium hover:text-purple-600 transition-colors duration-200"
+                            [ class "flex items-center space-x-2 px-3 py-1.5 text-gray-700 text-sm font-medium hover:bg-[#DCE2E5] rounded-md transition-colors duration-200"
                             , onClick ToggleDropdown
                             , stopPropagationOn "mousedown" (Decode.succeed ( NoOp, True ))
                             ]
@@ -1297,16 +1297,25 @@ viewNavHeader model =
                                 ]
                                 [ if isAdmin model.currentUser then
                                     button
-                                        [ class "block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                                        , onClick (InternalLinkClicked "/settings")
+                                        [ class "block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-[#DCE2E5]"
+                                        , onClick (InternalLinkClicked "/profile")
                                         ]
-                                        [ text "Settings" ]
+                                        [ text "Profile" ]
 
                                   else
                                     text ""
                                 , if isAdmin model.currentUser then
                                     button
-                                        [ class "block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                                        [ class "block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-[#DCE2E5]"
+                                        , onClick (InternalLinkClicked "/settings")
+                                        ]
+                                        [ text "Organization Settings" ]
+
+                                  else
+                                    text ""
+                                , if isAdmin model.currentUser then
+                                    button
+                                        [ class "block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-[#DCE2E5]"
                                         , onClick (InternalLinkClicked "/add-agents")
                                         ]
                                         [ text "Agents" ]
@@ -1314,17 +1323,12 @@ viewNavHeader model =
                                   else
                                     text ""
                                 , button
-                                    [ class "block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                                    [ class "block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-[#DCE2E5]"
                                     , onClick (InternalLinkClicked "/change-plan")
                                     ]
                                     [ text "Change Plan" ]
                                 , button
-                                    [ class "block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                                    , onClick (InternalLinkClicked "/profile")
-                                    ]
-                                    [ text "Profile" ]
-                                , button
-                                    [ class "block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                                    [ class "block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-[#DCE2E5]"
                                     , onClick InitiateLogout
                                     ]
                                     [ text "Log out" ]

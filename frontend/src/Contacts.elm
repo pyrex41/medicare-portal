@@ -1411,7 +1411,7 @@ view model =
                 , statsCard "Quotes Created" "385"
                 ]
             , -- Table Container with overflow handling
-              div [ class "overflow-x-auto" ]
+              div [ class "overflow-x-auto max-w-7xl mx-auto" ]
                 [ -- Contacts header and filters moved below the stat cards but above the table
                   div [ class "flex justify-between items-center mb-6" ]
                     [ div [ class "flex items-center gap-4" ]
@@ -1484,7 +1484,7 @@ view model =
                             [ text "+ Add Contact" ]
                         ]
                     ]
-                , table [ class "min-w-full border-separate border-spacing-0" ]
+                , table [ class "w-full" ]
                     [ colgroup []
                         [ col [ class "w-12" ] [] -- Checkbox
                         , col [ class "w-48" ] [] -- Name
