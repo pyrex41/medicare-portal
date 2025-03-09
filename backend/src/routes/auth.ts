@@ -41,7 +41,7 @@ export function createAuthRoutes() {
         const magicLink = await auth.createMagicLink(
           email,
           'default', // Default organization for now
-          { redirectUrl: '/dashboard' }
+          { redirectUrl: '/walkthrough' }
         );
 
         // Always send the email, but also log in development
@@ -131,10 +131,10 @@ export function createAuthRoutes() {
 
         const verificationResult = {
           success: true,
-          redirectUrl: result.redirectUrl || '/dashboard',
+          redirectUrl: '/walkthrough',  // Always redirect to walkthrough page instead of dashboard
           session: sessionId,
           email: result.email,
-          orgSlug: user.organization_slug
+          orgSlug: user.organization_id.toString()  // Use organization_id since organization_slug may not exist
         };
         logger.info(`Sending verification response: ${JSON.stringify(verificationResult)}`);
         return verificationResult;

@@ -24,6 +24,7 @@ import Json.Encode as E
 import Login
 import Logout
 import Onboarding.Onboarding as Onboarding
+import Process
 import Profile
 import Quote
 import Schedule
@@ -31,6 +32,7 @@ import Settings
 import Signup
 import Svg exposing (path, svg)
 import Svg.Attributes exposing (d, fill, viewBox)
+import Task
 import TempLanding
 import Url exposing (Url)
 import Url.Parser as Parser exposing ((</>), (<?>), Parser, map, oneOf, s, string, top)
@@ -231,6 +233,7 @@ type Msg
     | ShowDropdown
     | HideDropdown
     | ToggleStatusBanner
+    | PerformRedirect String
 
 
 type alias Flags =
@@ -322,9 +325,22 @@ init flags url key =
                 { url = "/api/auth/session"
                 , expect = Http.expectJson GotSession sessionDecoder
                 }
+
+        -- Force updatePage after a delay to avoid being stuck on loading screen
+        forcePageUpdate =
+            Task.perform (\_ -> PerformRedirect (Url.toString url)) (Process.sleep 3000)
+
+        cmds =
+            case initialSession of
+                Verified _ ->
+                    -- If we have a session, also fetch the current user immediately
+                    Cmd.batch [ checkSession, fetchCurrentUser, forcePageUpdate ]
+
+                _ ->
+                    Cmd.batch [ checkSession, forcePageUpdate ]
     in
     ( model
-    , checkSession
+    , cmds
     )
 
 
@@ -687,16 +703,18 @@ update msg model =
                                             , accountStatus = Nothing
                                             }
                                     , isSetup = isInSetup
+                                    , page = LoadingPage -- Force to loading page to prevent UI flicker during redirection
                                 }
                         in
                         ( newModel
                         , Cmd.batch
-                            [ case model.intendedDestination of
+                            [ -- Instead of direct navigation, use a message to redirect
+                              case model.intendedDestination of
                                 Just destination ->
-                                    Nav.replaceUrl model.key destination
+                                    Task.perform PerformRedirect (Task.succeed destination)
 
                                 Nothing ->
-                                    Nav.replaceUrl model.key response.redirectUrl
+                                    Task.perform PerformRedirect (Task.succeed response.redirectUrl)
                             , fetchCurrentUser
                             ]
                         )
@@ -706,6 +724,10 @@ update msg model =
 
                 Err error ->
                     ( model, Nav.pushUrl model.key "/login" )
+
+        PerformRedirect url ->
+            -- Navigate to the specified URL
+            ( model, Nav.pushUrl model.key url )
 
         GotSession result ->
             case result of
@@ -740,10 +762,13 @@ update msg model =
                                     , currentUser = Just user
                                     , isSetup = isInSetup
                                 }
+
+                            -- Explicitly fetch user information directly, not through updatePage
+                            _ =
+                                Debug.log "Directly calling fetchCurrentUser in GotSession" {}
                         in
-                        -- Now that we have session info, update page without calling fetchCurrentUser right away
-                        -- The page-specific logic will determine if we need to call fetchCurrentUser
-                        updatePage model.url ( newModel, Cmd.none )
+                        Cmd.batch [ fetchCurrentUser, updatePage model.url ( newModel, Cmd.none ) |> Tuple.second ]
+                            |> (\cmd -> ( newModel, cmd ))
 
                     else
                         let
@@ -875,25 +900,11 @@ update msg model =
             case model.page of
                 DashboardPage pageModel ->
                     let
-                        dashboardFlags =
-                            { isPostPayment =
-                                case
-                                    Parser.parse
-                                        (Parser.s "dashboard" <?> Query.string "payment_success")
-                                        model.url
-                                of
-                                    Just (Just "true") ->
-                                        Just True
-
-                                    _ ->
-                                        Nothing
-                            }
-
-                        ( dashboardModel, dashboardCmd ) =
-                            Dashboard.init dashboardFlags
+                        ( newPageModel, newCmd ) =
+                            Dashboard.update subMsg pageModel
                     in
-                    ( { model | page = DashboardPage dashboardModel }
-                    , Cmd.map DashboardMsg dashboardCmd
+                    ( { model | page = DashboardPage newPageModel }
+                    , Cmd.map DashboardMsg newCmd
                     )
 
                 _ ->
@@ -905,12 +916,15 @@ update msg model =
                     case response.user of
                         Just user ->
                             let
+                                _ =
+                                    Debug.log "Received user from API" user
+
                                 currentUser =
                                     Just
                                         { id = user.id
                                         , email = user.email
-                                        , isAdmin = user.isAdmin
-                                        , isAgent = user.isAgent
+                                        , isAdmin = Debug.log "Setting isAdmin to" user.isAdmin
+                                        , isAgent = Debug.log "Setting isAgent to" user.isAgent
                                         , organizationSlug = user.organizationSlug
                                         , organizationId = user.organizationId
                                         , firstName = user.firstName
@@ -926,12 +940,32 @@ update msg model =
                                 cmd =
                                     fetchAccountStatus user.organizationSlug
                             in
-                            updatePage model.url ( newModel, cmd )
+                            -- Check if we were already on the right page with the right data
+                            -- Only update the page if something meaningful has changed
+                            case model.currentUser of
+                                Just existingUser ->
+                                    if existingUser.id == user.id && existingUser.organizationSlug == user.organizationSlug then
+                                        -- We already have the same user, just update the model without triggering updatePage
+                                        ( newModel, cmd )
+
+                                    else
+                                        -- User has changed, update the page
+                                        updatePage model.url ( newModel, cmd )
+
+                                Nothing ->
+                                    -- We didn't have a user before, update the page
+                                    updatePage model.url ( newModel, cmd )
 
                         Nothing ->
+                            -- No user data, but we should still update the page to avoid being stuck
                             updatePage model.url ( model, Cmd.none )
 
                 Err error ->
+                    -- Error retrieving user data, but we should still update the page to avoid being stuck
+                    let
+                        _ =
+                            Debug.log "Error retrieving user data" error
+                    in
                     updatePage model.url ( model, Cmd.none )
 
         GotAccountStatus result ->
@@ -946,16 +980,20 @@ update msg model =
                                         (\user ->
                                             { user | accountStatus = Just response.status }
                                         )
+
+                            updatedModel =
+                                { model | currentUser = updatedUser }
                         in
-                        ( { model | currentUser = updatedUser }
-                        , Cmd.none
-                        )
+                        -- Now that we have all data (session, user, account status), update the page
+                        updatePage model.url ( updatedModel, Cmd.none )
 
                     else
                         ( model, Cmd.none )
 
                 Err _ ->
-                    ( model, Cmd.none )
+                    -- Even if there's an error getting account status, we should still update the page
+                    -- rather than staying on the loading screen
+                    updatePage model.url ( model, Cmd.none )
 
         CloseStatusBanner ->
             ( { model | showStatusBanner = False }
@@ -1529,14 +1567,14 @@ userDecoder =
         |> Pipeline.required "email" Decode.string
         |> Pipeline.required "is_admin"
             (Decode.oneOf
-                [ Decode.bool
-                , Decode.map (\n -> n == 1) Decode.int
+                [ Decode.bool |> Decode.map (\val -> Debug.log "is_admin as bool" val)
+                , Decode.int |> Decode.map (\n -> Debug.log "is_admin as int" n == 1)
                 ]
             )
         |> Pipeline.required "is_agent"
             (Decode.oneOf
-                [ Decode.bool
-                , Decode.map (\n -> n == 1) Decode.int
+                [ Decode.bool |> Decode.map (\val -> Debug.log "is_agent as bool" val)
+                , Decode.int |> Decode.map (\n -> Debug.log "is_agent as int" n == 1)
                 ]
             )
         |> Pipeline.required "organization_slug" Decode.string
@@ -1736,14 +1774,15 @@ updatePage url ( model, cmd ) =
                                 |> Debug.log "adminRedirect"
 
                         -- Determine if we should make authenticated requests based on session state
+                        -- Only fetch user data if we have a verified session AND don't already have user info
                         authCmd =
-                            case model.session of
-                                Verified _ ->
-                                    -- Only fetch user data if we have a verified session
+                            case ( model.session, model.currentUser ) of
+                                ( Verified _, Nothing ) ->
+                                    -- Only fetch user data if we have a verified session but no user data
                                     fetchCurrentUser
 
                                 _ ->
-                                    -- Don't make authenticated requests if no session
+                                    -- Don't make authenticated requests if no session or already have user data
                                     Cmd.none
                     in
                     case adminRedirect of
@@ -1765,11 +1804,23 @@ updatePage url ( model, cmd ) =
                                     | intendedDestination = Just (Url.toString url)
                                     , page = LoginPage (Login.init modelWithUpdatedSetup.key False url |> Tuple.first)
                                   }
-                                , Nav.pushUrl modelWithUpdatedSetup.key "/login"
+                                , if String.contains "/login" (Url.toString url) then
+                                    -- Already on login page, don't redirect
+                                    Cmd.none
+
+                                  else
+                                    Nav.pushUrl modelWithUpdatedSetup.key "/login"
                                 )
 
                             else if needsSetup then
-                                redirectToSetupStep modelWithUpdatedSetup
+                                -- Check if we're already on a setup route to prevent redirect loops
+                                case route of
+                                    SetupRoute _ ->
+                                        -- Already on a setup route, just update the page
+                                        ( modelWithUpdatedSetup, authCmd )
+
+                                    _ ->
+                                        redirectToSetupStep modelWithUpdatedSetup
 
                             else
                                 case route of
@@ -1872,22 +1923,113 @@ updatePage url ( model, cmd ) =
                                         ( modelWithUpdatedSetup, authCmd )
 
                                     ProtectedRoute ContactsRoute ->
-                                        ( modelWithUpdatedSetup, authCmd )
+                                        let
+                                            -- Convert Main.elm User to Contacts.elm User format
+                                            contactsUser =
+                                                modelWithUpdatedSetup.currentUser
+                                                    |> Maybe.map
+                                                        (\user ->
+                                                            { id = String.toInt user.id |> Maybe.withDefault 0
+                                                            , email = user.email
+                                                            , firstName = user.firstName
+                                                            , lastName = user.lastName
+                                                            , isAdmin = user.isAdmin
+                                                            , isAgent = user.isAgent
+                                                            , organizationId = String.toInt user.organizationId |> Maybe.withDefault 0
+                                                            , isActive = True -- Assume active
+                                                            , phone = "" -- Default empty
+                                                            , carriers = [] -- Default empty
+                                                            , stateLicenses = [] -- Default empty
+                                                            }
+                                                        )
+
+                                            ( contactsModel, contactsCmd ) =
+                                                Contacts.init modelWithUpdatedSetup.key contactsUser
+                                        in
+                                        ( { modelWithUpdatedSetup | page = ContactsPage contactsModel }
+                                        , Cmd.batch
+                                            [ Cmd.map ContactsMsg contactsCmd
+                                            , authCmd
+                                            ]
+                                        )
 
                                     ProtectedRoute ProfileRoute ->
-                                        ( modelWithUpdatedSetup, authCmd )
+                                        let
+                                            ( profileModel, profileCmd ) =
+                                                Profile.init ()
+                                        in
+                                        ( { modelWithUpdatedSetup | page = ProfilePage profileModel }
+                                        , Cmd.batch
+                                            [ Cmd.map ProfileMsg profileCmd
+                                            , authCmd
+                                            ]
+                                        )
 
                                     ProtectedRoute TempLandingRoute ->
-                                        ( modelWithUpdatedSetup, authCmd )
+                                        let
+                                            ( tempLandingModel, tempLandingCmd ) =
+                                                TempLanding.init ()
+                                        in
+                                        ( { modelWithUpdatedSetup | page = TempLandingPage tempLandingModel }
+                                        , Cmd.batch
+                                            [ Cmd.map TempLandingMsg tempLandingCmd
+                                            , authCmd
+                                            ]
+                                        )
 
-                                    ProtectedRoute (ContactRoute _) ->
-                                        ( modelWithUpdatedSetup, authCmd )
+                                    ProtectedRoute (ContactRoute id) ->
+                                        let
+                                            ( contactModel, contactCmd ) =
+                                                Contact.init modelWithUpdatedSetup.key id
+                                        in
+                                        ( { modelWithUpdatedSetup | page = ContactPage contactModel }
+                                        , Cmd.batch
+                                            [ Cmd.map ContactMsg contactCmd
+                                            , authCmd
+                                            ]
+                                        )
 
                                     ProtectedRoute ChangePlanRoute ->
-                                        ( modelWithUpdatedSetup, authCmd )
+                                        let
+                                            ( changePlanModel, changePlanCmd ) =
+                                                ChangePlan.init
+                                                    { key = modelWithUpdatedSetup.key
+                                                    , session = extractSession modelWithUpdatedSetup.session
+                                                    , orgSlug = modelWithUpdatedSetup.currentUser |> Maybe.map .organizationSlug |> Maybe.withDefault ""
+                                                    }
+                                        in
+                                        ( { modelWithUpdatedSetup | page = ChangePlanPage changePlanModel }
+                                        , Cmd.batch
+                                            [ Cmd.map ChangePlanMsg changePlanCmd
+                                            , authCmd
+                                            ]
+                                        )
 
                                     ProtectedRoute DashboardRoute ->
-                                        ( modelWithUpdatedSetup, authCmd )
+                                        let
+                                            dashboardFlags =
+                                                { isPostPayment =
+                                                    case
+                                                        Parser.parse
+                                                            (Parser.s "dashboard" <?> Query.string "payment_success")
+                                                            url
+                                                    of
+                                                        Just (Just "true") ->
+                                                            Just True
+
+                                                        _ ->
+                                                            Nothing
+                                                }
+
+                                            ( dashboardModel, dashboardCmd ) =
+                                                Dashboard.init dashboardFlags
+                                        in
+                                        ( { modelWithUpdatedSetup | page = DashboardPage dashboardModel }
+                                        , Cmd.batch
+                                            [ Cmd.map DashboardMsg dashboardCmd
+                                            , authCmd
+                                            ]
+                                        )
 
                                     ProtectedRoute WalkthroughRoute ->
                                         let
@@ -1914,13 +2056,170 @@ updatePage url ( model, cmd ) =
                                         )
 
                                     AdminRoute SettingsRoute ->
-                                        ( modelWithUpdatedSetup, authCmd )
+                                        let
+                                            -- Convert Main.elm User to Settings.elm CurrentUser format
+                                            settingsUser =
+                                                modelWithUpdatedSetup.currentUser
+                                                    |> Maybe.map
+                                                        (\user ->
+                                                            { id = user.id
+                                                            , email = user.email
+                                                            , isAdmin = user.isAdmin
+                                                            , isAgent = user.isAgent
+                                                            , organizationSlug = user.organizationSlug
+                                                            , organizationId = user.organizationId
+                                                            }
+                                                        )
+
+                                            ( settingsModel, settingsCmd ) =
+                                                Settings.init
+                                                    { isSetup = False
+                                                    , key = modelWithUpdatedSetup.key
+                                                    , currentUser = settingsUser
+                                                    , planType =
+                                                        modelWithUpdatedSetup.currentUser
+                                                            |> Maybe.map .subscriptionTier
+                                                            |> Maybe.withDefault ""
+                                                    }
+                                        in
+                                        ( { modelWithUpdatedSetup | page = SettingsPage settingsModel }
+                                        , Cmd.batch
+                                            [ Cmd.map SettingsMsg settingsCmd
+                                            , authCmd
+                                            ]
+                                        )
 
                                     AdminRoute AgentsRoute ->
-                                        ( modelWithUpdatedSetup, authCmd )
+                                        let
+                                            -- Convert Main.elm User to AddAgent.elm CurrentUser format
+                                            addAgentUser =
+                                                modelWithUpdatedSetup.currentUser
+                                                    |> Maybe.map
+                                                        (\user ->
+                                                            { id = user.id
+                                                            , email = user.email
+                                                            , firstName = user.firstName
+                                                            , lastName = user.lastName
+                                                            , isAdmin = user.isAdmin
+                                                            , isAgent = user.isAgent
+                                                            , phone = ""
+                                                            }
+                                                        )
 
-                                    SetupRoute _ ->
-                                        ( modelWithUpdatedSetup, authCmd )
+                                            ( addAgentModel, addAgentCmd ) =
+                                                AddAgent.init
+                                                    False
+                                                    modelWithUpdatedSetup.key
+                                                    addAgentUser
+                                                    (modelWithUpdatedSetup.currentUser
+                                                        |> Maybe.map .subscriptionTier
+                                                        |> Maybe.withDefault ""
+                                                    )
+                                        in
+                                        ( { modelWithUpdatedSetup | page = AddAgentsPage addAgentModel }
+                                        , Cmd.batch
+                                            [ Cmd.map AddAgentsMsg addAgentCmd
+                                            , authCmd
+                                            ]
+                                        )
+
+                                    SetupRoute (ChoosePlanRoute progress) ->
+                                        let
+                                            orgSlug =
+                                                modelWithUpdatedSetup.currentUser
+                                                    |> Maybe.map .organizationSlug
+                                                    |> Maybe.withDefault ""
+
+                                            session =
+                                                extractSession modelWithUpdatedSetup.session
+
+                                            ( choosePlanModel, choosePlanCmd ) =
+                                                ChoosePlan.init orgSlug session modelWithUpdatedSetup.key True
+                                        in
+                                        ( { modelWithUpdatedSetup | page = ChoosePlanPage choosePlanModel }
+                                        , Cmd.batch
+                                            [ Cmd.map ChoosePlanMsg choosePlanCmd
+                                            , authCmd
+                                            ]
+                                        )
+
+                                    SetupRoute (SetupSettingsRoute progress) ->
+                                        let
+                                            -- Get plan type from progress if available, otherwise use subscription tier
+                                            planType =
+                                                progress
+                                                    |> Maybe.andThen .plan
+                                                    |> Maybe.withDefault
+                                                        (modelWithUpdatedSetup.currentUser
+                                                            |> Maybe.map .subscriptionTier
+                                                            |> Maybe.withDefault ""
+                                                        )
+
+                                            -- Convert Main.elm User to Settings.elm CurrentUser format
+                                            settingsUser =
+                                                modelWithUpdatedSetup.currentUser
+                                                    |> Maybe.map
+                                                        (\user ->
+                                                            { id = user.id
+                                                            , email = user.email
+                                                            , isAdmin = user.isAdmin
+                                                            , isAgent = user.isAgent
+                                                            , organizationSlug = user.organizationSlug
+                                                            , organizationId = user.organizationId
+                                                            }
+                                                        )
+
+                                            ( settingsModel, settingsCmd ) =
+                                                Settings.init
+                                                    { isSetup = True
+                                                    , key = modelWithUpdatedSetup.key
+                                                    , currentUser = settingsUser
+                                                    , planType = planType
+                                                    }
+                                        in
+                                        ( { modelWithUpdatedSetup | page = SettingsPage settingsModel }
+                                        , Cmd.batch
+                                            [ Cmd.map SettingsMsg settingsCmd
+                                            , authCmd
+                                            ]
+                                        )
+
+                                    SetupRoute (AddAgentsRoute progress) ->
+                                        let
+                                            -- Get plan type from progress if available, otherwise use subscription tier
+                                            planType =
+                                                progress
+                                                    |> Maybe.andThen .plan
+                                                    |> Maybe.withDefault
+                                                        (modelWithUpdatedSetup.currentUser
+                                                            |> Maybe.map .subscriptionTier
+                                                            |> Maybe.withDefault ""
+                                                        )
+
+                                            -- Convert Main.elm User to AddAgent.elm CurrentUser format
+                                            addAgentUser =
+                                                modelWithUpdatedSetup.currentUser
+                                                    |> Maybe.map
+                                                        (\user ->
+                                                            { id = user.id
+                                                            , email = user.email
+                                                            , firstName = user.firstName
+                                                            , lastName = user.lastName
+                                                            , isAdmin = user.isAdmin
+                                                            , isAgent = user.isAgent
+                                                            , phone = ""
+                                                            }
+                                                        )
+
+                                            ( addAgentModel, addAgentCmd ) =
+                                                AddAgent.init True modelWithUpdatedSetup.key addAgentUser planType
+                                        in
+                                        ( { modelWithUpdatedSetup | page = AddAgentsPage addAgentModel }
+                                        , Cmd.batch
+                                            [ Cmd.map AddAgentsMsg addAgentCmd
+                                            , authCmd
+                                            ]
+                                        )
 
                                     NotFound ->
                                         ( modelWithUpdatedSetup, Cmd.none )
@@ -1957,7 +2256,20 @@ currentUserResponseDecoder : Decoder CurrentUserResponse
 currentUserResponseDecoder =
     Decode.map2 CurrentUserResponse
         (Decode.field "success" Decode.bool)
-        (Decode.field "user" (Decode.nullable userDecoder))
+        (Decode.field "user"
+            (Decode.nullable
+                (Decode.value
+                    |> Decode.andThen
+                        (\val ->
+                            let
+                                _ =
+                                    Debug.log "Raw user JSON" val
+                            in
+                            userDecoder
+                        )
+                )
+            )
+        )
 
 
 
