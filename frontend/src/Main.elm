@@ -35,6 +35,7 @@ import TempLanding
 import Url exposing (Url)
 import Url.Parser as Parser exposing ((</>), (<?>), Parser, map, oneOf, s, string, top)
 import Url.Parser.Query as Query
+import Walkthrough
 
 
 
@@ -191,6 +192,7 @@ type Page
     | DashboardPage Dashboard.Model
     | LogoutPage Logout.Model
     | OnboardingPage Onboarding.Model
+    | WalkthroughPage Walkthrough.Model
 
 
 type Msg
@@ -225,6 +227,10 @@ type Msg
     | InitiateLogout
     | GotAccountStatus (Result Http.Error AccountStatusResponse)
     | CloseStatusBanner
+    | WalkthroughMsg Walkthrough.Msg
+    | ShowDropdown
+    | HideDropdown
+    | ToggleStatusBanner
 
 
 type alias Flags =
@@ -384,6 +390,7 @@ type ProtectedPage
     | ContactRoute String
     | DashboardRoute
     | ChangePlanRoute
+    | WalkthroughRoute
 
 
 type AdminPage
@@ -501,6 +508,7 @@ routeParser =
         , map (AdminRoute SettingsRoute) (s "settings")
         , map (ProtectedRoute ProfileRoute) (s "profile")
         , map (ProtectedRoute TempLandingRoute) (s "templanding")
+        , map (ProtectedRoute WalkthroughRoute) (s "walkthrough")
         , map (AdminRoute AgentsRoute) (s "add-agents")
         , map (ProtectedRoute DashboardRoute) (s "dashboard")
         , map (\id -> ProtectedRoute (ContactRoute id)) (s "contact" </> string)
@@ -1023,6 +1031,29 @@ update msg model =
                 _ ->
                     ( model, Cmd.none )
 
+        WalkthroughMsg subMsg ->
+            case model.page of
+                WalkthroughPage pageModel ->
+                    let
+                        ( newPageModel, newCmd ) =
+                            Walkthrough.update subMsg pageModel
+                    in
+                    ( { model | page = WalkthroughPage newPageModel }
+                    , Cmd.map WalkthroughMsg newCmd
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        ShowDropdown ->
+            ( { model | showDropdown = True }, Cmd.none )
+
+        HideDropdown ->
+            ( { model | showDropdown = False }, Cmd.none )
+
+        ToggleStatusBanner ->
+            ( { model | showStatusBanner = not model.showStatusBanner }, Cmd.none )
+
 
 view : Model -> Browser.Document Msg
 view model =
@@ -1200,6 +1231,15 @@ view model =
                     in
                     { title = onboardingView.title
                     , body = [ Html.map OnboardingMsg (div [] onboardingView.body) ]
+                    }
+
+                WalkthroughPage pageModel ->
+                    let
+                        walkthroughView =
+                            Walkthrough.view pageModel
+                    in
+                    { title = walkthroughView.title
+                    , body = [ viewWithNav model (Html.map WalkthroughMsg (div [] walkthroughView.body)) ]
                     }
     in
     viewPage
@@ -1455,6 +1495,9 @@ subscriptions model =
 
                 OnboardingPage pageModel ->
                     Sub.map OnboardingMsg (Onboarding.subscriptions pageModel)
+
+                WalkthroughPage pageModel ->
+                    Sub.map WalkthroughMsg (Walkthrough.subscriptions pageModel)
     in
     Sub.batch [ dropdownSub, pageSubs ]
 
@@ -1720,7 +1763,7 @@ updatePage url ( model, cmd ) =
                             if needsLogin then
                                 ( { modelWithUpdatedSetup
                                     | intendedDestination = Just (Url.toString url)
-                                    , page = LoginPage (Login.init modelWithUpdatedSetup.key False |> Tuple.first)
+                                    , page = LoginPage (Login.init modelWithUpdatedSetup.key False url |> Tuple.first)
                                   }
                                 , Nav.pushUrl modelWithUpdatedSetup.key "/login"
                                 )
@@ -1744,7 +1787,7 @@ updatePage url ( model, cmd ) =
                                         -- Initialize login page without making authenticated API calls
                                         let
                                             ( loginModel, loginCmd ) =
-                                                Login.init modelWithUpdatedSetup.key False
+                                                Login.init modelWithUpdatedSetup.key False url
                                         in
                                         ( { modelWithUpdatedSetup | page = LoginPage loginModel }
                                         , Cmd.map LoginMsg loginCmd
@@ -1761,30 +1804,42 @@ updatePage url ( model, cmd ) =
                                         )
 
                                     PublicRoute (OnboardingRoute step) ->
-                                        -- Initialize onboarding without authenticated calls for new users
-                                        let
-                                            -- Extract session if available
-                                            sessionToken =
-                                                extractSession model.session
+                                        -- Check if we already have an onboarding page
+                                        case modelWithUpdatedSetup.page of
+                                            OnboardingPage existingModel ->
+                                                -- We already have an onboarding model, just update the step
+                                                -- This preserves all state between steps
+                                                ( { modelWithUpdatedSetup
+                                                    | page = OnboardingPage { existingModel | step = onboardingStepToStep step }
+                                                  }
+                                                , Cmd.none
+                                                )
 
-                                            -- Get organization slug if available, empty string for new users
-                                            orgSlug =
-                                                model.currentUser
-                                                    |> Maybe.map .organizationSlug
-                                                    |> Maybe.withDefault ""
+                                            _ ->
+                                                -- Initialize onboarding without authenticated calls for new users
+                                                let
+                                                    -- Extract session if available
+                                                    sessionToken =
+                                                        extractSession model.session
 
-                                            -- Initialize onboarding with correct step
-                                            ( onboardingModel, onboardingCmd ) =
-                                                Onboarding.init
-                                                    modelWithUpdatedSetup.key
-                                                    orgSlug
-                                                    sessionToken
-                                                    (onboardingStepToStep step)
-                                        in
-                                        -- Always set up the onboarding page, even if no session exists
-                                        ( { modelWithUpdatedSetup | page = OnboardingPage onboardingModel }
-                                        , Cmd.map OnboardingMsg onboardingCmd
-                                        )
+                                                    -- Get organization slug if available, empty string for new users
+                                                    orgSlug =
+                                                        model.currentUser
+                                                            |> Maybe.map .organizationSlug
+                                                            |> Maybe.withDefault ""
+
+                                                    -- Initialize onboarding with correct step
+                                                    ( onboardingModel, onboardingCmd ) =
+                                                        Onboarding.init
+                                                            modelWithUpdatedSetup.key
+                                                            orgSlug
+                                                            sessionToken
+                                                            (onboardingStepToStep step)
+                                                in
+                                                -- Always set up the onboarding page, even if no session exists
+                                                ( { modelWithUpdatedSetup | page = OnboardingPage onboardingModel }
+                                                , Cmd.map OnboardingMsg onboardingCmd
+                                                )
 
                                     PublicRoute (VerifyRoute params) ->
                                         -- Handle verification without making authenticated API calls
@@ -1833,6 +1888,30 @@ updatePage url ( model, cmd ) =
 
                                     ProtectedRoute DashboardRoute ->
                                         ( modelWithUpdatedSetup, authCmd )
+
+                                    ProtectedRoute WalkthroughRoute ->
+                                        let
+                                            currentUser =
+                                                modelWithUpdatedSetup.currentUser
+                                                    |> Maybe.map
+                                                        (\user ->
+                                                            { id = user.id
+                                                            , name = user.firstName ++ " " ++ user.lastName
+                                                            , email = user.email
+                                                            , isAdmin = user.isAdmin
+                                                            , isAgent = user.isAgent
+                                                            }
+                                                        )
+
+                                            ( walkthroughModel, walkthroughCmd ) =
+                                                Walkthrough.init modelWithUpdatedSetup.key currentUser
+                                        in
+                                        ( { modelWithUpdatedSetup | page = WalkthroughPage walkthroughModel }
+                                        , Cmd.batch
+                                            [ Cmd.map WalkthroughMsg walkthroughCmd
+                                            , authCmd
+                                            ]
+                                        )
 
                                     AdminRoute SettingsRoute ->
                                         ( modelWithUpdatedSetup, authCmd )

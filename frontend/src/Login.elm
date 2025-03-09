@@ -9,6 +9,9 @@ import Http
 import Json.Decode as Decode
 import Json.Encode as Encode
 import Time
+import Url
+import Url.Parser as Parser exposing ((</>), (<?>), Parser, s, string)
+import Url.Parser.Query as Query
 
 
 type alias Model =
@@ -17,6 +20,8 @@ type alias Model =
     , isLoggedIn : Bool
     , key : Nav.Key
     , resendAvailableAt : Maybe Time.Posix
+    , isFromOnboarding : Bool
+    , prefilledEmail : Maybe String
     }
 
 
@@ -48,16 +53,42 @@ type Msg
     | ResendLink
 
 
-init : Nav.Key -> Bool -> ( Model, Cmd Msg )
-init key isLoggedIn =
-    ( { email = ""
+init : Nav.Key -> Bool -> Url.Url -> ( Model, Cmd Msg )
+init key isLoggedIn url =
+    let
+        queryParams =
+            extractQueryParams url
+    in
+    ( { email = Maybe.withDefault "" queryParams.email
       , status = Idle
       , isLoggedIn = isLoggedIn
       , key = key
       , resendAvailableAt = Nothing
+      , isFromOnboarding = queryParams.onboarding
+      , prefilledEmail = queryParams.email
       }
     , Cmd.none
     )
+
+
+
+-- Helper to extract query parameters
+
+
+extractQueryParams : Url.Url -> { onboarding : Bool, email : Maybe String }
+extractQueryParams url =
+    let
+        parser =
+            Query.map2
+                (\onboarding email -> { onboarding = onboarding == Just "completed", email = email })
+                (Query.string "onboarding")
+                (Query.string "email")
+
+        route =
+            { url | path = "" }
+                |> Parser.parse (Parser.top <?> parser)
+    in
+    Maybe.withDefault { onboarding = False, email = Nothing } route
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -185,11 +216,24 @@ viewLoginForm model =
         [ div [ class "min-h-screen bg-gray-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8" ]
             [ div [ class "sm:mx-auto sm:w-full sm:max-w-md" ]
                 [ h2 [ class "mt-6 text-center text-3xl font-extrabold text-gray-900" ]
-                    [ text "Welcome Back To MedicareMax" ]
+                    [ if model.isFromOnboarding then
+                        text "Activate Your Account"
+
+                      else
+                        text "Welcome Back To MedicareMax"
+                    ]
                 ]
             , div [ class "mt-8 sm:mx-auto sm:w-full sm:max-w-md" ]
                 [ div [ class "bg-white py-8 px-4 shadow sm:rounded-lg sm:px-10" ]
-                    [ Html.form [ onSubmit SubmitForm ]
+                    [ if model.isFromOnboarding then
+                        div [ class "mb-6 bg-blue-50 p-4 rounded-md border border-blue-200" ]
+                            [ p [ class "text-blue-800" ]
+                                [ text "Your account has been created successfully! Please check your email for an activation link to continue to your new account." ]
+                            ]
+
+                      else
+                        text ""
+                    , Html.form [ onSubmit SubmitForm ]
                         [ div []
                             [ label [ for "email", class "block text-sm font-medium text-gray-700" ]
                                 [ text "Email address" ]

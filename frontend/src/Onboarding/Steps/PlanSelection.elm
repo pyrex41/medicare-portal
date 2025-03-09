@@ -4,6 +4,7 @@ module Onboarding.Steps.PlanSelection exposing
     , OutMsg(..)
     , fetchSubscriptionTiers
     , init
+    , initWithFetch
     , subscriptions
     , update
     , view
@@ -57,22 +58,35 @@ type alias SubscriptionResponse =
 
 init : Nav.Key -> String -> String -> ( Model, Cmd Msg )
 init key orgSlug session =
+    initWithFetch key orgSlug session True
+
+
+
+-- Add a version that allows controlling whether to fetch tiers
+
+
+initWithFetch : Nav.Key -> String -> String -> Bool -> ( Model, Cmd Msg )
+initWithFetch key orgSlug session shouldFetchTiers =
     ( { selectedPlan = Nothing
       , extraAgents = 0
       , extraContacts = 0
       , tiers = []
-      , isLoading = True
+      , isLoading = shouldFetchTiers
       , error = Nothing
       , key = key
       , orgSlug = orgSlug
       , session = session
       }
-    , Cmd.batch
-        [ fetchSubscriptionTiers
-        , -- Add a timeout to clear loading state after 5 seconds
-          Process.sleep 5000
-            |> Task.perform (\_ -> LoadingTimeout)
-        ]
+    , if shouldFetchTiers then
+        Cmd.batch
+            [ fetchSubscriptionTiers
+            , -- Add a timeout to clear loading state after 5 seconds
+              Process.sleep 5000
+                |> Task.perform (\_ -> LoadingTimeout)
+            ]
+
+      else
+        Cmd.none
     )
 
 

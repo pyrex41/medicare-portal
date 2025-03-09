@@ -36,6 +36,7 @@ type alias Model =
     , showAddForm : Bool
     , pendingSave : Maybe String
     , emailStatus : EmailStatus
+    , isOnboarding : Bool
     }
 
 
@@ -67,8 +68,8 @@ type EmailStatus
     | Invalid String
 
 
-init : Nav.Key -> String -> ( Model, Cmd Msg )
-init key orgSlug =
+init : Nav.Key -> String -> Bool -> ( Model, Cmd Msg )
+init key orgSlug isOnboarding =
     ( { agents = []
       , newAgent =
             { firstName = ""
@@ -78,15 +79,22 @@ init key orgSlug =
             , isAdmin = False
             , isAgent = True
             }
-      , isLoading = True
+      , isLoading = not isOnboarding -- Only set loading true if not in onboarding
       , error = Nothing
       , key = key
       , orgSlug = orgSlug
-      , showAddForm = False
+      , showAddForm = isOnboarding -- Auto-show the add form in onboarding
       , pendingSave = Nothing
       , emailStatus = NotChecked
+      , isOnboarding = isOnboarding
       }
-    , fetchAgents orgSlug
+    , if isOnboarding then
+        -- Skip fetching agents during onboarding
+        Cmd.none
+
+      else
+        -- Fetch existing agents when not in onboarding
+        fetchAgents orgSlug
     )
 
 
@@ -369,7 +377,14 @@ viewLoading =
 
 viewAgentsList : Model -> Html Msg
 viewAgentsList model =
-    if List.isEmpty model.agents then
+    if model.isOnboarding && List.isEmpty model.agents then
+        -- In onboarding with no agents, show a more appropriate message
+        div [ class "bg-gray-50 p-6 rounded-lg text-center" ]
+            [ p [ class "text-gray-500" ]
+                [ text "Add team members who will have access to your Medicare Max portal." ]
+            ]
+
+    else if List.isEmpty model.agents then
         div [ class "bg-gray-50 p-6 rounded-lg text-center" ]
             [ p [ class "text-gray-500" ]
                 [ text "No agents added yet. Add your first agent below." ]

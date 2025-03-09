@@ -24,6 +24,7 @@ import Onboarding.Steps.LicensingSettings as LicensingSettings
 import Onboarding.Steps.Payment as Payment
 import Onboarding.Steps.PlanSelection as PlanSelection exposing (fetchSubscriptionTiers)
 import Onboarding.Steps.UserDetails as UserDetails
+import Url
 
 
 
@@ -61,8 +62,9 @@ type alias Model =
 init : Nav.Key -> String -> String -> Step -> ( Model, Cmd Msg )
 init key orgSlug session initialStep =
     let
+        -- Only fetch tiers when we're on the plan selection step
         ( planSelectionModel, planSelectionCmd ) =
-            PlanSelection.init key orgSlug session
+            PlanSelection.initWithFetch key orgSlug session (initialStep == PlanSelectionStep)
 
         ( userDetailsModel, userDetailsCmd ) =
             UserDetails.init key orgSlug
@@ -76,6 +78,24 @@ init key orgSlug session initialStep =
         ( paymentModel, paymentCmd ) =
             Payment.init key orgSlug
 
+        -- Check if we need to initialize the AddAgents model based on the initial step
+        -- or if we're starting with a non-basic plan
+        shouldInitAddAgents =
+            initialStep
+                == AddAgentsStep
+                || (planSelectionModel.selectedPlan |> Maybe.map (\p -> p /= "basic") |> Maybe.withDefault False)
+
+        ( addAgentsModel, addAgentsCmd ) =
+            if shouldInitAddAgents then
+                let
+                    ( model, cmd ) =
+                        AddAgents.init key orgSlug True
+                in
+                ( Just model, Cmd.map AddAgentsMsg cmd )
+
+            else
+                ( Nothing, Cmd.none )
+
         -- Initialize enterprise form model if needed
         ( enterpriseFormModel, enterpriseFormCmd ) =
             if initialStep == EnterpriseFormStep then
@@ -87,19 +107,25 @@ init key orgSlug session initialStep =
 
             else
                 ( Nothing, Cmd.none )
+
+        -- Determine if we're on a basic plan
+        isBasicPlan =
+            planSelectionModel.selectedPlan
+                |> Maybe.map (\p -> p == "basic")
+                |> Maybe.withDefault True
     in
     ( { step = initialStep
       , planSelectionModel = planSelectionModel
       , userDetailsModel = userDetailsModel
       , companyDetailsModel = companyDetailsModel
       , licensingSettingsModel = licensingSettingsModel
-      , addAgentsModel = Nothing -- Will be initialized if needed
+      , addAgentsModel = addAgentsModel
       , paymentModel = paymentModel
-      , enterpriseFormModel = enterpriseFormModel -- Now initialized if needed
+      , enterpriseFormModel = enterpriseFormModel
       , key = key
       , orgSlug = orgSlug
       , session = session
-      , isBasicPlan = True -- Default to basic, will be updated after plan selection
+      , isBasicPlan = isBasicPlan
       , error = Nothing
       , isLoading = False
       }
@@ -109,7 +135,8 @@ init key orgSlug session initialStep =
         , Cmd.map CompanyDetailsMsg companyDetailsCmd
         , Cmd.map LicensingSettingsMsg licensingSettingsCmd
         , Cmd.map PaymentMsg paymentCmd
-        , enterpriseFormCmd -- Add the enterprise form command if needed
+        , addAgentsCmd
+        , enterpriseFormCmd
         ]
     )
 
@@ -154,7 +181,7 @@ update msg model =
                 addAgentsModel =
                     if not newIsBasicPlan && model.addAgentsModel == Nothing then
                         -- Initialize AddAgents model for non-basic plans
-                        Just (AddAgents.init model.key model.orgSlug |> Tuple.first)
+                        Just (AddAgents.init model.key model.orgSlug True |> Tuple.first)
 
                     else
                         model.addAgentsModel
@@ -216,7 +243,11 @@ update msg model =
                 navigationCmd =
                     case outMsg of
                         UserDetails.NextStep ->
-                            Nav.pushUrl model.key (getStepUrl CompanyDetailsStep)
+                            let
+                                nextStep =
+                                    getNextStep UserDetailsStep model.isBasicPlan
+                            in
+                            Nav.pushUrl model.key (getStepUrl nextStep)
 
                         _ ->
                             Cmd.none
@@ -248,7 +279,11 @@ update msg model =
                 navigationCmd =
                     case outMsg of
                         CompanyDetails.NextStep ->
-                            Nav.pushUrl model.key (getStepUrl LicensingSettingsStep)
+                            let
+                                nextStep =
+                                    getNextStep CompanyDetailsStep model.isBasicPlan
+                            in
+                            Nav.pushUrl model.key (getStepUrl nextStep)
 
                         _ ->
                             Cmd.none
@@ -277,15 +312,25 @@ update msg model =
                 ( updatedLicensingSettingsModel, licensingSettingsCmd, outMsg ) =
                     LicensingSettings.update subMsg model.licensingSettingsModel
 
+                -- Ensure addAgentsModel is initialized if we're on a non-basic plan
+                updatedModel =
+                    if not model.isBasicPlan && model.addAgentsModel == Nothing then
+                        { model
+                            | licensingSettingsModel = updatedLicensingSettingsModel
+                            , addAgentsModel = Just (AddAgents.init model.key model.orgSlug True |> Tuple.first)
+                        }
+
+                    else
+                        { model | licensingSettingsModel = updatedLicensingSettingsModel }
+
                 navigationCmd =
                     case outMsg of
                         LicensingSettings.NextStep ->
-                            if model.isBasicPlan then
-                                -- Skip AddAgentsStep for basic plan
-                                Nav.pushUrl model.key (getStepUrl PaymentStep)
-
-                            else
-                                Nav.pushUrl model.key (getStepUrl AddAgentsStep)
+                            let
+                                nextStep =
+                                    getNextStep LicensingSettingsStep model.isBasicPlan
+                            in
+                            Nav.pushUrl model.key (getStepUrl nextStep)
 
                         _ ->
                             Cmd.none
@@ -301,7 +346,7 @@ update msg model =
                         LicensingSettings.ShowError err ->
                             Cmd.none
             in
-            ( { model | licensingSettingsModel = updatedLicensingSettingsModel }
+            ( updatedModel
             , Cmd.batch
                 [ Cmd.map LicensingSettingsMsg licensingSettingsCmd
                 , outCmd
@@ -319,7 +364,11 @@ update msg model =
                         navigationCmd =
                             case outMsg of
                                 AddAgents.NextStep ->
-                                    Nav.pushUrl model.key (getStepUrl PaymentStep)
+                                    let
+                                        nextStep =
+                                            getNextStep AddAgentsStep model.isBasicPlan
+                                    in
+                                    Nav.pushUrl model.key (getStepUrl nextStep)
 
                                 _ ->
                                     Cmd.none
@@ -359,6 +408,9 @@ update msg model =
                         Payment.Completed ->
                             completeOnboarding model
 
+                        Payment.NavigateToWalkthrough ->
+                            completeOnboarding model
+
                         Payment.ShowError err ->
                             Cmd.none
             in
@@ -388,15 +440,7 @@ update msg model =
                             else
                                 Cmd.none
 
-                        -- Create a command to reload plan data if we're navigating back
-                        reloadPlanDataCmd =
-                            if isNavigatingBackToPlans then
-                                -- Fetch subscription tiers again to ensure they're loaded
-                                Cmd.map PlanSelectionMsg fetchSubscriptionTiers
-
-                            else
-                                Cmd.none
-
+                        -- Don't reload plan data - avoid unnecessary API call
                         outCmd =
                             case outMsg of
                                 EnterpriseForm.NoOutMsg ->
@@ -413,7 +457,6 @@ update msg model =
                         [ Cmd.map EnterpriseFormMsg enterpriseFormCmd
                         , outCmd
                         , navigationCmd
-                        , reloadPlanDataCmd
                         ]
                     )
 
@@ -428,39 +471,24 @@ update msg model =
                     )
 
         NavigateToStep step ->
-            ( model, Nav.pushUrl model.key (getStepUrl step) )
+            let
+                cmd =
+                    if step == PlanSelectionStep then
+                        -- When navigating directly to plan selection, fetch the tiers
+                        Cmd.batch
+                            [ Nav.pushUrl model.key (getStepUrl step)
+                            , Cmd.map PlanSelectionMsg fetchSubscriptionTiers
+                            ]
+
+                    else
+                        Nav.pushUrl model.key (getStepUrl step)
+            in
+            ( model, cmd )
 
         SkipStep ->
             let
                 nextStep =
-                    case model.step of
-                        PlanSelectionStep ->
-                            UserDetailsStep
-
-                        UserDetailsStep ->
-                            CompanyDetailsStep
-
-                        CompanyDetailsStep ->
-                            LicensingSettingsStep
-
-                        LicensingSettingsStep ->
-                            if model.isBasicPlan then
-                                PaymentStep
-
-                            else
-                                AddAgentsStep
-
-                        AddAgentsStep ->
-                            PaymentStep
-
-                        PaymentStep ->
-                            PaymentStep
-
-                        EnterpriseFormStep ->
-                            -- Can't skip enterprise form
-                            EnterpriseFormStep
-
-                -- Can't skip payment
+                    getNextStep model.step model.isBasicPlan
             in
             ( model, Nav.pushUrl model.key (getStepUrl nextStep) )
 
@@ -472,16 +500,9 @@ update msg model =
         OnboardingCompleted result ->
             case result of
                 Ok _ ->
-                    -- Redirect to login page with success message after completion
+                    -- Redirect to login with special parameters instead of walkthrough
                     ( { model | isLoading = False }
-                    , Cmd.batch
-                        [ Nav.pushUrl model.key "/login?signup=success"
-                        , Http.post
-                            { url = "/api/auth/logout"
-                            , body = Http.emptyBody
-                            , expect = Http.expectWhatever (\_ -> NoOp)
-                            }
-                        ]
+                    , Nav.pushUrl model.key ("/login?onboarding=completed&email=" ++ Url.percentEncode model.userDetailsModel.email)
                     )
 
                 Err _ ->
@@ -540,13 +561,36 @@ viewCurrentStep model =
             Html.map LicensingSettingsMsg (LicensingSettings.view model.licensingSettingsModel)
 
         AddAgentsStep ->
-            case model.addAgentsModel of
-                Just addAgentsModel ->
-                    Html.map AddAgentsMsg (AddAgents.view addAgentsModel)
+            if model.isBasicPlan then
+                -- If on basic plan but somehow on this step, redirect to payment
+                div [ class "text-center p-8" ]
+                    [ text "This step is not available for the basic plan. Please continue to payment."
+                    , div [ class "mt-4" ]
+                        [ button
+                            [ class "px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+                            , onClick (NavigateToStep PaymentStep)
+                            ]
+                            [ text "Continue to Payment" ]
+                        ]
+                    ]
 
-                Nothing ->
-                    div [ class "text-center p-8" ]
-                        [ text "Error: Add Agents model not initialized." ]
+            else
+                case model.addAgentsModel of
+                    Just addAgentsModel ->
+                        Html.map AddAgentsMsg (AddAgents.view addAgentsModel)
+
+                    Nothing ->
+                        -- If model not initialized, show error with option to continue
+                        div [ class "text-center p-8" ]
+                            [ text "There was an issue loading the team members form. Please try refreshing the page."
+                            , div [ class "mt-4" ]
+                                [ button
+                                    [ class "px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+                                    , onClick (NavigateToStep PaymentStep)
+                                    ]
+                                    [ text "Continue to Payment" ]
+                                ]
+                            ]
 
         PaymentStep ->
             Html.map PaymentMsg (Payment.view model.paymentModel)
@@ -729,11 +773,13 @@ encodeOnboardingData model =
                     Encode.list identity []
     in
     Encode.object
-        [ ( "subscription"
+        [ ( "plan"
           , Encode.object
-                [ ( "tierId", Encode.string selectedPlan )
+                [ ( "type", Encode.string selectedPlan )
                 , ( "extraAgents", Encode.int extraAgents )
                 , ( "extraContacts", Encode.int extraContacts )
+                , ( "price", Encode.int (getPlanPrice selectedPlan) )
+                , ( "billingCycle", Encode.string "monthly" )
                 ]
           )
         , ( "user"
@@ -889,3 +935,62 @@ getStepNumber step =
 
         EnterpriseFormStep ->
             6
+
+
+
+-- Helper function to get the next step in sequence
+
+
+getNextStep : Step -> Bool -> Step
+getNextStep currentStep isBasicPlan =
+    case currentStep of
+        PlanSelectionStep ->
+            UserDetailsStep
+
+        UserDetailsStep ->
+            CompanyDetailsStep
+
+        CompanyDetailsStep ->
+            LicensingSettingsStep
+
+        LicensingSettingsStep ->
+            if isBasicPlan then
+                PaymentStep
+
+            else
+                AddAgentsStep
+
+        AddAgentsStep ->
+            PaymentStep
+
+        PaymentStep ->
+            PaymentStep
+
+        -- No next step after payment
+        EnterpriseFormStep ->
+            EnterpriseFormStep
+
+
+
+-- Can't proceed from enterprise form
+-- Helper function to get plan price based on type
+
+
+getPlanPrice : String -> Int
+getPlanPrice planType =
+    case planType of
+        "basic" ->
+            29
+
+        "pro" ->
+            99
+
+        "enterprise" ->
+            499
+
+        _ ->
+            29
+
+
+
+-- Default to basic price

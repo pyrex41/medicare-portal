@@ -86,6 +86,7 @@ type OutMsg
     = NoOutMsg
     | Completed
     | ShowError String
+    | NavigateToWalkthrough
 
 
 update : Msg -> Model -> ( Model, Cmd Msg, OutMsg )
@@ -94,7 +95,7 @@ update msg model =
         CompleteOnboarding ->
             ( { model | processingPayment = True }
             , Cmd.none
-            , Completed
+            , NavigateToWalkthrough
             )
 
         ProcessPayment ->
@@ -174,7 +175,7 @@ view model =
             [ h1 [ class "text-2xl font-semibold text-gray-900" ]
                 [ text "Complete Your Account Setup" ]
             , p [ class "text-gray-600 mt-2" ]
-                [ text "You're almost done! Click 'Complete Setup' to finish the onboarding process." ]
+                [ text "You're almost done! Click 'Continue to Walkthrough' to finish the onboarding process." ]
             ]
         , div [ class "bg-white shadow rounded-lg p-6" ]
             [ div [ class "text-center space-y-6" ]
@@ -197,7 +198,7 @@ view model =
                                 ]
 
                           else
-                            text "Complete Setup"
+                            text "Continue to Walkthrough"
                         ]
                     ]
                 ]

@@ -47,56 +47,80 @@ export function createOnboardingRoutes() {
 
   return new Elysia()
     .post('/api/organizations/complete-onboarding', async ({ body, set }) => {
-      const data = body as OnboardingData
+      const data = body as any; // Use any temporarily for conversion
       
       try {
         logger.info(`Starting complete onboarding process for ${data.user.email}`)
         
-        // Get database client
-        const client = dbInstance.getClient()
+        // Adapt the data structure to handle both formats
+        const adaptedData: OnboardingData = {
+          plan: {
+            type: data.plan?.type || data.subscription?.tierId || 'basic',
+            price: data.plan?.price || 29,
+            billingCycle: data.plan?.billingCycle || 'monthly',
+            extraAgents: data.plan?.extraAgents || data.subscription?.extraAgents || 0,
+            extraContacts: data.plan?.extraContacts || data.subscription?.extraContacts || 0
+          },
+          user: data.user,
+          company: data.company,
+          licensing: data.licensing,
+          agents: data.agents || []
+        };
         
-        // Start a transaction
-        await client.execute('BEGIN')
-        
-        try {
-          // 1. Create organization
-          const orgResult = await client.execute({
-            sql: `INSERT INTO organizations (
+        // Use the transaction method instead of manual transaction management
+        const result = await dbInstance.transaction(async (db) => {
+          // Generate a completely random slug (12 characters)
+          const generateRandomSlug = () => {
+            const characters = 'abcdefghijklmnopqrstuvwxyz0123456789';
+            const length = 12;
+            let result = '';
+            for (let i = 0; i < length; i++) {
+              result += characters.charAt(Math.floor(Math.random() * characters.length));
+            }
+            return result;
+          };
+          
+          const slug = generateRandomSlug();
+          logger.info(`Generated random slug: ${slug}`);
+            
+          // 1. Create organization with slug included
+          const orgResult = await db.execute(`
+            INSERT INTO organizations (
               name, 
               website, 
               phone,
               primary_color,
               secondary_color,
-              created_at
-            ) VALUES (?, ?, ?, ?, ?, datetime('now'))`,
-            args: [
-              data.company.agencyName,
-              data.company.website || '',
-              data.company.phone || '',
-              data.company.primaryColor || '#0A0F4F',
-              data.company.secondaryColor || '#7B61FF'
+              subscription_tier,
+              created_at,
+              onboarding_completed,
+              slug,
+              agent_limit,
+              contact_limit,
+              extra_agents,
+              extra_contacts
+            ) VALUES (?, ?, ?, ?, ?, ?, datetime('now'), TRUE, ?, ?, ?, ?, ?)`,
+            [
+              adaptedData.company.agencyName || 'New Organization', // Provide a default if empty
+              adaptedData.company.website || '',
+              adaptedData.company.phone || '',
+              adaptedData.company.primaryColor || '#0A0F4F',
+              adaptedData.company.secondaryColor || '#7B61FF',
+              adaptedData.plan.type,
+              slug,
+              adaptedData.plan.type === 'basic' ? 1 : 3, // Basic: 1 agent, Pro: 3 agents
+              adaptedData.plan.type === 'basic' ? 100 : 1000, // Basic: 100 contacts, Pro: 1000
+              adaptedData.plan.extraAgents,
+              adaptedData.plan.extraContacts
             ]
-          })
+          )
           
           const organizationId = Number(orgResult.lastInsertRowid)
-          logger.info(`Created organization: ${organizationId} (${data.company.agencyName})`)
-          
-          // Generate a unique slug from the organization name
-          const slug = data.company.agencyName
-            .toLowerCase()
-            .replace(/[^a-z0-9]/g, '-')
-            .replace(/-+/g, '-')
-            .replace(/^-|-$/g, '') + '-' + Math.floor(Math.random() * 1000)
-            
-          // Update organization with the slug
-          await client.execute({
-            sql: `UPDATE organizations SET slug = ? WHERE id = ?`,
-            args: [slug, organizationId]
-          })
+          logger.info(`Created organization: ${organizationId} (${adaptedData.company.agencyName}) with slug: ${slug}`)
           
           // 2. Create admin user
-          const userResult = await client.execute({
-            sql: `INSERT INTO users (
+          const userResult = await db.execute(`
+            INSERT INTO users (
               email,
               first_name,
               last_name,
@@ -104,93 +128,92 @@ export function createOnboardingRoutes() {
               is_admin,
               is_agent,
               organization_id,
-              created_at,
-              settings
-            ) VALUES (?, ?, ?, ?, 1, 1, ?, datetime('now'), ?)`,
-            args: [
-              data.user.email,
-              data.user.firstName,
-              data.user.lastName,
-              data.user.phone || '',
-              organizationId,
-              JSON.stringify({
-                bookingLink: data.user.bookingLink || ''
-              })
+              created_at
+            ) VALUES (?, ?, ?, ?, 1, 1, ?, datetime('now'))`,
+            [
+              adaptedData.user.email,
+              adaptedData.user.firstName,
+              adaptedData.user.lastName,
+              adaptedData.user.phone || '',
+              organizationId
             ]
-          })
+          )
           
           const userId = Number(userResult.lastInsertRowid)
-          logger.info(`Created admin user: ${userId} (${data.user.email})`)
+          logger.info(`Created admin user: ${userId} (${adaptedData.user.email})`)
           
-          // 3. Create subscription
-          await client.execute({
-            sql: `INSERT INTO subscriptions (
-              organization_id,
-              plan_type,
-              billing_cycle,
-              price,
-              agent_limit,
-              contact_limit,
-              status,
-              created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, 'active', datetime('now'))`,
-            args: [
-              organizationId,
-              data.plan.type,
-              data.plan.billingCycle,
-              data.plan.price,
-              data.plan.extraAgents + (data.plan.type === 'basic' ? 1 : 3), // Basic: 1 agent, Pro: 3 agents + extras
-              data.plan.extraContacts + (data.plan.type === 'basic' ? 100 : 1000) // Basic: 100 contacts, Pro: 1000 + extras
-            ]
-          })
-          
-          logger.info(`Created subscription for org ${organizationId}: ${data.plan.type}`)
-          
-          // 4. Add state licenses
-          for (const state of data.licensing.stateLicenses) {
-            await client.execute({
-              sql: `INSERT INTO user_licenses (user_id, state, created_at)
-              VALUES (?, ?, datetime('now'))`,
-              args: [userId, state]
-            })
+          // Update user with booking link if provided
+          if (adaptedData.user.bookingLink) {
+            await db.execute(`
+              UPDATE users SET booking_link = ? WHERE id = ?`,
+              [adaptedData.user.bookingLink, userId]
+            )
           }
           
-          // 5. Add carrier contracts
-          for (const carrier of data.licensing.carrierContracts) {
-            await client.execute({
-              sql: `INSERT INTO user_carriers (user_id, carrier, created_at)
-              VALUES (?, ?, datetime('now'))`,
-              args: [userId, carrier]
-            })
+          // Add logo to brand settings if provided
+          if (adaptedData.company.logo) {
+            await db.execute(`
+              INSERT INTO brand_settings (
+                organization_id,
+                brand_name,
+                primary_color,
+                secondary_color,
+                logo_data
+              ) VALUES (?, ?, ?, ?, ?)`,
+              [
+                organizationId,
+                adaptedData.company.agencyName,
+                adaptedData.company.primaryColor || '#0A0F4F',
+                adaptedData.company.secondaryColor || '#7B61FF',
+                adaptedData.company.logo
+              ]
+            )
           }
           
-          // 6. Create organization-specific database
-          // In a real implementation, this would create a separate database or schema
-          logger.info(`Would create org-specific database for ${organizationId}`)
+          // We're not creating agent_settings here since we're using org-level settings
+          // Licensing information will be handled at the org level
           
           // 7. If additional agents were added, process them
-          if (data.agents && data.agents.length > 0) {
-            logger.info(`Processing ${data.agents.length} additional agents`)
+          if (adaptedData.agents && adaptedData.agents.length > 0) {
+            logger.info(`Processing ${adaptedData.agents.length} additional agents`)
             
-            // Process each agent - implementation would be added here
-          }
-          
-          // Commit the transaction
-          await client.execute('COMMIT')
-          
-          // Return success response
-          return {
-            success: true,
-            message: "Organization created successfully",
-            data: {
-              organizationId,
-              organizationSlug: slug
+            for (const agent of adaptedData.agents) {
+              const agentResult = await db.execute(`
+                INSERT INTO users (
+                  email,
+                  first_name,
+                  last_name,
+                  phone,
+                  is_admin,
+                  is_agent,
+                  organization_id,
+                  created_at
+                ) VALUES (?, ?, ?, ?, ?, 1, ?, datetime('now'))`,
+                [
+                  agent.email,
+                  agent.firstName,
+                  agent.lastName,
+                  agent.phone || '',
+                  agent.isAdmin ? 1 : 0,
+                  organizationId
+                ]
+              )
+              
+              logger.info(`Created additional agent: ${agentResult.lastInsertRowid} (${agent.email})`)
             }
           }
-        } catch (error) {
-          // Roll back the transaction on error
-          await client.execute('ROLLBACK')
-          throw error
+          
+          return {
+            organizationId,
+            organizationSlug: slug
+          }
+        })
+        
+        // Transaction was successful
+        return {
+          success: true,
+          message: "Organization created successfully",
+          data: result
         }
         
       } catch (error) {
