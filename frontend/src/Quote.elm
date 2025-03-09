@@ -200,7 +200,7 @@ update msg model =
                         )
             in
             ( model
-            , Nav.pushUrl model.key "/contacts"
+            , Nav.pushUrl model.key compareUrl
             )
 
 

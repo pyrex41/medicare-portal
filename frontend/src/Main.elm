@@ -363,18 +363,15 @@ init flags url key =
 
                 _ ->
                     Cmd.batch [ checkSession, directPageUpdate ]
-
-        -- For public routes, immediately try to render without waiting for session
-        initialModelAndCmd =
-            if isPublicRoute then
-                -- Try to render public route immediately
-                updatePageForcePublic url ( model, cmds )
-
-            else
-                -- For protected routes, wait for session verification
-                ( model, cmds )
     in
-    initialModelAndCmd
+    -- For public routes, immediately try to render without waiting for session
+    if isPublicRoute then
+        -- Try to render public route immediately
+        updatePageForcePublic url ( model, cmds )
+
+    else
+        -- For protected routes, wait for session verification
+        ( model, cmds )
 
 
 type alias CompareParams =
@@ -1890,7 +1887,6 @@ updatePage url ( model, cmd ) =
                                         )
 
                                     PublicRoute LoginRoute ->
-                                        -- Initialize login page without making authenticated API calls
                                         let
                                             ( loginModel, loginCmd ) =
                                                 Login.init modelWithUpdatedSetup.key False url
@@ -1948,7 +1944,7 @@ updatePage url ( model, cmd ) =
                                                 )
 
                                     PublicRoute (VerifyRoute params) ->
-                                        -- Handle verification without making authenticated API calls
+                                        -- For verification, we need to make an API call
                                         let
                                             verifyUrl =
                                                 case params of
@@ -1961,21 +1957,54 @@ updatePage url ( model, cmd ) =
                                                     , expect = Http.expectJson GotVerification verificationDecoder
                                                     }
                                         in
-                                        ( modelWithUpdatedSetup
-                                        , verifyCmd
+                                        ( model, verifyCmd )
+
+                                    PublicRoute (CompareRoute params) ->
+                                        let
+                                            ( compareModel, compareCmd ) =
+                                                Compare.init model.key (Just params)
+                                        in
+                                        ( { model | page = ComparePage compareModel }
+                                        , Cmd.map CompareMsg compareCmd
                                         )
 
-                                    PublicRoute (CompareRoute _) ->
-                                        ( modelWithUpdatedSetup, authCmd )
+                                    PublicRoute (QuoteRoute params) ->
+                                        let
+                                            initialValues =
+                                                { zipCode = Nothing
+                                                , dateOfBirth = Nothing
+                                                , tobacco = Nothing
+                                                , gender = Nothing
+                                                , quoteId = (\( id, _, _ ) -> id) params
+                                                , planType = (\( _, _, planType ) -> planType) params
+                                                }
 
-                                    PublicRoute (QuoteRoute _) ->
-                                        ( modelWithUpdatedSetup, authCmd )
+                                            ( quoteModel, quoteCmd ) =
+                                                Quote.init model.key initialValues
+                                        in
+                                        ( { model | page = QuotePage quoteModel }
+                                        , Cmd.map QuoteMsg quoteCmd
+                                        )
 
-                                    PublicRoute (EligibilityRoute _) ->
-                                        ( modelWithUpdatedSetup, authCmd )
+                                    PublicRoute (EligibilityRoute params) ->
+                                        let
+                                            ( eligibilityModel, eligibilityCmd ) =
+                                                Eligibility.init model.key (Tuple.first params)
+                                        in
+                                        ( { model | page = EligibilityPage eligibilityModel }
+                                        , Cmd.map EligibilityMsg eligibilityCmd
+                                        )
 
-                                    PublicRoute (ScheduleRoute _) ->
-                                        ( modelWithUpdatedSetup, authCmd )
+                                    PublicRoute (ScheduleRoute params) ->
+                                        let
+                                            ( scheduleModel, scheduleCmd ) =
+                                                Schedule.init model.key
+                                                    ((\( id, _, _ ) -> id) params)
+                                                    ((\( _, status, _ ) -> status) params)
+                                        in
+                                        ( { model | page = SchedulePage scheduleModel }
+                                        , Cmd.map ScheduleMsg scheduleCmd
+                                        )
 
                                     ProtectedRoute ContactsRoute ->
                                         let
@@ -2465,8 +2494,86 @@ updatePageForcePublic url ( model, cmd ) =
                             , Cmd.map SignupMsg signupCmd
                             )
 
-                        -- For all other public routes, use the standard updatePage
-                        -- which knows the proper types for each route
+                        PublicRoute (OnboardingRoute step) ->
+                            let
+                                ( onboardingModel, onboardingCmd ) =
+                                    Onboarding.init
+                                        model.key
+                                        (model.currentUser
+                                            |> Maybe.map .organizationSlug
+                                            |> Maybe.withDefault ""
+                                        )
+                                        (extractSession model.session)
+                                        (onboardingStepToStep step)
+                            in
+                            ( { model | page = OnboardingPage onboardingModel }
+                            , Cmd.map OnboardingMsg onboardingCmd
+                            )
+
+                        PublicRoute (CompareRoute params) ->
+                            let
+                                ( compareModel, compareCmd ) =
+                                    Compare.init model.key (Just params)
+                            in
+                            ( { model | page = ComparePage compareModel }
+                            , Cmd.map CompareMsg compareCmd
+                            )
+
+                        PublicRoute (QuoteRoute params) ->
+                            let
+                                initialValues =
+                                    { zipCode = Nothing
+                                    , dateOfBirth = Nothing
+                                    , tobacco = Nothing
+                                    , gender = Nothing
+                                    , quoteId = (\( id, _, _ ) -> id) params
+                                    , planType = (\( _, _, planType ) -> planType) params
+                                    }
+
+                                ( quoteModel, quoteCmd ) =
+                                    Quote.init model.key initialValues
+                            in
+                            ( { model | page = QuotePage quoteModel }
+                            , Cmd.map QuoteMsg quoteCmd
+                            )
+
+                        PublicRoute (EligibilityRoute params) ->
+                            let
+                                ( eligibilityModel, eligibilityCmd ) =
+                                    Eligibility.init model.key (Tuple.first params)
+                            in
+                            ( { model | page = EligibilityPage eligibilityModel }
+                            , Cmd.map EligibilityMsg eligibilityCmd
+                            )
+
+                        PublicRoute (ScheduleRoute params) ->
+                            let
+                                ( scheduleModel, scheduleCmd ) =
+                                    Schedule.init model.key
+                                        ((\( id, _, _ ) -> id) params)
+                                        ((\( _, status, _ ) -> status) params)
+                            in
+                            ( { model | page = SchedulePage scheduleModel }
+                            , Cmd.map ScheduleMsg scheduleCmd
+                            )
+
+                        PublicRoute (VerifyRoute params) ->
+                            -- For verification, we need to make an API call
+                            let
+                                verifyUrl =
+                                    case params of
+                                        VerifyParams orgSlug token ->
+                                            "/api/auth/verify/" ++ orgSlug ++ "/" ++ token
+
+                                verifyCmd =
+                                    Http.get
+                                        { url = verifyUrl
+                                        , expect = Http.expectJson GotVerification verificationDecoder
+                                        }
+                            in
+                            ( model, verifyCmd )
+
+                        -- For any other routes, use the standard updatePage
                         _ ->
                             updatePage url ( model, cmd )
 
