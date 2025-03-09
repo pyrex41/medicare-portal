@@ -1365,21 +1365,7 @@ viewNavHeader model =
                         [ text "Contacts" ]
                     ]
                 , div [ class "flex items-center space-x-4" ]
-                    [ case model.currentUser of
-                        Just user ->
-                            if user.isAdmin && user.subscriptionTier /= "basic" then
-                                button
-                                    [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:bg-[#DCE2E5] rounded-md transition-colors duration-200"
-                                    , onClick (InternalLinkClicked "/add-agents")
-                                    ]
-                                    [ text "Manage Agents" ]
-
-                            else
-                                text ""
-
-                        Nothing ->
-                            text ""
-                    , div [ class "relative" ]
+                    [ div [ class "relative" ]
                         [ button
                             [ class "flex items-center space-x-2 px-3 py-1.5 text-gray-700 text-sm font-medium hover:bg-[#DCE2E5] rounded-md transition-colors duration-200"
                             , onClick ToggleDropdown
@@ -1421,7 +1407,7 @@ viewNavHeader model =
                                         [ class "block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-[#DCE2E5]"
                                         , onClick (InternalLinkClicked "/settings")
                                         ]
-                                        [ text "Organization Settings" ]
+                                        [ text "Settings" ]
 
                                   else
                                     text ""
