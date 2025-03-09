@@ -11,7 +11,6 @@ import Components.AccountStatusBanner as AccountStatusBanner
 import Contact
 import Contacts
 import Dashboard
-import Debug
 import Eligibility
 import Home
 import Html exposing (Html, a, button, div, h1, img, nav, p, text)
@@ -796,10 +795,6 @@ update msg model =
                                     , currentUser = Just user
                                     , isSetup = isInSetup
                                 }
-
-                            -- Explicitly fetch user information directly, not through updatePage
-                            _ =
-                                Debug.log "Directly calling fetchCurrentUser in GotSession" {}
                         in
                         Cmd.batch [ fetchCurrentUser, updatePage model.url ( newModel, Cmd.none ) |> Tuple.second ]
                             |> (\cmd -> ( newModel, cmd ))
@@ -842,20 +837,13 @@ update msg model =
         HomeMsg subMsg ->
             case model.page of
                 HomePage pageModel ->
-                    -- Determine if this is a navigation message by looking at its string representation
-                    if String.contains "NavigateSignup" (Debug.toString subMsg) then
-                        -- Directly handle the NavigateSignup case
-                        ( model, Nav.pushUrl model.key "/onboarding/plan" )
-
-                    else
-                        -- Regular update for non-navigation messages
-                        let
-                            ( newPageModel, homeCmd ) =
-                                Home.update subMsg pageModel
-                        in
-                        ( { model | page = HomePage newPageModel }
-                        , Cmd.map HomeMsg homeCmd
-                        )
+                    let
+                        ( newPageModel, homeCmd ) =
+                            Home.update subMsg pageModel
+                    in
+                    ( { model | page = HomePage newPageModel }
+                    , Cmd.map HomeMsg homeCmd
+                    )
 
                 _ ->
                     ( model, Cmd.none )
@@ -950,15 +938,12 @@ update msg model =
                     case response.user of
                         Just user ->
                             let
-                                _ =
-                                    Debug.log "Received user from API" user
-
                                 currentUser =
                                     Just
                                         { id = user.id
                                         , email = user.email
-                                        , isAdmin = Debug.log "Setting isAdmin to" user.isAdmin
-                                        , isAgent = Debug.log "Setting isAgent to" user.isAgent
+                                        , isAdmin = user.isAdmin
+                                        , isAgent = user.isAgent
                                         , organizationSlug = user.organizationSlug
                                         , organizationId = user.organizationId
                                         , firstName = user.firstName
@@ -996,10 +981,6 @@ update msg model =
 
                 Err error ->
                     -- Error retrieving user data, but we should still update the page to avoid being stuck
-                    let
-                        _ =
-                            Debug.log "Error retrieving user data" error
-                    in
                     updatePage model.url ( model, Cmd.none )
 
         GotAccountStatus result ->
@@ -1587,14 +1568,14 @@ userDecoder =
         |> Pipeline.required "email" Decode.string
         |> Pipeline.required "is_admin"
             (Decode.oneOf
-                [ Decode.bool |> Decode.map (\val -> Debug.log "is_admin as bool" val)
-                , Decode.int |> Decode.map (\n -> Debug.log "is_admin as int" n == 1)
+                [ Decode.bool
+                , Decode.int |> Decode.map (\n -> n == 1)
                 ]
             )
         |> Pipeline.required "is_agent"
             (Decode.oneOf
-                [ Decode.bool |> Decode.map (\val -> Debug.log "is_agent as bool" val)
-                , Decode.int |> Decode.map (\n -> Debug.log "is_agent as int" n == 1)
+                [ Decode.bool
+                , Decode.int |> Decode.map (\n -> n == 1)
                 ]
             )
         |> Pipeline.required "organization_slug" Decode.string
@@ -1771,10 +1752,6 @@ shouldRedirectToSetup route model =
 
 updatePage : Url -> ( Model, Cmd Msg ) -> ( Model, Cmd Msg )
 updatePage url ( model, cmd ) =
-    let
-        _ =
-            Debug.log "updatePage" { url = Url.toString url, sessionState = Debug.toString model.session }
-    in
     case model.session of
         Unknown ->
             -- When session state is Unknown, still allow public routes to render
@@ -1807,7 +1784,6 @@ updatePage url ( model, cmd ) =
 
                         adminRedirect =
                             shouldRedirectAdminRoute route modelWithUpdatedSetup
-                                |> Debug.log "adminRedirect"
 
                         -- Determine if we should make authenticated requests based on session state
                         -- Only fetch user data if we have a verified session AND don't already have user info
@@ -1829,11 +1805,9 @@ updatePage url ( model, cmd ) =
                             let
                                 needsLogin =
                                     shouldRedirectToLogin route modelWithUpdatedSetup
-                                        |> Debug.log "needsLogin"
 
                                 needsSetup =
                                     shouldRedirectToSetup route modelWithUpdatedSetup
-                                        |> Debug.log "needsSetup"
                             in
                             if needsLogin then
                                 ( { modelWithUpdatedSetup
@@ -2330,11 +2304,7 @@ currentUserResponseDecoder =
             (Decode.nullable
                 (Decode.value
                     |> Decode.andThen
-                        (\val ->
-                            let
-                                _ =
-                                    Debug.log "Raw user JSON" val
-                            in
+                        (\_ ->
                             userDecoder
                         )
                 )

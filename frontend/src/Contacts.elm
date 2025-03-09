@@ -290,18 +290,6 @@ init key maybeUser =
             , key = key
             , showLimitBanner = True
             }
-
-        _ =
-            Debug.log "Contacts init with user"
-                { user = maybeUser
-                , hasAdmin =
-                    case maybeUser of
-                        Just user ->
-                            user.isAdmin
-
-                        Nothing ->
-                            False
-                }
     in
     ( initialModel
     , Cmd.batch
@@ -1096,9 +1084,6 @@ update msg model =
 
         CsvUploaded (Ok response) ->
             let
-                _ =
-                    Debug.log "CSV Upload Response" response
-
                 errorMessage =
                     if response.success then
                         "CSV uploaded successfully with "
@@ -1170,9 +1155,6 @@ update msg model =
 
         CsvUploaded (Err httpError) ->
             let
-                _ =
-                    Debug.log "CSV Upload Error" httpError
-
                 errorMessage =
                     case httpError of
                         Http.BadUrl url ->
@@ -1265,15 +1247,6 @@ update msg model =
                     ( model, Cmd.none )
 
         GotCurrentUser (Ok user) ->
-            let
-                _ =
-                    Debug.log "Current user loaded"
-                        { id = user.id
-                        , email = user.email
-                        , isAdmin = user.isAdmin
-                        , isAgent = user.isAgent
-                        }
-            in
             ( { model | currentUser = Just user }, Cmd.none )
 
         GotCurrentUser (Err _) ->
@@ -1291,32 +1264,9 @@ update msg model =
             ( model, Cmd.none )
 
         GotAgents (Ok agents) ->
-            let
-                _ =
-                    Debug.log "Agents loaded"
-                        { count = List.length agents
-                        , firstAgent =
-                            case List.head agents of
-                                Just agent ->
-                                    { id = agent.id
-                                    , email = agent.email
-                                    , firstName = agent.firstName
-                                    , lastName = agent.lastName
-                                    , isAdmin = agent.isAdmin
-                                    , isAgent = agent.isAgent
-                                    }
-
-                                Nothing ->
-                                    { id = 0, email = "", firstName = "", lastName = "", isAdmin = False, isAgent = False }
-                        }
-            in
             ( { model | agents = agents }, Cmd.none )
 
         GotAgents (Err error) ->
-            let
-                _ =
-                    Debug.log "Error loading agents" (Debug.toString error)
-            in
             ( model, Cmd.none )
 
         SelectUploadAgent agentId ->
@@ -1330,11 +1280,6 @@ update msg model =
                     ( model, Cmd.none )
 
         ShowReassignAgentModal ->
-            let
-                _ =
-                    Debug.log "ShowReassignAgentModal triggered"
-                        { selectedContactsCount = List.length model.selectedContacts }
-            in
             ( { model | showModal = ReassignAgentModal }, Cmd.none )
 
         SelectReassignAgent agentId ->
@@ -1570,13 +1515,6 @@ viewBulkActionBar model =
     let
         isAdmin =
             isAdminOrAdminAgent model.currentUser
-
-        _ =
-            Debug.log "Bottom action bar"
-                { selectedContactsCount = List.length model.selectedContacts
-                , showingReassignButton = isAdmin
-                , currentUserAvailable = model.currentUser /= Nothing
-                }
     in
     div
         [ class "fixed bottom-0 inset-x-0 bg-white border-t border-gray-200 shadow-lg transform transition-all duration-200" ]
@@ -2991,25 +2929,10 @@ isAdminOrAdminAgent maybeUser =
             let
                 isAdmin =
                     user.isAdmin
-
-                _ =
-                    Debug.log "User admin status check - DETAILED"
-                        { userId = user.id
-                        , email = user.email
-                        , firstName = user.firstName
-                        , lastName = user.lastName
-                        , isAdmin = isAdmin
-                        , isAgent = user.isAgent
-                        }
             in
             isAdmin
 
         Nothing ->
-            -- If no user is available yet, default to false
-            let
-                _ =
-                    Debug.log "Admin check failed - DETAILED" "No current user found - defaulting to non-admin"
-            in
             False
 
 
@@ -3392,13 +3315,6 @@ agentDecoder =
 viewReassignAgentModal : Model -> Html Msg
 viewReassignAgentModal model =
     let
-        _ =
-            Debug.log "ReassignAgentModal"
-                { agentsCount = List.length model.agents
-                , selectedContactsCount = List.length model.selectedContacts
-                , selectedAgentId = model.editForm.contactOwnerId
-                }
-
         -- Filter to only include actual agents
         agentList =
             model.agents
@@ -3414,13 +3330,6 @@ viewReassignAgentModal model =
                         )
                     )
                     agentList
-
-        _ =
-            Debug.log "Filtered agent list for reassign"
-                { totalAgents = List.length model.agents
-                , actualAgents = List.length agentList
-                , agentOptions = agentOptions
-                }
     in
     div [ class "fixed inset-0 bg-gray-500/75 flex items-center justify-center p-8" ]
         [ div [ class "bg-white rounded-xl p-10 max-w-2xl w-full mx-4 shadow-xl relative" ]

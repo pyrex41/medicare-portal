@@ -4,7 +4,6 @@ import Browser exposing (Document)
 import Browser.Navigation as Nav
 import Components.LimitBanner as LimitBanner exposing (LimitWarning(..))
 import Components.SetupLayout as SetupLayout
-import Debug
 import Html exposing (Html, button, div, h1, h2, h3, input, label, li, p, span, text, ul)
 import Html.Attributes exposing (class, type_, value)
 import Html.Events exposing (onClick, onInput)
@@ -106,9 +105,6 @@ fetchCurrentSubscription orgSlug =
     let
         url =
             "/api/organizations/" ++ orgSlug ++ "/subscription"
-
-        _ =
-            Debug.log "Fetching subscription from URL" url
     in
     Http.get
         { url = url
@@ -253,31 +249,17 @@ update msg model =
             case result of
                 Ok tiers ->
                     let
-                        -- Log all tiers
-                        _ =
-                            Debug.log "All tiers from API" tiers
-
                         -- Look for Pro plans specifically
                         proPlans =
                             List.filter (\t -> t.id == "pro") tiers
-
-                        _ =
-                            Debug.log "Pro plans found" proPlans
 
                         -- Look for $99 Pro plan
                         proPlans99 =
                             List.filter (\t -> t.id == "pro" && t.price == "$99/mo") tiers
 
-                        _ =
-                            Debug.log "$99 Pro plans found" proPlans99
-
                         -- Apply filter
                         filteredTiers =
                             filterTiers tiers
-
-                        -- Log filtered tiers
-                        _ =
-                            Debug.log "Filtered tiers" filteredTiers
                     in
                     ( { model
                         | tiers = filteredTiers
@@ -304,9 +286,6 @@ update msg model =
 
                                 Http.BadBody message ->
                                     "Bad body: " ++ message
-
-                        _ =
-                            Debug.log "Failed to load tiers" errorString
                     in
                     ( { model | error = Just "Failed to load subscription tiers", isLoading = False }
                     , Cmd.none
@@ -315,15 +294,6 @@ update msg model =
         GotCurrentSubscription result ->
             case result of
                 Ok subscription ->
-                    -- Log successful subscription load in console using Debug.log
-                    let
-                        _ =
-                            Debug.log "Successfully loaded subscription"
-                                { tierId = subscription.tierId
-                                , agentLimit = subscription.agentLimit
-                                , contactLimit = subscription.contactLimit
-                                }
-                    in
                     ( { model
                         | currentTier = Just subscription.tierId
                         , currentAgentLimit = subscription.agentLimit
@@ -352,9 +322,6 @@ update msg model =
 
                                 Http.BadBody message ->
                                     "Bad body: " ++ message
-
-                        _ =
-                            Debug.log "Failed to load subscription" errorString
                     in
                     ( { model | error = Just "Failed to load current subscription", isLoading = False }
                     , Cmd.none

@@ -10,7 +10,6 @@ module Onboarding.Steps.UserDetails exposing
 
 import Browser.Navigation as Nav
 import Char
-import Debug
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (..)
@@ -153,16 +152,8 @@ update msg model =
                 )
 
         GotEmailCheckResponse result ->
-            let
-                _ =
-                    Debug.log "Email check response" result
-            in
             case result of
                 Ok response ->
-                    let
-                        _ =
-                            Debug.log "Email check success" response
-                    in
                     if response.available then
                         ( { model | emailStatus = Available }
                         , Cmd.none
@@ -177,9 +168,6 @@ update msg model =
 
                 Err httpError ->
                     let
-                        _ =
-                            Debug.log "Email check error" httpError
-
                         errorMsg =
                             case httpError of
                                 Http.BadBody message ->
@@ -563,10 +551,6 @@ saveUserDetails model =
 
 checkEmailAvailability : String -> Cmd Msg
 checkEmailAvailability email =
-    let
-        _ =
-            Debug.log "Checking email availability for" email
-    in
     Http.request
         { method = "GET"
         , headers = []
@@ -595,17 +579,9 @@ handleEmailCheckResponse response =
             Err Http.NetworkError
 
         Http.BadStatus_ metadata body ->
-            let
-                _ =
-                    Debug.log "Email check BadStatus" { status = metadata.statusCode, body = body }
-            in
             Err (Http.BadStatus metadata.statusCode)
 
         Http.GoodStatus_ metadata body ->
-            let
-                _ =
-                    Debug.log "Email check GoodStatus" { status = metadata.statusCode, body = body, headers = metadata.headers }
-            in
             -- If we get a 200 status but empty body, consider it a success
             if String.isEmpty (String.trim body) then
                 Ok { available = True, message = "Email is available" }
@@ -617,10 +593,6 @@ handleEmailCheckResponse response =
                         Ok value
 
                     Err error ->
-                        let
-                            _ =
-                                Debug.log "Email check decoder error" { error = error, body = body }
-                        in
                         -- Consider most 200 responses as success even with decode errors
                         Ok { available = True, message = "Email is available (decode error)" }
 
