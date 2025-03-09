@@ -195,66 +195,36 @@ view model =
             viewLoading
 
           else
-            div [ class "space-y-6" ]
-                [ div [ class "bg-white shadow rounded-lg p-6" ]
-                    [ div [ class "space-y-6" ]
-                        [ div []
-                            [ label [ class "block text-sm font-medium text-gray-700" ]
+            div [ class "space-y-8" ]
+                [ div [ class "bg-white shadow rounded-lg p-8" ]
+                    [ div [ class "space-y-8 max-w-3xl mx-auto" ]
+                        [ div [ class "mb-6" ]
+                            [ label [ class "block text-sm font-medium text-gray-700 mb-3" ]
                                 [ text "Agency Name" ]
                             , input
                                 [ type_ "text"
-                                , class "mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                                , class "mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 px-4 py-3"
                                 , value model.agencyName
                                 , onInput UpdateAgencyName
                                 , placeholder "Enter your agency name"
                                 ]
                                 []
                             ]
-                        , div [ class "grid grid-cols-1 md:grid-cols-2 gap-6" ]
+                        , div [ class "grid grid-cols-1 md:grid-cols-2 gap-8 mb-6" ]
                             [ div []
-                                [ label [ class "block text-sm font-medium text-gray-700" ]
-                                    [ text "Website (Optional)" ]
-                                , div [ class "mt-1 flex rounded-md shadow-sm" ]
-                                    [ span [ class "inline-flex items-center px-3 rounded-l-md border border-r-0 border-gray-300 bg-gray-50 text-gray-500 text-sm" ]
-                                        [ text "https://" ]
-                                    , input
-                                        [ type_ "text"
-                                        , class "flex-1 min-w-0 block w-full px-3 py-2 rounded-none rounded-r-md border-gray-300 focus:ring-blue-500 focus:border-blue-500"
-                                        , value model.website
-                                        , onInput UpdateWebsite
-                                        , placeholder "www.example.com"
-                                        ]
-                                        []
-                                    ]
-                                ]
-                            , div []
-                                [ label [ class "block text-sm font-medium text-gray-700" ]
-                                    [ text "Phone (Optional)" ]
-                                , input
-                                    [ type_ "tel"
-                                    , class "mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                                    , value model.phone
-                                    , onInput UpdatePhone
-                                    , placeholder "(555) 555-5555"
-                                    ]
-                                    []
-                                ]
-                            ]
-                        , div [ class "grid grid-cols-1 md:grid-cols-2 gap-6" ]
-                            [ div []
-                                [ label [ class "block text-sm font-medium text-gray-700" ]
+                                [ label [ class "block text-sm font-medium text-gray-700 mb-3" ]
                                     [ text "Primary Color (Optional)" ]
-                                , div [ class "mt-1 flex items-center space-x-3" ]
+                                , div [ class "mt-1 flex items-center space-x-4" ]
                                     [ input
                                         [ type_ "color"
-                                        , class "h-10 w-10 border border-gray-300 rounded"
+                                        , class "h-12 w-12 border border-gray-300 rounded"
                                         , value model.primaryColor
                                         , onInput UpdatePrimaryColor
                                         ]
                                         []
                                     , input
                                         [ type_ "text"
-                                        , class "flex-1 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                                        , class "flex-1 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 px-4 py-3"
                                         , value model.primaryColor
                                         , onInput UpdatePrimaryColor
                                         ]
@@ -262,19 +232,19 @@ view model =
                                     ]
                                 ]
                             , div []
-                                [ label [ class "block text-sm font-medium text-gray-700" ]
+                                [ label [ class "block text-sm font-medium text-gray-700 mb-3" ]
                                     [ text "Secondary Color (Optional)" ]
-                                , div [ class "mt-1 flex items-center space-x-3" ]
+                                , div [ class "mt-1 flex items-center space-x-4" ]
                                     [ input
                                         [ type_ "color"
-                                        , class "h-10 w-10 border border-gray-300 rounded"
+                                        , class "h-12 w-12 border border-gray-300 rounded"
                                         , value model.secondaryColor
                                         , onInput UpdateSecondaryColor
                                         ]
                                         []
                                     , input
                                         [ type_ "text"
-                                        , class "flex-1 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                                        , class "flex-1 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 px-4 py-3"
                                         , value model.secondaryColor
                                         , onInput UpdateSecondaryColor
                                         ]
@@ -282,20 +252,20 @@ view model =
                                     ]
                                 ]
                             ]
-                        , div []
-                            [ label [ class "block text-sm font-medium text-gray-700" ]
+                        , div [ class "mb-6" ]
+                            [ label [ class "block text-sm font-medium text-gray-700 mb-3" ]
                                 [ text "Logo (Optional)" ]
                             , div [ class "mt-1 flex items-center space-x-4" ]
                                 [ case model.logo of
                                     Just logoUrl ->
-                                        div [ class "flex items-center space-x-4" ]
+                                        div [ class "flex items-center space-x-6" ]
                                             [ img
                                                 [ src logoUrl
-                                                , class "h-16 w-16 object-contain border border-gray-200 rounded"
+                                                , class "h-20 w-20 object-contain border border-gray-200 rounded p-1"
                                                 ]
                                                 []
                                             , button
-                                                [ class "px-4 py-2 text-sm text-blue-600 hover:text-blue-800"
+                                                [ class "px-5 py-2.5 text-sm text-blue-600 hover:text-blue-800 border border-blue-200 rounded-md"
                                                 , onClick UploadLogo
                                                 , disabled model.uploadingLogo
                                                 ]
@@ -311,7 +281,7 @@ view model =
 
                                         else
                                             button
-                                                [ class "px-4 py-2 text-sm text-blue-600 hover:text-blue-800 border border-blue-200 rounded"
+                                                [ class "px-5 py-2.5 text-sm text-blue-600 hover:text-blue-800 border border-blue-200 rounded-md"
                                                 , onClick UploadLogo
                                                 ]
                                                 [ text "Upload Logo" ]
@@ -320,12 +290,12 @@ view model =
                         ]
                     ]
                 , if model.error /= Nothing then
-                    div [ class "bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded" ]
+                    div [ class "bg-red-100 border border-red-400 text-red-700 px-6 py-4 rounded" ]
                         [ text (Maybe.withDefault "" model.error) ]
 
                   else
                     text ""
-                , div [ class "flex justify-between" ]
+                , div [ class "flex justify-between mt-8" ]
                     [ button
                         [ class "px-6 py-3 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500"
                         , onClick SkipStepClicked

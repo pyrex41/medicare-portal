@@ -25,21 +25,12 @@ import Json.Encode as Encode
 type alias Model =
     { stateLicenses : List String
     , carrierContracts : List String
-    , stateCarrierSettings : List StateCarrierSetting
+    , useSmartSendForGI : Bool
     , isLoading : Bool
     , error : Maybe String
     , key : Nav.Key
     , orgSlug : String
     , expandedSections : List String
-    , useRecommendedGISettings : Bool
-    }
-
-
-type alias StateCarrierSetting =
-    { state : String
-    , carrier : String
-    , active : Bool
-    , targetGI : Bool
     }
 
 
@@ -47,13 +38,12 @@ init : Nav.Key -> String -> ( Model, Cmd Msg )
 init key orgSlug =
     ( { stateLicenses = []
       , carrierContracts = []
-      , stateCarrierSettings = []
+      , useSmartSendForGI = True
       , isLoading = False
       , error = Nothing
       , key = key
       , orgSlug = orgSlug
-      , expandedSections = [ "State Licenses", "Carrier Contracts", "State & Carrier Settings" ]
-      , useRecommendedGISettings = True
+      , expandedSections = [ "State Licenses", "Carrier Contracts", "Guaranteed Issue Settings" ]
       }
     , Cmd.none
     )
@@ -68,11 +58,10 @@ type Msg
     | RemoveStateLicense String
     | AddCarrierContract String
     | RemoveCarrierContract String
-    | UpdateStateCarrierSetting String String Bool Bool
     | ToggleSection String
     | ToggleAllStates Bool
     | ToggleAllCarriers Bool
-    | ToggleRecommendedGISettings Bool
+    | ToggleSmartSendForGI Bool
     | NextStepClicked
     | GotLicensingSettings (Result Http.Error LicensingSettingsResponse)
     | LicensingSettingsSaved (Result Http.Error ())
@@ -88,7 +77,7 @@ type OutMsg
 type alias LicensingSettingsResponse =
     { stateLicenses : List String
     , carrierContracts : List String
-    , stateCarrierSettings : List StateCarrierSetting
+    , useSmartSendForGI : Bool
     }
 
 
@@ -102,35 +91,14 @@ update msg model =
                         model
 
                     else
-                        let
-                            newStateCarrierSettings =
-                                List.concat
-                                    [ model.stateCarrierSettings
-                                    , List.map
-                                        (\carrier ->
-                                            { state = state
-                                            , carrier = carrier
-                                            , active = True
-                                            , targetGI = model.useRecommendedGISettings
-                                            }
-                                        )
-                                        model.carrierContracts
-                                    ]
-                        in
-                        { model
-                            | stateLicenses = state :: model.stateLicenses
-                            , stateCarrierSettings = newStateCarrierSettings
-                        }
+                        { model | stateLicenses = state :: model.stateLicenses }
             in
             ( newModel, Cmd.none, NoOutMsg )
 
         RemoveStateLicense state ->
             let
                 newModel =
-                    { model
-                        | stateLicenses = List.filter (\x -> x /= state) model.stateLicenses
-                        , stateCarrierSettings = List.filter (\setting -> setting.state /= state) model.stateCarrierSettings
-                    }
+                    { model | stateLicenses = List.filter (\x -> x /= state) model.stateLicenses }
             in
             ( newModel, Cmd.none, NoOutMsg )
 
@@ -141,71 +109,14 @@ update msg model =
                         model
 
                     else
-                        let
-                            newStateCarrierSettings =
-                                List.concat
-                                    [ model.stateCarrierSettings
-                                    , List.map
-                                        (\state ->
-                                            { state = state
-                                            , carrier = carrier
-                                            , active = True
-                                            , targetGI = model.useRecommendedGISettings
-                                            }
-                                        )
-                                        model.stateLicenses
-                                    ]
-                        in
-                        { model
-                            | carrierContracts = carrier :: model.carrierContracts
-                            , stateCarrierSettings = newStateCarrierSettings
-                        }
+                        { model | carrierContracts = carrier :: model.carrierContracts }
             in
             ( newModel, Cmd.none, NoOutMsg )
 
         RemoveCarrierContract carrier ->
             let
                 newModel =
-                    { model
-                        | carrierContracts = List.filter (\x -> x /= carrier) model.carrierContracts
-                        , stateCarrierSettings = List.filter (\setting -> setting.carrier /= carrier) model.stateCarrierSettings
-                    }
-            in
-            ( newModel, Cmd.none, NoOutMsg )
-
-        UpdateStateCarrierSetting state carrier active targetGI ->
-            let
-                existingSetting =
-                    List.filter
-                        (\setting ->
-                            setting.state == state && setting.carrier == carrier
-                        )
-                        model.stateCarrierSettings
-                        |> List.head
-
-                newSettings =
-                    case existingSetting of
-                        Just _ ->
-                            List.map
-                                (\setting ->
-                                    if setting.state == state && setting.carrier == carrier then
-                                        { setting | active = active, targetGI = targetGI }
-
-                                    else
-                                        setting
-                                )
-                                model.stateCarrierSettings
-
-                        Nothing ->
-                            { state = state
-                            , carrier = carrier
-                            , active = active
-                            , targetGI = targetGI
-                            }
-                                :: model.stateCarrierSettings
-
-                newModel =
-                    { model | stateCarrierSettings = newSettings }
+                    { model | carrierContracts = List.filter (\x -> x /= carrier) model.carrierContracts }
             in
             ( newModel, Cmd.none, NoOutMsg )
 
@@ -230,25 +141,6 @@ update msg model =
 
                             else
                                 []
-                        , stateCarrierSettings =
-                            if checked then
-                                -- Create settings for all state/carrier combinations
-                                List.concatMap
-                                    (\state ->
-                                        List.map
-                                            (\carrier ->
-                                                { state = state
-                                                , carrier = carrier
-                                                , active = True
-                                                , targetGI = False
-                                                }
-                                            )
-                                            model.carrierContracts
-                                    )
-                                    allStates
-
-                            else
-                                []
                     }
             in
             ( newModel, Cmd.none, NoOutMsg )
@@ -263,52 +155,12 @@ update msg model =
 
                             else
                                 []
-                        , stateCarrierSettings =
-                            if checked then
-                                -- Create settings for all state/carrier combinations
-                                List.concatMap
-                                    (\state ->
-                                        List.map
-                                            (\carrier ->
-                                                { state = state
-                                                , carrier = carrier
-                                                , active = True
-                                                , targetGI = False
-                                                }
-                                            )
-                                            allCarriers
-                                    )
-                                    model.stateLicenses
-
-                            else
-                                []
                     }
             in
             ( newModel, Cmd.none, NoOutMsg )
 
-        ToggleRecommendedGISettings useRecommended ->
-            let
-                newModel =
-                    { model | useRecommendedGISettings = useRecommended }
-
-                -- If turning on recommended settings, update all state carrier settings
-                updatedSettings =
-                    if useRecommended then
-                        -- Apply recommended settings to all state/carrier combinations
-                        List.map
-                            (\setting ->
-                                { setting | targetGI = setting.active }
-                            )
-                            model.stateCarrierSettings
-
-                    else
-                        -- Keep current settings
-                        model.stateCarrierSettings
-            in
-            ( { newModel | stateCarrierSettings = updatedSettings }
-            , Cmd.none
-            , NoOutMsg
-            )
+        ToggleSmartSendForGI useSmartSend ->
+            ( { model | useSmartSendForGI = useSmartSend }, Cmd.none, NoOutMsg )
 
         NextStepClicked ->
             -- Instead of making API calls, just move to the next step
@@ -321,7 +173,7 @@ update msg model =
                     ( { model
                         | stateLicenses = response.stateLicenses
                         , carrierContracts = response.carrierContracts
-                        , stateCarrierSettings = response.stateCarrierSettings
+                        , useSmartSendForGI = response.useSmartSendForGI
                         , isLoading = False
                       }
                     , Cmd.none
@@ -378,9 +230,7 @@ view model =
             , viewExpandableSection "Carrier Contracts"
                 (viewCarriersGrid model)
                 model.expandedSections
-            , viewExpandableSection "State & Carrier Settings"
-                (viewStateCarrierGrid model)
-                model.expandedSections
+            , viewGISettings model
             , if model.error /= Nothing then
                 div [ class "bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded" ]
                     [ text (Maybe.withDefault "" model.error) ]
@@ -391,6 +241,14 @@ view model =
                 [ button
                     [ class "px-6 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
                     , onClick NextStepClicked
+                    , disabled (List.isEmpty model.stateLicenses || List.isEmpty model.carrierContracts)
+                    , title
+                        (if List.isEmpty model.stateLicenses || List.isEmpty model.carrierContracts then
+                            "Please select at least one state license and one carrier contract"
+
+                         else
+                            ""
+                        )
                     ]
                     [ text "Continue" ]
                 ]
@@ -485,159 +343,55 @@ viewCarriersGrid model =
         ]
 
 
-viewStateCarrierGrid : Model -> Html Msg
-viewStateCarrierGrid model =
-    if List.isEmpty model.stateLicenses || List.isEmpty model.carrierContracts then
-        div [ class "text-gray-500 italic p-4 bg-yellow-50 border border-yellow-200 rounded-md" ]
-            [ div [ class "font-medium text-yellow-800 mb-1" ]
-                [ text "Setup Needed" ]
-            , p []
-                [ text "You need to select at least one state license and one carrier contract above before you can configure their settings." ]
-            , if List.isEmpty model.stateLicenses && List.isEmpty model.carrierContracts then
-                div [ class "mt-2" ]
-                    [ text "Please select both state licenses and carrier contracts from the sections above." ]
-
-              else if List.isEmpty model.stateLicenses then
-                div [ class "mt-2" ]
-                    [ text "Please select at least one state license from the State Licenses section above." ]
-
-              else
-                div [ class "mt-2" ]
-                    [ text "Please select at least one carrier contract from the Carrier Contracts section above." ]
+viewGISettings : Model -> Html Msg
+viewGISettings model =
+    div [ class "bg-white shadow rounded-lg overflow-hidden" ]
+        [ div [ class "px-6 py-4 border-b border-gray-200" ]
+            [ h2 [ class "text-lg font-medium" ] [ text "Guaranteed Issue Settings" ]
             ]
-
-    else
-        div []
-            [ div [ class "mb-4 p-3 bg-blue-50 border border-blue-100 rounded-md" ]
-                [ checkbox "Use recommended GI settings (applies GI to all active carrier combinations)"
-                    model.useRecommendedGISettings
-                    ToggleRecommendedGISettings
-                , if model.useRecommendedGISettings then
-                    p [ class "text-sm text-blue-600 mt-2" ]
-                        [ text "With recommended settings, all active carrier combinations will automatically be configured for GI (Guaranteed Issue)." ]
-
-                  else
-                    p [ class "text-sm text-blue-600 mt-2" ]
-                        [ text "Configure GI settings individually for each state and carrier combination below." ]
-                ]
-            , if not model.useRecommendedGISettings then
-                div [ class "overflow-x-auto" ]
-                    [ table [ class "min-w-full divide-y divide-gray-200" ]
-                        [ thead [ class "bg-gray-50" ]
-                            [ tr []
-                                (th [ class "px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider sticky left-0 bg-gray-50 z-10 w-16" ]
-                                    [ text "State" ]
-                                    :: List.map
-                                        (\carrier ->
-                                            th [ class "px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-24" ]
-                                                [ text carrier ]
-                                        )
-                                        model.carrierContracts
-                                )
+        , div [ class "p-6 space-y-6" ]
+            [ div [ class "mb-4 p-4 bg-blue-50 border border-blue-100 rounded-md" ]
+                [ div [ class "flex items-start" ]
+                    [ div [ class "flex items-center h-5" ]
+                        [ input
+                            [ type_ "checkbox"
+                            , checked model.useSmartSendForGI
+                            , onCheck ToggleSmartSendForGI
+                            , class "h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                             ]
-                        , tbody [ class "bg-white divide-y divide-gray-200" ]
-                            (List.indexedMap
-                                (\index state ->
-                                    tr [ classList [ ( "bg-gray-50", modBy 2 index == 0 ) ] ]
-                                        (td [ class "px-3 py-4 whitespace-nowrap text-sm font-medium text-gray-900 sticky left-0 bg-inherit z-10" ]
-                                            [ text state ]
-                                            :: List.map
-                                                (\carrier ->
-                                                    let
-                                                        setting =
-                                                            findStateCarrierSetting model state carrier
-                                                    in
-                                                    td [ class "px-3 py-2 whitespace-nowrap text-sm text-center" ]
-                                                        [ div [ class "flex flex-col items-start space-y-1 w-20 mx-auto" ]
-                                                            [ div [ class "w-full" ]
-                                                                [ label [ class "flex items-center cursor-pointer w-full" ]
-                                                                    [ div [ class "relative w-4 h-4 mr-1 shrink-0" ]
-                                                                        [ input
-                                                                            [ type_ "checkbox"
-                                                                            , checked setting.active
-                                                                            , onCheck
-                                                                                (\active ->
-                                                                                    UpdateStateCarrierSetting state
-                                                                                        carrier
-                                                                                        active
-                                                                                        (if active then
-                                                                                            setting.targetGI
-
-                                                                                         else
-                                                                                            False
-                                                                                        )
-                                                                                )
-                                                                            , class "absolute w-0 h-0 opacity-0"
-                                                                            ]
-                                                                            []
-                                                                        , div
-                                                                            [ class "w-4 h-4 border rounded transition-colors duration-200 flex items-center justify-center"
-                                                                            , classList
-                                                                                [ ( "bg-green-600 border-green-600", setting.active )
-                                                                                , ( "border-gray-300", not setting.active )
-                                                                                ]
-                                                                            ]
-                                                                            [ if setting.active then
-                                                                                div [ class "text-white text-xs" ] [ text "✓" ]
-
-                                                                              else
-                                                                                text ""
-                                                                            ]
-                                                                        ]
-                                                                    , span [ class "text-xs ml-1" ] [ text "Active" ]
-                                                                    ]
-                                                                ]
-                                                            , div [ class "w-full" ]
-                                                                [ label
-                                                                    [ class "flex items-center w-full"
-                                                                    , classList
-                                                                        [ ( "cursor-pointer", setting.active )
-                                                                        , ( "cursor-not-allowed opacity-50", not setting.active )
-                                                                        ]
-                                                                    ]
-                                                                    [ div [ class "relative w-4 h-4 mr-1 shrink-0" ]
-                                                                        [ input
-                                                                            [ type_ "checkbox"
-                                                                            , checked setting.targetGI
-                                                                            , onCheck (\targetGI -> UpdateStateCarrierSetting state carrier setting.active targetGI)
-                                                                            , class "absolute w-0 h-0 opacity-0"
-                                                                            , disabled (not setting.active)
-                                                                            ]
-                                                                            []
-                                                                        , div
-                                                                            [ class "w-4 h-4 border rounded transition-colors duration-200 flex items-center justify-center"
-                                                                            , classList
-                                                                                [ ( "bg-blue-600 border-blue-600", setting.targetGI && setting.active )
-                                                                                , ( "border-gray-300", not setting.targetGI || not setting.active )
-                                                                                ]
-                                                                            ]
-                                                                            [ if setting.targetGI && setting.active then
-                                                                                div [ class "text-white text-xs" ] [ text "✓" ]
-
-                                                                              else
-                                                                                text ""
-                                                                            ]
-                                                                        ]
-                                                                    , span [ class "text-xs ml-1" ] [ text "GI" ]
-                                                                    ]
-                                                                ]
-                                                            ]
-                                                        ]
-                                                )
-                                                model.carrierContracts
-                                        )
-                                )
-                                model.stateLicenses
-                            )
+                            []
+                        ]
+                    , div [ class "ml-3 text-sm" ]
+                        [ label [ class "font-medium text-gray-700" ]
+                            [ text "Use SmartSend for Guaranteed Issue" ]
+                        , p [ class "text-gray-500 mt-1" ]
+                            [ text "When enabled, SmartSend will automatically identify which carrier-state combinations offer full compensation for Guaranteed Issue (GI) policies." ]
                         ]
                     ]
+                ]
+            , div [ class "mt-4 p-4 bg-gray-50 rounded-md" ]
+                [ h3 [ class "text-lg font-medium text-gray-900 mb-2" ]
+                    [ text "How SmartSend Works" ]
+                , p [ class "text-gray-600" ]
+                    [ text "SmartSend analyzes each state and carrier combination to determine which ones offer full carrier compensation for Guaranteed Issue policies. This helps maximize your commissions while ensuring your quotes are always compliant with the latest state and carrier regulations." ]
+                , if model.useSmartSendForGI then
+                    div [ class "mt-4 text-sm text-green-600" ]
+                        [ div [ class "flex items-center" ]
+                            [ span [ class "mr-2 flex-shrink-0" ] [ text "✓" ]
+                            , text "SmartSend for GI is enabled. All eligible state-carrier combinations with full compensation will be automatically processed for Guaranteed Issue."
+                            ]
+                        ]
 
-              else
-                div [ class "p-4 bg-gray-50 rounded-md" ]
-                    [ p [ class "text-gray-600 text-center" ]
-                        [ text "Guaranteed Issue (GI) will be automatically applied to all active state and carrier combinations." ]
-                    ]
+                  else
+                    div [ class "mt-4 text-sm text-gray-600" ]
+                        [ div [ class "flex items-center" ]
+                            [ span [ class "mr-2 flex-shrink-0" ] [ text "•" ]
+                            , text "SmartSend for GI is disabled. You'll need to manually manage GI settings for each state-carrier combination in your Settings after setup."
+                            ]
+                        ]
+                ]
             ]
+        ]
 
 
 checkbox : String -> Bool -> (Bool -> msg) -> Html msg
@@ -666,22 +420,18 @@ td attributes children =
 
 
 -- HELPERS
-
-
-findStateCarrierSetting : Model -> String -> String -> StateCarrierSetting
-findStateCarrierSetting model state carrier =
-    model.stateCarrierSettings
-        |> List.filter (\s -> s.state == state && s.carrier == carrier)
-        |> List.head
-        |> Maybe.withDefault
-            { state = state
-            , carrier = carrier
-            , active = True
-            , targetGI = False
-            }
-
-
-
+-- Remove the findStateCarrierSetting function which is no longer needed
+-- findStateCarrierSetting : Model -> String -> String -> StateCarrierSetting
+-- findStateCarrierSetting model state carrier =
+--     model.stateCarrierSettings
+--         |> List.filter (\s -> s.state == state && s.carrier == carrier)
+--         |> List.head
+--         |> Maybe.withDefault
+--             { state = state
+--             , carrier = carrier
+--             , active = True
+--             , targetGI = False
+--             }
 -- API CALLS
 
 
@@ -711,48 +461,15 @@ licensingSettingsDecoder =
     Decode.succeed LicensingSettingsResponse
         |> Pipeline.required "stateLicenses" (Decode.list Decode.string)
         |> Pipeline.required "carrierContracts" (Decode.list Decode.string)
-        |> Pipeline.required "stateCarrierSettings" (Decode.list stateCarrierSettingDecoder)
-
-
-stateCarrierSettingDecoder : Decode.Decoder StateCarrierSetting
-stateCarrierSettingDecoder =
-    Decode.map4 StateCarrierSetting
-        (Decode.field "state" Decode.string)
-        (Decode.field "carrier" Decode.string)
-        (Decode.field "active" Decode.bool)
-        (Decode.field "targetGI" Decode.bool)
+        |> Pipeline.required "useSmartSendForGI" Decode.bool
 
 
 encodeLicensingSettings : Model -> Encode.Value
 encodeLicensingSettings model =
-    let
-        -- If using recommended settings, ensure all active combinations have targetGI set to true
-        processedSettings =
-            if model.useRecommendedGISettings then
-                List.map
-                    (\setting ->
-                        { setting | targetGI = setting.active }
-                    )
-                    model.stateCarrierSettings
-
-            else
-                model.stateCarrierSettings
-    in
     Encode.object
         [ ( "stateLicenses", Encode.list Encode.string model.stateLicenses )
         , ( "carrierContracts", Encode.list Encode.string model.carrierContracts )
-        , ( "stateCarrierSettings", Encode.list stateCarrierSettingEncoder processedSettings )
-        , ( "useRecommendedGISettings", Encode.bool model.useRecommendedGISettings )
-        ]
-
-
-stateCarrierSettingEncoder : StateCarrierSetting -> Encode.Value
-stateCarrierSettingEncoder setting =
-    Encode.object
-        [ ( "state", Encode.string setting.state )
-        , ( "carrier", Encode.string setting.carrier )
-        , ( "active", Encode.bool setting.active )
-        , ( "targetGI", Encode.bool setting.targetGI )
+        , ( "useSmartSendForGI", Encode.bool model.useSmartSendForGI )
         ]
 
 

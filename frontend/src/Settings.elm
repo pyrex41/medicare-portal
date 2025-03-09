@@ -131,6 +131,16 @@ type alias CurrentUser =
     }
 
 
+
+-- Add new type for deactivated carrier-state pairs
+
+
+type alias DeactivatedPair =
+    { carrier : String
+    , state : String
+    }
+
+
 type alias Model =
     { orgSettings : Maybe Settings
     , status : Status
@@ -143,6 +153,9 @@ type alias Model =
     , isSaving : Bool
     , planType : String
     , error : Maybe String
+    , selectedCarrier : Maybe String
+    , selectedState : Maybe String
+    , deactivatedPairs : List DeactivatedPair
     }
 
 
@@ -207,6 +220,10 @@ type Msg
     | LogoUploaded (Result Http.Error String)
     | NoOp
     | OrgFinalized (Result Http.Error ())
+    | SelectCarrier String
+    | SelectState String
+    | AddDeactivatedPair
+    | RemoveDeactivatedPair String String
 
 
 type alias SettingsResponse =
@@ -228,6 +245,9 @@ init flags =
       , isSaving = False
       , planType = flags.planType
       , error = Nothing
+      , selectedCarrier = Nothing
+      , selectedState = Nothing
+      , deactivatedPairs = []
       }
     , Cmd.batch
         [ fetchSettings
@@ -649,6 +669,83 @@ update msg model =
                 Err error ->
                     ( { model | status = Error "Failed to upload logo" }, Cmd.none )
 
+        SelectCarrier carrier ->
+            ( { model | selectedCarrier = Just carrier }, Cmd.none )
+
+        SelectState state ->
+            ( { model | selectedState = Just state }, Cmd.none )
+
+        AddDeactivatedPair ->
+            case ( model.selectedCarrier, model.selectedState ) of
+                ( Just carrier, Just state ) ->
+                    case model.orgSettings of
+                        Just settings ->
+                            let
+                                -- Update stateCarrierSettings to set active=false for this pair
+                                updatedSettings =
+                                    { settings
+                                        | stateCarrierSettings =
+                                            List.map
+                                                (\s ->
+                                                    if s.state == state && s.carrier == carrier then
+                                                        { s | active = False }
+
+                                                    else
+                                                        s
+                                                )
+                                                settings.stateCarrierSettings
+                                    }
+                            in
+                            ( { model
+                                | orgSettings = Just updatedSettings
+                                , selectedCarrier = Nothing
+                                , selectedState = Nothing
+                              }
+                            , saveSettings updatedSettings
+                            )
+
+                        Nothing ->
+                            ( model, Cmd.none )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        RemoveDeactivatedPair carrier state ->
+            let
+                -- Remove the pair from our local tracking
+                newDeactivatedPairs =
+                    List.filter (\p -> not (p.carrier == carrier && p.state == state)) model.deactivatedPairs
+
+                -- Update orgSettings to reflect the change
+                updatedModel =
+                    case model.orgSettings of
+                        Just settings ->
+                            let
+                                -- Update stateCarrierSettings to set active=true for this pair
+                                updatedSettings =
+                                    { settings
+                                        | stateCarrierSettings =
+                                            List.map
+                                                (\s ->
+                                                    if s.state == state && s.carrier == carrier then
+                                                        { s | active = True }
+
+                                                    else
+                                                        s
+                                                )
+                                                settings.stateCarrierSettings
+                                    }
+                            in
+                            { model
+                                | deactivatedPairs = newDeactivatedPairs
+                                , orgSettings = Just updatedSettings
+                            }
+
+                        Nothing ->
+                            { model | deactivatedPairs = newDeactivatedPairs }
+            in
+            ( updatedModel, Cmd.none )
+
 
 updateSettings : Model -> (Settings -> Settings) -> ( Model, Cmd Msg )
 updateSettings model updateFn =
@@ -1044,155 +1141,121 @@ viewCarriersGrid settings =
 
 viewStateCarrierGrid : Settings -> Html Msg
 viewStateCarrierGrid settings =
-    if List.isEmpty settings.stateLicenses || List.isEmpty settings.carrierContracts then
-        div [ class "text-gray-500 italic p-4" ]
-            [ text "Please select at least one state license and one carrier contract to configure their settings." ]
-
-    else
-        div []
-            [ div [ class "mb-6" ]
-                [ h3 [ class "text-sm font-medium text-gray-700 mb-2" ]
-                    [ text "Guaranteed Issue Settings" ]
-                , div [ class "flex space-x-2" ]
-                    [ button
-                        [ class "px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
-                        , onClick (ApplyGISelection GIAll)
+    div []
+        [ div [ class "mb-6" ]
+            [ h3 [ class "text-sm font-medium text-gray-700 mb-2" ]
+                [ text "SmartSend for Guaranteed Issue" ]
+            , div [ class "flex items-start p-4 bg-blue-50 rounded-md mb-6" ]
+                [ div [ class "flex items-center h-5" ]
+                    [ input
+                        [ type_ "checkbox"
+                        , checked settings.smartSendEnabled
+                        , onCheck ToggleSmartSend
+                        , class "h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
                         ]
-                        [ text "Select All" ]
-                    , button
-                        [ class "px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
-                        , onClick (ApplyGISelection GINone)
-                        ]
-                        [ text "Clear All" ]
-                    , div [ class "relative group" ]
-                        [ button
-                            [ class "px-4 py-2 text-sm font-medium text-indigo-700 bg-white border border-indigo-300 rounded-md hover:bg-indigo-50 flex items-center"
-                            , onClick (ApplyGISelection GIRecommended)
-                            ]
-                            [ text "Apply Recommended"
-                            , div [ class "ml-2 w-5 h-5 rounded-full bg-indigo-50 flex items-center justify-center text-indigo-700" ]
-                                [ text "i" ]
-                            ]
-                        , div
-                            [ class """absolute bottom-full mb-2 p-4 bg-white text-indigo-700 text-sm rounded-lg shadow-lg 
-                                      invisible group-hover:visible opacity-0 group-hover:opacity-100 transition-opacity
-                                      -translate-x-1/2 left-1/2 w-96 border border-indigo-100 z-50"""
-                            ]
-                            [ text """Include state/carriers with full compensation for GI policies. Always verify with your own contracts and commission schedules.""" ]
-                        ]
+                        []
+                    ]
+                , div [ class "ml-3 text-sm" ]
+                    [ label [ class "font-medium text-gray-700" ]
+                        [ text "Use SmartSend for Guaranteed Issue" ]
+                    , p [ class "text-gray-500 mt-1" ]
+                        [ text "When enabled, SmartSend will automatically identify which carrier-state combinations offer full compensation for Guaranteed Issue (GI) policies." ]
                     ]
                 ]
-            , div [ class "overflow-x-auto" ]
-                [ table [ class "min-w-full divide-y divide-gray-200" ]
-                    [ thead [ class "bg-gray-50" ]
-                        [ tr []
-                            (th [ class "px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider sticky left-0 bg-gray-50 z-10 w-16" ]
-                                [ text "State" ]
-                                :: List.map
-                                    (\carrier ->
-                                        th [ class "px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-24" ]
-                                            [ text carrier ]
-                                    )
-                                    settings.carrierContracts
-                            )
+            , div [ class "mt-4 p-4 bg-gray-50 rounded-md mb-8" ]
+                [ h3 [ class "text-md font-medium text-gray-900 mb-2" ]
+                    [ text "How SmartSend Works" ]
+                , p [ class "text-gray-600" ]
+                    [ text "SmartSend analyzes each state and carrier combination to determine which ones offer full carrier compensation for Guaranteed Issue policies. This helps maximize your commissions while ensuring your quotes are always compliant with the latest state and carrier regulations." ]
+                ]
+            , h3 [ class "text-sm font-medium text-gray-700 mt-8 mb-2" ]
+                [ text "Deactivate Carrier-State Pairs" ]
+            , p [ class "text-gray-500 mb-4" ]
+                [ text "If you want to deactivate specific carrier-state combinations, select a carrier and state below and add them to the list." ]
+            , div [ class "flex items-end space-x-4 mb-4" ]
+                [ div [ class "flex-1" ]
+                    [ label [ class "block text-sm font-medium text-gray-700 mb-1" ]
+                        [ text "Carrier" ]
+                    , select
+                        [ class "block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                        , onInput SelectCarrier
                         ]
-                    , tbody [ class "bg-white divide-y divide-gray-200" ]
-                        (List.indexedMap
-                            (\index state ->
-                                tr [ classList [ ( "bg-gray-50", modBy 2 index == 0 ) ] ]
-                                    (td [ class "px-3 py-4 whitespace-nowrap text-sm font-medium text-gray-900 sticky left-0 bg-inherit z-10" ]
-                                        [ text state ]
-                                        :: List.map
-                                            (\carrier ->
-                                                let
-                                                    setting =
-                                                        findStateCarrierSetting settings state carrier
-                                                in
-                                                td [ class "px-3 py-2 whitespace-nowrap text-sm text-center" ]
-                                                    [ div [ class "flex flex-col items-start space-y-1 w-20 mx-auto" ]
-                                                        [ div [ class "w-full" ]
-                                                            [ label [ class "flex items-center cursor-pointer w-full" ]
-                                                                [ div [ class "relative w-4 h-4 mr-1 shrink-0" ]
-                                                                    [ input
-                                                                        [ type_ "checkbox"
-                                                                        , checked setting.active
-                                                                        , onCheck
-                                                                            (\active ->
-                                                                                UpdateStateCarrierSetting state
-                                                                                    carrier
-                                                                                    active
-                                                                                    (if active then
-                                                                                        setting.targetGI
-
-                                                                                     else
-                                                                                        False
-                                                                                    )
-                                                                            )
-                                                                        , class "absolute w-0 h-0 opacity-0"
-                                                                        ]
-                                                                        []
-                                                                    , div
-                                                                        [ class "w-4 h-4 border rounded transition-colors duration-200 flex items-center justify-center"
-                                                                        , classList
-                                                                            [ ( "bg-green-600 border-green-600", setting.active )
-                                                                            , ( "border-gray-300", not setting.active )
-                                                                            ]
-                                                                        ]
-                                                                        [ if setting.active then
-                                                                            div [ class "text-white text-xs" ] [ text "✓" ]
-
-                                                                          else
-                                                                            text ""
-                                                                        ]
-                                                                    ]
-                                                                , span [ class "text-xs ml-1" ] [ text "Active" ]
-                                                                ]
-                                                            ]
-                                                        , div [ class "w-full" ]
-                                                            [ label
-                                                                [ class "flex items-center w-full"
-                                                                , classList
-                                                                    [ ( "cursor-pointer", setting.active )
-                                                                    , ( "cursor-not-allowed opacity-50", not setting.active )
-                                                                    ]
-                                                                ]
-                                                                [ div [ class "relative w-4 h-4 mr-1 shrink-0" ]
-                                                                    [ input
-                                                                        [ type_ "checkbox"
-                                                                        , checked setting.targetGI
-                                                                        , onCheck (\targetGI -> UpdateStateCarrierSetting state carrier setting.active targetGI)
-                                                                        , class "absolute w-0 h-0 opacity-0"
-                                                                        , disabled (not setting.active)
-                                                                        ]
-                                                                        []
-                                                                    , div
-                                                                        [ class "w-4 h-4 border rounded transition-colors duration-200 flex items-center justify-center"
-                                                                        , classList
-                                                                            [ ( "bg-blue-600 border-blue-600", setting.targetGI && setting.active )
-                                                                            , ( "border-gray-300", not setting.targetGI || not setting.active )
-                                                                            ]
-                                                                        ]
-                                                                        [ if setting.targetGI && setting.active then
-                                                                            div [ class "text-white text-xs" ] [ text "✓" ]
-
-                                                                          else
-                                                                            text ""
-                                                                        ]
-                                                                    ]
-                                                                , span [ class "text-xs ml-1" ] [ text "GI" ]
-                                                                ]
-                                                            ]
-                                                        ]
-                                                    ]
-                                            )
-                                            settings.carrierContracts
-                                    )
-                            )
-                            settings.stateLicenses
+                        (option [ value "" ] [ text "Select carrier" ]
+                            :: List.map
+                                (\carrier ->
+                                    option [ value carrier ] [ text carrier ]
+                                )
+                                settings.carrierContracts
                         )
                     ]
+                , div [ class "flex-1" ]
+                    [ label [ class "block text-sm font-medium text-gray-700 mb-1" ]
+                        [ text "State" ]
+                    , select
+                        [ class "block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                        , onInput SelectState
+                        ]
+                        (option [ value "" ] [ text "Select state" ]
+                            :: List.map
+                                (\state ->
+                                    option [ value state ] [ text state ]
+                                )
+                                settings.stateLicenses
+                        )
+                    ]
+                , button
+                    [ class "px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                    , onClick AddDeactivatedPair
+                    , disabled (List.isEmpty settings.stateLicenses || List.isEmpty settings.carrierContracts)
+                    ]
+                    [ text "Add" ]
+                ]
+            , viewDeactivatedList settings
+            ]
+        ]
+
+
+viewDeactivatedList : Settings -> Html Msg
+viewDeactivatedList settings =
+    let
+        -- Get the deactivated pairs from the settings
+        deactivatedPairs =
+            List.filter (\s -> not s.active) settings.stateCarrierSettings
+    in
+    if List.isEmpty deactivatedPairs then
+        div [ class "text-gray-500 italic mt-4 p-4 bg-gray-50 rounded-md" ]
+            [ text "No carrier-state pairs have been deactivated." ]
+
+    else
+        div [ class "mt-4" ]
+            [ h4 [ class "text-sm font-medium text-gray-700 mb-2" ]
+                [ text "Deactivated Pairs" ]
+            , div [ class "bg-white border border-gray-200 rounded-md" ]
+                [ ul [ class "divide-y divide-gray-200" ]
+                    (List.map
+                        (\pair ->
+                            li [ class "px-4 py-3 flex justify-between items-center" ]
+                                [ div []
+                                    [ span [ class "font-medium" ] [ text pair.carrier ]
+                                    , span [ class "text-gray-500 mx-2" ] [ text "in" ]
+                                    , span [ class "font-medium" ] [ text pair.state ]
+                                    ]
+                                , button
+                                    [ class "text-red-600 hover:text-red-800"
+                                    , onClick (UpdateStateCarrierSetting pair.state pair.carrier True False)
+                                    ]
+                                    [ text "Reactivate" ]
+                                ]
+                        )
+                        deactivatedPairs
+                    )
                 ]
             ]
+
+
+option : List (Attribute msg) -> List (Html msg) -> Html msg
+option attributes children =
+    Html.option attributes children
 
 
 
@@ -1258,7 +1321,7 @@ viewStateCarrierCell setting =
                 , class "h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
                 ]
                 []
-            , span [ class "text-sm text-gray-600" ] [ text "GI" ]
+            , span [ class "text-xs ml-1" ] [ text "GI" ]
             ]
         ]
 

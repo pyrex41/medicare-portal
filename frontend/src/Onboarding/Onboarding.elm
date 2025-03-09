@@ -703,7 +703,20 @@ encodeOnboardingData model =
             model.licensingSettingsModel.carrierContracts
 
         stateCarrierSettings =
-            model.licensingSettingsModel.stateCarrierSettings
+            -- Create state carrier settings based on whether SmartSend for GI is enabled
+            List.concatMap
+                (\state ->
+                    List.map
+                        (\carrier ->
+                            { state = state
+                            , carrier = carrier
+                            , active = True
+                            , targetGI = model.licensingSettingsModel.useSmartSendForGI
+                            }
+                        )
+                        carrierContracts
+                )
+                stateLicenses
 
         -- Agents (if applicable)
         agents =
