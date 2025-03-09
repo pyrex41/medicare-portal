@@ -266,8 +266,8 @@ const startServer = async () => {
 
           logger.info(`GET /api/contacts - Attempting to fetch contacts for org ${user.organization_id}`)
           
-          // Get org-specific database
-          const orgDb = await Database.getOrgDb(user.organization_id.toString())
+          // Get org-specific database, initializing it if needed
+          const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString())
           
           // First get all unique carriers and states for filter options
           const [carrierResults, stateResults] = await Promise.all([
@@ -392,7 +392,7 @@ const startServer = async () => {
             throw new Error('No organization ID found in session')
           }
 
-          const orgDb = await Database.getOrgDb(user.organization_id.toString())
+          const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString())
           
           const result = await orgDb.fetchOne(
             'SELECT 1 FROM contacts WHERE LOWER(TRIM(email)) = LOWER(TRIM(?))',
@@ -417,7 +417,7 @@ const startServer = async () => {
           logger.info(`GET /api/contacts/${id} - Fetching contact for org ${user.organization_id}`)
           
           // Get org-specific database
-          const orgDb = await Database.getOrgDb(user.organization_id.toString())
+          const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString())
           
           // Fetch the contact
           const result = await orgDb.fetchOne<ContactRow>(
@@ -463,7 +463,7 @@ const startServer = async () => {
           logger.info(`Attempting to create contact for org ${user.organization_id}: ${contact.first_name} ${contact.last_name}`)
           
           // Get org-specific database
-          const orgDb = await Database.getOrgDb(user.organization_id.toString())
+          const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString())
 
           // Check for existing email
           const existingContact = await orgDb.fetchOne(
@@ -535,7 +535,7 @@ const startServer = async () => {
           throw new Error(String(e))
         }
       })
-      .put('/api/contacts/:id', async ({ params: { id }, body, request }) => {
+      .put('/api/contacts/:id', async ({ params: { id }, body, request }: { body: ContactCreate, request: Request }) => {
         try {
           // Get user and org info
           const user = await getUserFromSession(request)
@@ -544,7 +544,7 @@ const startServer = async () => {
           }
 
           // Get org-specific database
-          const orgDb = await Database.getOrgDb(user.organization_id.toString())
+          const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString())
 
           const contact = body as ContactCreate
           logger.info(`PUT /api/contacts/${id} - Updating contact for org ${user.organization_id}`)
@@ -626,18 +626,26 @@ const startServer = async () => {
         }
       })
       // Add DELETE endpoint for contacts
-      .delete('/api/contacts', async ({ body, request }) => {
+      .delete('/api/contacts', async ({ request }) => {
         try {
           const user = await getUserFromSession(request)
           if (!user?.organization_id) {
             throw new Error('No organization ID found in session')
           }
 
-          const contactIds = body as number[]
-          logger.info(`DELETE /api/contacts - Attempting to delete contacts with IDs: ${contactIds} for org ${user.organization_id}`)
+          // Parse contact IDs from the request
+          const url = new URL(request.url)
+          const ids = url.searchParams.get('ids')
+          if (!ids) {
+            throw new Error('No contact IDs provided')
+          }
+
+          const contactIds = ids.split(',').map(id => parseInt(id.trim(), 10))
+          
+          logger.info(`DELETE /api/contacts - Attempting to delete ${contactIds.length} contacts for org ${user.organization_id}`)
           
           // Get org-specific database
-          const orgDb = await Database.getOrgDb(user.organization_id.toString())
+          const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString())
 
           // Create placeholders for SQL IN clause
           const placeholders = contactIds.map(() => '?').join(',')
@@ -664,24 +672,22 @@ const startServer = async () => {
         }
       })
       // Add endpoint for reassigning contacts to a different agent
-      .put('/api/contacts/reassign', async ({ body, request }) => {
+      .put('/api/contacts/reassign', async ({ request, body }: { request: Request, body: { contact_ids: number[], agent_id: number | null } }) => {
         try {
           const user = await getUserFromSession(request)
           if (!user?.organization_id) {
             throw new Error('No organization ID found in session')
           }
 
-          // Only admins can reassign contacts
-          if (!user.is_admin) {
-            throw new Error('Only administrators can reassign contacts')
+          const { contact_ids, agent_id } = body
+          if (!contact_ids || !Array.isArray(contact_ids) || contact_ids.length === 0) {
+            throw new Error('Invalid or empty contact_ids array')
           }
 
-          // Parse the request body
-          const { contact_ids, agent_id } = body as { contact_ids: number[], agent_id: number }
-          logger.info(`PUT /api/contacts/reassign - Attempting to reassign contacts with IDs: ${contact_ids} to agent ${agent_id} for org ${user.organization_id}`)
-
+          logger.info(`PUT /api/contacts/reassign - Reassigning ${contact_ids.length} contacts to agent ${agent_id} for org ${user.organization_id}`)
+          
           // Get org-specific database
-          const orgDb = await Database.getOrgDb(user.organization_id.toString())
+          const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString())
 
           // Create placeholders for SQL IN clause
           const placeholders = contact_ids.map(() => '?').join(',')
@@ -710,16 +716,15 @@ const startServer = async () => {
         }
       })
       // Add file upload endpoint
-      .post('/api/contacts/upload', async ({ body, request }) => {
+      .post('/api/contacts/upload', async ({ request, body }: { request: Request, body: { contacts: any[], file_type?: string, sheet_name?: string } }) => {
         try {
-          // Get user and org info
           const user = await getUserFromSession(request)
           if (!user?.organization_id) {
             throw new Error('No organization ID found in session')
           }
 
           // Get org-specific database
-          const orgDb = await Database.getOrgDb(user.organization_id.toString())
+          const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString())
 
           // Extract file and overwrite flag from form data
           const formData = body as { file: File, overwrite_duplicates: boolean | string, duplicateStrategy: string, agent_id?: string }
@@ -2108,11 +2113,12 @@ const startServer = async () => {
             throw new Error('No organization ID found in session')
           }
 
-          const { name, email, type, quoteId } = body
+          const contactRequest = body as { name: string, email: string, type: string, quoteId: string }
+          const { name, email, type, quoteId } = contactRequest
           logger.info(`Processing contact request for ${email} (type: ${type})`)
           
           // Get org-specific database
-          const orgDb = await Database.getOrgDb(user.organization_id.toString())
+          const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString())
 
           // Check for existing contact
           const existingContact = await orgDb.fetchOne<{ id: number }>(
@@ -2177,7 +2183,7 @@ const startServer = async () => {
           logger.info(`GET /api/contacts/${id}/eligibility - Fetching eligibility results`)
           
           // Get org-specific database
-          const orgDb = await Database.getOrgDb(user.organization_id.toString())
+          const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString())
           
           // Get most recent eligibility answers for this contact
           const result = await orgDb.fetchOne(
@@ -2221,7 +2227,7 @@ const startServer = async () => {
           logger.info(`GET /api/contacts/${id}/follow-ups - Fetching follow-up requests`)
           
           // Get org-specific database
-          const orgDb = await Database.getOrgDb(user.organization_id.toString())
+          const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString())
           
           // Get follow-up requests from contact_events table
           const result = await orgDb.execute(
@@ -2237,20 +2243,20 @@ const startServer = async () => {
           )
 
           // Map results to a more friendly format
-          const followUps = result.rows.map(row => {
+          const followUps = result.rows?.map((row: { metadata: string, created_at: string }) => {
             const metadata = JSON.parse(row.metadata)
             return {
               type: metadata.requestType,
               quoteId: metadata.quoteId,
               createdAt: row.created_at
             }
-          })
+          }) || []
 
           return followUps
 
         } catch (e) {
-          logger.error(`Error fetching follow-up requests: ${e}`)
-          throw new Error(String(e))
+          logger.error(`Error fetching follow-up requests: ${e instanceof Error ? e.message : String(e)}`)
+          throw new Error(e instanceof Error ? e.message : String(e))
         }
       })
       .post('/api/eligibility-answers', async ({ body, request }) => {
@@ -2373,6 +2379,178 @@ const startServer = async () => {
             success: false,
             error: String(error)
           }
+        }
+      })
+      .get('/api/agents/:id/contacts', async ({ params, request }) => {
+        try {
+          const currentUser = await getUserFromSession(request)
+          if (!currentUser?.organization_id) {
+            throw new Error('No organization ID found in session')
+          }
+          
+          logger.info(`GET /api/agents/${params.id}/contacts - Fetching contacts for agent ${params.id}`)
+          
+          // Get organization-specific database
+          const orgDb = await Database.getOrInitOrgDb(currentUser.organization_id.toString())
+          
+          // Fetch all contacts for the agent
+          const result = await orgDb.fetchAll('SELECT * FROM contacts WHERE agent_id = ?', [params.id])
+          
+          logger.info(`GET /api/agents/${params.id}/contacts - Found ${result.length} contacts`)
+          
+          // Map the database results to the expected format with camelCase field names
+          const contacts = result.map(contact => ({
+            id: contact.id,
+            first_name: contact.first_name,
+            last_name: contact.last_name,
+            email: contact.email,
+            current_carrier: contact.current_carrier,
+            plan_type: contact.plan_type,
+            effective_date: contact.effective_date,
+            birth_date: contact.birth_date,
+            tobacco_user: Boolean(contact.tobacco_user),
+            gender: contact.gender,
+            state: contact.state,
+            zip_code: contact.zip_code,
+            agent_id: contact.agent_id,
+            last_emailed: contact.last_emailed,
+            phone_number: contact.phone_number || ''
+          }))
+          
+          return {
+            success: true,
+            contacts: contacts
+          }
+        } catch (e) {
+          logger.error(`Error fetching contacts for agent ${params.id}: ${e}`)
+          return {
+            success: false,
+            error: String(e)
+          }
+        }
+      })
+      .get('/api/contact-requests', async ({ request }) => {
+        try {
+          const user = await getUserFromSession(request)
+          if (!user?.organization_id) {
+            throw new Error('No organization ID found in session')
+          }
+
+          logger.info(`GET /api/contact-requests - Fetching follow-up requests`)
+          
+          // Get org-specific database
+          const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString())
+          
+          // Fetch all follow-up requests
+          const result = await orgDb.fetchAll('SELECT * FROM contact_events WHERE event_type = ?', ['followup_request'])
+          
+          logger.info(`GET /api/contact-requests - Found ${result.length} follow-up requests`)
+          
+          // Map the database results to the expected format with camelCase field names
+          const followUps = result.map(followUp => ({
+            id: followUp.id,
+            event_type: followUp.event_type,
+            metadata: JSON.parse(followUp.metadata),
+            created_at: followUp.created_at
+          }))
+          
+          return {
+            success: true,
+            followUps: followUps
+          }
+        } catch (e) {
+          logger.error(`Error fetching follow-up requests: ${e}`)
+          return {
+            success: false,
+            error: String(e)
+          }
+        }
+      })
+      .get('/api/contacts/:id/eligibility', async ({ params, request }) => {
+        try {
+          const user = await getUserFromSession(request)
+          if (!user?.organization_id) {
+            throw new Error('No organization ID found in session')
+          }
+
+          logger.info(`GET /api/contacts/${params.id}/eligibility - Fetching eligibility status`)
+          
+          // Get org-specific database
+          const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString())
+          
+          // Get most recent eligibility answers for this contact
+          const result = await orgDb.fetchOne(
+            `SELECT answers 
+             FROM eligibility_answers 
+             WHERE contact_id = ? 
+             ORDER BY created_at DESC 
+             LIMIT 1`,
+            [params.id]
+          )
+
+          if (!result) {
+            return {
+              status: "incomplete",
+              answers: null
+            }
+          }
+
+          // Parse answers JSON and determine status
+          const answers = JSON.parse(result.answers)
+          const allTrue = Object.values(answers).every(value => value === true)
+
+          return {
+            status: allTrue ? "pass" : "flagged",
+            answers: answers
+          }
+        } catch (e) {
+          logger.error(`Error fetching eligibility status: ${e}`)
+          return {
+            success: false,
+            error: String(e)
+          }
+        }
+      })
+      .get('/api/contacts/:id/follow-ups', async ({ params: { id }, request }) => {
+        try {
+          const user = await getUserFromSession(request)
+          if (!user?.organization_id) {
+            throw new Error('No organization ID found in session')
+          }
+
+          logger.info(`GET /api/contacts/${id}/follow-ups - Fetching follow-up requests`)
+          
+          // Get org-specific database
+          const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString())
+          
+          // Get follow-up requests from contact_events table
+          const result = await orgDb.execute(
+            `SELECT 
+              event_type,
+              metadata,
+              created_at
+             FROM contact_events 
+             WHERE contact_id = ? 
+               AND event_type = 'followup_request'
+             ORDER BY created_at DESC`,
+            [id]
+          )
+
+          // Map results to a more friendly format
+          const followUps = result.rows?.map((row: { metadata: string, created_at: string }) => {
+            const metadata = JSON.parse(row.metadata)
+            return {
+              type: metadata.requestType,
+              quoteId: metadata.quoteId,
+              createdAt: row.created_at
+            }
+          }) || []
+
+          return followUps
+
+        } catch (e) {
+          logger.error(`Error fetching follow-up requests: ${e instanceof Error ? e.message : String(e)}`)
+          throw new Error(e instanceof Error ? e.message : String(e))
         }
       })
       .listen(8000)

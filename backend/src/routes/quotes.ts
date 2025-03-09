@@ -75,7 +75,7 @@ export const quotesRoutes = (app: Elysia) => {
             }
 
             // Get org-specific database
-            const orgDb = await Database.getOrgDb(user.organization_id.toString());
+            const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString());
             
             // Verify contact exists and belongs to this org
             const contact = await orgDb.fetchOne(
@@ -108,7 +108,7 @@ export const quotesRoutes = (app: Elysia) => {
             }
 
             // Get org-specific database
-            const orgDb = await Database.getOrgDb(decoded.orgId.toString());
+            const orgDb = await Database.getOrInitOrgDb(decoded.orgId.toString());
             
             // Fetch contact details
             const contact = await orgDb.fetchOne<ContactQuoteInfo>(
@@ -209,7 +209,7 @@ export const quotesRoutes = (app: Elysia) => {
             }
 
             // Get org-specific database
-            const orgDb = await Database.getOrgDb(params.orgId);
+            const orgDb = await Database.getOrInitOrgDb(params.orgId);
 
             // Try to get default agent (first admin or agent)
             const defaultAgent = await orgDb.fetchOne<{ first_name: string, last_name: string }>(
@@ -262,7 +262,7 @@ export const quotesRoutes = (app: Elysia) => {
             contactId = decoded.contactId;
 
             // Get org-specific database
-            const orgDb = await Database.getOrgDb(orgId.toString());
+            const orgDb = await Database.getOrInitOrgDb(orgId.toString());
 
             // If we have a contact ID, try to get the assigned agent's name
             if (contactId) {

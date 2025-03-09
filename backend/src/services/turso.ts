@@ -106,7 +106,16 @@ export class TursoService {
         agent_name TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (contact_id) REFERENCES contacts(id)
-      )`
+      )`,
+      `CREATE TABLE eligibility_answers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        contact_id INTEGER NOT NULL,
+        quote_id TEXT NOT NULL,
+        answers TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (contact_id) REFERENCES contacts(id)
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_eligibility_answers_contact_id ON eligibility_answers(contact_id)`
     ];
 
     // Execute each statement

@@ -234,6 +234,7 @@ type Msg
     | HideDropdown
     | ToggleStatusBanner
     | PerformRedirect String
+    | DirectPageUpdate
 
 
 type alias Flags =
@@ -308,10 +309,33 @@ init flags url key =
                 Nothing ->
                     Unknown
 
+        -- Parse the initial route to determine if we're on a public page
+        initialRoute =
+            Parser.parse routeParser url
+
+        -- Determine if this is a public route that can be rendered immediately
+        isPublicRoute =
+            case initialRoute of
+                Just (PublicRoute _) ->
+                    True
+
+                _ ->
+                    False
+
+        -- Set initial page appropriately
+        initialPage =
+            if isPublicRoute then
+                -- For public routes, we'll immediately handle this in updatePageForcePublic below
+                LoadingPage
+
+            else
+                -- For protected routes, we need to wait for session verification
+                LoadingPage
+
         model =
             { key = key
             , url = url
-            , page = LoadingPage -- Start with loading page while we check session
+            , page = initialPage
             , session = initialSession
             , currentUser = Nothing
             , isSetup = False
@@ -326,22 +350,31 @@ init flags url key =
                 , expect = Http.expectJson GotSession sessionDecoder
                 }
 
-        -- Force updatePage after a delay to avoid being stuck on loading screen
-        forcePageUpdate =
-            Task.perform (\_ -> PerformRedirect (Url.toString url)) (Process.sleep 3000)
+        -- Use a very short timer for the initial direct page update for public routes
+        directPageUpdate =
+            Task.perform (\_ -> DirectPageUpdate) (Process.sleep 50)
 
+        -- Check session and also immediately try to render public routes
         cmds =
             case initialSession of
                 Verified _ ->
                     -- If we have a session, also fetch the current user immediately
-                    Cmd.batch [ checkSession, fetchCurrentUser, forcePageUpdate ]
+                    Cmd.batch [ checkSession, fetchCurrentUser, directPageUpdate ]
 
                 _ ->
-                    Cmd.batch [ checkSession, forcePageUpdate ]
+                    Cmd.batch [ checkSession, directPageUpdate ]
+
+        -- For public routes, immediately try to render without waiting for session
+        initialModelAndCmd =
+            if isPublicRoute then
+                -- Try to render public route immediately
+                updatePageForcePublic url ( model, cmds )
+
+            else
+                -- For protected routes, wait for session verification
+                ( model, cmds )
     in
-    ( model
-    , cmds
-    )
+    initialModelAndCmd
 
 
 type alias CompareParams =
@@ -540,6 +573,10 @@ routeParser =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+        DirectPageUpdate ->
+            -- Force updatePage even if we're in Unknown session state
+            updatePageForcePublic model.url ( model, Cmd.none )
+
         LinkClicked urlRequest ->
             case urlRequest of
                 Browser.Internal url ->
@@ -1757,10 +1794,26 @@ updatePage url ( model, cmd ) =
     in
     case model.session of
         Unknown ->
-            ( { model | page = LoadingPage }
-            , cmd
-            )
+            -- When session state is Unknown, still allow public routes to render
+            case Parser.parse routeParser url of
+                Just route ->
+                    case routeAccessType route of
+                        Public ->
+                            -- For public routes, redirect to the force update function
+                            updatePageForcePublic url ( model, cmd )
 
+                        _ ->
+                            -- For non-public routes, keep showing loading while we wait
+                            ( { model | page = LoadingPage }
+                            , cmd
+                            )
+
+                Nothing ->
+                    ( { model | page = NotFoundPage }
+                    , cmd
+                    )
+
+        -- Rest of the function remains the same for Verified and NoSession states
         _ ->
             case Parser.parse routeParser url of
                 Just route ->
@@ -1823,6 +1876,8 @@ updatePage url ( model, cmd ) =
                                         redirectToSetupStep modelWithUpdatedSetup
 
                             else
+                                -- Continue with the original logic for handling different routes
+                                -- Rest of the function remains the same
                                 case route of
                                     PublicRoute HomeRoute ->
                                         -- Home page handles its own session checking
@@ -2368,3 +2423,59 @@ onboardingStepToStep step =
 
         EnterpriseStep ->
             Onboarding.EnterpriseFormStep
+
+
+
+-- Add a new function to force update public routes
+
+
+updatePageForcePublic : Url -> ( Model, Cmd Msg ) -> ( Model, Cmd Msg )
+updatePageForcePublic url ( model, cmd ) =
+    case Parser.parse routeParser url of
+        Just route ->
+            case routeAccessType route of
+                Public ->
+                    -- For public routes, directly initialize the appropriate page
+                    -- without waiting for session checks
+                    case route of
+                        PublicRoute HomeRoute ->
+                            let
+                                ( homeModel, homeCmd ) =
+                                    Home.init model.key
+                            in
+                            ( { model | page = HomePage homeModel }
+                            , Cmd.map HomeMsg homeCmd
+                            )
+
+                        PublicRoute LoginRoute ->
+                            let
+                                ( loginModel, loginCmd ) =
+                                    Login.init model.key False url
+                            in
+                            ( { model | page = LoginPage loginModel }
+                            , Cmd.map LoginMsg loginCmd
+                            )
+
+                        PublicRoute SignupRoute ->
+                            let
+                                ( signupModel, signupCmd ) =
+                                    Signup.init model.key
+                            in
+                            ( { model | page = Signup signupModel }
+                            , Cmd.map SignupMsg signupCmd
+                            )
+
+                        -- For all other public routes, use the standard updatePage
+                        -- which knows the proper types for each route
+                        _ ->
+                            updatePage url ( model, cmd )
+
+                _ ->
+                    -- For protected routes, use the standard updatePage
+                    updatePage url ( model, cmd )
+
+        Nothing ->
+            -- For invalid routes, show the not found page
+            ( { model | page = NotFoundPage }
+            , cmd
+            )
