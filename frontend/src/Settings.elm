@@ -156,6 +156,7 @@ type alias Model =
     , selectedCarrier : Maybe String
     , selectedState : Maybe String
     , deactivatedPairs : List DeactivatedPair
+    , loadedCarriers : List String
     }
 
 
@@ -224,6 +225,7 @@ type Msg
     | SelectState String
     | AddDeactivatedPair
     | RemoveDeactivatedPair String String
+    | GotCarriers (Result Http.Error (List String))
 
 
 type alias SettingsResponse =
@@ -248,10 +250,12 @@ init flags =
       , selectedCarrier = Nothing
       , selectedState = Nothing
       , deactivatedPairs = []
+      , loadedCarriers = []
       }
     , Cmd.batch
         [ fetchSettings
         , fetchRecommendedGICombos
+        , fetchCarriers
         ]
     )
 
@@ -269,6 +273,14 @@ fetchRecommendedGICombos =
     Http.get
         { url = "/api/settings/gi-recommendations"
         , expect = Http.expectJson GotRecommendedGICombos recommendationsDecoder
+        }
+
+
+fetchCarriers : Cmd Msg
+fetchCarriers =
+    Http.get
+        { url = "/api/settings/carriers"
+        , expect = Http.expectJson GotCarriers (Decode.list (Decode.field "name" Decode.string))
         }
 
 
@@ -307,6 +319,16 @@ update msg model =
                     ( { model | status = Error errorMsg, isLoading = False }
                     , Cmd.none
                     )
+
+        GotCarriers result ->
+            case result of
+                Ok carriers ->
+                    ( { model | loadedCarriers = carriers }
+                    , Cmd.none
+                    )
+
+                Err _ ->
+                    ( model, Cmd.none )
 
         SaveSettings ->
             ( { model | status = Saving }
@@ -471,6 +493,25 @@ update msg model =
 
                                     else
                                         []
+                                , stateCarrierSettings =
+                                    if checked then
+                                        -- Create settings for all state/carrier combinations
+                                        List.concatMap
+                                            (\state ->
+                                                List.map
+                                                    (\carrier ->
+                                                        { state = state
+                                                        , carrier = carrier
+                                                        , active = True
+                                                        , targetGI = False
+                                                        }
+                                                    )
+                                                    settings.carrierContracts
+                                            )
+                                            allStates
+
+                                    else
+                                        []
                             }
                     in
                     ( { model | orgSettings = Just newSettings }
@@ -484,11 +525,37 @@ update msg model =
             case model.orgSettings of
                 Just settings ->
                     let
+                        carriersToUse =
+                            if List.isEmpty model.loadedCarriers then
+                                allCarriers
+
+                            else
+                                model.loadedCarriers
+
                         newSettings =
                             { settings
                                 | carrierContracts =
                                     if checked then
-                                        allCarriers
+                                        carriersToUse
+
+                                    else
+                                        []
+                                , stateCarrierSettings =
+                                    if checked then
+                                        -- Create settings for all state/carrier combinations
+                                        List.concatMap
+                                            (\state ->
+                                                List.map
+                                                    (\carrier ->
+                                                        { state = state
+                                                        , carrier = carrier
+                                                        , active = True
+                                                        , targetGI = False
+                                                        }
+                                                    )
+                                                    carriersToUse
+                                            )
+                                            settings.stateLicenses
 
                                     else
                                         []
@@ -681,19 +748,37 @@ update msg model =
                     case model.orgSettings of
                         Just settings ->
                             let
+                                existingSetting =
+                                    List.filter
+                                        (\s -> s.state == state && s.carrier == carrier)
+                                        settings.stateCarrierSettings
+                                        |> List.head
+
                                 -- Update stateCarrierSettings to set active=false for this pair
                                 updatedSettings =
                                     { settings
                                         | stateCarrierSettings =
-                                            List.map
-                                                (\s ->
-                                                    if s.state == state && s.carrier == carrier then
-                                                        { s | active = False }
+                                            case existingSetting of
+                                                Just _ ->
+                                                    -- Update existing setting
+                                                    List.map
+                                                        (\s ->
+                                                            if s.state == state && s.carrier == carrier then
+                                                                { s | active = False }
 
-                                                    else
-                                                        s
-                                                )
-                                                settings.stateCarrierSettings
+                                                            else
+                                                                s
+                                                        )
+                                                        settings.stateCarrierSettings
+
+                                                Nothing ->
+                                                    -- Create new setting
+                                                    { state = state
+                                                    , carrier = carrier
+                                                    , active = False
+                                                    , targetGI = False
+                                                    }
+                                                        :: settings.stateCarrierSettings
                                     }
                             in
                             ( { model
@@ -744,7 +829,29 @@ update msg model =
                         Nothing ->
                             { model | deactivatedPairs = newDeactivatedPairs }
             in
-            ( updatedModel, Cmd.none )
+            ( updatedModel
+            , case model.orgSettings of
+                Just settings ->
+                    let
+                        updatedSettings =
+                            { settings
+                                | stateCarrierSettings =
+                                    List.map
+                                        (\s ->
+                                            if s.state == state && s.carrier == carrier then
+                                                { s | active = True }
+
+                                            else
+                                                s
+                                        )
+                                        settings.stateCarrierSettings
+                            }
+                    in
+                    saveSettings updatedSettings
+
+                Nothing ->
+                    Cmd.none
+            )
 
 
 updateSettings : Model -> (Settings -> Settings) -> ( Model, Cmd Msg )
@@ -827,7 +934,7 @@ view model =
           else
             div [ class "min-h-screen bg-gray-50" ]
                 [ viewHeader
-                , div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" ]
+                , div [ class "max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8" ]
                     [ if model.isLoading then
                         viewLoading
 
@@ -860,7 +967,7 @@ viewBottomBar model =
     div
         [ class """sticky bottom-0 left-0 right-0 bg-white border-t border-gray-200 
                   px-4 py-4 sm:px-6 lg:px-8 flex justify-end items-center
-                  mt-8"""
+                  mt-8 max-w-4xl mx-auto"""
         ]
         [ case model.error of
             Just errorMsg ->
@@ -872,37 +979,21 @@ viewBottomBar model =
         ]
 
 
-viewSettingsContent : Maybe Settings -> Bool -> List String -> String -> Html Msg
-viewSettingsContent maybeSettings canEdit expandedSections planType =
+viewSettingsContent : Maybe Settings -> Bool -> List String -> String -> Model -> Html Msg
+viewSettingsContent maybeSettings canEdit expandedSections planType model =
     case maybeSettings of
         Just settings ->
             div [ class "space-y-6" ]
-                [ div [ class "bg-white shadow rounded-lg p-6" ]
-                    [ div [ class "flex justify-between items-center mb-4" ]
-                        [ h2 [ class "text-lg font-medium" ] [ text "Organization Settings" ]
-                        , div [ class "px-3 py-1 bg-gray-100 rounded-full text-sm text-gray-600" ]
-                            [ text (String.toUpper planType ++ " Plan") ]
-                        ]
-                    , if planType /= "basic" then
-                        div [ class "space-y-4" ]
-                            [ checkbox "Allow agents to customize their own settings"
-                                settings.allowAgentSettings
-                                ToggleAllowAgentSettings
-                            ]
-
-                      else
-                        text ""
-                    ]
-                , viewBrandSettings settings
+                [ viewBrandSettings settings
                 , viewEmailSettings settings
                 , viewExpandableSection "State Licenses"
                     (viewLicensesGrid settings)
                     expandedSections
                 , viewExpandableSection "Carrier Contracts"
-                    (viewCarriersGrid settings)
+                    (viewCarriersGrid settings model)
                     expandedSections
                 , viewExpandableSection "State & Carrier Settings"
-                    (viewStateCarrierGrid settings)
+                    (viewStateCarrierGrid settings model)
                     expandedSections
                 ]
 
@@ -1006,10 +1097,7 @@ viewEmailSettings settings =
     div [ class "bg-white shadow rounded-lg p-6" ]
         [ h2 [ class "text-lg font-medium mb-4" ] [ text "Email Settings" ]
         , div [ class "space-y-4" ]
-            [ checkbox "Send birthday emails" settings.emailSendBirthday ToggleEmailBirthday
-            , checkbox "Send policy anniversary emails" settings.emailSendPolicyAnniversary ToggleEmailAnniversary
-            , checkbox "Send AEP emails" settings.emailSendAep ToggleEmailAep
-            , checkbox "Enable smart send" settings.smartSendEnabled ToggleSmartSend
+            [ checkbox "Enable smart send" settings.smartSendEnabled ToggleSmartSend
             ]
         ]
 
@@ -1113,12 +1201,20 @@ viewLicensesGrid settings =
         ]
 
 
-viewCarriersGrid : Settings -> Html Msg
-viewCarriersGrid settings =
+viewCarriersGrid : Settings -> Model -> Html Msg
+viewCarriersGrid settings model =
+    let
+        carriersToUse =
+            if List.isEmpty model.loadedCarriers then
+                allCarriers
+
+            else
+                model.loadedCarriers
+    in
     div []
         [ div [ class "mb-4 flex items-center" ]
             [ checkbox "Select All Carriers"
-                (List.length settings.carrierContracts == List.length allCarriers)
+                (List.length settings.carrierContracts == List.length carriersToUse)
                 ToggleAllCarriers
             ]
         , div [ class "grid grid-cols-3 gap-4" ]
@@ -1134,13 +1230,21 @@ viewCarriersGrid settings =
                                 RemoveCarrierContract carrier
                         )
                 )
-                allCarriers
+                carriersToUse
             )
         ]
 
 
-viewStateCarrierGrid : Settings -> Html Msg
-viewStateCarrierGrid settings =
+viewStateCarrierGrid : Settings -> Model -> Html Msg
+viewStateCarrierGrid settings model =
+    let
+        carriersToUse =
+            if List.isEmpty model.loadedCarriers then
+                allCarriers
+
+            else
+                model.loadedCarriers
+    in
     div []
         [ div [ class "mb-6" ]
             [ h3 [ class "text-sm font-medium text-gray-700 mb-2" ]
@@ -1185,7 +1289,7 @@ viewStateCarrierGrid settings =
                                 (\carrier ->
                                     option [ value carrier ] [ text carrier ]
                                 )
-                                settings.carrierContracts
+                                carriersToUse
                         )
                     ]
                 , div [ class "flex-1" ]
@@ -1200,13 +1304,13 @@ viewStateCarrierGrid settings =
                                 (\state ->
                                     option [ value state ] [ text state ]
                                 )
-                                settings.stateLicenses
+                                allStates
                         )
                     ]
                 , button
                     [ class "px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                     , onClick AddDeactivatedPair
-                    , disabled (List.isEmpty settings.stateLicenses || List.isEmpty settings.carrierContracts)
+                    , disabled (model.selectedCarrier == Nothing || model.selectedState == Nothing)
                     ]
                     [ text "Add" ]
                 ]
@@ -1242,7 +1346,7 @@ viewDeactivatedList settings =
                                     ]
                                 , button
                                     [ class "text-red-600 hover:text-red-800"
-                                    , onClick (UpdateStateCarrierSetting pair.state pair.carrier True False)
+                                    , onClick (RemoveDeactivatedPair pair.carrier pair.state)
                                     ]
                                     [ text "Reactivate" ]
                                 ]
@@ -1454,7 +1558,7 @@ viewLoading =
 viewHeader : Html msg
 viewHeader =
     nav [ class "bg-white border-b border-gray-200" ]
-        [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8" ]
+        [ div [ class "max-w-4xl mx-auto px-4 sm:px-6 lg:px-8" ]
             [ div [ class "flex justify-between h-16" ]
                 [ div [ class "flex" ]
                     [ div [ class "flex-shrink-0 flex items-center" ]
@@ -1470,7 +1574,7 @@ viewHeader =
 viewSettings : Model -> Html Msg
 viewSettings model =
     div [ class "space-y-8" ]
-        [ viewSettingsContent model.orgSettings True model.expandedSections model.planType
+        [ viewSettingsContent model.orgSettings True model.expandedSections model.planType model
         , viewBottomBar model
         ]
 
