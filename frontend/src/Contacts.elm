@@ -1356,7 +1356,7 @@ view model =
               LimitBanner.view model.limitBanner
                 |> Html.map LimitBannerMsg
             , -- Stats Section - Make more compact with reduced margins
-              div [ class "grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 mb-4" ]
+              div [ class "grid grid-cols-4 gap-2 mb-3" ]
                 [ statsCard "Total Contacts" (String.fromInt (List.length model.contacts))
                 , statsCard "Emails Sent" "1824"
                 , statsCard "Emails Clicked" "425"
@@ -1568,9 +1568,9 @@ viewBulkActionBar model =
 
 statsCard : String -> String -> Html Msg
 statsCard title value =
-    div [ class "bg-white rounded-md border p-3 hover:shadow-md transition-shadow" ]
-        [ div [ class "text-xs text-gray-600 mb-1" ] [ text title ]
-        , div [ class "text-2xl font-semibold" ] [ text value ]
+    div [ class "bg-white rounded-md border p-2 hover:shadow-md transition-shadow flex flex-col items-center" ]
+        [ div [ class "text-xs text-gray-600 mb-0.5 text-center" ] [ text title ]
+        , div [ class "text-xl font-semibold text-center" ] [ text value ]
         ]
 
 

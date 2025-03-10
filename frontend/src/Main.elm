@@ -1388,7 +1388,7 @@ viewNavHeader model =
                                         [ class "block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-[#DCE2E5]"
                                         , onClick (InternalLinkClicked "/settings")
                                         ]
-                                        [ text "Settings" ]
+                                        [ text "Organization Settings" ]
 
                                   else
                                     text ""
