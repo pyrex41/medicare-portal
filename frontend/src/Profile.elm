@@ -283,18 +283,16 @@ viewField label inputType value field =
 
 viewRoleInfo : User -> Html Msg
 viewRoleInfo user =
-    div [ class "mb-6" ]
-        [ label [ class "block text-sm font-medium text-gray-700 mb-2" ]
-            [ text "Role" ]
-        , div [ class "text-gray-900" ]
-            [ text (formatRole user) ]
-        , if user.isAdmin then
-            div [ class "mt-2 text-sm text-gray-500" ]
+    if user.isAdmin then
+        div [ class "mb-6" ]
+            [ label [ class "block text-sm font-medium text-gray-700 mb-2" ]
+                [ text "Role" ]
+            , div [ class "mt-2 text-sm text-gray-500" ]
                 [ text "You have administrator privileges" ]
+            ]
 
-          else
-            text ""
-        ]
+    else
+        text ""
 
 
 viewSaveButton : Model -> Html Msg

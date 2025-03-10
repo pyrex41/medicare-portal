@@ -465,7 +465,7 @@ viewBasicInfo model =
             ]
         , div [ class "mt-4" ]
             [ label [ class "block text-sm font-medium text-gray-700 mb-2" ]
-                [ text "Role (at least one required)" ]
+                [ text "Administrator Status" ]
             , div [ class "flex items-center space-x-6" ]
                 [ label
                     [ class "inline-flex items-center" ]
@@ -478,17 +478,6 @@ viewBasicInfo model =
                         []
                     , span [ class "ml-2 text-sm text-gray-700" ]
                         [ text "Admin" ]
-                    ]
-                , label [ class "inline-flex items-center" ]
-                    [ input
-                        [ type_ "checkbox"
-                        , class "rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                        , checked model.isAgent
-                        , onClick (UpdateAgentCheckbox (not model.isAgent))
-                        ]
-                        []
-                    , span [ class "ml-2 text-sm text-gray-700" ]
-                        [ text "Agent" ]
                     ]
                 ]
             ]
@@ -748,7 +737,7 @@ viewAgentDetails model agent =
             ]
         , div [ class "mt-4" ]
             [ label [ class "block text-sm font-medium text-gray-700 mb-2" ]
-                [ text "Role (at least one required)" ]
+                [ text "Administrator Status" ]
             , div [ class "flex items-center space-x-6" ]
                 [ label
                     [ class "inline-flex items-center"
@@ -771,18 +760,6 @@ viewAgentDetails model agent =
                         []
                     , span [ class "ml-2 text-sm text-gray-700" ]
                         [ text "Admin" ]
-                    ]
-                , label [ class "inline-flex items-center" ]
-                    [ input
-                        [ type_ "checkbox"
-                        , class "rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                        , checked agent.isAgent
-                        , onClick (ToggleAgentRole agent.id "agent")
-                        , disabled (not canEditField)
-                        ]
-                        []
-                    , span [ class "ml-2 text-sm text-gray-700" ]
-                        [ text "Agent" ]
                     ]
                 ]
             ]
@@ -1023,47 +1000,9 @@ update msg model =
                             False
 
                 updateAgent agent =
-                    if agent.id == agentId then
-                        -- Special handling for current user to prevent unchecking admin
-                        if isSelfUser agent.id && role == "admin" && agent.isAdmin then
-                            -- Don't allow removing admin role for self if already admin
-                            agent
+                    { agent | isAgent = True }
 
-                        else
-                            case role of
-                                "admin" ->
-                                    let
-                                        -- Ensure at least one role is selected
-                                        newIsAgent =
-                                            if not (not agent.isAdmin) then
-                                                agent.isAgent
-
-                                            else
-                                                True
-
-                                        -- If admin is being unchecked, ensure agent is checked
-                                    in
-                                    { agent | isAdmin = not agent.isAdmin, isAgent = newIsAgent }
-
-                                "agent" ->
-                                    let
-                                        -- Ensure at least one role is selected
-                                        newIsAdmin =
-                                            if not (not agent.isAgent) then
-                                                agent.isAdmin
-
-                                            else
-                                                True
-
-                                        -- If agent is being unchecked, ensure admin is checked
-                                    in
-                                    { agent | isAgent = not agent.isAgent, isAdmin = newIsAdmin }
-
-                                _ ->
-                                    agent
-
-                    else
-                        agent
+                -- hardcodding everyone as agent
             in
             ( { model
                 | agents = List.map updateAgent model.agents
@@ -1614,19 +1553,10 @@ update msg model =
             )
 
         UpdateAdminCheckbox value ->
-            let
-                -- Ensure at least one role is selected
-                newIsAgent =
-                    if not value then
-                        True
-                        -- If admin is being unchecked, ensure agent is checked
-
-                    else
-                        model.isAgent
-            in
-            ( { model | isAdmin = value, isAgent = newIsAgent }, Cmd.none )
+            ( { model | isAdmin = value, isAgent = True }, Cmd.none )
 
         UpdateAgentCheckbox value ->
+            -- not using anymore
             let
                 -- Ensure at least one role is selected
                 newIsAdmin =
@@ -1746,7 +1676,7 @@ saveAgent user model =
             , email = user.email
             , phone = user.phone
             , isAdmin = user.isAdmin
-            , isAgent = user.isAgent
+            , isAgent = True -- always true
             , carriers = carriers
             , stateLicenses = stateLicenses
             , expanded = False
@@ -2028,9 +1958,6 @@ canModifySettings model agentId =
         ( Just user, Just settings ) ->
             -- Admin and admin_agent can always modify settings
             user.isAdmin
-                || user.isAgent
-                || -- Regular agents can modify if allowed and it's their own settings
-                   (settings.allowAgentSettings && user.id == agentId)
 
         _ ->
             False
