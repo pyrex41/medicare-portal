@@ -19,6 +19,7 @@ import { errorHandler } from './middleware/error'
 import { getUserFromSession } from './services/auth'
 import { join } from 'path'
 import { existsSync } from 'fs'
+import { EmailService } from './services/email'
 
 // At the top of the file, add interface for ZIP data
 interface ZipInfo {
@@ -560,6 +561,7 @@ const startServer = async () => {
             UPDATE contacts SET 
               first_name = ?,
               last_name = ?,
+              email = ?,
               current_carrier = ?,
               plan_type = ?,
               effective_date = ?,
@@ -569,12 +571,13 @@ const startServer = async () => {
               state = ?,
               zip_code = ?,
               phone_number = ?
-            WHERE LOWER(email) = ?
+            WHERE id = ?
           `
 
           const updateParams = [
             contact.first_name,
             contact.last_name,
+            contact.email,
             contact.current_carrier,
             contact.plan_type,
             contact.effective_date,
@@ -584,7 +587,7 @@ const startServer = async () => {
             zipInfo.state, // Use state from ZIP code
             contact.zip_code,
             contact.phone_number || '',
-            contact.email.toLowerCase()
+            id
           ]
 
           // Execute the update
@@ -2106,7 +2109,80 @@ const startServer = async () => {
           }
         }
       })
-      .post('/api/contact-request', async ({ body, request }) => {
+      
+      // Send quote email to contact
+      .post('/api/contacts/:contactId/send-quote-email', async ({ params, request }) => {
+        try {
+          const user = await getUserFromSession(request);
+          if (!user) {
+            return {
+              success: false,
+              message: 'Authentication required'
+            };
+          }
+
+          const contactId = Number(params.contactId);
+          if (isNaN(contactId)) {
+            return {
+              success: false,
+              message: 'Invalid contact ID'
+            };
+          }
+
+          // Get org-specific database
+          const orgDb = await Database.getOrgDb(user.organization_id.toString());
+
+          // Fetch contact details
+          const contact = await orgDb.fetchOne<{id: number, first_name: string, last_name: string, email: string, plan_type: string}>(
+            'SELECT id, first_name, last_name, email, plan_type FROM contacts WHERE id = ?',
+            [contactId]
+          );
+
+          if (!contact) {
+            return {
+              success: false,
+              message: 'Contact not found'
+            };
+          }
+
+          // Create a quote link
+          const quoteId = `${user.organization_id.toString(36)}-${contactId.toString(36)}-${Math.random().toString(36).substring(2, 10)}`;
+          
+          // Calculate base URL
+          const baseUrl = process.env.PUBLIC_URL || 'http://localhost:5173';
+          const quoteUrl = `${baseUrl}/quote?id=${quoteId}&planType=${contact.plan_type}`;
+
+          // Send the email via SendGrid
+          const emailService = new EmailService();
+          await emailService.sendQuoteEmail({
+            email: contact.email,
+            firstName: contact.first_name,
+            lastName: contact.last_name,
+            quoteUrl,
+            planType: contact.plan_type
+          });
+
+          // Update last_emailed timestamp
+          await orgDb.execute(
+            'UPDATE contacts SET last_emailed = CURRENT_TIMESTAMP WHERE id = ?',
+            [contactId]
+          );
+
+          return {
+            success: true,
+            message: 'Quote email sent successfully'
+          };
+        } catch (error) {
+          logger.error(`Error sending quote email: ${error}`);
+          return {
+            success: false,
+            message: 'Failed to send quote email',
+            error: String(error)
+          };
+        }
+      })
+      
+      .post('/api/contact-request', async ({ body }: { body: { name: string; email: string; type: string; quoteId?: string } }) => {
         try {
           const user = await getUserFromSession(request)
           if (!user?.organization_id) {

@@ -13,6 +13,7 @@ import Http
 import Json.Decode as Decode exposing (Decoder)
 import Json.Decode.Pipeline as Pipeline
 import Json.Encode as Encode
+import Process
 import Task
 import Time exposing (Month(..), Posix, Zone)
 
@@ -137,6 +138,7 @@ type alias Model =
     , timeZone : Zone
     , showAllFollowUps : Bool
     , orgSettings : Maybe Settings
+    , emailSendSuccess : Bool
     }
 
 
@@ -303,6 +305,7 @@ init key contactId =
       , timeZone = Time.utc
       , showAllFollowUps = False
       , orgSettings = Nothing
+      , emailSendSuccess = False
       }
     , Cmd.batch
         [ Http.get
@@ -351,6 +354,9 @@ type Msg
     | GotFollowUps (Result Http.Error (List FollowUpRequest))
     | ToggleFollowUps
     | GotOrgSettings (Result Http.Error Settings)
+    | SendQuoteEmail
+    | QuoteEmailSent (Result Http.Error { success : Bool, message : String })
+    | ResetEmailSendState
 
 
 type ContactFormField
@@ -738,6 +744,56 @@ update msg model =
             , Cmd.none
             )
 
+        SendQuoteEmail ->
+            case model.contact of
+                Just contact ->
+                    ( { model | isGeneratingQuote = True, emailSendSuccess = False }
+                    , Http.post
+                        { url = "/api/contacts/" ++ String.fromInt contact.id ++ "/send-quote-email"
+                        , body = Http.emptyBody
+                        , expect =
+                            Http.expectJson QuoteEmailSent
+                                (Decode.map2 (\s m -> { success = s, message = m })
+                                    (Decode.field "success" Decode.bool)
+                                    (Decode.field "message" Decode.string)
+                                )
+                        }
+                    )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        QuoteEmailSent (Ok response) ->
+            ( { model
+                | isGeneratingQuote = False
+                , emailSendSuccess = response.success
+                , error =
+                    if response.success then
+                        Nothing
+
+                    else
+                        Just response.message
+              }
+            , if response.success then
+                Process.sleep 5000
+                    |> Task.perform (\_ -> ResetEmailSendState)
+
+              else
+                Cmd.none
+            )
+
+        QuoteEmailSent (Err _) ->
+            ( { model
+                | isGeneratingQuote = False
+                , emailSendSuccess = False
+                , error = Just "Failed to send quote email"
+              }
+            , Cmd.none
+            )
+
+        ResetEmailSendState ->
+            ( { model | emailSendSuccess = False }, Cmd.none )
+
 
 
 -- VIEW
@@ -753,7 +809,7 @@ view model =
                 , case model.contact of
                     Just contact ->
                         div []
-                            [ viewHeader contact
+                            [ viewHeader contact model
                             , viewContactSummary contact model.quoteUrl model.isGeneratingQuote model.healthStatus model.followUps model.timeZone model.showAllFollowUps
                             , if model.orgSettings /= Nothing && isStateActive model.emailSchedule then
                                 div [ class "bg-white rounded-lg border border-gray-200 p-6 mb-8" ]
@@ -790,8 +846,8 @@ viewBackButton =
         ]
 
 
-viewHeader : Contact -> Html Msg
-viewHeader contact =
+viewHeader : Contact -> Model -> Html Msg
+viewHeader contact model =
     div [ class "flex justify-between items-center mb-8" ]
         [ div [ class "flex items-center gap-4" ]
             [ h1 [ class "text-2xl font-semibold" ]
@@ -800,6 +856,29 @@ viewHeader contact =
             ]
         , div [ class "flex gap-2" ]
             [ button
+                [ class "px-4 py-2 text-sm font-medium text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors duration-200 flex items-center gap-2"
+                , onClick
+                    (if model.isGeneratingQuote || model.emailSendSuccess then
+                        NoOp
+
+                     else
+                        SendQuoteEmail
+                    )
+                ]
+                (if model.isGeneratingQuote then
+                    [ viewSpinner
+                    , text "Sending..."
+                    ]
+
+                 else if model.emailSendSuccess then
+                    [ span [ class "text-green-600" ] [ text "✓" ]
+                    , text "Email Sent"
+                    ]
+
+                 else
+                    [ text "Send Email" ]
+                )
+            , button
                 [ class "px-4 py-2 text-sm font-medium text-purple-600 hover:text-purple-700 bg-purple-50 hover:bg-purple-100 rounded-lg transition-colors duration-200 flex items-center gap-2"
                 , onClick ShowEditModal
                 ]
