@@ -1055,36 +1055,28 @@ confirmationDecoder =
 getPlanLimitBanner : Model -> Html Msg
 getPlanLimitBanner model =
     -- When user is on trial plan
-    if model.currentTier == Just "trial" then
+    if model.currentAgentLimit > 0 && model.extraAgents > model.currentAgentLimit then
         LimitBanner.viewLimitBanner
-            (Just (TrialEnding "June 15, 2024"))
-            CloseBanner
-        -- When user has exceeded agent limit on current plan
-
-    else if model.currentAgentLimit > 0 && model.extraAgents > model.currentAgentLimit then
-        LimitBanner.viewLimitBanner
-            (Just (AgentLimit (model.currentAgentLimit + model.extraAgents) model.currentAgentLimit))
+            (AgentLimit (model.currentAgentLimit + model.extraAgents) model.currentAgentLimit)
             CloseBanner
         -- When user is on basic plan (which only allows 1 agent)
 
     else if model.currentTier == Just "basic" then
         LimitBanner.viewLimitBanner
-            (Just
-                (CustomWarning
-                    "Basic Plan Limitations"
-                    "Your current Basic plan only supports 1 agent. Please upgrade to a higher tier plan to add more agents."
-                )
+            (CustomWarning
+                "Basic Plan Limitations"
+                "Your current Basic plan only supports 1 agent. Please upgrade to a higher tier plan to add more agents."
             )
             CloseBanner
         -- When approaching contact limit (subscription data from API)
 
     else if model.currentContactLimit > 0 && model.extraContacts >= (model.currentContactLimit * 1 // 10) then
         LimitBanner.viewLimitBanner
-            (Just (ContactLimit (model.currentContactLimit + model.extraContacts) model.currentContactLimit))
+            (ContactLimit (model.currentContactLimit + model.extraContacts) model.currentContactLimit)
             CloseBanner
         -- Default for new users or when no specific warning is needed
 
     else
         LimitBanner.viewLimitBanner
-            (Just (TrialEnding "June 15, 2024"))
+            (TrialEnding "June 15, 2024")
             CloseBanner

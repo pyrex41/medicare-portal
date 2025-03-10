@@ -381,6 +381,97 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
       };
     }
   })
+  .get('/organizations/my-subscription', async ({ request, set }) => {
+    try {
+      const db = new Database();
+      
+      logger.info('GET /organizations/my-subscription - Request received');
+      
+      // Get current user from session
+      const currentUser = await getUserFromSession(request);
+      logger.info(`User authentication result: ${currentUser ? `Authenticated as ${currentUser.email}` : 'Not authenticated'}`);
+      
+      if (!currentUser) {
+        set.status = 401;
+        logger.error('My subscription fetch failed: User not authenticated');
+        return {
+          success: false,
+          error: 'You must be logged in to perform this action'
+        };
+      }
+
+      // Get organization details using user's organization_id
+      const orgResult = await db.query<{ 
+        id: number,
+        name: string,
+        slug: string,
+        subscription_tier: string,
+        agent_limit: number,
+        contact_limit: number,
+        stripe_subscription_id: string | null
+      }>(
+        'SELECT id, name, slug, subscription_tier, agent_limit, contact_limit, stripe_subscription_id FROM organizations WHERE id = ?',
+        [currentUser.organization_id]
+      );
+
+      if (!orgResult || orgResult.length === 0) {
+        set.status = 404;
+        logger.error(`My subscription fetch failed: Organization not found for user ${currentUser.id}`);
+        return {
+          success: false,
+          error: 'Organization not found'
+        };
+      }
+
+      const organization = orgResult[0];
+      
+      // Get subscription tier details from subscription_tiers table
+      const tierResult = await db.query<{
+        name: string,
+        agent_limit: number,
+        contact_limit: number,
+        features: string
+      }>(
+        'SELECT name, agent_limit, contact_limit, features FROM subscription_tiers WHERE id = ?',
+        [organization.subscription_tier]
+      );
+      
+      const tier = tierResult[0] || null;
+      
+      // Determine subscription status based on Stripe subscription
+      const subscriptionStatus = organization.stripe_subscription_id ? 'active' : 'inactive';
+      
+      // Set up the response with complete subscription details
+      const response = {
+        success: true,
+        organization: {
+          id: organization.id,
+          name: organization.name,
+          slug: organization.slug
+        },
+        subscription: {
+          tierId: organization.subscription_tier,
+          tierName: tier?.name || organization.subscription_tier,
+          status: subscriptionStatus,
+          agentLimit: organization.agent_limit,
+          contactLimit: organization.contact_limit,
+          features: tier ? JSON.parse(tier.features) : []
+        }
+      };
+
+      logger.info(`Successfully fetched my subscription for org ${organization.id}: tier=${organization.subscription_tier}, agents=${organization.agent_limit}, contacts=${organization.contact_limit}`);
+      
+      return response;
+      
+    } catch (error) {
+      logger.error(`Error fetching my organization subscription: ${error}`);
+      set.status = 500;
+      return {
+        success: false,
+        error: 'Failed to fetch subscription details'
+      };
+    }
+  })
   .post('/organizations/:orgSlug/subscription', async ({ params: { orgSlug }, body, request, set }) => {
     try {
       const db = new Database();
@@ -645,7 +736,7 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
       // Import Stripe to verify the webhook
       const Stripe = await import('stripe');
       const stripe = new Stripe.default(config.stripe.secretKey, {
-        apiVersion: '2023-10-16',
+        apiVersion: '2025-02-24.acacia',
       });
       
       const event = stripe.webhooks.constructEvent(

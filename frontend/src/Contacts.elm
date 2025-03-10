@@ -10,7 +10,7 @@ module Contacts exposing
 import Browser
 import Browser.Events
 import Browser.Navigation as Nav
-import Components.LimitBanner as LimitBanner exposing (LimitWarning(..))
+import Components.LimitBanner as LimitBanner
 import File exposing (File)
 import File.Download
 import File.Select as Select
@@ -109,7 +109,7 @@ type alias Model =
     , carriers : List String
     , agents : List User
     , key : Nav.Key
-    , showLimitBanner : Bool
+    , limitBanner : LimitBanner.Model
     }
 
 
@@ -261,6 +261,9 @@ init key maybeUser =
         initialAddForm =
             { emptyForm | contactOwnerId = defaultOwnerId }
 
+        ( limitBannerModel, limitBannerCmd ) =
+            LimitBanner.init
+
         initialModel =
             { contacts = []
             , selectedContacts = []
@@ -288,7 +291,7 @@ init key maybeUser =
             , carriers = []
             , agents = []
             , key = key
-            , showLimitBanner = True
+            , limitBanner = limitBannerModel
             }
     in
     ( initialModel
@@ -303,6 +306,7 @@ init key maybeUser =
         , Task.perform GotCurrentTime Time.now
         , fetchCarriers
         , fetchAgents
+        , Cmd.map LimitBannerMsg limitBannerCmd
         ]
     )
 
@@ -438,7 +442,7 @@ type Msg
     | SelectReassignAgent Int
     | ReassignSelectedContacts
     | ContactsReassigned (Result Http.Error ReassignResponse)
-    | CloseLimitBanner
+    | LimitBannerMsg LimitBanner.Msg
 
 
 type ContactFormField
@@ -1328,8 +1332,14 @@ update msg model =
         ContactsReassigned (Err _) ->
             ( { model | error = Just "Failed to reassign contacts", showModal = NoModal }, Cmd.none )
 
-        CloseLimitBanner ->
-            ( { model | showLimitBanner = False }, Cmd.none )
+        LimitBannerMsg limitBannerMsg ->
+            let
+                ( updatedLimitBannerModel, limitBannerCmd ) =
+                    LimitBanner.update limitBannerMsg model.limitBanner
+            in
+            ( { model | limitBanner = updatedLimitBannerModel }
+            , Cmd.map LimitBannerMsg limitBannerCmd
+            )
 
 
 
@@ -1343,11 +1353,8 @@ view model =
     div [ class "min-h-screen bg-white" ]
         [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" ]
             [ -- Limit banner - use our reusable component
-              if model.showLimitBanner then
-                getLimitBanner model
-
-              else
-                text ""
+              LimitBanner.view model.limitBanner
+                |> Html.map LimitBannerMsg
             , -- Stats Section - Make more compact with reduced margins
               div [ class "grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 mb-4" ]
                 [ statsCard "Total Contacts" (String.fromInt (List.length model.contacts))
@@ -3451,52 +3458,3 @@ filterByAgents agentIds contacts =
 
 
 -- Replace the old contact limit banner functions with this more streamlined one
-
-
-getLimitBanner : Model -> Html Msg
-getLimitBanner model =
-    let
-        -- For demo purposes, using fixed values - in a real app these would come from the user's subscription data
-        currentContacts =
-            List.length model.contacts
-
-        contactLimit =
-            1000
-
-        currentAgents =
-            2
-
-        agentLimit =
-            1
-    in
-    if currentAgents > agentLimit then
-        -- Show agent limit warning
-        LimitBanner.viewLimitBanner
-            (Just (AgentLimit currentAgents agentLimit))
-            CloseLimitBanner
-
-    else if currentContacts >= contactLimit then
-        -- Show contact limit reached warning
-        LimitBanner.viewLimitBanner
-            (Just (ContactLimit currentContacts contactLimit))
-            CloseLimitBanner
-
-    else if currentContacts >= (contactLimit * 9 // 10) then
-        -- Show approaching contact limit warning (90%+)
-        LimitBanner.viewLimitBanner
-            (Just
-                (CustomWarning
-                    "Contact Limit Approaching"
-                    ("You have "
-                        ++ String.fromInt currentContacts
-                        ++ " contacts out of your plan limit of "
-                        ++ String.fromInt contactLimit
-                        ++ ". Please upgrade your plan soon to avoid disruption."
-                    )
-                )
-            )
-            CloseLimitBanner
-
-    else
-        -- No warnings needed
-        text ""

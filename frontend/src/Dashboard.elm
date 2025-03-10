@@ -14,7 +14,7 @@ import Time
 
 type alias Model =
     { hovering : Maybe Point
-    , showLimitBanner : Bool
+    , limitBanner : LimitBanner.Model
     , showTutorialModal : Bool
     }
 
@@ -36,7 +36,7 @@ type alias ChartData =
 type Msg
     = OnHover (Maybe Point)
     | NoOp
-    | CloseLimitBanner
+    | LimitBannerMsg LimitBanner.Msg
     | CloseTutorialModal
     | OpenTutorialModal
 
@@ -48,11 +48,15 @@ type alias Flags =
 
 init : Flags -> ( Model, Cmd Msg )
 init flags =
+    let
+        ( limitBannerModel, limitBannerCmd ) =
+            LimitBanner.init
+    in
     ( { hovering = Nothing
-      , showLimitBanner = True
+      , limitBanner = limitBannerModel
       , showTutorialModal = Maybe.withDefault False flags.isPostPayment
       }
-    , Cmd.none
+    , Cmd.map LimitBannerMsg limitBannerCmd
     )
 
 
@@ -64,9 +68,13 @@ update msg model =
             , Cmd.none
             )
 
-        CloseLimitBanner ->
-            ( { model | showLimitBanner = False }
-            , Cmd.none
+        LimitBannerMsg limitBannerMsg ->
+            let
+                ( limitBanner, cmd ) =
+                    LimitBanner.update limitBannerMsg model.limitBanner
+            in
+            ( { model | limitBanner = limitBanner }
+            , Cmd.map LimitBannerMsg cmd
             )
 
         CloseTutorialModal ->
@@ -88,11 +96,8 @@ view model =
     { title = "Dashboard"
     , body =
         [ div [ class "p-6 max-w-7xl mx-auto" ]
-            [ if model.showLimitBanner then
-                LimitBanner.viewLimitBanner (Just (AgentLimit 2 1)) CloseLimitBanner
-
-              else
-                text ""
+            [ LimitBanner.view model.limitBanner
+                |> Html.map LimitBannerMsg
             , if model.showTutorialModal then
                 viewTutorialModal
 

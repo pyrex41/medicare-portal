@@ -3,7 +3,7 @@ module ChangePlan exposing (Model, Msg, init, subscriptions, update, view)
 import Browser exposing (Document)
 import Browser.Navigation as Nav
 import ChoosePlan
-import Components.LimitBanner as LimitBanner exposing (LimitWarning(..))
+import Components.LimitBanner as LimitBanner
 import Html exposing (Html, div, text)
 import Html.Attributes exposing (class)
 import Json.Decode as Decode
@@ -11,13 +11,13 @@ import Json.Decode as Decode
 
 type alias Model =
     { choosePlanModel : ChoosePlan.Model
-    , showLimitBanner : Bool
+    , limitBanner : LimitBanner.Model
     }
 
 
 type Msg
     = ChoosePlanMsg ChoosePlan.Msg
-    | CloseLimitBanner
+    | ChooseBannerMsg LimitBanner.Msg
 
 
 init : { key : Nav.Key, session : String, orgSlug : String } -> ( Model, Cmd Msg )
@@ -25,11 +25,17 @@ init { key, session, orgSlug } =
     let
         ( choosePlanModel, choosePlanCmd ) =
             ChoosePlan.init orgSlug session key True
+
+        ( limitBannerModel, limitBannerCmd ) =
+            LimitBanner.init
     in
     ( { choosePlanModel = choosePlanModel
-      , showLimitBanner = True
+      , limitBanner = limitBannerModel
       }
-    , Cmd.map ChoosePlanMsg choosePlanCmd
+    , Cmd.batch
+        [ Cmd.map ChoosePlanMsg choosePlanCmd
+        , Cmd.map ChooseBannerMsg limitBannerCmd
+        ]
     )
 
 
@@ -45,9 +51,13 @@ update msg model =
             , Cmd.map ChoosePlanMsg choosePlanCmd
             )
 
-        CloseLimitBanner ->
-            ( { model | showLimitBanner = False }
-            , Cmd.none
+        ChooseBannerMsg chooseBannerMsg ->
+            let
+                ( updatedChooseBannerModel, chooseBannerCmd ) =
+                    LimitBanner.update chooseBannerMsg model.limitBanner
+            in
+            ( { model | limitBanner = updatedChooseBannerModel }
+            , Cmd.map ChooseBannerMsg chooseBannerCmd
             )
 
 
@@ -55,11 +65,8 @@ view : Model -> Document Msg
 view model =
     { title = "Change Plan - Medicare Max"
     , body =
-        [ if model.showLimitBanner then
-            getLimitBanner
-
-          else
-            text ""
+        [ LimitBanner.view model.limitBanner
+            |> Html.map ChooseBannerMsg
         , ChoosePlan.viewChangePlan model.choosePlanModel
             |> Html.map ChoosePlanMsg
         ]
@@ -69,17 +76,3 @@ view model =
 subscriptions : Model -> Sub Msg
 subscriptions model =
     Sub.map ChoosePlanMsg (ChoosePlan.subscriptions model.choosePlanModel)
-
-
-getLimitBanner : Html Msg
-getLimitBanner =
-    let
-        currentAgents =
-            2
-
-        agentLimit =
-            1
-    in
-    LimitBanner.viewLimitBanner
-        (Just (AgentLimit currentAgents agentLimit))
-        CloseLimitBanner
