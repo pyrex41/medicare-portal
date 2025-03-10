@@ -1348,156 +1348,159 @@ view model =
 
               else
                 text ""
-            , -- Stats Section
-              div [ class "grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4 mb-8" ]
+            , -- Stats Section - Make more compact with reduced margins
+              div [ class "grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 mb-4" ]
                 [ statsCard "Total Contacts" (String.fromInt (List.length model.contacts))
                 , statsCard "Emails Sent" "1824"
                 , statsCard "Emails Clicked" "425"
                 , statsCard "Quotes Created" "385"
                 ]
-            , -- Table Container with overflow handling
+            , -- Table Container with overflow handling - reduced vertical spacing
               div [ class "overflow-x-auto max-w-7xl mx-auto" ]
-                [ -- Contacts header and filters moved below the stat cards but above the table
-                  div [ class "flex justify-between items-center mb-6" ]
-                    [ div [ class "flex items-center gap-4" ]
-                        [ h1 [ class "text-lg font-semibold" ] [ text "Contacts " ]
-                        , span [ class "text-sm text-gray-500" ]
-                            [ text ("(" ++ String.fromInt (List.length model.contacts) ++ ")") ]
-                        ]
-                    , div [ class "flex items-center gap-3" ]
-                        [ -- Only show Agent filter for admins
-                          if isAdminOrAdminAgent model.currentUser then
-                            div [ class "relative" ]
-                                [ button
-                                    [ class "inline-flex items-center gap-2 px-3 py-2 border rounded-lg text-sm text-gray-700 hover:bg-gray-50"
-                                    , onClick (ToggleFilterDropdown AgentFilter)
+                [ -- Add a container around both the header and the table to ensure they have the same width
+                  div [ class "w-full" ]
+                    [ -- Contacts header and filters - reduced margin bottom
+                      div [ class "flex justify-between items-center mb-3 w-full" ]
+                        [ div [ class "flex items-center gap-2" ]
+                            [ h1 [ class "text-base font-semibold" ] [ text "Contacts " ]
+                            , span [ class "text-sm text-gray-500" ]
+                                [ text ("(" ++ String.fromInt (List.length model.contacts) ++ ")") ]
+                            ]
+                        , div [ class "flex items-center gap-2" ]
+                            [ -- Only show Agent filter for admins
+                              if isAdminOrAdminAgent model.currentUser then
+                                div [ class "relative" ]
+                                    [ button
+                                        [ class "inline-flex items-center gap-1 px-2 py-1 border rounded-md text-sm text-gray-700 hover:bg-gray-50"
+                                        , onClick (ToggleFilterDropdown AgentFilter)
+                                        ]
+                                        [ text "Agent"
+                                        , viewIcon "M19 9l-7 7-7-7"
+                                        ]
+                                    , if model.openFilter == Just AgentFilter then
+                                        viewFilterDropdown model AgentFilter
+
+                                      else
+                                        text ""
                                     ]
-                                    [ text "Agent"
+
+                              else
+                                text ""
+                            , div [ class "relative" ]
+                                [ button
+                                    [ class "inline-flex items-center gap-1 px-2 py-1 border rounded-md text-sm text-gray-700 hover:bg-gray-50"
+                                    , onClick (ToggleFilterDropdown CarrierFilter)
+                                    ]
+                                    [ text "Carrier"
                                     , viewIcon "M19 9l-7 7-7-7"
                                     ]
-                                , if model.openFilter == Just AgentFilter then
-                                    viewFilterDropdown model AgentFilter
+                                , if model.openFilter == Just CarrierFilter then
+                                    viewFilterDropdown model CarrierFilter
 
                                   else
                                     text ""
                                 ]
+                            , div [ class "relative" ]
+                                [ button
+                                    [ class "inline-flex items-center gap-1 px-2 py-1 border rounded-md text-sm text-gray-700 hover:bg-gray-50"
+                                    , onClick (ToggleFilterDropdown StateFilter)
+                                    ]
+                                    [ text "State"
+                                    , viewIcon "M19 9l-7 7-7-7"
+                                    ]
+                                , if model.openFilter == Just StateFilter then
+                                    viewFilterDropdown model StateFilter
 
-                          else
-                            text ""
-                        , div [ class "relative" ]
-                            [ button
-                                [ class "inline-flex items-center gap-2 px-3 py-2 border rounded-lg text-sm text-gray-700 hover:bg-gray-50"
-                                , onClick (ToggleFilterDropdown CarrierFilter)
+                                  else
+                                    text ""
                                 ]
-                                [ text "Carrier"
-                                , viewIcon "M19 9l-7 7-7-7"
-                                ]
-                            , if model.openFilter == Just CarrierFilter then
-                                viewFilterDropdown model CarrierFilter
-
-                              else
-                                text ""
-                            ]
-                        , div [ class "relative" ]
-                            [ button
-                                [ class "inline-flex items-center gap-2 px-3 py-2 border rounded-lg text-sm text-gray-700 hover:bg-gray-50"
-                                , onClick (ToggleFilterDropdown StateFilter)
-                                ]
-                                [ text "State"
-                                , viewIcon "M19 9l-7 7-7-7"
-                                ]
-                            , if model.openFilter == Just StateFilter then
-                                viewFilterDropdown model StateFilter
-
-                              else
-                                text ""
-                            ]
-                        , div [ class "relative" ]
-                            [ input
-                                [ class "w-64 px-4 py-2 border rounded-lg text-sm placeholder-gray-500 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                                , placeholder "Search contacts..."
-                                , value model.searchQuery
-                                , onInput UpdateSearchQuery
-                                ]
-                                []
-                            ]
-                        , -- Add the add contact button with a different style
-                          button
-                            [ class "px-3 py-2 bg-black text-white rounded-lg text-sm hover:bg-gray-800 transition-colors"
-                            , onClick ShowContactChoiceModal
-                            ]
-                            [ text "+ Add Contact" ]
-                        ]
-                    ]
-                , table [ class "w-full" ]
-                    [ colgroup []
-                        [ col [ class "w-12" ] [] -- Checkbox
-                        , col [ class "w-48" ] [] -- Name
-                        , col [ class "w-32" ] [] -- Contact Status
-                        , col [ class "w-48" ] [] -- Email
-                        , col [ class "w-32" ] [] -- Phone Number
-                        , col [ class "w-16" ] [] -- State
-                        , col [ class "w-32" ] [] -- Assigned Agent
-                        , col [ class "w-32" ] [] -- Current Carrier
-                        , col [ class "w-28" ] [] -- Effective Date
-                        , col [ class "w-20" ] [] -- Actions
-                        ]
-                    , thead [ class "bg-gray-50" ]
-                        [ tr []
-                            [ th [ class "sticky top-0 px-3 py-2 border-b border-gray-200 bg-gray-50" ]
+                            , div [ class "relative" ]
                                 [ input
-                                    [ type_ "checkbox"
-                                    , class "rounded border-gray-300 text-purple-600 focus:ring-purple-500"
-                                    , checked (not (List.isEmpty model.contacts) && List.length model.selectedContacts == List.length model.contacts)
-                                    , onClick
-                                        (if not (List.isEmpty model.contacts) && List.length model.selectedContacts == List.length model.contacts then
-                                            DeselectAllContacts
-
-                                         else
-                                            SelectAllContacts
-                                        )
+                                    [ class "w-48 px-2 py-1 border rounded-md text-sm placeholder-gray-500 focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500"
+                                    , placeholder "Search contacts..."
+                                    , value model.searchQuery
+                                    , onInput UpdateSearchQuery
                                     ]
                                     []
                                 ]
-                            , tableHeader "Name"
-                            , tableHeader "Contact Status"
-                            , tableHeader "Email"
-                            , tableHeader "Phone Number"
-                            , tableHeader "State"
-                            , tableHeader "Assigned Agent"
-                            , tableHeader "Current Carrier"
-                            , tableHeader "Effective Date"
-                            , tableHeader "Actions"
+                            , -- Add the add contact button with a different style
+                              button
+                                [ class "px-2 py-1 bg-black text-white rounded-md text-sm hover:bg-gray-800 transition-colors"
+                                , onClick ShowContactChoiceModal
+                                ]
+                                [ text "+ Add Contact" ]
                             ]
                         ]
-                    , tbody [ class "bg-white" ]
-                        (if model.isLoadingContacts then
+                    , table [ class "w-full" ]
+                        [ colgroup []
+                            [ col [ class "w-12" ] [] -- Checkbox
+                            , col [ class "w-48" ] [] -- Name
+                            , col [ class "w-32" ] [] -- Contact Status
+                            , col [ class "w-48" ] [] -- Email
+                            , col [ class "w-32" ] [] -- Phone Number
+                            , col [ class "w-16" ] [] -- State
+                            , col [ class "w-32" ] [] -- Assigned Agent
+                            , col [ class "w-32" ] [] -- Current Carrier
+                            , col [ class "w-28" ] [] -- Effective Date
+                            , col [ class "w-20" ] [] -- Actions
+                            ]
+                        , thead [ class "bg-gray-50" ]
                             [ tr []
-                                [ td
-                                    [ class "px-3 py-8 text-sm text-gray-500 text-center border-t border-gray-200"
-                                    , attribute "colspan" "10"
+                                [ th [ class "sticky top-0 px-2 py-1 border-b border-gray-200 bg-gray-50" ]
+                                    [ input
+                                        [ type_ "checkbox"
+                                        , class "rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                                        , checked (not (List.isEmpty model.contacts) && List.length model.selectedContacts == List.length model.contacts)
+                                        , onClick
+                                            (if not (List.isEmpty model.contacts) && List.length model.selectedContacts == List.length model.contacts then
+                                                DeselectAllContacts
+
+                                             else
+                                                SelectAllContacts
+                                            )
+                                        ]
+                                        []
                                     ]
-                                    [ div [ class "flex items-center justify-center gap-3" ]
-                                        [ viewSpinner
-                                        , text "Loading contacts..."
+                                , tableHeader "Name"
+                                , tableHeader "Contact Status"
+                                , tableHeader "Email"
+                                , tableHeader "Phone Number"
+                                , tableHeader "State"
+                                , tableHeader "Assigned Agent"
+                                , tableHeader "Current Carrier"
+                                , tableHeader "Effective Date"
+                                , tableHeader "Actions"
+                                ]
+                            ]
+                        , tbody [ class "bg-white" ]
+                            (if model.isLoadingContacts then
+                                [ tr []
+                                    [ td
+                                        [ class "px-3 py-8 text-sm text-gray-500 text-center border-t border-gray-200"
+                                        , attribute "colspan" "10"
+                                        ]
+                                        [ div [ class "flex items-center justify-center gap-3" ]
+                                            [ viewSpinner
+                                            , text "Loading contacts..."
+                                            ]
                                         ]
                                     ]
                                 ]
-                            ]
 
-                         else if List.isEmpty model.contacts then
-                            [ tr []
-                                [ td
-                                    [ class "px-3 py-2 text-sm text-gray-500 text-center border-t border-gray-200"
-                                    , attribute "colspan" "10"
+                             else if List.isEmpty model.contacts then
+                                [ tr []
+                                    [ td
+                                        [ class "px-3 py-2 text-sm text-gray-500 text-center border-t border-gray-200"
+                                        , attribute "colspan" "10"
+                                        ]
+                                        [ text "No contacts found" ]
                                     ]
-                                    [ text "No contacts found" ]
                                 ]
-                            ]
 
-                         else
-                            List.concatMap (viewTableRow model) model.contacts
-                        )
+                             else
+                                List.concatMap (viewTableRow model) model.contacts
+                            )
+                        ]
                     ]
                 ]
             ]
@@ -1558,15 +1561,15 @@ viewBulkActionBar model =
 
 statsCard : String -> String -> Html Msg
 statsCard title value =
-    div [ class "bg-white rounded-lg border p-6 hover:shadow-lg transition-shadow" ]
-        [ div [ class "text-sm text-gray-600 mb-2" ] [ text title ]
-        , div [ class "text-3xl font-semibold" ] [ text value ]
+    div [ class "bg-white rounded-md border p-3 hover:shadow-md transition-shadow" ]
+        [ div [ class "text-xs text-gray-600 mb-1" ] [ text title ]
+        , div [ class "text-2xl font-semibold" ] [ text value ]
         ]
 
 
 tableHeader : String -> Html Msg
 tableHeader headerText =
-    th [ class "px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-b border-gray-200 bg-gray-50" ]
+    th [ class "px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-b border-gray-200 bg-gray-50" ]
         [ text headerText ]
 
 
@@ -1574,7 +1577,7 @@ viewTableRow : Model -> Contact -> List (Html Msg)
 viewTableRow model contact =
     let
         cellClass =
-            "px-3 py-2 text-sm border-t border-gray-200"
+            "px-2 py-1 text-sm border-t border-gray-200"
 
         initials =
             String.left 1 contact.firstName ++ String.left 1 contact.lastName
@@ -1743,10 +1746,6 @@ submitEditFormWithFlag form isZipUpdate =
 
 contactDecoder : Decode.Decoder Contact
 contactDecoder =
-    let
-        debugLog label value =
-            value
-    in
     Decode.succeed Contact
         |> Pipeline.required "id" Decode.int
         |> Pipeline.required "first_name" Decode.string
@@ -1833,42 +1832,42 @@ viewModals model =
 
 viewContactChoiceModal : Html Msg
 viewContactChoiceModal =
-    div [ class "fixed inset-0 bg-gray-500/75 flex items-center justify-center p-8" ]
-        [ div [ class "bg-white rounded-xl p-10 max-w-2xl w-full mx-4 shadow-xl relative" ]
+    div [ class "fixed inset-0 bg-gray-500/75 flex items-center justify-center p-4" ]
+        [ div [ class "bg-white rounded-md p-5 max-w-lg w-full mx-2 shadow-lg relative" ]
             [ button
-                [ class "absolute top-4 right-4 text-gray-400 hover:text-gray-600 transition-colors duration-200"
+                [ class "absolute top-2 right-2 text-gray-400 hover:text-gray-600 transition-colors duration-200"
                 , onClick CloseModal
                 ]
                 [ viewIcon "M6 18L18 6M6 6l12 12" ]
-            , h2 [ class "text-2xl font-semibold text-gray-900 mb-2" ]
+            , h2 [ class "text-xl font-semibold text-gray-900 mb-2" ]
                 [ text "Add Contacts" ]
-            , div [ class "text-sm text-gray-600 mb-8" ]
+            , div [ class "text-xs text-gray-600 mb-4" ]
                 [ text "Select how you want to add your new contacts." ]
-            , div [ class "grid grid-cols-2 gap-6" ]
+            , div [ class "grid grid-cols-2 gap-3" ]
                 [ div
-                    [ class "p-6 border-2 border-gray-200 rounded-lg hover:border-[#03045E] hover:bg-[#03045E]/5 cursor-pointer transition-colors"
+                    [ class "p-3 border border-gray-200 rounded-md hover:border-[#03045E] hover:bg-[#03045E]/5 cursor-pointer transition-colors"
                     , onClick ChooseSingleContact
                     ]
-                    [ div [ class "flex items-center mb-4" ]
-                        [ div [ class "h-8 w-8 rounded-full bg-purple-100 flex items-center justify-center text-sm text-purple-700 font-medium" ]
+                    [ div [ class "flex items-center mb-2" ]
+                        [ div [ class "h-6 w-6 rounded-full bg-purple-100 flex items-center justify-center text-xs text-purple-700 font-medium" ]
                             [ viewIcon "M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" ]
                         ]
-                    , h3 [ class "text-lg font-medium text-gray-900 mb-2" ]
+                    , h3 [ class "text-base font-medium text-gray-900 mb-1" ]
                         [ text "Single Contact" ]
-                    , p [ class "text-sm text-gray-600" ]
+                    , p [ class "text-xs text-gray-600" ]
                         [ text "Individual Form" ]
                     ]
                 , div
-                    [ class "p-6 border-2 border-gray-200 rounded-lg hover:border-[#03045E] hover:bg-[#03045E]/5 cursor-pointer transition-colors"
+                    [ class "p-3 border border-gray-200 rounded-md hover:border-[#03045E] hover:bg-[#03045E]/5 cursor-pointer transition-colors"
                     , onClick ChooseMultipleContacts
                     ]
-                    [ div [ class "flex items-center mb-4" ]
-                        [ div [ class "h-8 w-8 rounded-full bg-purple-100 flex items-center justify-center text-sm text-purple-700 font-medium" ]
+                    [ div [ class "flex items-center mb-2" ]
+                        [ div [ class "h-6 w-6 rounded-full bg-purple-100 flex items-center justify-center text-xs text-purple-700 font-medium" ]
                             [ viewIcon "M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" ]
                         ]
-                    , h3 [ class "text-lg font-medium text-gray-900 mb-2" ]
+                    , h3 [ class "text-base font-medium text-gray-900 mb-1" ]
                         [ text "Multiple Contacts" ]
-                    , p [ class "text-sm text-gray-600" ]
+                    , p [ class "text-xs text-gray-600" ]
                         [ text "CSV Upload" ]
                     ]
                 ]
@@ -1878,16 +1877,16 @@ viewContactChoiceModal =
 
 viewAddModal : Model -> Bool -> Html Msg
 viewAddModal model isSubmitting =
-    div [ class "fixed inset-0 bg-gray-500/75 flex items-center justify-center p-8" ]
-        [ div [ class "bg-white rounded-xl p-10 max-w-lg w-full mx-4 shadow-xl relative overflow-y-auto flex flex-col max-h-[90vh]" ]
+    div [ class "fixed inset-0 bg-gray-500/75 flex items-center justify-center p-4" ]
+        [ div [ class "bg-white rounded-md p-5 max-w-lg w-full mx-2 shadow-lg relative max-h-[90vh] flex flex-col" ]
             [ button
-                [ class "absolute top-4 right-4 text-gray-400 hover:text-gray-600 transition-colors duration-200"
+                [ class "absolute top-2 right-2 text-gray-400 hover:text-gray-600 transition-colors duration-200"
                 , onClick CloseModal
                 ]
                 [ viewIcon "M6 18L18 6M6 6l12 12" ]
-            , h2 [ class "text-2xl font-semibold text-gray-900 mb-8" ]
+            , h2 [ class "text-xl font-semibold text-gray-900 mb-4" ]
                 [ text "Add New Client" ]
-            , div [ class "flex-grow overflow-y-auto pr-2" ]
+            , div [ class "overflow-y-auto pr-1 flex-grow" ]
                 [ viewContactForm model model.addForm UpdateAddForm SubmitAddForm "Add Client" isSubmitting ]
             ]
         ]
@@ -1895,16 +1894,16 @@ viewAddModal model isSubmitting =
 
 viewEditModal : Model -> Bool -> Html Msg
 viewEditModal model isSubmitting =
-    div [ class "fixed inset-0 bg-gray-500/75 flex items-center justify-center p-8" ]
-        [ div [ class "bg-white rounded-xl p-10 max-w-lg w-full mx-4 shadow-xl relative overflow-y-auto flex flex-col max-h-[90vh]" ]
+    div [ class "fixed inset-0 bg-gray-500/75 flex items-center justify-center p-4" ]
+        [ div [ class "bg-white rounded-md p-5 max-w-lg w-full mx-2 shadow-lg relative max-h-[90vh] flex flex-col" ]
             [ button
-                [ class "absolute top-4 right-4 text-gray-400 hover:text-gray-600 transition-colors duration-200"
+                [ class "absolute top-2 right-2 text-gray-400 hover:text-gray-600 transition-colors duration-200"
                 , onClick CloseModal
                 ]
                 [ viewIcon "M6 18L18 6M6 6l12 12" ]
-            , h2 [ class "text-2xl font-semibold text-gray-900 mb-8" ]
+            , h2 [ class "text-xl font-semibold text-gray-900 mb-4" ]
                 [ text "Edit Client" ]
-            , div [ class "flex-grow overflow-y-auto pr-2" ]
+            , div [ class "overflow-y-auto pr-1 flex-grow" ]
                 [ viewContactForm model model.editForm UpdateEditForm SubmitEditForm "Save Changes" isSubmitting ]
             ]
         ]
@@ -2611,19 +2610,19 @@ viewContactForm model form updateMsg submitMsg buttonText isSubmitting =
                     defaultAgentId
 
         emailField =
-            div [ class "form-group relative" ]
-                [ Html.label [ class "block text-sm font-medium text-gray-700 mb-2" ]
+            div [ class "form-group mb-3 relative" ]
+                [ Html.label [ class "block text-xs font-medium text-gray-700 mb-1" ]
                     [ text "Email" ]
                 , div [ class "relative" ]
                     [ Html.input
                         [ type_ "email"
                         , class
-                            ("w-full px-4 py-3 bg-white border-[2.5px] rounded-lg text-gray-700 placeholder-gray-400 shadow-sm transition-all duration-200 "
+                            ("w-full px-2 py-1.5 bg-white border-[1.5px] rounded-md text-sm text-gray-700 placeholder-gray-400 shadow-sm transition-all duration-200 "
                                 ++ (if model.emailExists then
-                                        "border-red-300 hover:border-red-400 focus:border-red-500 focus:ring-2 focus:ring-red-200"
+                                        "border-red-300 hover:border-red-400 focus:border-red-500 focus:ring-1 focus:ring-red-200"
 
                                     else
-                                        "border-purple-300 hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200"
+                                        "border-purple-300 hover:border-purple-400 focus:border-purple-500 focus:ring-1 focus:ring-purple-200"
                                    )
                             )
                         , value form.email
@@ -2632,24 +2631,24 @@ viewContactForm model form updateMsg submitMsg buttonText isSubmitting =
                         ]
                         []
                     , if model.isCheckingEmail then
-                        div [ class "absolute right-3 top-3" ]
+                        div [ class "absolute right-2 top-1.5" ]
                             [ viewSpinner ]
 
                       else if model.emailExists then
                         div
-                            [ class "absolute right-3 top-3 text-red-500" ]
+                            [ class "absolute right-2 top-1.5 text-red-500" ]
                             [ viewIcon "M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" ]
 
                       else if String.length form.email > 0 then
                         div
-                            [ class "absolute right-3 top-3 text-green-500" ]
+                            [ class "absolute right-2 top-1.5 text-green-500" ]
                             [ viewIcon "M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" ]
 
                       else
                         text ""
                     ]
                 , if model.emailExists then
-                    div [ class "mt-2 text-sm text-red-600" ]
+                    div [ class "mt-1 text-xs text-red-600" ]
                         [ text "A contact with this email already exists" ]
 
                   else
@@ -2657,7 +2656,7 @@ viewContactForm model form updateMsg submitMsg buttonText isSubmitting =
                 ]
     in
     Html.form [ onSubmit submitMsg ]
-        [ div [ class "grid grid-cols-2 gap-x-8 gap-y-6" ]
+        [ div [ class "grid grid-cols-2 gap-x-4 gap-y-3" ]
             [ viewFormInput "First Name" "text" form.firstName FirstName updateMsg True
             , viewFormInput "Last Name" "text" form.lastName LastName updateMsg True
             , emailField
@@ -2678,25 +2677,25 @@ viewContactForm model form updateMsg submitMsg buttonText isSubmitting =
                 updateMsg
                 [ ( "true", "Yes" ), ( "false", "No" ) ]
             , viewFormRadioGroup "Gender" form.gender Gender updateMsg [ ( "M", "Male" ), ( "F", "Female" ) ]
-            , div [ class "col-span-2 grid grid-cols-2 gap-x-8" ]
+            , div [ class "col-span-2 grid grid-cols-2 gap-x-4" ]
                 [ viewZipCodeField model form
                 , viewStateField form
                 ]
             ]
         , if model.error /= Nothing && not model.emailExists then
-            div [ class "mt-4 text-red-600 text-sm" ] [ text (Maybe.withDefault "" model.error) ]
+            div [ class "mt-2 text-red-600 text-xs" ] [ text (Maybe.withDefault "" model.error) ]
 
           else
             text ""
-        , div [ class "mt-10 flex justify-end space-x-4" ]
+        , div [ class "mt-4 flex justify-end space-x-2" ]
             [ button
                 [ type_ "button"
                 , onClick CloseModal
-                , class "px-6 py-3 bg-white text-gray-700 text-sm font-medium rounded-lg border-2 border-gray-200 hover:border-gray-300 hover:bg-gray-50 transition-colors duration-200 focus:ring-4 focus:ring-purple-100"
+                , class "px-3 py-1.5 bg-white text-gray-700 text-sm font-medium rounded-md border border-gray-200 hover:border-gray-300 hover:bg-gray-50 transition-colors duration-200 focus:ring-1 focus:ring-purple-100"
                 ]
                 [ text "Cancel" ]
             , if isSubmitting then
-                div [ class "px-6 py-3 flex items-center space-x-2" ] [ viewSpinner ]
+                div [ class "px-3 py-1.5 flex items-center" ] [ viewSpinner ]
 
               else
                 let
@@ -2706,7 +2705,7 @@ viewContactForm model form updateMsg submitMsg buttonText isSubmitting =
                 button
                     [ type_ "submit"
                     , class
-                        ("px-6 py-3 text-white text-sm font-medium rounded-lg transition-colors duration-200 focus:ring-4 focus:ring-purple-200 "
+                        ("px-3 py-1.5 text-white text-sm font-medium rounded-md transition-colors duration-200 focus:ring-1 focus:ring-purple-200 "
                             ++ (if isValid then
                                     "bg-purple-500 hover:bg-purple-600"
 
@@ -2750,12 +2749,12 @@ viewFormInput labelText inputType inputValue field updateMsg isRequired =
             else
                 ""
     in
-    div [ class "form-group" ]
-        [ Html.label [ class "block text-sm font-medium text-gray-700 mb-2" ]
+    div [ class "form-group mb-3" ]
+        [ Html.label [ class "block text-xs font-medium text-gray-700 mb-1" ]
             [ text labelText ]
         , Html.input
             [ type_ inputType
-            , class "w-full px-4 py-3 bg-white border-[2.5px] border-purple-300 rounded-lg text-gray-700 placeholder-gray-400 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 focus:bg-white transition-all duration-200"
+            , class "w-full px-2 py-1.5 bg-white border-[1.5px] border-purple-300 rounded-md text-sm text-gray-700 placeholder-gray-400 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-1 focus:ring-purple-200 focus:bg-white transition-all duration-200"
             , value displayValue
             , onInput inputHandler
             , required isRequired
@@ -2767,33 +2766,36 @@ viewFormInput labelText inputType inputValue field updateMsg isRequired =
 
 viewFormSelect : String -> String -> ContactFormField -> (ContactFormField -> String -> Msg) -> List ( String, String ) -> Html Msg
 viewFormSelect labelText selectedValue field updateMsg options =
-    div [ class "form-group" ]
-        [ Html.label [ class "block text-sm font-medium text-gray-700 mb-2" ]
+    div [ class "form-group mb-3" ]
+        [ Html.label [ class "block text-xs font-medium text-gray-700 mb-1" ]
             [ text labelText ]
-        , div [ class "relative" ]
-            [ Html.select
-                [ class "w-full px-4 py-3 bg-white border-[2.5px] border-purple-300 rounded-lg text-gray-700 placeholder-gray-400 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 focus:bg-white transition-all duration-200 appearance-none"
-                , value selectedValue
-                , onInput (updateMsg field)
-                ]
-                (List.map (\( val, txt ) -> option [ value val ] [ text txt ]) options)
-            , div [ class "absolute inset-y-0 right-0 flex items-center px-2 pointer-events-none" ]
-                [ viewIcon "M19 9l-7 7-7-7" ]
+        , Html.select
+            [ class "w-full px-2 py-1.5 bg-white border-[1.5px] border-purple-300 rounded-md text-sm text-gray-700 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-1 focus:ring-purple-200 focus:bg-white transition-all duration-200"
+            , value selectedValue
+            , onInput (updateMsg field)
             ]
+            (List.map
+                (\( val, label ) ->
+                    Html.option
+                        [ value val, selected (val == selectedValue) ]
+                        [ text label ]
+                )
+                options
+            )
         ]
 
 
 viewFormRadioGroup : String -> String -> ContactFormField -> (ContactFormField -> String -> Msg) -> List ( String, String ) -> Html Msg
 viewFormRadioGroup labelText selectedValue field updateMsg options =
-    div [ class "form-group" ]
-        [ Html.label [ class "block text-sm font-medium text-gray-700 mb-2" ]
+    div [ class "form-group mb-3" ]
+        [ Html.label [ class "block text-xs font-medium text-gray-700 mb-1" ]
             [ text labelText ]
-        , div [ class "flex gap-4" ]
+        , div [ class "flex gap-2" ]
             (List.map
                 (\( val, txt ) ->
                     label
                         [ class
-                            ("flex items-center px-4 py-2 rounded-lg border-2 cursor-pointer transition-all duration-200 "
+                            ("flex items-center px-2 py-1 rounded-md border text-sm cursor-pointer transition-all duration-200 "
                                 ++ (if selectedValue == val then
                                         "border-purple-500 bg-purple-50 text-purple-700"
 
@@ -2820,12 +2822,12 @@ viewFormRadioGroup labelText selectedValue field updateMsg options =
 
 viewZipCodeField : Model -> ContactForm -> Html Msg
 viewZipCodeField model form =
-    div []
-        [ Html.label [ class "block text-sm font-medium text-gray-700 mb-2" ]
+    div [ class "form-group mb-3" ]
+        [ Html.label [ class "block text-xs font-medium text-gray-700 mb-1" ]
             [ text "ZIP Code" ]
         , Html.input
             [ type_ "text"
-            , class "w-full px-4 py-3 bg-white border-[2.5px] border-purple-300 rounded-lg text-gray-700 placeholder-gray-400 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 focus:bg-white transition-all duration-200"
+            , class "w-full px-2 py-1.5 bg-white border-[1.5px] border-purple-300 rounded-md text-sm text-gray-700 placeholder-gray-400 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-1 focus:ring-purple-200 focus:bg-white transition-all duration-200"
             , value form.zipCode
             , onInput
                 (\zip ->
@@ -2853,12 +2855,12 @@ viewZipCodeField model form =
 
 viewStateField : ContactForm -> Html Msg
 viewStateField form =
-    div []
-        [ Html.label [ class "block text-sm font-medium text-gray-700 mb-2" ]
+    div [ class "form-group mb-3" ]
+        [ Html.label [ class "block text-xs font-medium text-gray-700 mb-1" ]
             [ text "State" ]
         , Html.input
             [ type_ "text"
-            , class "w-full px-4 py-3 bg-white border-[2.5px] border-gray-200 rounded-lg text-gray-700 placeholder-gray-400 shadow-sm focus:ring-2 focus:ring-purple-200 focus:bg-white transition-all duration-200"
+            , class "w-full px-2 py-1.5 bg-white border-[1.5px] border-gray-200 rounded-md text-sm text-gray-700 placeholder-gray-400 shadow-sm focus:ring-1 focus:ring-purple-200 focus:bg-white transition-all duration-200"
             , value form.state
             , Html.Attributes.disabled True
             ]
@@ -3260,19 +3262,19 @@ viewDeleteConfirmModal model =
 
 viewFormSelectWithValue : String -> String -> ContactFormField -> (ContactFormField -> String -> Msg) -> List ( String, String ) -> Html Msg
 viewFormSelectWithValue labelText selectedValue field updateMsg options =
-    div [ class "form-group" ]
-        [ Html.label [ class "block text-sm font-medium text-gray-700 mb-2" ]
+    div [ class "form-group mb-3" ]
+        [ Html.label [ class "block text-xs font-medium text-gray-700 mb-1" ]
             [ text labelText ]
         , div [ class "relative" ]
             [ Html.select
-                [ class "w-full px-4 py-3 bg-white border-[2.5px] border-purple-300 rounded-lg text-gray-700 placeholder-gray-400 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 focus:bg-white transition-all duration-200 appearance-none"
+                [ class "w-full px-2 py-1.5 bg-white border-[1.5px] border-purple-300 rounded-md text-sm text-gray-700 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-1 focus:ring-purple-200 focus:bg-white transition-all duration-200 appearance-none"
                 , value selectedValue
                 , onInput (updateMsg field)
                 ]
                 (option [ value "", disabled True, selected (selectedValue == "") ] [ text "Select an Agent" ]
-                    :: List.map (\( val, txt ) -> option [ value val ] [ text txt ]) options
+                    :: List.map (\( val, txt ) -> option [ value val, selected (val == selectedValue) ] [ text txt ]) options
                 )
-            , div [ class "absolute inset-y-0 right-0 flex items-center px-2 pointer-events-none" ]
+            , div [ class "absolute inset-y-0 right-0 flex items-center px-1 pointer-events-none text-gray-500" ]
                 [ viewIcon "M19 9l-7 7-7-7" ]
             ]
         ]

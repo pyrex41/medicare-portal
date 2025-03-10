@@ -19,12 +19,7 @@ const getCookie = (name: string) => {
 const sessionCookie = getCookie('session')
 console.log('Found session cookie:', sessionCookie)
 
-// Add favicon link to head
-const faviconLink = document.createElement('link');
-faviconLink.rel = 'icon';
-faviconLink.href = '/images/medicare-max-logo.png';
-faviconLink.type = 'image/png';
-document.head.appendChild(faviconLink);
+// Favicon is now set directly in index.html
 
 try {
   // @ts-ignore - Will be used for ports in the future
