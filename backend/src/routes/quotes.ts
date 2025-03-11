@@ -52,6 +52,7 @@ interface ContactQuoteInfo {
     first_name: string;
     last_name: string;
     current_carrier: string;
+    phone_number: string;
 }
 
 // Add new interface for org info response
@@ -112,7 +113,7 @@ export const quotesRoutes = (app: Elysia) => {
             
             // Fetch contact details
             const contact = await orgDb.fetchOne<ContactQuoteInfo>(
-                'SELECT zip_code, birth_date, tobacco_user, gender, email, first_name, last_name, current_carrier FROM contacts WHERE id = ?',
+                'SELECT zip_code, birth_date, tobacco_user, gender, email, first_name, last_name, current_carrier, phone_number FROM contacts WHERE id = ?',
                 [decoded.contactId]
             );
 
@@ -130,7 +131,8 @@ export const quotesRoutes = (app: Elysia) => {
                     email: contact.email,
                     firstName: contact.first_name,
                     lastName: contact.last_name,
-                    currentCarrier: contact.current_carrier
+                    currentCarrier: contact.current_carrier,
+                    phoneNumber: contact.phone_number
                 }
             };
         } catch (e) {

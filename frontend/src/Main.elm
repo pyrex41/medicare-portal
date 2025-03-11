@@ -548,6 +548,13 @@ routeParser =
                         (Query.string "id")
                         (Query.string "tid")
             )
+        , map (PublicRoute << ScheduleRoute)
+            (s "schedule"
+                <?> Query.map3 (\id status tid -> ( id, status, tid ))
+                        (Query.string "id")
+                        (Query.string "status")
+                        (Query.string "tid")
+            )
         , map (ProtectedRoute ChangePlanRoute) (s "change-plan")
         , map (ProtectedRoute ContactsRoute) (s "contacts")
         , map (AdminRoute SettingsRoute) (s "settings")
@@ -1247,7 +1254,7 @@ view model =
                             Eligibility.view eligibilityModel
                     in
                     { title = eligibilityView.title
-                    , body = List.map (Html.map EligibilityMsg) eligibilityView.body
+                    , body = [ viewWithNav model (Html.map EligibilityMsg (div [] eligibilityView.body)) ]
                     }
 
                 SchedulePage scheduleModel ->
@@ -1256,7 +1263,7 @@ view model =
                             Schedule.view scheduleModel
                     in
                     { title = scheduleView.title
-                    , body = List.map (Html.map ScheduleMsg) scheduleView.body
+                    , body = [ viewWithNav model (Html.map ScheduleMsg (div [] scheduleView.body)) ]
                     }
 
                 DashboardPage dashboardModel ->
@@ -1316,10 +1323,30 @@ viewWithNav model content =
 
 viewNavHeader : Model -> Html Msg
 viewNavHeader model =
-    nav [ class "bg-white border-b border-gray-200" ]
-        [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8" ]
-            [ div [ class "flex justify-between h-16" ]
-                [ div [ class "flex items-center space-x-4" ]
+    let
+        -- Check if current page is one of the quote flow pages that should have simplified header
+        isQuoteFlowPage =
+            case model.page of
+                QuotePage _ ->
+                    True
+
+                ComparePage _ ->
+                    True
+
+                EligibilityPage _ ->
+                    True
+
+                SchedulePage _ ->
+                    True
+
+                _ ->
+                    False
+    in
+    if isQuoteFlowPage then
+        -- Simplified header with just the logo for quote flow pages
+        nav [ class "bg-white border-b border-gray-200" ]
+            [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8" ]
+                [ div [ class "flex justify-center h-16" ]
                     [ div [ class "shrink-0 flex items-center" ]
                         [ a
                             [ href "#"
@@ -1328,98 +1355,122 @@ viewNavHeader model =
                             ]
                             [ img
                                 [ src "/images/medicare-max-logo.png"
-                                , class "h-8 w-auto mr-8"
+                                , class "h-8 w-auto"
                                 , alt "Medicare Max logo"
                                 ]
                                 []
                             ]
                         ]
-                    , button
-                        [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:bg-[#DCE2E5] rounded-md transition-colors duration-200"
-                        , onClick (InternalLinkClicked "/dashboard")
-                        ]
-                        [ text "Dashboard" ]
-                    , button
-                        [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:bg-[#DCE2E5] rounded-md transition-colors duration-200"
-                        , onClick (InternalLinkClicked "/contacts")
-                        ]
-                        [ text "Contacts" ]
                     ]
-                , div [ class "flex items-center space-x-4" ]
-                    [ div [ class "relative" ]
-                        [ button
-                            [ class "flex items-center space-x-2 px-3 py-1.5 text-gray-700 text-sm font-medium hover:bg-[#DCE2E5] rounded-md transition-colors duration-200"
-                            , onClick ToggleDropdown
-                            , stopPropagationOn "mousedown" (Decode.succeed ( NoOp, True ))
-                            ]
-                            [ case model.currentUser of
-                                Just user ->
-                                    text (user.firstName ++ " " ++ user.lastName)
+                ]
+            ]
 
-                                Nothing ->
-                                    text "Menu"
-                            , div [ class "w-4 h-4" ]
-                                [ svg
-                                    [ Svg.Attributes.viewBox "0 0 20 20"
-                                    , Svg.Attributes.fill "currentColor"
+    else
+        -- Full header with navigation for other pages
+        nav [ class "bg-white border-b border-gray-200" ]
+            [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8" ]
+                [ div [ class "flex justify-between h-16" ]
+                    [ div [ class "flex items-center space-x-4" ]
+                        [ div [ class "shrink-0 flex items-center" ]
+                            [ a
+                                [ href "#"
+                                , onClick (InternalLinkClicked "/")
+                                , class "cursor-pointer"
+                                ]
+                                [ img
+                                    [ src "/images/medicare-max-logo.png"
+                                    , class "h-8 w-auto mr-8"
+                                    , alt "Medicare Max logo"
                                     ]
-                                    [ path
-                                        [ Svg.Attributes.d "M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" ]
-                                        []
-                                    ]
+                                    []
                                 ]
                             ]
-                        , if model.showDropdown then
-                            div
-                                [ class "absolute right-0 mt-2 w-48 rounded-md shadow-lg py-1 bg-white ring-1 ring-black ring-opacity-5 z-50"
+                        , button
+                            [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:bg-[#DCE2E5] rounded-md transition-colors duration-200"
+                            , onClick (InternalLinkClicked "/dashboard")
+                            ]
+                            [ text "Dashboard" ]
+                        , button
+                            [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:bg-[#DCE2E5] rounded-md transition-colors duration-200"
+                            , onClick (InternalLinkClicked "/contacts")
+                            ]
+                            [ text "Contacts" ]
+                        ]
+                    , div [ class "flex items-center space-x-4" ]
+                        [ div [ class "relative" ]
+                            [ button
+                                [ class "flex items-center space-x-2 px-3 py-1.5 text-gray-700 text-sm font-medium hover:bg-[#DCE2E5] rounded-md transition-colors duration-200"
+                                , onClick ToggleDropdown
                                 , stopPropagationOn "mousedown" (Decode.succeed ( NoOp, True ))
                                 ]
-                                [ if isAdmin model.currentUser then
-                                    button
-                                        [ class "block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-[#DCE2E5]"
-                                        , onClick (InternalLinkClicked "/profile")
-                                        ]
-                                        [ text "Profile" ]
+                                [ case model.currentUser of
+                                    Just user ->
+                                        text (user.firstName ++ " " ++ user.lastName)
 
-                                  else
-                                    text ""
-                                , if isAdmin model.currentUser then
-                                    button
-                                        [ class "block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-[#DCE2E5]"
-                                        , onClick (InternalLinkClicked "/settings")
+                                    Nothing ->
+                                        text "Menu"
+                                , div [ class "w-4 h-4" ]
+                                    [ svg
+                                        [ Svg.Attributes.viewBox "0 0 20 20"
+                                        , Svg.Attributes.fill "currentColor"
                                         ]
-                                        [ text "Organization Settings" ]
-
-                                  else
-                                    text ""
-                                , if isAdmin model.currentUser then
-                                    button
-                                        [ class "block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-[#DCE2E5]"
-                                        , onClick (InternalLinkClicked "/add-agents")
+                                        [ path
+                                            [ Svg.Attributes.d "M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" ]
+                                            []
                                         ]
-                                        [ text "Agents" ]
-
-                                  else
-                                    text ""
-                                , button
-                                    [ class "block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-[#DCE2E5]"
-                                    , onClick (InternalLinkClicked "/change-plan")
                                     ]
-                                    [ text "Change Plan" ]
-                                , button
-                                    [ class "block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-[#DCE2E5]"
-                                    , onClick InitiateLogout
-                                    ]
-                                    [ text "Log out" ]
                                 ]
+                            , if model.showDropdown then
+                                div
+                                    [ class "absolute right-0 mt-2 w-48 rounded-md shadow-lg py-1 bg-white ring-1 ring-black ring-opacity-5 z-50"
+                                    , stopPropagationOn "mousedown" (Decode.succeed ( NoOp, True ))
+                                    ]
+                                    [ if isAdmin model.currentUser then
+                                        button
+                                            [ class "block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-[#DCE2E5]"
+                                            , onClick (InternalLinkClicked "/profile")
+                                            ]
+                                            [ text "Profile" ]
 
-                          else
-                            text ""
+                                      else
+                                        text ""
+                                    , if isAdmin model.currentUser then
+                                        button
+                                            [ class "block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-[#DCE2E5]"
+                                            , onClick (InternalLinkClicked "/settings")
+                                            ]
+                                            [ text "Organization Settings" ]
+
+                                      else
+                                        text ""
+                                    , if isAdmin model.currentUser then
+                                        button
+                                            [ class "block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-[#DCE2E5]"
+                                            , onClick (InternalLinkClicked "/add-agents")
+                                            ]
+                                            [ text "Agents" ]
+
+                                      else
+                                        text ""
+                                    , button
+                                        [ class "block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-[#DCE2E5]"
+                                        , onClick (InternalLinkClicked "/change-plan")
+                                        ]
+                                        [ text "Change Plan" ]
+                                    , button
+                                        [ class "block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-[#DCE2E5]"
+                                        , onClick InitiateLogout
+                                        ]
+                                        [ text "Log out" ]
+                                    ]
+
+                              else
+                                text ""
+                            ]
                         ]
                     ]
                 ]
             ]
-        ]
 
 
 isAdminOrAdminAgent : Maybe User -> Bool

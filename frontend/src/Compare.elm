@@ -945,9 +945,17 @@ viewPlanCard model plan =
                     , text ("Apply " ++ calculateDiscount plan ++ "% Household Discount")
                     ]
                 ]
-            , button
-                [ onClick (SelectPlan plan)
-                , class "w-full bg-[#7C3AED] text-white py-4 px-4 rounded-lg hover:bg-[#6D28D9] transition-colors mb-8 font-medium text-base"
+            , a
+                [ href
+                    (case model.quoteId of
+                        Just id ->
+                            "/eligibility?id=" ++ id
+
+                        Nothing ->
+                            "/eligibility"
+                    )
+                , class "w-full bg-[#7C3AED] text-white py-4 px-4 rounded-lg hover:bg-[#6D28D9] transition-colors mb-8 font-medium text-base inline-block text-center"
+                , onClick (SelectPlan plan)
                 ]
                 [ text "See If I Qualify" ]
             , div [ class "border-t border-[#E5E5E5] pt-6" ]

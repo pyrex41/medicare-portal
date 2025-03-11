@@ -76,10 +76,29 @@ update msg model =
             ( { model | limits = Just limitInfo }, Cmd.none )
 
         GotLimits (Err error) ->
-            ( { model | error = Just (Debug.toString error) }, Cmd.none )
+            ( { model | error = Just (httpErrorToString error) }, Cmd.none )
 
         CloseBanner ->
             ( { model | warning = Nothing }, Cmd.none )
+
+
+httpErrorToString : Http.Error -> String
+httpErrorToString error =
+    case error of
+        Http.BadUrl url ->
+            "Bad URL: " ++ url
+
+        Http.Timeout ->
+            "Request timed out"
+
+        Http.NetworkError ->
+            "Network error"
+
+        Http.BadStatus statusCode ->
+            "Bad status: " ++ String.fromInt statusCode
+
+        Http.BadBody message ->
+            "Bad body: " ++ message
 
 
 view : Model -> Html Msg
