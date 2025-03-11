@@ -5,6 +5,8 @@ import { logger } from '../logger';
 import { Database } from '../database';
 import { generateQuoteId, decodeQuoteId } from '../utils/quoteId';
 import { getUserFromSession } from '../services/auth';
+import { readFile } from 'fs/promises';
+import { join } from 'path';
 
 interface Quote {
     age: number;
@@ -120,6 +122,7 @@ export const quotesRoutes = (app: Elysia) => {
             if (!contact) {
                 throw new Error('Contact not found');
             }
+            logger.info(`Contact details: ${JSON.stringify(contact, null, 2)}`);
 
             return {
                 success: true,
@@ -170,30 +173,16 @@ export const quotesRoutes = (app: Elysia) => {
                 data: requestBody
             };
 
-            // Log complete request details
-            logger.info(`Full request details: ${JSON.stringify({
-                url: requestConfig.url,
-                method: requestConfig.method,
-                headers: requestConfig.headers,
-                data: requestConfig.data
-            }, null, 2)}`);
+            // Make request to quote engine API
+            const response = await axios(requestConfig);
             
-            const response = await axios.request<QuoteResponse[]>(requestConfig);
+            logger.info(`Quote engine response status: ${response.status}`);
             
-            // Log response summary without full data
-            const quotes = response.data;
-            const planTypes = new Set(quotes.flatMap(q => q.quotes.map(quote => quote.plan)));
-            logger.info(`Quote response summary: ${JSON.stringify({
-                total_quotes: quotes.length,
-                plan_types: Array.from(planTypes),
-                carriers: quotes.map(q => q.company_name)
-            }, null, 2)}`);
-            
+            // Return quotes from response data
             return response.data;
         } catch (error) {
-            console.error('Error fetching quotes:', error);
-            const message = error instanceof Error ? error.message : 'Unknown error';
-            throw new Error(`Failed to fetch quotes: ${message}`);
+            logger.error(`Error fetching quotes: ${error}`);
+            throw new Error(String(error));
         }
     })
     .get('/api/contact-request/org-info/:orgId', async ({ params }) => {
@@ -317,6 +306,37 @@ export const quotesRoutes = (app: Elysia) => {
         } catch (e) {
             logger.error(`Error saving contact request: ${e}`);
             throw new Error(String(e));
+        }
+    })
+    // Add new endpoint for zip code information
+    .get('/api/zipinfo/:zipCode', async ({ params }) => {
+        try {
+            const { zipCode } = params;
+            
+            // Read the zip data file from the ROOT directory, not the backend directory
+            const zipDataPath = join(process.cwd(), '..', 'zipData.json');
+            logger.info(`Looking for zip data at: ${zipDataPath}`);
+            const zipDataContent = await readFile(zipDataPath, 'utf-8');
+            const zipData = JSON.parse(zipDataContent);
+            
+            // Look up the zip code
+            if (zipData[zipCode]) {
+                return {
+                    success: true,
+                    data: zipData[zipCode]
+                };
+            } else {
+                return {
+                    success: false,
+                    error: 'Zip code not found'
+                };
+            }
+        } catch (error) {
+            logger.error(`Error fetching zip code info: ${error}`);
+            return {
+                success: false,
+                error: 'Failed to fetch zip code information'
+            };
         }
     });
 

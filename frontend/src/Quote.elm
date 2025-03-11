@@ -27,6 +27,11 @@ type alias Model =
     , error : Maybe String
     , currentCarrier : Maybe String
     , planType : Maybe String
+    , state : Maybe String
+    , counties : List String
+    , selectedCounty : Maybe String
+    , isLoadingZipData : Bool
+    , zipError : Maybe String
     }
 
 
@@ -38,6 +43,8 @@ type Msg
     | SubmitForm
     | GotCurrentDate Date
     | GotQuoteInfo (Result Http.Error QuoteInfo)
+    | GotZipInfo (Result Http.Error ZipInfo)
+    | UpdateSelectedCounty String
 
 
 type alias InitialValues =
@@ -59,6 +66,12 @@ type alias QuoteInfo =
     }
 
 
+type alias ZipInfo =
+    { state : String
+    , counties : List String
+    }
+
+
 init : Nav.Key -> InitialValues -> ( Model, Cmd Msg )
 init key initialValues =
     let
@@ -73,6 +86,11 @@ init key initialValues =
             , error = Nothing
             , currentCarrier = Nothing
             , planType = initialValues.planType
+            , state = Nothing
+            , counties = []
+            , selectedCounty = Nothing
+            , isLoadingZipData = False
+            , zipError = Nothing
             }
 
         commands =
@@ -84,6 +102,12 @@ init key initialValues =
                 Nothing ->
                     Cmd.none
             ]
+                ++ (if String.length model.zipCode == 5 then
+                        [ fetchZipInfo model.zipCode ]
+
+                    else
+                        []
+                   )
     in
     ( model, Cmd.batch commands )
 
@@ -93,6 +117,14 @@ fetchQuoteInfo quoteId =
     Http.get
         { url = "/api/quotes/decode/" ++ quoteId
         , expect = Http.expectJson GotQuoteInfo quoteInfoDecoder
+        }
+
+
+fetchZipInfo : String -> Cmd Msg
+fetchZipInfo zipCode =
+    Http.get
+        { url = "/api/zipinfo/" ++ zipCode
+        , expect = Http.expectJson GotZipInfo zipInfoDecoder
         }
 
 
@@ -108,11 +140,64 @@ quoteInfoDecoder =
         )
 
 
+zipInfoDecoder : D.Decoder ZipInfo
+zipInfoDecoder =
+    D.field "success" D.bool
+        |> D.andThen
+            (\success ->
+                if success then
+                    D.field "data"
+                        (D.map2 ZipInfo
+                            (D.field "state" D.string)
+                            (D.field "counties" (D.list D.string))
+                        )
+
+                else
+                    D.field "error" D.string
+                        |> D.andThen (\error -> D.fail error)
+            )
+
+
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
         UpdateZipCode zip ->
-            ( { model | zipCode = String.filter Char.isDigit zip |> String.left 5 }, Cmd.none )
+            let
+                filteredZip =
+                    String.filter Char.isDigit zip |> String.left 5
+
+                cmd =
+                    if String.length filteredZip == 5 && filteredZip /= model.zipCode then
+                        fetchZipInfo filteredZip
+
+                    else
+                        Cmd.none
+            in
+            ( { model
+                | zipCode = filteredZip
+                , isLoadingZipData = String.length filteredZip == 5 && filteredZip /= model.zipCode
+                , state =
+                    if String.length filteredZip /= 5 then
+                        Nothing
+
+                    else
+                        model.state
+                , counties =
+                    if String.length filteredZip /= 5 then
+                        []
+
+                    else
+                        model.counties
+                , selectedCounty =
+                    if String.length filteredZip /= 5 then
+                        Nothing
+
+                    else
+                        model.selectedCounty
+                , zipError = Nothing
+              }
+            , cmd
+            )
 
         UpdateDateOfBirth dob ->
             ( { model | dateOfBirth = dob }, Cmd.none )
@@ -129,79 +214,141 @@ update msg model =
         GotQuoteInfo result ->
             case result of
                 Ok quoteInfo ->
-                    ( { model
-                        | zipCode = quoteInfo.zipCode
-                        , dateOfBirth = quoteInfo.dateOfBirth
-                        , tobacco = quoteInfo.tobacco
-                        , gender = quoteInfo.gender
-                        , currentCarrier =
-                            if String.isEmpty quoteInfo.currentCarrier then
-                                Nothing
+                    let
+                        updatedModel =
+                            { model
+                                | zipCode = quoteInfo.zipCode
+                                , dateOfBirth = quoteInfo.dateOfBirth
+                                , tobacco = quoteInfo.tobacco
+                                , gender = quoteInfo.gender
+                                , currentCarrier =
+                                    if String.isEmpty quoteInfo.currentCarrier then
+                                        Nothing
+
+                                    else
+                                        Just quoteInfo.currentCarrier
+                            }
+
+                        cmd =
+                            if String.length quoteInfo.zipCode == 5 then
+                                fetchZipInfo quoteInfo.zipCode
 
                             else
-                                Just quoteInfo.currentCarrier
-                      }
-                    , Cmd.none
-                    )
+                                Cmd.none
+                    in
+                    ( updatedModel, cmd )
 
                 Err _ ->
                     ( { model | error = Just "Failed to load quote information" }, Cmd.none )
 
+        GotZipInfo result ->
+            case result of
+                Ok zipInfo ->
+                    let
+                        -- Always select the first county as default
+                        selectedCounty =
+                            List.head zipInfo.counties
+                    in
+                    ( { model
+                        | state = Just zipInfo.state
+                        , counties = zipInfo.counties
+                        , selectedCounty = selectedCounty
+                        , isLoadingZipData = False
+                        , zipError = Nothing
+                      }
+                    , Cmd.none
+                    )
+
+                Err error ->
+                    ( { model
+                        | state = Nothing
+                        , counties = []
+                        , selectedCounty = Nothing
+                        , isLoadingZipData = False
+                        , zipError = Just (httpErrorToString error)
+                      }
+                    , Cmd.none
+                    )
+
+        UpdateSelectedCounty county ->
+            ( { model | selectedCounty = Just county }, Cmd.none )
+
         SubmitForm ->
-            let
-                age =
-                    case model.currentDate of
-                        Just currentDate ->
-                            getAgeNextMonth model.dateOfBirth currentDate
-                                |> String.fromInt
+            if String.length model.zipCode /= 5 then
+                ( { model | zipError = Just "Please enter a valid 5-digit zip code" }, Cmd.none )
 
-                        Nothing ->
-                            "65"
+            else if model.state == Nothing then
+                ( { model | zipError = Just "Unable to determine state from zip code" }, Cmd.none )
 
-                -- Fallback if we somehow don't have current date
-                compareUrl =
-                    Builder.absolute [ "compare" ]
-                        ([ Builder.string "state" "TX"
-                         , Builder.string "zip" model.zipCode
-                         , Builder.string "county" "Dallas" -- We'll need to look this up based on zip
-                         , Builder.string "gender" model.gender
-                         , Builder.string "tobacco"
-                            (if model.tobacco then
-                                "true"
+            else
+                let
+                    age =
+                        case model.currentDate of
+                            Just currentDate ->
+                                getAgeNextMonth model.dateOfBirth currentDate
+                                    |> String.fromInt
 
-                             else
-                                "false"
+                            Nothing ->
+                                "65"
+
+                    -- Get the selected county or the first one from the list
+                    county =
+                        case model.selectedCounty of
+                            Just c ->
+                                c
+
+                            Nothing ->
+                                List.head model.counties
+                                    |> Maybe.withDefault ""
+
+                    state =
+                        model.state
+                            |> Maybe.withDefault ""
+
+                    -- Build the URL with all parameters
+                    compareUrl =
+                        Builder.absolute [ "compare" ]
+                            ([ Builder.string "zip" model.zipCode
+                             , Builder.string "state" state
+                             , Builder.string "county" county
+                             , Builder.string "gender" model.gender
+                             , Builder.string "tobacco"
+                                (if model.tobacco then
+                                    "true"
+
+                                 else
+                                    "false"
+                                )
+                             , Builder.string "age" age
+                             , Builder.string "dateOfBirth" model.dateOfBirth
+                             ]
+                                ++ (case model.quoteId of
+                                        Just id ->
+                                            [ Builder.string "id" id ]
+
+                                        Nothing ->
+                                            []
+                                   )
+                                ++ (case model.currentCarrier of
+                                        Just carrier ->
+                                            [ Builder.string "currentCarrier" carrier ]
+
+                                        Nothing ->
+                                            []
+                                   )
+                                ++ (case model.planType of
+                                        Just planType ->
+                                            [ Builder.string "planType" planType ]
+
+                                        Nothing ->
+                                            [ Builder.string "planType" "G" ]
+                                    -- Default to G if no plan type provided
+                                   )
                             )
-                         , Builder.string "age" age
-                         , Builder.string "dateOfBirth" model.dateOfBirth
-                         ]
-                            ++ (case model.quoteId of
-                                    Just id ->
-                                        [ Builder.string "id" id ]
-
-                                    Nothing ->
-                                        []
-                               )
-                            ++ (case model.currentCarrier of
-                                    Just carrier ->
-                                        [ Builder.string "currentCarrier" carrier ]
-
-                                    Nothing ->
-                                        []
-                               )
-                            ++ (case model.planType of
-                                    Just planType ->
-                                        [ Builder.string "planType" planType ]
-
-                                    Nothing ->
-                                        [ Builder.string "planType" "G" ]
-                                -- Default to G if no plan type provided
-                               )
-                        )
-            in
-            ( model
-            , Nav.pushUrl model.key compareUrl
-            )
+                in
+                ( model
+                , Nav.pushUrl model.key compareUrl
+                )
 
 
 view : Model -> Browser.Document Msg
@@ -228,6 +375,25 @@ view model =
                     text ""
             , Html.form [ onSubmit SubmitForm, class "space-y-6" ]
                 [ viewFormInput "Zip Code" "text" model.zipCode UpdateZipCode True
+
+                -- Show zip code loading state or error if any
+                , if model.isLoadingZipData then
+                    div [ class "text-sm text-blue-600" ]
+                        [ text "Looking up location..." ]
+
+                  else if model.zipError /= Nothing then
+                    div [ class "text-sm text-red-600" ]
+                        [ text (Maybe.withDefault "Invalid zip code" model.zipError) ]
+
+                  else
+                    text ""
+
+                -- Only show the county dropdown if there are multiple counties
+                , if List.length model.counties > 1 then
+                    viewCountyDropdown model.counties model.selectedCounty
+
+                  else
+                    text ""
                 , viewFormInput "Date of Birth" "date" model.dateOfBirth UpdateDateOfBirth True
                 , viewFormRadioGroup "Tobacco User"
                     (if model.tobacco then
@@ -251,6 +417,31 @@ view model =
             ]
         ]
     }
+
+
+viewCountyDropdown : List String -> Maybe String -> Html Msg
+viewCountyDropdown counties selectedCounty =
+    div [ class "form-group" ]
+        [ Html.label [ class "block text-sm font-medium text-gray-700 mb-2" ]
+            [ text "County" ]
+        , select
+            [ class "w-full px-4 py-3 bg-white border-[2.5px] border-purple-300 rounded-lg text-gray-700 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 focus:bg-white transition-all duration-200"
+            , onInput UpdateSelectedCounty
+            , required True
+            ]
+            (option [ value "", disabled True, selected (selectedCounty == Nothing) ]
+                [ text "Select your county" ]
+                :: List.map
+                    (\county ->
+                        option
+                            [ value county
+                            , selected (selectedCounty == Just county)
+                            ]
+                            [ text county ]
+                    )
+                    counties
+            )
+        ]
 
 
 viewFormInput : String -> String -> String -> (String -> Msg) -> Bool -> Html Msg
@@ -330,6 +521,25 @@ viewFormRadioGroup labelText selectedValue msg options =
 formatZipCode : String -> String
 formatZipCode zip =
     String.filter Char.isDigit zip |> String.left 5
+
+
+httpErrorToString : Http.Error -> String
+httpErrorToString error =
+    case error of
+        Http.BadUrl url ->
+            "Bad URL: " ++ url
+
+        Http.Timeout ->
+            "Request timed out"
+
+        Http.NetworkError ->
+            "Network error"
+
+        Http.BadStatus statusCode ->
+            "Bad status: " ++ String.fromInt statusCode
+
+        Http.BadBody message ->
+            "Data error: " ++ message
 
 
 subscriptions : Model -> Sub Msg
