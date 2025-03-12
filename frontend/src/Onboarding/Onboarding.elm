@@ -151,7 +151,7 @@ init key orgSlug session initialStep =
             UserDetails.init key orgSlug isNewSignup
 
         ( companyDetailsModel, companyDetailsCmd ) =
-            CompanyDetails.init key orgSlug
+            CompanyDetails.init key orgSlug session
 
         ( licensingSettingsModel, licensingSettingsCmd ) =
             LicensingSettings.init key orgSlug
@@ -589,9 +589,13 @@ update msg model =
 
                         CompanyDetails.ShowError err ->
                             Cmd.none
+
+                -- Always ensure the company details model has the latest orgSlug
+                updatedCompanyDetailsModelWithSlug =
+                    { updatedCompanyDetailsModel | orgSlug = model.orgSlug }
             in
             ( { updatedModelWithStep
-                | companyDetailsModel = updatedCompanyDetailsModel
+                | companyDetailsModel = updatedCompanyDetailsModelWithSlug
               }
             , Cmd.batch
                 [ Cmd.map CompanyDetailsMsg companyDetailsCmd
@@ -862,10 +866,26 @@ update msg model =
                             if not model.companyDetailsInitialized then
                                 let
                                     ( newModel, subCmd ) =
-                                        CompanyDetails.init model.key model.orgSlug
+                                        case model.sessionToken of
+                                            Just token ->
+                                                CompanyDetails.init model.key model.orgSlug token
+
+                                            Nothing ->
+                                                CompanyDetails.init model.key model.orgSlug model.session
+
+                                    -- Preserve existing company details if they exist
+                                    modelWithDetails =
+                                        { newModel
+                                            | agencyName = model.companyDetailsModel.agencyName
+                                            , website = model.companyDetailsModel.website
+                                            , phone = model.companyDetailsModel.phone
+                                            , primaryColor = model.companyDetailsModel.primaryColor
+                                            , secondaryColor = model.companyDetailsModel.secondaryColor
+                                            , logo = model.companyDetailsModel.logo
+                                        }
                                 in
                                 ( Cmd.map CompanyDetailsMsg subCmd
-                                , { model | companyDetailsModel = newModel, companyDetailsInitialized = True }
+                                , { model | companyDetailsModel = modelWithDetails, companyDetailsInitialized = True }
                                 )
 
                             else
@@ -1379,7 +1399,6 @@ update msg model =
         UserDetailsReceived maybeUserData ->
             case maybeUserData of
                 Just userData ->
-                    -- Pass the data to the UserDetails module
                     ( model
                     , Cmd.map UserDetailsMsg (Task.perform (\_ -> UserDetails.loadUserFromSession userData) (Task.succeed ()))
                     )
@@ -2113,7 +2132,7 @@ updateCompanyDetails : String -> String -> CompanyDetails.Model -> Cmd Msg
 updateCompanyDetails orgSlug sessionToken model =
     let
         url =
-            "/api/onboarding/" ++ orgSlug ++ "/company"
+            "/api/organizations/" ++ orgSlug ++ "/update-company"
 
         body =
             Encode.object

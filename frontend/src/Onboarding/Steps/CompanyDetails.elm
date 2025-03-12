@@ -36,11 +36,12 @@ type alias Model =
     , key : Nav.Key
     , orgSlug : String
     , uploadingLogo : Bool
+    , sessionToken : String
     }
 
 
-init : Nav.Key -> String -> ( Model, Cmd Msg )
-init key orgSlug =
+init : Nav.Key -> String -> String -> ( Model, Cmd Msg )
+init key orgSlug sessionToken =
     ( { agencyName = ""
       , website = ""
       , phone = ""
@@ -52,6 +53,7 @@ init key orgSlug =
       , key = key
       , orgSlug = orgSlug
       , uploadingLogo = False
+      , sessionToken = sessionToken
       }
     , Cmd.none
     )
@@ -133,7 +135,10 @@ update msg model =
                     )
 
         NextStepClicked ->
-            ( model, Cmd.none, NextStep )
+            ( { model | isLoading = True }
+            , saveCompanyDetails model
+            , NoOutMsg
+            )
 
         SkipStepClicked ->
             ( model, Cmd.none, NextStep )
@@ -344,10 +349,15 @@ fetchCompanyDetails orgSlug =
 
 saveCompanyDetails : Model -> Cmd Msg
 saveCompanyDetails model =
-    Http.post
-        { url = "/api/organizations/" ++ model.orgSlug ++ "/company-details"
+    Http.request
+        { method = "PUT"
+        , headers =
+            [ Http.header "Authorization" ("Bearer " ++ model.sessionToken) ]
+        , url = "/api/organizations/" ++ model.orgSlug ++ "/update-company"
         , body = Http.jsonBody (encodeCompanyDetails model)
         , expect = Http.expectWhatever CompanyDetailsSaved
+        , timeout = Nothing
+        , tracker = Nothing
         }
 
 

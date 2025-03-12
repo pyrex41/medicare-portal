@@ -364,7 +364,7 @@ export function createOnboardingRoutes() {
     })
     
     // Update company details
-    .put('/api/organizations/:orgSlug/update-company', async ({ params, body, set }) => {
+    .put('/api/organizations/:orgSlug/update-company', async ({ params, body, request, set }) => {
       try {
         const { orgSlug } = params;
         const { 
@@ -373,36 +373,47 @@ export function createOnboardingRoutes() {
           phone, 
           primaryColor, 
           secondaryColor,
-          logo,
-          tempSessionId 
+          logo
         } = body as { 
           agencyName: string,
           website: string,
           phone: string,
           primaryColor: string,
           secondaryColor: string,
-          logo?: string,
-          tempSessionId: string
+          logo?: string
         };
         
         logger.info(`Updating company details for organization ${orgSlug}`);
         
-        // Find organization by slug and session token
+        // First try to get user from session
+        const currentUser = await getUserFromSession(request);
+        
+        // Find organization and verify user has access
         const orgInfo = await dbInstance.query<{ id: number }>(
-          'SELECT id FROM organizations WHERE slug = ? AND temp_session_id = ?',
-          [orgSlug, tempSessionId]
+          'SELECT id FROM organizations WHERE slug = ?',
+          [orgSlug]
         );
         
         if (!orgInfo || orgInfo.length === 0) {
-          logger.warn(`Invalid session or organization slug: ${orgSlug}`);
-          set.status = 401;
+          logger.warn(`Organization not found: ${orgSlug}`);
+          set.status = 404;
           return { 
             success: false, 
-            message: 'Unauthorized: Invalid session' 
+            message: 'Organization not found' 
           };
         }
         
         const orgId = orgInfo[0].id;
+        
+        // If we have a session user, verify they belong to this org
+        if (currentUser && currentUser.organization_id !== orgId) {
+          logger.warn(`User ${currentUser.id} attempted to update details for org ${orgId}`);
+          set.status = 403;
+          return {
+            success: false,
+            message: 'Unauthorized: User does not belong to this organization'
+          };
+        }
         
         // Update organization info
         await dbInstance.execute(`
