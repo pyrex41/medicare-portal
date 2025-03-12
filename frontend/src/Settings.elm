@@ -23,62 +23,6 @@ import Task
 -- Constants
 
 
-allStates : List String
-allStates =
-    [ "AL"
-    , "AK"
-    , "AZ"
-    , "AR"
-    , "CA"
-    , "CO"
-    , "CT"
-    , "DE"
-    , "FL"
-    , "GA"
-    , "HI"
-    , "ID"
-    , "IL"
-    , "IN"
-    , "IA"
-    , "KS"
-    , "KY"
-    , "LA"
-    , "ME"
-    , "MD"
-    , "MA"
-    , "MI"
-    , "MN"
-    , "MS"
-    , "MO"
-    , "MT"
-    , "NE"
-    , "NV"
-    , "NH"
-    , "NJ"
-    , "NM"
-    , "NY"
-    , "NC"
-    , "ND"
-    , "OH"
-    , "OK"
-    , "OR"
-    , "PA"
-    , "RI"
-    , "SC"
-    , "SD"
-    , "TN"
-    , "TX"
-    , "UT"
-    , "VT"
-    , "VA"
-    , "WA"
-    , "WV"
-    , "WI"
-    , "WY"
-    , "DC"
-    ]
-
-
 allCarriers : List String
 allCarriers =
     [ "Aetna"
@@ -137,7 +81,6 @@ type alias CurrentUser =
 
 type alias DeactivatedPair =
     { carrier : String
-    , state : String
     }
 
 
@@ -154,23 +97,19 @@ type alias Model =
     , planType : String
     , error : Maybe String
     , selectedCarrier : Maybe String
-    , selectedState : Maybe String
-    , deactivatedPairs : List DeactivatedPair
     , loadedCarriers : List String
     }
 
 
 type alias StateCarrierSetting =
-    { state : String
-    , carrier : String
+    { carrier : String
     , active : Bool
     , targetGI : Bool
     }
 
 
 type alias Settings =
-    { stateLicenses : List String
-    , carrierContracts : List String
+    { carrierContracts : List String
     , stateCarrierSettings : List StateCarrierSetting
     , allowAgentSettings : Bool
     , emailSendBirthday : Bool
@@ -199,19 +138,15 @@ type Msg
     | ToggleEmailAnniversary Bool
     | ToggleEmailAep Bool
     | ToggleSmartSend Bool
-    | AddStateLicense String
-    | RemoveStateLicense String
     | AddCarrierContract String
     | RemoveCarrierContract String
-    | UpdateStateCarrierSetting String String Bool Bool
+    | UpdateStateCarrierSetting String Bool Bool
     | ToggleSection String
-    | ToggleAllStates Bool
     | ToggleAllCarriers Bool
     | ApplyGISelection GISelectionMode
     | GotRecommendedGICombos (Result Http.Error (List StateCarrierSetting))
     | ToggleAllowAgentSettings Bool
     | FinishSetup
-    | SelectCommonStates Region
     | UpdateBrandName String
     | UpdatePrimaryColor String
     | UpdateSecondaryColor String
@@ -222,9 +157,6 @@ type Msg
     | NoOp
     | OrgFinalized (Result Http.Error ())
     | SelectCarrier String
-    | SelectState String
-    | AddDeactivatedPair
-    | RemoveDeactivatedPair String String
     | GotCarriers (Result Http.Error (List String))
 
 
@@ -248,8 +180,6 @@ init flags =
       , planType = flags.planType
       , error = Nothing
       , selectedCarrier = Nothing
-      , selectedState = Nothing
-      , deactivatedPairs = []
       , loadedCarriers = []
       }
     , Cmd.batch
@@ -359,43 +289,6 @@ update msg model =
         ToggleSmartSend value ->
             updateSettings model (\s -> { s | smartSendEnabled = value })
 
-        AddStateLicense state ->
-            updateSettings model
-                (\s ->
-                    if List.member state s.stateLicenses then
-                        s
-
-                    else
-                        let
-                            newStateCarrierSettings =
-                                List.concat
-                                    [ s.stateCarrierSettings
-                                    , List.map
-                                        (\carrier ->
-                                            { state = state
-                                            , carrier = carrier
-                                            , active = True
-                                            , targetGI = False
-                                            }
-                                        )
-                                        s.carrierContracts
-                                    ]
-                        in
-                        { s
-                            | stateLicenses = state :: s.stateLicenses
-                            , stateCarrierSettings = newStateCarrierSettings
-                        }
-                )
-
-        RemoveStateLicense state ->
-            updateSettings model
-                (\s ->
-                    { s
-                        | stateLicenses = List.filter (\x -> x /= state) s.stateLicenses
-                        , stateCarrierSettings = List.filter (\setting -> setting.state /= state) s.stateCarrierSettings
-                    }
-                )
-
         AddCarrierContract carrier ->
             updateSettings model
                 (\s ->
@@ -403,24 +296,9 @@ update msg model =
                         s
 
                     else
-                        let
-                            newStateCarrierSettings =
-                                List.concat
-                                    [ s.stateCarrierSettings
-                                    , List.map
-                                        (\state ->
-                                            { state = state
-                                            , carrier = carrier
-                                            , active = True
-                                            , targetGI = False
-                                            }
-                                        )
-                                        s.stateLicenses
-                                    ]
-                        in
                         { s
                             | carrierContracts = carrier :: s.carrierContracts
-                            , stateCarrierSettings = newStateCarrierSettings
+                            , stateCarrierSettings = List.map (\setting -> { setting | active = True }) s.stateCarrierSettings
                         }
                 )
 
@@ -433,14 +311,14 @@ update msg model =
                     }
                 )
 
-        UpdateStateCarrierSetting state carrier active targetGI ->
+        UpdateStateCarrierSetting carrier active targetGI ->
             updateSettings model
                 (\s ->
                     let
                         existingSetting =
                             List.filter
                                 (\setting ->
-                                    setting.state == state && setting.carrier == carrier
+                                    setting.carrier == carrier
                                 )
                                 s.stateCarrierSettings
                                 |> List.head
@@ -450,7 +328,7 @@ update msg model =
                                 Just _ ->
                                     List.map
                                         (\setting ->
-                                            if setting.state == state && setting.carrier == carrier then
+                                            if setting.carrier == carrier then
                                                 { setting | active = active, targetGI = targetGI }
 
                                             else
@@ -459,8 +337,7 @@ update msg model =
                                         s.stateCarrierSettings
 
                                 Nothing ->
-                                    { state = state
-                                    , carrier = carrier
+                                    { carrier = carrier
                                     , active = active
                                     , targetGI = targetGI
                                     }
@@ -480,46 +357,6 @@ update msg model =
               }
             , Cmd.none
             )
-
-        ToggleAllStates checked ->
-            case model.orgSettings of
-                Just settings ->
-                    let
-                        newSettings =
-                            { settings
-                                | stateLicenses =
-                                    if checked then
-                                        allStates
-
-                                    else
-                                        []
-                                , stateCarrierSettings =
-                                    if checked then
-                                        -- Create settings for all state/carrier combinations
-                                        List.concatMap
-                                            (\state ->
-                                                List.map
-                                                    (\carrier ->
-                                                        { state = state
-                                                        , carrier = carrier
-                                                        , active = True
-                                                        , targetGI = False
-                                                        }
-                                                    )
-                                                    settings.carrierContracts
-                                            )
-                                            allStates
-
-                                    else
-                                        []
-                            }
-                    in
-                    ( { model | orgSettings = Just newSettings }
-                    , saveSettings newSettings
-                    )
-
-                Nothing ->
-                    ( model, Cmd.none )
 
         ToggleAllCarriers checked ->
             case model.orgSettings of
@@ -542,20 +379,14 @@ update msg model =
                                         []
                                 , stateCarrierSettings =
                                     if checked then
-                                        -- Create settings for all state/carrier combinations
-                                        List.concatMap
-                                            (\state ->
-                                                List.map
-                                                    (\carrier ->
-                                                        { state = state
-                                                        , carrier = carrier
-                                                        , active = True
-                                                        , targetGI = False
-                                                        }
-                                                    )
-                                                    carriersToUse
+                                        List.map
+                                            (\carrier ->
+                                                { carrier = carrier
+                                                , active = True
+                                                , targetGI = False
+                                                }
                                             )
-                                            settings.stateLicenses
+                                            carriersToUse
 
                                     else
                                         []
@@ -577,60 +408,43 @@ update msg model =
                                 GIAll ->
                                     { settings
                                         | stateCarrierSettings =
-                                            List.concatMap
-                                                (\state ->
-                                                    List.map
-                                                        (\carrier ->
-                                                            { state = state
-                                                            , carrier = carrier
-                                                            , active = True
-                                                            , targetGI = True
-                                                            }
-                                                        )
-                                                        settings.carrierContracts
+                                            List.map
+                                                (\carrier ->
+                                                    { carrier = carrier
+                                                    , active = True
+                                                    , targetGI = True
+                                                    }
                                                 )
-                                                settings.stateLicenses
+                                                settings.carrierContracts
                                     }
 
                                 GINone ->
                                     { settings
                                         | stateCarrierSettings =
-                                            List.concatMap
-                                                (\state ->
-                                                    List.map
-                                                        (\carrier ->
-                                                            { state = state
-                                                            , carrier = carrier
-                                                            , active = True
-                                                            , targetGI = False
-                                                            }
-                                                        )
-                                                        settings.carrierContracts
+                                            List.map
+                                                (\carrier ->
+                                                    { carrier = carrier
+                                                    , active = True
+                                                    , targetGI = False
+                                                    }
                                                 )
-                                                settings.stateLicenses
+                                                settings.carrierContracts
                                     }
 
                                 GIRecommended ->
                                     { settings
                                         | stateCarrierSettings =
-                                            List.concatMap
-                                                (\state ->
-                                                    List.map
-                                                        (\carrier ->
-                                                            { state = state
-                                                            , carrier = carrier
-                                                            , active = True
-                                                            , targetGI =
-                                                                List.any
-                                                                    (\rec ->
-                                                                        rec.state == state && rec.carrier == carrier
-                                                                    )
-                                                                    model.recommendedGICombos
-                                                            }
-                                                        )
-                                                        settings.carrierContracts
+                                            List.map
+                                                (\carrier ->
+                                                    { carrier = carrier
+                                                    , active = True
+                                                    , targetGI =
+                                                        List.any
+                                                            (\rec -> rec.carrier == carrier)
+                                                            model.recommendedGICombos
+                                                    }
                                                 )
-                                                settings.stateLicenses
+                                                settings.carrierContracts
                                     }
                     in
                     ( { model | orgSettings = Just newSettings }
@@ -700,11 +514,8 @@ update msg model =
                     , Cmd.none
                     )
 
-        SelectCommonStates region ->
-            updateSettings model
-                (\s ->
-                    { s | stateLicenses = s.stateLicenses ++ getRegionStates region }
-                )
+        SelectCarrier carrier ->
+            ( { model | selectedCarrier = Just carrier }, Cmd.none )
 
         UpdateBrandName name ->
             updateSettings model (\s -> { s | brandName = name })
@@ -733,125 +544,8 @@ update msg model =
                 Ok url ->
                     updateSettings model (\s -> { s | logo = Just url })
 
-                Err error ->
+                Err _ ->
                     ( { model | status = Error "Failed to upload logo" }, Cmd.none )
-
-        SelectCarrier carrier ->
-            ( { model | selectedCarrier = Just carrier }, Cmd.none )
-
-        SelectState state ->
-            ( { model | selectedState = Just state }, Cmd.none )
-
-        AddDeactivatedPair ->
-            case ( model.selectedCarrier, model.selectedState ) of
-                ( Just carrier, Just state ) ->
-                    case model.orgSettings of
-                        Just settings ->
-                            let
-                                existingSetting =
-                                    List.filter
-                                        (\s -> s.state == state && s.carrier == carrier)
-                                        settings.stateCarrierSettings
-                                        |> List.head
-
-                                -- Update stateCarrierSettings to set active=false for this pair
-                                updatedSettings =
-                                    { settings
-                                        | stateCarrierSettings =
-                                            case existingSetting of
-                                                Just _ ->
-                                                    -- Update existing setting
-                                                    List.map
-                                                        (\s ->
-                                                            if s.state == state && s.carrier == carrier then
-                                                                { s | active = False }
-
-                                                            else
-                                                                s
-                                                        )
-                                                        settings.stateCarrierSettings
-
-                                                Nothing ->
-                                                    -- Create new setting
-                                                    { state = state
-                                                    , carrier = carrier
-                                                    , active = False
-                                                    , targetGI = False
-                                                    }
-                                                        :: settings.stateCarrierSettings
-                                    }
-                            in
-                            ( { model
-                                | orgSettings = Just updatedSettings
-                                , selectedCarrier = Nothing
-                                , selectedState = Nothing
-                              }
-                            , saveSettings updatedSettings
-                            )
-
-                        Nothing ->
-                            ( model, Cmd.none )
-
-                _ ->
-                    ( model, Cmd.none )
-
-        RemoveDeactivatedPair carrier state ->
-            let
-                -- Remove the pair from our local tracking
-                newDeactivatedPairs =
-                    List.filter (\p -> not (p.carrier == carrier && p.state == state)) model.deactivatedPairs
-
-                -- Update orgSettings to reflect the change
-                updatedModel =
-                    case model.orgSettings of
-                        Just settings ->
-                            let
-                                -- Update stateCarrierSettings to set active=true for this pair
-                                updatedSettings =
-                                    { settings
-                                        | stateCarrierSettings =
-                                            List.map
-                                                (\s ->
-                                                    if s.state == state && s.carrier == carrier then
-                                                        { s | active = True }
-
-                                                    else
-                                                        s
-                                                )
-                                                settings.stateCarrierSettings
-                                    }
-                            in
-                            { model
-                                | deactivatedPairs = newDeactivatedPairs
-                                , orgSettings = Just updatedSettings
-                            }
-
-                        Nothing ->
-                            { model | deactivatedPairs = newDeactivatedPairs }
-            in
-            ( updatedModel
-            , case model.orgSettings of
-                Just settings ->
-                    let
-                        updatedSettings =
-                            { settings
-                                | stateCarrierSettings =
-                                    List.map
-                                        (\s ->
-                                            if s.state == state && s.carrier == carrier then
-                                                { s | active = True }
-
-                                            else
-                                                s
-                                        )
-                                        settings.stateCarrierSettings
-                            }
-                    in
-                    saveSettings updatedSettings
-
-                Nothing ->
-                    Cmd.none
-            )
 
 
 updateSettings : Model -> (Settings -> Settings) -> ( Model, Cmd Msg )
@@ -886,8 +580,7 @@ saveSettings settings =
 encodeSettings : Settings -> Encode.Value
 encodeSettings settings =
     Encode.object
-        [ ( "stateLicenses", Encode.list Encode.string settings.stateLicenses )
-        , ( "carrierContracts", Encode.list Encode.string settings.carrierContracts )
+        [ ( "carrierContracts", Encode.list Encode.string settings.carrierContracts )
         , ( "stateCarrierSettings", Encode.list stateCarrierSettingEncoder settings.stateCarrierSettings )
         , ( "allowAgentSettings", Encode.bool settings.allowAgentSettings )
         , ( "emailSendBirthday", Encode.bool settings.emailSendBirthday )
@@ -904,8 +597,7 @@ encodeSettings settings =
 stateCarrierSettingEncoder : StateCarrierSetting -> Encode.Value
 stateCarrierSettingEncoder setting =
     Encode.object
-        [ ( "state", Encode.string setting.state )
-        , ( "carrier", Encode.string setting.carrier )
+        [ ( "carrier", Encode.string setting.carrier )
         , ( "active", Encode.bool setting.active )
         , ( "targetGI", Encode.bool setting.targetGI )
         ]
@@ -934,7 +626,7 @@ view model =
           else
             div [ class "min-h-screen bg-gray-50" ]
                 [ viewHeader
-                , div [ class "max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8" ]
+                , div [ class "max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-8" ]
                     [ if model.isLoading then
                         viewLoading
 
@@ -986,9 +678,6 @@ viewSettingsContent maybeSettings canEdit expandedSections planType model =
             div [ class "space-y-6" ]
                 [ viewBrandSettings settings
                 , viewEmailSettings settings
-                , viewExpandableSection "State Licenses"
-                    (viewLicensesGrid settings)
-                    expandedSections
                 , viewExpandableSection "Carrier Contracts"
                     (viewCarriersGrid settings model)
                     expandedSections
@@ -1142,65 +831,6 @@ viewExpandableSection title content expandedSections =
         ]
 
 
-viewLicensesGrid : Settings -> Html Msg
-viewLicensesGrid settings =
-    div []
-        [ div [ class "mb-4 space-y-2" ]
-            [ div [ class "flex gap-4" ]
-                -- Container for both label groups
-                [ div []
-                    -- Batch Select group
-                    [ div [ class "text-sm font-medium text-gray-700 mb-2" ]
-                        [ text "Batch Select" ]
-                    , div [ class "flex gap-2" ]
-                        [ button
-                            [ class "px-3 py-1 text-sm border rounded-md hover:bg-gray-50 min-w-[70px]"
-                            , onClick (ToggleAllStates True)
-                            ]
-                            [ text "Select All" ]
-                        , button
-                            [ class "px-3 py-1 text-sm border rounded-md hover:bg-gray-50 min-w-[70px]"
-                            , onClick (ToggleAllStates False)
-                            ]
-                            [ text "Clear All" ]
-                        ]
-                    ]
-                , div []
-                    -- By Region: group
-                    [ div [ class "text-sm font-medium text-gray-700 mb-2" ]
-                        [ text "By Region:" ]
-                    , div [ class "flex gap-2" ]
-                        (List.map
-                            (\region ->
-                                button
-                                    [ class "px-3 py-1 text-sm border rounded-md hover:bg-gray-50"
-                                    , onClick (SelectCommonStates region)
-                                    ]
-                                    [ text (regionToString region) ]
-                            )
-                            StateRegions.allRegions
-                        )
-                    ]
-                ]
-            ]
-        , div [ class "grid grid-cols-5 gap-4" ]
-            (List.map
-                (\state ->
-                    checkbox state
-                        (List.member state settings.stateLicenses)
-                        (\checked ->
-                            if checked then
-                                AddStateLicense state
-
-                            else
-                                RemoveStateLicense state
-                        )
-                )
-                allStates
-            )
-        ]
-
-
 viewCarriersGrid : Settings -> Model -> Html Msg
 viewCarriersGrid settings model =
     let
@@ -1217,7 +847,7 @@ viewCarriersGrid settings model =
                 (List.length settings.carrierContracts == List.length carriersToUse)
                 ToggleAllCarriers
             ]
-        , div [ class "grid grid-cols-3 gap-4" ]
+        , div [ class "grid grid-cols-2 sm:grid-cols-3 gap-4" ]
             (List.map
                 (\carrier ->
                     checkbox carrier
@@ -1263,98 +893,17 @@ viewStateCarrierGrid settings model =
                     [ label [ class "font-medium text-gray-700" ]
                         [ text "Use SmartSend for Guaranteed Issue" ]
                     , p [ class "text-gray-500 mt-1" ]
-                        [ text "When enabled, SmartSend will automatically identify which carrier-state combinations offer full compensation for Guaranteed Issue (GI) policies." ]
+                        [ text "When enabled, SmartSend will automatically identify which carriers offer full compensation for Guaranteed Issue (GI) policies." ]
                     ]
                 ]
             , div [ class "mt-4 p-4 bg-gray-50 rounded-md mb-8" ]
                 [ h3 [ class "text-md font-medium text-gray-900 mb-2" ]
                     [ text "How SmartSend Works" ]
                 , p [ class "text-gray-600" ]
-                    [ text "SmartSend analyzes each state and carrier combination to determine which ones offer full carrier compensation for Guaranteed Issue policies. This helps maximize your commissions while ensuring your quotes are always compliant with the latest state and carrier regulations." ]
+                    [ text "SmartSend analyzes each carrier to determine which ones offer full carrier compensation for Guaranteed Issue policies. This helps maximize your commissions while ensuring your quotes are always compliant with the latest carrier regulations." ]
                 ]
-            , h3 [ class "text-sm font-medium text-gray-700 mt-8 mb-2" ]
-                [ text "Deactivate Carrier-State Pairs" ]
-            , p [ class "text-gray-500 mb-4" ]
-                [ text "If you want to deactivate specific carrier-state combinations, select a carrier and state below and add them to the list." ]
-            , div [ class "flex items-end space-x-4 mb-4" ]
-                [ div [ class "flex-1" ]
-                    [ label [ class "block text-sm font-medium text-gray-700 mb-1" ]
-                        [ text "Carrier" ]
-                    , select
-                        [ class "block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-                        , onInput SelectCarrier
-                        ]
-                        (option [ value "" ] [ text "Select carrier" ]
-                            :: List.map
-                                (\carrier ->
-                                    option [ value carrier ] [ text carrier ]
-                                )
-                                carriersToUse
-                        )
-                    ]
-                , div [ class "flex-1" ]
-                    [ label [ class "block text-sm font-medium text-gray-700 mb-1" ]
-                        [ text "State" ]
-                    , select
-                        [ class "block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-                        , onInput SelectState
-                        ]
-                        (option [ value "" ] [ text "Select state" ]
-                            :: List.map
-                                (\state ->
-                                    option [ value state ] [ text state ]
-                                )
-                                allStates
-                        )
-                    ]
-                , button
-                    [ class "px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                    , onClick AddDeactivatedPair
-                    , disabled (model.selectedCarrier == Nothing || model.selectedState == Nothing)
-                    ]
-                    [ text "Add" ]
-                ]
-            , viewDeactivatedList settings
             ]
         ]
-
-
-viewDeactivatedList : Settings -> Html Msg
-viewDeactivatedList settings =
-    let
-        -- Get the deactivated pairs from the settings
-        deactivatedPairs =
-            List.filter (\s -> not s.active) settings.stateCarrierSettings
-    in
-    if List.isEmpty deactivatedPairs then
-        div [ class "text-gray-500 italic mt-4 p-4 bg-gray-50 rounded-md" ]
-            [ text "No carrier-state pairs have been deactivated." ]
-
-    else
-        div [ class "mt-4" ]
-            [ h4 [ class "text-sm font-medium text-gray-700 mb-2" ]
-                [ text "Deactivated Pairs" ]
-            , div [ class "bg-white border border-gray-200 rounded-md" ]
-                [ ul [ class "divide-y divide-gray-200" ]
-                    (List.map
-                        (\pair ->
-                            li [ class "px-4 py-3 flex justify-between items-center" ]
-                                [ div []
-                                    [ span [ class "font-medium" ] [ text pair.carrier ]
-                                    , span [ class "text-gray-500 mx-2" ] [ text "in" ]
-                                    , span [ class "font-medium" ] [ text pair.state ]
-                                    ]
-                                , button
-                                    [ class "text-red-600 hover:text-red-800"
-                                    , onClick (RemoveDeactivatedPair pair.carrier pair.state)
-                                    ]
-                                    [ text "Reactivate" ]
-                                ]
-                        )
-                        deactivatedPairs
-                    )
-                ]
-            ]
 
 
 option : List (Attribute msg) -> List (Html msg) -> Html msg
@@ -1366,24 +915,6 @@ option attributes children =
 -- Helper functions for state/carrier grid
 
 
-isStateCarrierActive : Settings -> String -> String -> Bool
-isStateCarrierActive settings state carrier =
-    settings.stateCarrierSettings
-        |> List.filter (\s -> s.state == state && s.carrier == carrier)
-        |> List.head
-        |> Maybe.map .active
-        |> Maybe.withDefault True
-
-
-isStateCarrierTargetGI : Settings -> String -> String -> Bool
-isStateCarrierTargetGI settings state carrier =
-    settings.stateCarrierSettings
-        |> List.filter (\s -> s.state == state && s.carrier == carrier)
-        |> List.head
-        |> Maybe.map .targetGI
-        |> Maybe.withDefault False
-
-
 hasDefaultSettings : Settings -> Bool
 hasDefaultSettings settings =
     List.all
@@ -1391,14 +922,13 @@ hasDefaultSettings settings =
         settings.stateCarrierSettings
 
 
-findStateCarrierSetting : Settings -> String -> String -> StateCarrierSetting
-findStateCarrierSetting settings state carrier =
+findStateCarrierSetting : Settings -> String -> StateCarrierSetting
+findStateCarrierSetting settings carrier =
     settings.stateCarrierSettings
-        |> List.filter (\s -> s.state == state && s.carrier == carrier)
+        |> List.filter (\s -> s.carrier == carrier)
         |> List.head
         |> Maybe.withDefault
-            { state = state
-            , carrier = carrier
+            { carrier = carrier
             , active = True
             , targetGI = False
             }
@@ -1411,7 +941,7 @@ viewStateCarrierCell setting =
             [ input
                 [ type_ "checkbox"
                 , checked setting.active
-                , onCheck (\active -> UpdateStateCarrierSetting setting.state setting.carrier active setting.targetGI)
+                , onCheck (\active -> UpdateStateCarrierSetting setting.carrier active setting.targetGI)
                 , class "h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
                 ]
                 []
@@ -1421,7 +951,7 @@ viewStateCarrierCell setting =
             [ input
                 [ type_ "checkbox"
                 , checked setting.targetGI
-                , onCheck (\targetGI -> UpdateStateCarrierSetting setting.state setting.carrier setting.active targetGI)
+                , onCheck (\targetGI -> UpdateStateCarrierSetting setting.carrier setting.active targetGI)
                 , class "h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
                 ]
                 []
@@ -1467,7 +997,6 @@ settingsObjectDecoder =
                     ]
     in
     Decode.succeed Settings
-        |> Pipeline.required "stateLicenses" (Decode.list Decode.string)
         |> Pipeline.required "carrierContracts" (Decode.list Decode.string)
         |> Pipeline.custom stateCarrierSettingsDecoder
         |> Pipeline.required "allowAgentSettings" Decode.bool
@@ -1483,8 +1012,7 @@ settingsObjectDecoder =
 
 stateCarrierSettingDecoder : Decoder StateCarrierSetting
 stateCarrierSettingDecoder =
-    Decode.map4 StateCarrierSetting
-        (Decode.field "state" Decode.string)
+    Decode.map3 StateCarrierSetting
         (Decode.field "carrier" Decode.string)
         (Decode.field "active" Decode.bool)
         (Decode.field "targetGI" Decode.bool)
@@ -1493,8 +1021,7 @@ stateCarrierSettingDecoder =
 recommendationsDecoder : Decoder (List StateCarrierSetting)
 recommendationsDecoder =
     Decode.list
-        (Decode.map4 StateCarrierSetting
-            (Decode.field "state" Decode.string)
+        (Decode.map3 StateCarrierSetting
             (Decode.field "carrier" Decode.string)
             (Decode.field "active" Decode.bool)
             (Decode.field "targetGI" Decode.bool)

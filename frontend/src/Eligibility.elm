@@ -206,19 +206,19 @@ view model =
     { title = "Underwriting Assessment"
     , body =
         [ div [ class "min-h-screen bg-white" ]
-            [ div [ class "max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-12" ]
-                [ h1 [ class "text-3xl font-bold text-center text-gray-900 mb-4" ]
+            [ div [ class "max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-12" ]
+                [ h1 [ class "text-2xl sm:text-3xl font-bold text-center text-gray-900 mb-3 sm:mb-4" ]
                     [ text "Underwriting Assessment" ]
-                , p [ class "text-gray-600 text-center mb-12" ]
+                , p [ class "text-gray-600 text-center mb-8 sm:mb-12 text-sm sm:text-base" ]
                     [ text "In order to qualify for a new Supplemental plan you must past medical underwriting. This is a quick questionnaire to assess the likelihood of you being able to pass." ]
-                , Html.form [ onSubmit SubmitAnswers, class "space-y-8" ]
+                , Html.form [ onSubmit SubmitAnswers, class "space-y-6 sm:space-y-8" ]
                     (List.map viewQuestion model.questions
                         ++ [ viewSubmitButton model ]
                     )
-                , div [ class "text-center mt-6" ]
+                , div [ class "text-center mt-4 sm:mt-6" ]
                     [ button
                         [ onClick SkipQuestions
-                        , class "text-blue-600 hover:text-blue-800 underline text-sm"
+                        , class "text-blue-600 hover:text-blue-800 underline text-sm py-2"
                         , type_ "button"
                         ]
                         [ text "Skip" ]
@@ -231,10 +231,10 @@ view model =
 
 viewQuestion : Question -> Html Msg
 viewQuestion question =
-    div [ class "space-y-4" ]
-        [ p [ class "text-gray-900 text-lg" ]
+    div [ class "space-y-3 sm:space-y-4" ]
+        [ p [ class "text-gray-900 text-base sm:text-lg" ]
             [ text question.text ]
-        , div [ class "grid grid-cols-2 gap-4" ]
+        , div [ class "grid grid-cols-2 gap-2 sm:gap-4 max-w-md mx-auto" ]
             [ viewRadioButton question "Yes" True
             , viewRadioButton question "No" False
             ]
@@ -245,7 +245,7 @@ viewRadioButton : Question -> String -> Bool -> Html Msg
 viewRadioButton question labelText value =
     label
         [ class
-            ("flex items-center justify-center px-6 py-3 rounded-lg border-[2.5px] cursor-pointer transition-all duration-200 w-full "
+            ("flex items-center justify-center px-4 sm:px-6 py-2.5 sm:py-3 rounded-lg border-[2px] sm:border-[2.5px] cursor-pointer transition-all duration-200 w-full "
                 ++ (if question.answer == Just value then
                         "border-blue-500 bg-white text-gray-900"
 
@@ -262,7 +262,7 @@ viewRadioButton question labelText value =
             , class "sr-only"
             ]
             []
-        , span [ class "font-medium" ] [ text labelText ]
+        , span [ class "font-medium text-sm sm:text-base" ] [ text labelText ]
         ]
 
 
@@ -273,7 +273,7 @@ viewSubmitButton model =
             List.all (.answer >> (/=) Nothing) model.questions
 
         buttonClass =
-            "w-full py-4 rounded-lg text-white font-medium transition-colors duration-200 mt-8 "
+            "w-full py-3 sm:py-4 rounded-lg text-white font-medium transition-colors duration-200 mt-6 sm:mt-8 text-base sm:text-lg "
                 ++ (if allAnswered then
                         "bg-purple-600 hover:bg-purple-700"
 

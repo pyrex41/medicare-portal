@@ -3,6 +3,7 @@ module Onboarding.Steps.UserDetails exposing
     , Msg
     , OutMsg(..)
     , init
+    , loadUserFromSession
     , subscriptions
     , update
     , view
@@ -18,9 +19,13 @@ import Json.Decode as Decode
 import Json.Encode as Encode
 import Svg exposing (circle, path, svg)
 import Svg.Attributes as SvgAttr exposing (clipRule, cx, cy, d, fill, fillRule, r, stroke, strokeWidth, viewBox)
+import Task
+import Utils.RandomOrgName exposing (generateOrgName)
 
 
 
+-- PORTS
+-- These ports are defined in Onboarding.elm, we just use them here
 -- MODEL
 
 
@@ -34,6 +39,8 @@ type alias Model =
     , key : Nav.Key
     , orgSlug : String
     , emailStatus : EmailStatus
+    , loadedFromSession : Bool
+    , sessionToken : String
     }
 
 
@@ -44,8 +51,8 @@ type EmailStatus
     | Unavailable String
 
 
-init : Nav.Key -> String -> ( Model, Cmd Msg )
-init key orgSlug =
+init : Nav.Key -> String -> Bool -> ( Model, Cmd Msg )
+init key orgSlug isNewSignup =
     ( { firstName = ""
       , lastName = ""
       , email = ""
@@ -55,15 +62,26 @@ init key orgSlug =
       , key = key
       , orgSlug = orgSlug
       , emailStatus = NotChecked
+      , loadedFromSession = False
+      , sessionToken = ""
       }
-    , if String.isEmpty (String.trim orgSlug) then
+    , if isNewSignup || String.isEmpty (String.trim orgSlug) then
         -- Don't fetch user details for new users in signup flow
         Cmd.none
 
       else
-        -- Only fetch user details for existing users
+        -- For existing users, try to fetch from backend and session
         fetchUserDetails orgSlug
     )
+
+
+
+-- New function to load user details from session/localStorage
+
+
+loadUserFromSession : { firstName : String, lastName : String, email : String, phone : String } -> Msg
+loadUserFromSession userData =
+    LoadUserFromSession userData
 
 
 
@@ -82,12 +100,17 @@ type Msg
     | EmailBlurred
     | EmailFocused
     | GotEmailCheckResponse (Result Http.Error EmailCheckResponse)
+    | LoadUserFromSession { firstName : String, lastName : String, email : String, phone : String }
+    | SaveUserDetails
 
 
 type OutMsg
     = NoOutMsg
     | NextStep
     | ShowError String
+    | SaveUserToCookie { firstName : String, lastName : String, email : String, phone : String }
+    | UpdateOrgSlug String
+    | NextStepAndUpdateSlug String
 
 
 type alias UserDetailsResponse =
@@ -107,6 +130,7 @@ type alias EmailCheckResponse =
 type alias SignupResponse =
     { success : Bool
     , message : String
+    , slug : String
     }
 
 
@@ -186,9 +210,19 @@ update msg model =
 
         NextStepClicked ->
             if isFormValid model then
-                -- Instead of making API calls, just move to the next step
-                -- All data will be collected and submitted in the final step
-                ( model, Cmd.none, NextStep )
+                -- Save user details and move to next step
+                let
+                    userData =
+                        { firstName = model.firstName
+                        , lastName = model.lastName
+                        , email = model.email
+                        , phone = model.phone
+                        }
+                in
+                ( model
+                , saveUserDetails model
+                , SaveUserToCookie userData
+                )
 
             else
                 ( { model | error = Just "Please fill out all required fields" }
@@ -205,27 +239,28 @@ update msg model =
                         , email = response.email
                         , phone = response.phone
                         , isLoading = False
+                        , emailStatus = Available -- Consider email as valid since it's already registered
                       }
                     , Cmd.none
                     , NoOutMsg
                     )
 
                 Err _ ->
+                    -- On error, we don't cause a fatal error, just keep the form empty
                     ( { model
-                        | error = Just "Failed to load user details"
-                        , isLoading = False
+                        | isLoading = False
                       }
                     , Cmd.none
-                    , ShowError "Failed to load user details"
+                    , NoOutMsg
                     )
 
         UserDetailsSaved result ->
             case result of
                 Ok response ->
                     if response.success then
-                        ( { model | isLoading = False }
+                        ( { model | isLoading = False, orgSlug = response.slug }
                         , Cmd.none
-                        , NextStep
+                        , NextStepAndUpdateSlug response.slug
                         )
 
                     else
@@ -246,6 +281,38 @@ update msg model =
                     , ShowError "Failed to save user details"
                     )
 
+        LoadUserFromSession userData ->
+            -- Load user details from session/cookies
+            ( { model
+                | firstName = userData.firstName
+                , lastName = userData.lastName
+                , email = userData.email
+                , phone = userData.phone
+                , loadedFromSession = True
+
+                -- Auto-validate email if it's been loaded from session
+                , emailStatus =
+                    if String.isEmpty userData.email then
+                        NotChecked
+
+                    else
+                        Available
+              }
+            , Cmd.none
+            , NoOutMsg
+            )
+
+        SaveUserDetails ->
+            -- Explicit action to save user details to backend
+            if isFormValid model then
+                ( { model | isLoading = True }
+                , saveUserDetails model
+                , NoOutMsg
+                )
+
+            else
+                ( model, Cmd.none, NoOutMsg )
+
         NoOp ->
             ( model, Cmd.none, NoOutMsg )
 
@@ -262,6 +329,12 @@ view model =
                 [ text "Personal Details" ]
             , p [ class "text-gray-600 mt-2" ]
                 [ text "Tell us about yourself" ]
+            , if model.loadedFromSession then
+                p [ class "text-blue-600 mt-2 italic" ]
+                    [ text "Your previously entered information has been loaded." ]
+
+              else
+                text ""
             ]
         , if model.isLoading then
             viewLoading
@@ -270,7 +343,7 @@ view model =
             div [ class "space-y-6" ]
                 [ div [ class "bg-white shadow rounded-lg p-6" ]
                     [ div [ class "space-y-6" ]
-                        [ div [ class "grid grid-cols-2 gap-6" ]
+                        [ div [ class "grid grid-cols-1 sm:grid-cols-2 gap-6" ]
                             [ div []
                                 [ label [ class "block text-sm font-medium text-gray-700" ]
                                     [ text "First Name" ]
@@ -296,7 +369,7 @@ view model =
                                     []
                                 ]
                             ]
-                        , div [ class "grid grid-cols-2 gap-6 pt-2" ]
+                        , div [ class "grid grid-cols-1 sm:grid-cols-2 gap-6 pt-2" ]
                             [ div [ class "relative pb-6" ]
                                 [ label [ class "block text-sm font-medium text-gray-700" ]
                                     [ text "Email" ]
@@ -339,10 +412,10 @@ view model =
                     [ button
                         [ class
                             (if isFormValid model then
-                                "px-6 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                                "px-4 py-2 sm:px-6 sm:py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
 
                              else
-                                "px-6 py-3 bg-gray-300 text-gray-500 rounded-md cursor-not-allowed"
+                                "px-4 py-2 sm:px-6 sm:py-3 bg-gray-300 text-gray-500 rounded-md cursor-not-allowed"
                             )
                         , onClick NextStepClicked
                         , disabled (not (isFormValid model))
@@ -542,9 +615,10 @@ saveUserDetails model =
         , body = Http.jsonBody (encodeUserDetails model)
         , expect =
             Http.expectJson UserDetailsSaved
-                (Decode.map2 SignupResponse
+                (Decode.map3 SignupResponse
                     (Decode.field "success" Decode.bool)
                     (Decode.field "message" Decode.string)
+                    (Decode.field "slug" Decode.string)
                 )
         }
 
@@ -645,6 +719,7 @@ encodeUserDetails model =
         , ( "adminLastName", Encode.string model.lastName )
         , ( "adminEmail", Encode.string model.email )
         , ( "phone", Encode.string model.phone )
+        , ( "organizationName", Encode.string model.orgSlug )
         ]
 
 

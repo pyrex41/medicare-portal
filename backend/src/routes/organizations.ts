@@ -66,7 +66,7 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
       
       // Check if email is already registered in any organization
       const existingUser = await db.query<{ count: number }>(
-        'SELECT COUNT(*) as count FROM users WHERE email = ?',
+        'SELECT COUNT(*) as count FROM users WHERE LOWER(email) = LOWER(?)',
         [data.adminEmail]
       );
 
@@ -148,30 +148,12 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
         return orgId;
       });
 
-      // Generate and send magic link outside the transaction
-      logger.info('Generating magic link');
-      const magicLink = await auth.createMagicLink(
-        data.adminEmail, 
-        slug,
-        {
-          redirectUrl: '/choose-plan',
-          orgId,
-          name: `${data.adminFirstName} ${data.adminLastName}`
-        }
-      );
-
-      logger.info(`Magic link generated successfully: ${magicLink}`);
-      await sendMagicLink({
-        email: data.adminEmail,
-        magicLink,
-        name: `${data.adminFirstName} ${data.adminLastName}`
-      });
-
-      logger.info('Magic link email sent successfully');
+      // Return success response without sending magic link
       set.status = 201;
       return { 
         success: true,
-        message: 'Please check your email to verify your account'
+        message: 'Organization created successfully',
+        slug: slug
       };
 
     } catch (error) {
@@ -236,29 +218,36 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
 
     try {
       const decodedEmail = decodeURIComponent(params.email);
+      logger.info(`Checking email availability for: "${decodedEmail}"`);
       
       // Basic email format validation
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(decodedEmail)) {
+        logger.info(`Email validation failed for: "${decodedEmail}"`);
         return {
           available: false,
           message: 'Invalid email format'
         };
       }
 
+      // Use LOWER() for case-insensitive comparison to match unique constraint behavior
+      logger.info(`Running SQL query: SELECT COUNT(*) as count FROM users WHERE LOWER(email) = LOWER('${decodedEmail}')`);
       const existingUser = await db.query<{ count: number }>(
-        'SELECT COUNT(*) as count FROM users WHERE email = ?',
+        'SELECT COUNT(*) as count FROM users WHERE LOWER(email) = LOWER(?)',
         [decodedEmail]
       );
 
       const count = existingUser[0]?.count || 0;
+      logger.info(`Email check query result count: ${count} for email: "${decodedEmail}"`);
 
       if (count > 0) {
+        logger.info(`Email "${decodedEmail}" is already registered`);
         return {
           available: false,
           message: 'This email address is already registered'
         };
       }
 
+      logger.info(`Email "${decodedEmail}" is available`);
       return {
         available: true,
         message: 'Email is available'

@@ -160,7 +160,7 @@ view model =
     { title = "Profile"
     , body =
         [ div [ class "min-h-screen bg-gray-50" ]
-            [ div [ class "max-w-3xl mx-auto py-12 px-4 sm:px-6 lg:px-8" ]
+            [ div [ class "max-w-3xl mx-auto py-6 sm:py-12 px-4 sm:px-6 lg:px-8" ]
                 [ h1 [ class "text-3xl font-bold text-gray-900 mb-8" ]
                     [ text "Profile" ]
                 , viewContent model
@@ -248,7 +248,7 @@ viewBasicInfo user =
             [ h2 [ class "text-lg font-medium text-gray-900" ]
                 [ text "Basic Information" ]
             ]
-        , div [ class "grid grid-cols-2 gap-4" ]
+        , div [ class "grid grid-cols-1 sm:grid-cols-2 gap-4" ]
             [ viewField "First Name" "text" user.firstName "firstName"
             , viewField "Last Name" "text" user.lastName "lastName"
             , viewField "Email" "email" user.email "email"
@@ -304,7 +304,7 @@ viewSaveButton model =
 
           else
             button
-                [ class "px-6 py-3 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-blue-600"
+                [ class "px-4 py-2 sm:px-6 sm:py-3 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-blue-600"
                 , onClick SaveProfile
                 , disabled (not (hasChanges model))
                 ]

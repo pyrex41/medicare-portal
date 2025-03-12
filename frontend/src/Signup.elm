@@ -414,7 +414,7 @@ viewForm model =
                         , id "admin-first-name"
                         , value model.adminFirstName
                         , onInput UpdateAdminFirstName
-                        , class "block w-full px-3.5 py-2.5 bg-white border border-[#d0d5dd] rounded-lg shadow-sm text-[#101828] focus:outline-none focus:ring-2 focus:ring-[#03045e] focus:border-[#03045e] sm:text-sm"
+                        , class "block w-full px-3 sm:px-3.5 py-3 sm:py-2.5 bg-white border border-[#d0d5dd] rounded-lg shadow-sm text-[#101828] focus:outline-none focus:ring-2 focus:ring-[#03045e] focus:border-[#03045e] sm:text-sm"
                         , placeholder "Enter your first name"
                         ]
                         []
@@ -431,7 +431,7 @@ viewForm model =
                         , id "admin-last-name"
                         , value model.adminLastName
                         , onInput UpdateAdminLastName
-                        , class "block w-full px-3.5 py-2.5 bg-white border border-[#d0d5dd] rounded-lg shadow-sm text-[#101828] focus:outline-none focus:ring-2 focus:ring-[#03045e] focus:border-[#03045e] sm:text-sm"
+                        , class "block w-full px-3 sm:px-3.5 py-3 sm:py-2.5 bg-white border border-[#d0d5dd] rounded-lg shadow-sm text-[#101828] focus:outline-none focus:ring-2 focus:ring-[#03045e] focus:border-[#03045e] sm:text-sm"
                         , placeholder "Enter your last name"
                         ]
                         []
@@ -601,7 +601,7 @@ isFormValid model =
 
 submitButtonClass : Model -> String
 submitButtonClass model =
-    "w-full flex justify-center py-2.5 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium transition-colors "
+    "w-full flex justify-center py-3 sm:py-2.5 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium transition-colors "
         ++ (if isFormValid model then
                 "text-white bg-[#03045e] hover:bg-[#03045e]/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#03045e]"
 

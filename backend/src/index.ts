@@ -14,12 +14,13 @@ import { organizationRoutes } from './routes/organizations'
 import { createBrandRoutes } from './routes/brand'
 import { quotesRoutes } from './routes/quotes'
 import { createStripeRoutes } from './routes/stripe'
-import { createOnboardingRoutes } from './routes/onboarding'
+import { createOnboardingRoutes, cleanupOldOrganizations } from './routes/onboarding'
 import { errorHandler } from './middleware/error'
 import { getUserFromSession } from './services/auth'
 import { join } from 'path'
 import { existsSync } from 'fs'
 import { EmailService } from './services/email'
+import * as cron from 'node-cron'
 
 // At the top of the file, add interface for ZIP data
 interface ZipInfo {
@@ -2632,9 +2633,21 @@ const startServer = async () => {
       .listen(8000)
 
     logger.info('Server started on port 8000')
+
+    // Schedule the cleanup job to run daily at midnight
+    cron.schedule('0 0 * * *', () => {
+      logger.info('Running scheduled cleanup job for old organizations');
+      cleanupOldOrganizations().catch(error => {
+        logger.error(`Error in scheduled cleanup job: ${error}`);
+      });
+    });
+    
+    logger.info('Scheduled daily cleanup job for old organizations');
+
+    return app
   } catch (error) {
     logger.error(`Error starting server: ${error}`)
-    process.exit(1)
+    throw error
   }
 }
 

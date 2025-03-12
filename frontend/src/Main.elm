@@ -1346,7 +1346,7 @@ viewNavHeader model =
         -- Simplified header with just the logo for quote flow pages
         nav [ class "bg-white border-b border-gray-200" ]
             [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8" ]
-                [ div [ class "flex justify-center h-16" ]
+                [ div [ class "flex justify-center h-14 sm:h-16" ]
                     [ div [ class "shrink-0 flex items-center" ]
                         [ a
                             [ href "#"
@@ -1355,7 +1355,7 @@ viewNavHeader model =
                             ]
                             [ img
                                 [ src "/images/medicare-max-logo.png"
-                                , class "h-8 w-auto"
+                                , class "h-6 sm:h-6 w-auto"
                                 , alt "Medicare Max logo"
                                 ]
                                 []
@@ -1370,7 +1370,7 @@ viewNavHeader model =
         nav [ class "bg-white border-b border-gray-200" ]
             [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8" ]
                 [ div [ class "flex justify-between h-16" ]
-                    [ div [ class "flex items-center space-x-4" ]
+                    [ div [ class "flex items-center" ]
                         [ div [ class "shrink-0 flex items-center" ]
                             [ a
                                 [ href "#"
@@ -1379,27 +1379,29 @@ viewNavHeader model =
                                 ]
                                 [ img
                                     [ src "/images/medicare-max-logo.png"
-                                    , class "h-8 w-auto mr-8"
+                                    , class "h-6 sm:h-6 w-auto mr-2 sm:mr-8"
                                     , alt "Medicare Max logo"
                                     ]
                                     []
                                 ]
                             ]
-                        , button
-                            [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:bg-[#DCE2E5] rounded-md transition-colors duration-200"
-                            , onClick (InternalLinkClicked "/dashboard")
+                        , div [ class "hidden sm:flex items-center space-x-4" ]
+                            [ button
+                                [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:bg-[#DCE2E5] rounded-md transition-colors duration-200"
+                                , onClick (InternalLinkClicked "/dashboard")
+                                ]
+                                [ text "Dashboard" ]
+                            , button
+                                [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:bg-[#DCE2E5] rounded-md transition-colors duration-200"
+                                , onClick (InternalLinkClicked "/contacts")
+                                ]
+                                [ text "Contacts" ]
                             ]
-                            [ text "Dashboard" ]
-                        , button
-                            [ class "px-3 py-1.5 text-gray-700 text-sm font-medium hover:bg-[#DCE2E5] rounded-md transition-colors duration-200"
-                            , onClick (InternalLinkClicked "/contacts")
-                            ]
-                            [ text "Contacts" ]
                         ]
-                    , div [ class "flex items-center space-x-4" ]
+                    , div [ class "flex items-center" ]
                         [ div [ class "relative" ]
                             [ button
-                                [ class "flex items-center space-x-2 px-3 py-1.5 text-gray-700 text-sm font-medium hover:bg-[#DCE2E5] rounded-md transition-colors duration-200"
+                                [ class "flex items-center space-x-1 sm:space-x-2 px-2 sm:px-3 py-1.5 text-gray-700 text-xs sm:text-sm font-medium hover:bg-[#DCE2E5] rounded-md transition-colors duration-200"
                                 , onClick ToggleDropdown
                                 , stopPropagationOn "mousedown" (Decode.succeed ( NoOp, True ))
                                 ]
@@ -1409,7 +1411,7 @@ viewNavHeader model =
 
                                     Nothing ->
                                         text "Menu"
-                                , div [ class "w-4 h-4" ]
+                                , div [ class "w-4 h-4 flex-shrink-0" ]
                                     [ svg
                                         [ Svg.Attributes.viewBox "0 0 20 20"
                                         , Svg.Attributes.fill "currentColor"
@@ -1425,7 +1427,20 @@ viewNavHeader model =
                                     [ class "absolute right-0 mt-2 w-48 rounded-md shadow-lg py-1 bg-white ring-1 ring-black ring-opacity-5 z-50"
                                     , stopPropagationOn "mousedown" (Decode.succeed ( NoOp, True ))
                                     ]
-                                    [ if isAdmin model.currentUser then
+                                    [ -- Always show on mobile
+                                      div [ class "block sm:hidden" ]
+                                        [ button
+                                            [ class "block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-[#DCE2E5]"
+                                            , onClick (InternalLinkClicked "/dashboard")
+                                            ]
+                                            [ text "Dashboard" ]
+                                        , button
+                                            [ class "block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-[#DCE2E5]"
+                                            , onClick (InternalLinkClicked "/contacts")
+                                            ]
+                                            [ text "Contacts" ]
+                                        ]
+                                    , if isAdmin model.currentUser then
                                         button
                                             [ class "block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-[#DCE2E5]"
                                             , onClick (InternalLinkClicked "/profile")

@@ -23,8 +23,7 @@ import Json.Encode as Encode
 
 
 type alias Model =
-    { stateLicenses : List String
-    , carrierContracts : List String
+    { carrierContracts : List String
     , useSmartSendForGI : Bool
     , isLoading : Bool
     , error : Maybe String
@@ -36,14 +35,13 @@ type alias Model =
 
 init : Nav.Key -> String -> ( Model, Cmd Msg )
 init key orgSlug =
-    ( { stateLicenses = []
-      , carrierContracts = []
+    ( { carrierContracts = []
       , useSmartSendForGI = True
       , isLoading = False
       , error = Nothing
       , key = key
       , orgSlug = orgSlug
-      , expandedSections = [ "State Licenses", "Carrier Contracts", "Guaranteed Issue Settings" ]
+      , expandedSections = [ "Carrier Contracts", "Guaranteed Issue Settings" ]
       }
     , Cmd.none
     )
@@ -54,12 +52,9 @@ init key orgSlug =
 
 
 type Msg
-    = AddStateLicense String
-    | RemoveStateLicense String
-    | AddCarrierContract String
+    = AddCarrierContract String
     | RemoveCarrierContract String
     | ToggleSection String
-    | ToggleAllStates Bool
     | ToggleAllCarriers Bool
     | ToggleSmartSendForGI Bool
     | NextStepClicked
@@ -75,8 +70,7 @@ type OutMsg
 
 
 type alias LicensingSettingsResponse =
-    { stateLicenses : List String
-    , carrierContracts : List String
+    { carrierContracts : List String
     , useSmartSendForGI : Bool
     }
 
@@ -84,24 +78,6 @@ type alias LicensingSettingsResponse =
 update : Msg -> Model -> ( Model, Cmd Msg, OutMsg )
 update msg model =
     case msg of
-        AddStateLicense state ->
-            let
-                newModel =
-                    if List.member state model.stateLicenses then
-                        model
-
-                    else
-                        { model | stateLicenses = state :: model.stateLicenses }
-            in
-            ( newModel, Cmd.none, NoOutMsg )
-
-        RemoveStateLicense state ->
-            let
-                newModel =
-                    { model | stateLicenses = List.filter (\x -> x /= state) model.stateLicenses }
-            in
-            ( newModel, Cmd.none, NoOutMsg )
-
         AddCarrierContract carrier ->
             let
                 newModel =
@@ -131,20 +107,6 @@ update msg model =
             in
             ( { model | expandedSections = newExpandedSections }, Cmd.none, NoOutMsg )
 
-        ToggleAllStates checked ->
-            let
-                newModel =
-                    { model
-                        | stateLicenses =
-                            if checked then
-                                allStates
-
-                            else
-                                []
-                    }
-            in
-            ( newModel, Cmd.none, NoOutMsg )
-
         ToggleAllCarriers checked ->
             let
                 newModel =
@@ -163,16 +125,13 @@ update msg model =
             ( { model | useSmartSendForGI = useSmartSend }, Cmd.none, NoOutMsg )
 
         NextStepClicked ->
-            -- Instead of making API calls, just move to the next step
-            -- All data will be collected and submitted in the final step
             ( model, Cmd.none, NextStep )
 
         GotLicensingSettings result ->
             case result of
                 Ok response ->
                     ( { model
-                        | stateLicenses = response.stateLicenses
-                        , carrierContracts = response.carrierContracts
+                        | carrierContracts = response.carrierContracts
                         , useSmartSendForGI = response.useSmartSendForGI
                         , isLoading = False
                       }
@@ -221,13 +180,10 @@ view model =
             [ h1 [ class "text-2xl font-semibold text-gray-900" ]
                 [ text "Licensing & Carriers" ]
             , p [ class "text-gray-600 mt-2" ]
-                [ text "Configure your state licenses and carrier contracts" ]
+                [ text "Configure your carrier contracts" ]
             ]
         , div [ class "space-y-6" ]
-            [ viewExpandableSection "State Licenses"
-                (viewLicensesGrid model)
-                model.expandedSections
-            , viewExpandableSection "Carrier Contracts"
+            [ viewExpandableSection "Carrier Contracts"
                 (viewCarriersGrid model)
                 model.expandedSections
             , viewGISettings model
@@ -241,10 +197,10 @@ view model =
                 [ button
                     [ class "px-6 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
                     , onClick NextStepClicked
-                    , disabled (List.isEmpty model.stateLicenses || List.isEmpty model.carrierContracts)
+                    , disabled (List.isEmpty model.carrierContracts)
                     , title
-                        (if List.isEmpty model.stateLicenses || List.isEmpty model.carrierContracts then
-                            "Please select at least one state license and one carrier contract"
+                        (if List.isEmpty model.carrierContracts then
+                            "Please select at least one carrier contract"
 
                          else
                             ""
@@ -291,32 +247,6 @@ viewExpandableSection title content expandedSections =
         ]
 
 
-viewLicensesGrid : Model -> Html Msg
-viewLicensesGrid model =
-    div []
-        [ div [ class "mb-4 flex items-center" ]
-            [ checkbox "Select All States"
-                (List.length model.stateLicenses == List.length allStates)
-                ToggleAllStates
-            ]
-        , div [ class "grid grid-cols-5 gap-4" ]
-            (List.map
-                (\state ->
-                    checkbox state
-                        (List.member state model.stateLicenses)
-                        (\checked ->
-                            if checked then
-                                AddStateLicense state
-
-                            else
-                                RemoveStateLicense state
-                        )
-                )
-                allStates
-            )
-        ]
-
-
 viewCarriersGrid : Model -> Html Msg
 viewCarriersGrid model =
     div []
@@ -325,7 +255,7 @@ viewCarriersGrid model =
                 (List.length model.carrierContracts == List.length allCarriers)
                 ToggleAllCarriers
             ]
-        , div [ class "grid grid-cols-3 gap-4" ]
+        , div [ class "grid grid-cols-2 sm:grid-cols-3 gap-4" ]
             (List.map
                 (\carrier ->
                     checkbox carrier
@@ -365,7 +295,7 @@ viewGISettings model =
                         [ label [ class "font-medium text-gray-700" ]
                             [ text "Use SmartSend for Guaranteed Issue" ]
                         , p [ class "text-gray-500 mt-1" ]
-                            [ text "When enabled, SmartSend will automatically identify which carrier-state combinations offer full compensation for Guaranteed Issue (GI) policies." ]
+                            [ text "When enabled, SmartSend will automatically identify which carrier combinations offer full compensation for Guaranteed Issue (GI) policies." ]
                         ]
                     ]
                 ]
@@ -373,22 +303,7 @@ viewGISettings model =
                 [ h3 [ class "text-lg font-medium text-gray-900 mb-2" ]
                     [ text "How SmartSend Works" ]
                 , p [ class "text-gray-600" ]
-                    [ text "SmartSend analyzes each state and carrier combination to determine which ones offer full carrier compensation for Guaranteed Issue policies. This helps maximize your commissions while ensuring your quotes are always compliant with the latest state and carrier regulations." ]
-                , if model.useSmartSendForGI then
-                    div [ class "mt-4 text-sm text-green-600" ]
-                        [ div [ class "flex items-center" ]
-                            [ span [ class "mr-2 flex-shrink-0" ] [ text "✓" ]
-                            , text "SmartSend for GI is enabled. All eligible state-carrier combinations with full compensation will be automatically processed for Guaranteed Issue."
-                            ]
-                        ]
-
-                  else
-                    div [ class "mt-4 text-sm text-gray-600" ]
-                        [ div [ class "flex items-center" ]
-                            [ span [ class "mr-2 flex-shrink-0" ] [ text "•" ]
-                            , text "SmartSend for GI is disabled. You'll need to manually manage GI settings for each state-carrier combination in your Settings after setup."
-                            ]
-                        ]
+                    [ text "SmartSend analyzes each carrier to determine which ones offer full carrier compensation for Guaranteed Issue policies. This helps maximize your commissions while ensuring your quotes are always compliant with the latest carrier regulations." ]
                 ]
             ]
         ]
@@ -420,18 +335,6 @@ td attributes children =
 
 
 -- HELPERS
--- Remove the findStateCarrierSetting function which is no longer needed
--- findStateCarrierSetting : Model -> String -> String -> StateCarrierSetting
--- findStateCarrierSetting model state carrier =
---     model.stateCarrierSettings
---         |> List.filter (\s -> s.state == state && s.carrier == carrier)
---         |> List.head
---         |> Maybe.withDefault
---             { state = state
---             , carrier = carrier
---             , active = True
---             , targetGI = False
---             }
 -- API CALLS
 
 
@@ -459,7 +362,6 @@ saveLicensingSettings model =
 licensingSettingsDecoder : Decode.Decoder LicensingSettingsResponse
 licensingSettingsDecoder =
     Decode.succeed LicensingSettingsResponse
-        |> Pipeline.required "stateLicenses" (Decode.list Decode.string)
         |> Pipeline.required "carrierContracts" (Decode.list Decode.string)
         |> Pipeline.required "useSmartSendForGI" Decode.bool
 
@@ -467,70 +369,13 @@ licensingSettingsDecoder =
 encodeLicensingSettings : Model -> Encode.Value
 encodeLicensingSettings model =
     Encode.object
-        [ ( "stateLicenses", Encode.list Encode.string model.stateLicenses )
-        , ( "carrierContracts", Encode.list Encode.string model.carrierContracts )
+        [ ( "carrierContracts", Encode.list Encode.string model.carrierContracts )
         , ( "useSmartSendForGI", Encode.bool model.useSmartSendForGI )
         ]
 
 
 
 -- CONSTANTS
-
-
-allStates : List String
-allStates =
-    [ "AL"
-    , "AK"
-    , "AZ"
-    , "AR"
-    , "CA"
-    , "CO"
-    , "CT"
-    , "DE"
-    , "FL"
-    , "GA"
-    , "HI"
-    , "ID"
-    , "IL"
-    , "IN"
-    , "IA"
-    , "KS"
-    , "KY"
-    , "LA"
-    , "ME"
-    , "MD"
-    , "MA"
-    , "MI"
-    , "MN"
-    , "MS"
-    , "MO"
-    , "MT"
-    , "NE"
-    , "NV"
-    , "NH"
-    , "NJ"
-    , "NM"
-    , "NY"
-    , "NC"
-    , "ND"
-    , "OH"
-    , "OK"
-    , "OR"
-    , "PA"
-    , "RI"
-    , "SC"
-    , "SD"
-    , "TN"
-    , "TX"
-    , "UT"
-    , "VT"
-    , "VA"
-    , "WA"
-    , "WV"
-    , "WI"
-    , "WY"
-    , "DC"
-    ]
 
 
 allCarriers : List String

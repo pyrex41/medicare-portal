@@ -95,7 +95,7 @@ view : Model -> Document Msg
 view model =
     { title = "Dashboard"
     , body =
-        [ div [ class "p-6 max-w-7xl mx-auto" ]
+        [ div [ class "p-4 sm:p-6 max-w-7xl mx-auto" ]
             [ LimitBanner.view model.limitBanner
                 |> Html.map LimitBannerMsg
             , if model.showTutorialModal then
@@ -103,39 +103,39 @@ view model =
 
               else
                 text ""
-            , div [ class "grid grid-cols-3 gap-6" ]
+            , div [ class "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6" ]
                 [ -- Stats cards
                   viewStatsCard "Quotes Sent" "912" "text-purple-600"
                 , viewStatsCard "Quotes Viewed" "912" "text-purple-600"
                 , viewStatsCard "Follow Ups Requested" "912" "text-purple-600"
                 ]
-            , div [ class "mt-8 grid grid-cols-4 gap-6" ]
-                [ div [ class "col-span-3" ]
+            , div [ class "mt-6 sm:mt-8 grid grid-cols-1 lg:grid-cols-4 gap-4 sm:gap-6" ]
+                [ div [ class "lg:col-span-3" ]
                     [ -- Chart section
-                      div [ class "bg-white rounded-lg shadow p-6" ]
-                        [ h3 [ class "text-lg font-semibold mb-4" ] [ text "Quote Results" ]
-                        , div [ class "h-64" ]
+                      div [ class "bg-white rounded-lg shadow p-4 sm:p-6" ]
+                        [ h3 [ class "text-lg font-semibold mb-2 sm:mb-4" ] [ text "Quote Results" ]
+                        , div [ class "h-64 overflow-x-auto overflow-y-hidden" ]
                             [ viewChart model ]
-                        , div [ class "flex justify-center mt-16 space-x-8 text-sm text-gray-600 border-t border-gray-200 pt-8" ]
+                        , div [ class "flex flex-col sm:flex-row justify-center mt-8 sm:mt-16 space-y-2 sm:space-y-0 sm:space-x-8 text-sm text-gray-600 border-t border-gray-200 pt-4 sm:pt-8" ]
                             [ div [ class "flex items-center" ]
-                                [ div [ class "w-3 h-3 rounded-full bg-[#DCE2E5] mr-2" ] []
+                                [ div [ class "w-3 h-3 rounded-full bg-[#DCE2E5] mr-1.5 sm:mr-2" ] []
                                 , text "Quotes Sent"
                                 ]
                             , div [ class "flex items-center" ]
-                                [ div [ class "w-3 h-3 rounded-full bg-[#53389E] mr-2" ] []
+                                [ div [ class "w-3 h-3 rounded-full bg-[#53389E] mr-1.5 sm:mr-2" ] []
                                 , text "Quotes Viewed"
                                 ]
                             , div [ class "flex items-center" ]
-                                [ div [ class "w-3 h-3 rounded-full bg-[#03045E] mr-2" ] []
+                                [ div [ class "w-3 h-3 rounded-full bg-[#03045E] mr-1.5 sm:mr-2" ] []
                                 , text "Follow-up Requests"
                                 ]
                             ]
                         ]
                     ]
-                , div [ class "col-span-1" ]
+                , div [ class "lg:col-span-1" ]
                     [ -- Next Renewals section
-                      div [ class "bg-white rounded-lg shadow p-6" ]
-                        [ h3 [ class "text-lg font-semibold mb-4" ] [ text "Next Renewals" ]
+                      div [ class "bg-white rounded-lg shadow p-4 sm:p-6" ]
+                        [ h3 [ class "text-lg font-semibold mb-2 sm:mb-4" ] [ text "Next Renewals" ]
                         , div [ class "space-y-4" ]
                             [-- We'll add renewal items here later
                             ]
@@ -149,28 +149,28 @@ view model =
 
 viewTutorialModal : Html Msg
 viewTutorialModal =
-    div [ class "fixed inset-0 z-50 bg-gray-600 bg-opacity-50 flex items-center justify-center" ]
-        [ div [ class "bg-white p-6 rounded-lg shadow-lg max-w-2xl w-full" ]
+    div [ class "fixed inset-0 z-50 bg-gray-600 bg-opacity-50 flex items-center justify-center p-4" ]
+        [ div [ class "bg-white p-4 sm:p-6 rounded-lg shadow-lg max-w-2xl w-full" ]
             [ div [ class "flex justify-between items-center mb-4" ]
-                [ h2 [ class "text-xl font-semibold text-[#03045E]" ] [ text "Welcome to MedicareMax!" ]
+                [ h2 [ class "text-lg sm:text-xl font-semibold text-[#03045E]" ] [ text "Welcome to MedicareMax!" ]
                 , button
-                    [ class "text-gray-400 hover:text-gray-600", onClick CloseTutorialModal ]
+                    [ class "text-gray-400 hover:text-gray-600 text-xl p-1", onClick CloseTutorialModal ]
                     [ text "×" ]
                 ]
-            , div [ class "mb-6" ]
+            , div [ class "mb-4 sm:mb-6" ]
                 [ iframe
                     [ src "https://www.youtube.com/embed/dQw4w9WgXcQ" -- Replace with actual tutorial video
-                    , class "w-full h-96"
+                    , class "w-full aspect-video max-h-[50vh] sm:h-96"
                     , attribute "allowfullscreen" ""
                     , attribute "frameborder" "0"
                     ]
                     []
                 ]
-            , p [ class "mb-4 text-gray-600" ]
+            , p [ class "mb-4 text-gray-600 text-sm sm:text-base" ]
                 [ text "This quick setup tutorial will help you get started with MedicareMax and show you how to make the most of its features." ]
             , div [ class "flex justify-end" ]
                 [ button
-                    [ class "px-4 py-2 bg-[#03045E] text-white rounded-md hover:bg-opacity-90"
+                    [ class "px-4 py-2 bg-[#03045E] text-white rounded-md hover:bg-opacity-90 w-full sm:w-auto"
                     , onClick CloseTutorialModal
                     ]
                     [ text "Close" ]
@@ -181,9 +181,9 @@ viewTutorialModal =
 
 viewStatsCard : String -> String -> String -> Html Msg
 viewStatsCard title value colorClass =
-    div [ class "bg-white rounded-lg shadow p-6" ]
-        [ div [ class "text-gray-600 text-sm" ] [ text title ]
-        , div [ class "text-4xl font-bold mt-2 text-[#03045E]" ] [ text value ]
+    div [ class "bg-white rounded-lg shadow p-4 sm:p-6" ]
+        [ div [ class "text-gray-600 text-xs sm:text-sm" ] [ text title ]
+        , div [ class "text-2xl sm:text-4xl font-bold mt-1 sm:mt-2 text-[#03045E]" ] [ text value ]
         ]
 
 
@@ -191,8 +191,9 @@ viewChart : Model -> Html Msg
 viewChart model =
     C.chart
         [ CA.height 300
-        , CA.width 800
+        , CA.width 800 -- Fixed width, with overflow-x-auto on container
         , CA.margin { top = 10, bottom = 45, left = 30, right = 10 }
+        -- CA.responsive is not available in this version
         ]
         [ C.xLabels
             [ CA.withGrid

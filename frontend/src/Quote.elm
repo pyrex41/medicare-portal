@@ -355,34 +355,34 @@ view : Model -> Browser.Document Msg
 view model =
     { title = "Get Your Quote - Medicare Max"
     , body =
-        [ div [ class "container mx-auto px-4 py-8 max-w-xl" ]
-            [ h1 [ class "text-3xl font-bold text-center mb-6" ]
+        [ div [ class "container mx-auto px-4 py-6 sm:py-8 max-w-xl" ]
+            [ h1 [ class "text-2xl sm:text-3xl font-bold text-center mb-4 sm:mb-6" ]
                 [ text "Get Your Quote" ]
-            , div [ class "flex justify-center mb-8" ]
+            , div [ class "flex justify-center mb-6 sm:mb-8" ]
                 [ button
-                    [ class "flex items-center gap-2 px-4 py-2 rounded-full border border-blue-500 text-blue-500 hover:bg-blue-50 transition-colors"
+                    [ class "flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full border border-blue-500 text-blue-500 hover:bg-blue-50 transition-colors text-sm"
                     ]
-                    [ span [ class "text-sm" ] [ text "▶ Video" ]
+                    [ span [ class "text-xs sm:text-sm" ] [ text "▶ Video" ]
                     , text "Rates and Plan Options"
                     ]
                 ]
             , case model.error of
                 Just error ->
-                    div [ class "bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4" ]
+                    div [ class "bg-red-100 border border-red-400 text-red-700 px-3 sm:px-4 py-2 sm:py-3 rounded mb-4 text-sm" ]
                         [ text error ]
 
                 Nothing ->
                     text ""
-            , Html.form [ onSubmit SubmitForm, class "space-y-6" ]
+            , Html.form [ onSubmit SubmitForm, class "space-y-4 sm:space-y-6" ]
                 [ viewFormInput "Zip Code" "text" model.zipCode UpdateZipCode True
 
                 -- Show zip code loading state or error if any
                 , if model.isLoadingZipData then
-                    div [ class "text-sm text-blue-600" ]
+                    div [ class "text-xs sm:text-sm text-blue-600" ]
                         [ text "Looking up location..." ]
 
                   else if model.zipError /= Nothing then
-                    div [ class "text-sm text-red-600" ]
+                    div [ class "text-xs sm:text-sm text-red-600" ]
                         [ text (Maybe.withDefault "Invalid zip code" model.zipError) ]
 
                   else
@@ -409,7 +409,7 @@ view model =
                     UpdateGender
                     [ ( "M", "Male" ), ( "F", "Female" ) ]
                 , button
-                    [ class "w-full bg-purple-600 text-white py-4 rounded-lg hover:bg-purple-700 transition-colors mt-8"
+                    [ class "w-full bg-purple-600 text-white py-3 sm:py-4 rounded-lg hover:bg-purple-700 transition-colors mt-6 sm:mt-8 text-base sm:text-lg"
                     , type_ "submit"
                     ]
                     [ text "Next" ]
@@ -422,10 +422,10 @@ view model =
 viewCountyDropdown : List String -> Maybe String -> Html Msg
 viewCountyDropdown counties selectedCounty =
     div [ class "form-group" ]
-        [ Html.label [ class "block text-sm font-medium text-gray-700 mb-2" ]
+        [ Html.label [ class "block text-sm font-medium text-gray-700 mb-1.5 sm:mb-2" ]
             [ text "County" ]
         , select
-            [ class "w-full px-4 py-3 bg-white border-[2.5px] border-purple-300 rounded-lg text-gray-700 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 focus:bg-white transition-all duration-200"
+            [ class "w-full px-3 sm:px-4 py-2.5 sm:py-3 bg-white border-[2px] sm:border-[2.5px] border-purple-300 rounded-lg text-gray-700 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 focus:bg-white transition-all duration-200 text-sm sm:text-base"
             , onInput UpdateSelectedCounty
             , required True
             ]
@@ -447,12 +447,12 @@ viewCountyDropdown counties selectedCounty =
 viewFormInput : String -> String -> String -> (String -> Msg) -> Bool -> Html Msg
 viewFormInput labelText inputType inputValue msg isRequired =
     div [ class "form-group" ]
-        [ Html.label [ class "block text-sm font-medium text-gray-700 mb-2" ]
+        [ Html.label [ class "block text-sm font-medium text-gray-700 mb-1.5 sm:mb-2" ]
             [ text labelText ]
         , if inputType == "date" then
             input
                 [ type_ inputType
-                , class "w-full px-4 py-3 bg-white border-[2.5px] border-purple-300 rounded-lg text-gray-700 placeholder-gray-400 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 focus:bg-white transition-all duration-200"
+                , class "w-full px-3 sm:px-4 py-2.5 sm:py-3 bg-white border-[2px] sm:border-[2.5px] border-purple-300 rounded-lg text-gray-700 placeholder-gray-400 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 focus:bg-white transition-all duration-200 text-sm sm:text-base"
                 , Html.Attributes.value inputValue
                 , onInput msg
                 , required isRequired
@@ -462,7 +462,7 @@ viewFormInput labelText inputType inputValue msg isRequired =
           else if labelText == "Zip Code" then
             input
                 [ type_ inputType
-                , class "w-full px-4 py-3 bg-white border-[2.5px] border-purple-300 rounded-lg text-gray-700 placeholder-gray-400 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 focus:bg-white transition-all duration-200"
+                , class "w-full px-3 sm:px-4 py-2.5 sm:py-3 bg-white border-[2px] sm:border-[2.5px] border-purple-300 rounded-lg text-gray-700 placeholder-gray-400 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 focus:bg-white transition-all duration-200 text-sm sm:text-base"
                 , Html.Attributes.value (formatZipCode inputValue)
                 , onInput msg
                 , required isRequired
@@ -474,7 +474,7 @@ viewFormInput labelText inputType inputValue msg isRequired =
           else
             input
                 [ type_ inputType
-                , class "w-full px-4 py-3 bg-white border-[2.5px] border-purple-300 rounded-lg text-gray-700 placeholder-gray-400 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 focus:bg-white transition-all duration-200"
+                , class "w-full px-3 sm:px-4 py-2.5 sm:py-3 bg-white border-[2px] sm:border-[2.5px] border-purple-300 rounded-lg text-gray-700 placeholder-gray-400 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 focus:bg-white transition-all duration-200 text-sm sm:text-base"
                 , Html.Attributes.value inputValue
                 , onInput msg
                 , required isRequired
@@ -486,14 +486,14 @@ viewFormInput labelText inputType inputValue msg isRequired =
 viewFormRadioGroup : String -> String -> (String -> Msg) -> List ( String, String ) -> Html Msg
 viewFormRadioGroup labelText selectedValue msg options =
     div [ class "form-group" ]
-        [ Html.label [ class "block text-sm font-medium text-gray-700 mb-2" ]
+        [ Html.label [ class "block text-sm font-medium text-gray-700 mb-1.5 sm:mb-2" ]
             [ text labelText ]
-        , div [ class "flex gap-4" ]
+        , div [ class "flex flex-col sm:flex-row gap-2 sm:gap-4 w-full" ]
             (List.map
                 (\( val, txt ) ->
                     label
                         [ class
-                            ("flex items-center px-4 py-2 rounded-lg border-2 cursor-pointer transition-all duration-200 "
+                            ("flex items-center justify-center px-3 sm:px-4 py-2 rounded-lg border-2 cursor-pointer transition-all duration-200 flex-1 "
                                 ++ (if selectedValue == val then
                                         "border-purple-500 bg-purple-50 text-purple-700"
 

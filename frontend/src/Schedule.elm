@@ -234,35 +234,35 @@ view model =
     { title = getTitle model.status
     , body =
         [ div [ class "min-h-screen bg-white" ]
-            [ div [ class "max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-12" ]
+            [ div [ class "max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-12" ]
                 [ if model.success then
                     div [ class "text-center" ]
-                        [ h1 [ class "text-3xl font-bold text-gray-900 mb-4" ]
+                        [ h1 [ class "text-2xl sm:text-3xl font-bold text-gray-900 mb-3 sm:mb-4" ]
                             [ text "Thank You" ]
-                        , p [ class "text-gray-600" ]
+                        , p [ class "text-gray-600 text-sm sm:text-base" ]
                             [ text "We'll be in touch soon to discuss your options." ]
                         ]
 
                   else
                     div []
-                        [ h1 [ class "text-3xl font-bold text-center text-gray-900 mb-4" ]
+                        [ h1 [ class "text-2xl sm:text-3xl font-bold text-center text-gray-900 mb-3 sm:mb-4" ]
                             [ text (getHeading model.status) ]
-                        , p [ class "text-gray-600 text-center mb-8" ]
+                        , p [ class "text-gray-600 text-center mb-6 sm:mb-8 text-sm sm:text-base" ]
                             [ text (getMessage model.status) ]
                         , case model.error of
                             Just error ->
-                                div [ class "bg-red-50 border border-red-400 text-red-700 px-4 py-3 rounded mb-4" ]
+                                div [ class "bg-red-50 border border-red-400 text-red-700 px-3 sm:px-4 py-2 sm:py-3 rounded mb-4 text-sm" ]
                                     [ text error ]
 
                             Nothing ->
                                 text ""
-                        , Html.form [ onSubmit SubmitForm, class "space-y-6 max-w-lg mx-auto" ]
+                        , Html.form [ onSubmit SubmitForm, class "space-y-4 sm:space-y-6 max-w-lg mx-auto" ]
                             [ div []
                                 [ label [ class "block text-sm font-medium text-gray-700 mb-1" ]
                                     [ text "Name" ]
                                 , input
                                     [ type_ "text"
-                                    , class "w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-purple-500 focus:border-purple-500"
+                                    , class "w-full px-3 sm:px-4 py-2.5 sm:py-2 border border-gray-300 rounded-lg focus:ring-purple-500 focus:border-purple-500 text-sm sm:text-base"
                                     , value (model.name |> Maybe.withDefault "")
                                     , onInput UpdateName
                                     , required True
@@ -274,7 +274,7 @@ view model =
                                     [ text "Email" ]
                                 , input
                                     [ type_ "email"
-                                    , class "w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-purple-500 focus:border-purple-500"
+                                    , class "w-full px-3 sm:px-4 py-2.5 sm:py-2 border border-gray-300 rounded-lg focus:ring-purple-500 focus:border-purple-500 text-sm sm:text-base"
                                     , value (model.email |> Maybe.withDefault "")
                                     , onInput UpdateEmail
                                     , required True
@@ -286,7 +286,7 @@ view model =
                                     [ text "Phone Number" ]
                                 , input
                                     [ type_ "tel"
-                                    , class "w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-purple-500 focus:border-purple-500"
+                                    , class "w-full px-3 sm:px-4 py-2.5 sm:py-2 border border-gray-300 rounded-lg focus:ring-purple-500 focus:border-purple-500 text-sm sm:text-base"
                                     , value (model.phoneNumber |> Maybe.map formatPhoneNumber |> Maybe.withDefault "")
                                     , onInput UpdatePhoneNumber
                                     , required True
@@ -321,7 +321,7 @@ view model =
                                                 |> (\s -> url ++ "?" ++ s)
                                     in
                                     a
-                                        [ class "w-full bg-purple-600 text-white py-3 px-4 rounded-lg hover:bg-purple-700 transition-colors duration-200 disabled:opacity-50 text-center block"
+                                        [ class "w-full bg-purple-600 text-white py-3 sm:py-3 px-4 rounded-lg hover:bg-purple-700 transition-colors duration-200 disabled:opacity-50 text-center block text-sm sm:text-base mt-4 sm:mt-4"
                                         , href fullUrl
                                         , target "_blank"
                                         ]
@@ -329,7 +329,7 @@ view model =
 
                                 Nothing ->
                                     button
-                                        [ class "w-full bg-purple-600 text-white py-3 px-4 rounded-lg hover:bg-purple-700 transition-colors duration-200 disabled:opacity-50"
+                                        [ class "w-full bg-purple-600 text-white py-3 sm:py-3 px-4 rounded-lg hover:bg-purple-700 transition-colors duration-200 disabled:opacity-50 text-sm sm:text-base mt-4 sm:mt-4"
                                         , type_ "submit"
                                         , disabled model.isSubmitting
                                         ]

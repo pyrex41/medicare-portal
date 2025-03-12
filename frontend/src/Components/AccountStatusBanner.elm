@@ -134,14 +134,14 @@ view maybeStatus closeMsg =
     case maybeStatus of
         Just status ->
             div
-                [ class ("p-4 mb-4 border rounded-lg flex items-start justify-between " ++ getBannerColorClass status.status)
+                [ class ("p-3 sm:p-4 mb-3 sm:mb-4 border rounded-lg flex flex-col sm:flex-row sm:items-start sm:justify-between " ++ getBannerColorClass status.status)
                 , attribute "role" "alert"
                 ]
                 [ div [ class "flex items-start" ]
                     [ div [ class "flex-shrink-0" ]
-                        [ div [ class ("p-1 rounded-full mr-3 " ++ getIconColorClass status.status) ]
+                        [ div [ class ("p-1 rounded-full mr-2 sm:mr-3 " ++ getIconColorClass status.status) ]
                             [ svg
-                                [ SvgAttr.class "w-5 h-5"
+                                [ SvgAttr.class "w-4 h-4 sm:w-5 sm:h-5"
                                 , SvgAttr.fill "currentColor"
                                 , SvgAttr.viewBox "0 0 20 20"
                                 ]
@@ -154,14 +154,14 @@ view maybeStatus closeMsg =
                                 ]
                             ]
                         ]
-                    , div []
-                        [ div [ class "font-medium" ] [ text (getStatusTitle status.status) ]
-                        , p [ class "text-sm" ] [ text status.message ]
+                    , div [ class "flex-grow pr-8 sm:pr-0" ]
+                        [ div [ class "font-medium text-sm sm:text-base" ] [ text (getStatusTitle status.status) ]
+                        , p [ class "text-xs sm:text-sm" ] [ text status.message ]
                         , viewLimitsInfo status
                         ]
                     ]
                 , button
-                    [ class ("p-1.5 rounded-lg " ++ getButtonColorClass status.status)
+                    [ class ("p-1.5 rounded-lg absolute top-2 right-2 sm:static " ++ getButtonColorClass status.status)
                     , onClick closeMsg
                     ]
                     [ svg
@@ -190,7 +190,7 @@ view maybeStatus closeMsg =
 viewLimitsInfo : AccountStatusDetails -> Html msg
 viewLimitsInfo status =
     if status.currentAgentCount >= status.agentLimit || status.currentContactCount >= status.contactLimit then
-        div [ class "mt-2 text-sm" ]
+        div [ class "mt-1 sm:mt-2 text-xs sm:text-sm" ]
             [ if status.currentAgentCount >= status.agentLimit then
                 div [ class "mb-1" ]
                     [ text ("Agents: " ++ String.fromInt status.currentAgentCount ++ "/" ++ String.fromInt status.agentLimit ++ " ")

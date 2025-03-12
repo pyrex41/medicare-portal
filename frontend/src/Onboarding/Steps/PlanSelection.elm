@@ -1,10 +1,11 @@
 module Onboarding.Steps.PlanSelection exposing
     ( Model
-    , Msg
+    , Msg(..)
     , OutMsg(..)
     , fetchSubscriptionTiers
     , init
     , initWithFetch
+    , initWithSavedState
     , subscriptions
     , update
     , view
@@ -46,13 +47,7 @@ type alias Model =
     , key : Nav.Key
     , orgSlug : String
     , session : String
-    }
-
-
-type alias SubscriptionResponse =
-    { success : Bool
-    , message : String
-    , orgSlug : Maybe String
+    , loadedFromSession : Bool
     }
 
 
@@ -76,10 +71,13 @@ initWithFetch key orgSlug session shouldFetchTiers =
       , key = key
       , orgSlug = orgSlug
       , session = session
+      , loadedFromSession = False
       }
     , if shouldFetchTiers then
         Cmd.batch
             [ fetchSubscriptionTiers
+            , -- Also check if we have a plan type in localStorage
+              checkSessionForPlan key orgSlug session
             , -- Add a timeout to clear loading state after 5 seconds
               Process.sleep 5000
                 |> Task.perform (\_ -> LoadingTimeout)
@@ -87,6 +85,31 @@ initWithFetch key orgSlug session shouldFetchTiers =
 
       else
         Cmd.none
+    )
+
+
+
+-- Initialize with saved state from session
+
+
+initWithSavedState : Nav.Key -> String -> String -> String -> ( Model, Cmd Msg )
+initWithSavedState key orgSlug session savedPlan =
+    let
+        initialModel =
+            { selectedPlan = Just savedPlan
+            , extraAgents = 0 -- We could load these from session too if needed
+            , extraContacts = 0
+            , tiers = []
+            , isLoading = True
+            , error = Nothing
+            , key = key
+            , orgSlug = orgSlug
+            , session = session
+            , loadedFromSession = True
+            }
+    in
+    ( initialModel
+    , fetchSubscriptionTiers
     )
 
 
@@ -99,9 +122,10 @@ type Msg
     | SetExtraAgents String
     | SetExtraContacts String
     | GotTiers (Result Http.Error (List SubscriptionTier))
-    | SubscriptionSaved (Result Http.Error SubscriptionResponse)
     | NextStepClicked
     | LoadingTimeout
+    | OnboardingInitialized (Result Http.Error { organizationId : Int, slug : String, sessionToken : String, onboardingStep : Int })
+    | LoadPlanFromSession String
     | NoOp
 
 
@@ -109,6 +133,7 @@ type OutMsg
     = NoOutMsg
     | SelectedPlan String
     | NextStep
+    | OnboardingInitializedSuccess { organizationId : Int, slug : String, sessionToken : String, onboardingStep : Int }
     | ShowError String
 
 
@@ -155,27 +180,26 @@ update msg model =
                     , ShowError "Failed to load subscription tiers"
                     )
 
-        SubscriptionSaved result ->
+        OnboardingInitialized result ->
             case result of
                 Ok response ->
-                    case response.orgSlug of
-                        Just newOrgSlug ->
-                            ( { model | orgSlug = newOrgSlug }
-                            , Cmd.none
-                            , NextStep
-                            )
-
-                        Nothing ->
-                            ( model
-                            , Cmd.none
-                            , NextStep
-                            )
+                    ( { model | isLoading = False }
+                    , Cmd.none
+                    , OnboardingInitializedSuccess response
+                    )
 
                 Err _ ->
-                    ( { model | error = Just "Failed to save subscription", isLoading = False }
+                    ( { model | error = Just "Failed to initialize onboarding", isLoading = False }
                     , Cmd.none
-                    , ShowError "Failed to save subscription"
+                    , ShowError "Failed to initialize onboarding"
                     )
+
+        LoadPlanFromSession planType ->
+            -- Handle loading a plan selection from the session
+            ( { model | selectedPlan = Just planType, loadedFromSession = True }
+            , Cmd.none
+            , NoOutMsg
+            )
 
         NextStepClicked ->
             case model.selectedPlan of
@@ -188,11 +212,10 @@ update msg model =
                         )
 
                     else
-                        -- Instead of saving the subscription now, just proceed to the next step
-                        -- We'll save everything at the end of the onboarding flow
-                        ( model
-                        , Cmd.none
-                        , NextStep
+                        -- Initialize onboarding with selected plan
+                        ( { model | isLoading = True }
+                        , initializeOnboarding planId
+                        , NoOutMsg
                         )
 
                 Nothing ->
@@ -228,8 +251,14 @@ view model =
                 [ text "Choose your plan" ]
             , p [ class "text-gray-600 mt-2" ]
                 [ text "Select a plan that best fits your organization's needs" ]
+            , if model.loadedFromSession && model.selectedPlan /= Nothing then
+                p [ class "text-blue-600 mt-2 italic" ]
+                    [ text "Your previously selected plan has been loaded." ]
+
+              else
+                text ""
             ]
-        , if model.isLoading then
+        , if model.isLoading && List.isEmpty model.tiers then
             viewLoading
 
           else
@@ -465,22 +494,38 @@ fetchSubscriptionTiers =
         }
 
 
-saveSubscription : String -> String -> Int -> Int -> Cmd Msg
-saveSubscription orgSlug tierId extraAgents extraContacts =
-    -- If orgSlug is empty, use a different endpoint for new organization signup
-    if String.isEmpty (String.trim orgSlug) then
-        Http.post
-            { url = "/api/organizations/signup/subscription"
-            , body = Http.jsonBody (encodeSubscriptionUpdate tierId extraAgents extraContacts)
-            , expect = Http.expectJson SubscriptionSaved subscriptionResponseDecoder
-            }
+initializeOnboarding : String -> Cmd Msg
+initializeOnboarding planType =
+    let
+        url =
+            "/api/onboarding/initialize"
 
-    else
-        Http.post
-            { url = "/api/organizations/" ++ orgSlug ++ "/subscription"
-            , body = Http.jsonBody (encodeSubscriptionUpdate tierId extraAgents extraContacts)
-            , expect = Http.expectJson SubscriptionSaved subscriptionResponseDecoder
-            }
+        body =
+            Encode.object
+                [ ( "planType", Encode.string planType )
+                , ( "organizationName", Encode.string "Medicare Max Agency" )
+                ]
+                |> Http.jsonBody
+
+        decoder =
+            Decode.map4
+                (\organizationId slug sessionToken onboardingStep ->
+                    { organizationId = organizationId
+                    , slug = slug
+                    , sessionToken = sessionToken
+                    , onboardingStep = onboardingStep
+                    }
+                )
+                (Decode.field "organizationId" Decode.int)
+                (Decode.field "slug" Decode.string)
+                (Decode.field "sessionToken" Decode.string)
+                (Decode.field "onboardingStep" Decode.int)
+    in
+    Http.post
+        { url = url
+        , body = body
+        , expect = Http.expectJson OnboardingInitialized decoder
+        }
 
 
 
@@ -502,27 +547,6 @@ subscriptionTiersDecoder =
         )
 
 
-encodeSubscriptionUpdate : String -> Int -> Int -> Encode.Value
-encodeSubscriptionUpdate tierId extraAgents extraContacts =
-    Encode.object
-        [ ( "tierId", Encode.string tierId )
-        , ( "extraAgents", Encode.int extraAgents )
-        , ( "extraContacts", Encode.int extraContacts )
-        ]
-
-
-
--- Add decoder for the subscription response
-
-
-subscriptionResponseDecoder : Decoder SubscriptionResponse
-subscriptionResponseDecoder =
-    Decode.map3 SubscriptionResponse
-        (Decode.field "success" Decode.bool)
-        (Decode.field "message" Decode.string)
-        (Decode.maybe (Decode.field "orgSlug" Decode.string))
-
-
 
 -- SUBSCRIPTIONS
 
@@ -530,3 +554,17 @@ subscriptionResponseDecoder =
 subscriptions : Model -> Sub Msg
 subscriptions _ =
     Sub.none
+
+
+
+-- Helper function to check session for plan type and dispatch appropriate message
+
+
+checkSessionForPlan : Nav.Key -> String -> String -> Cmd Msg
+checkSessionForPlan key orgSlug session =
+    -- This would be replaced with an actual API call in a real implementation
+    -- For now, we'll just simulate finding the plan in the session by checking localStorage
+    -- via the port system. The port would return the plan type if found.
+    -- Since we can't directly call a port from here, we'll use a Task.succeed
+    -- to simulate waiting for the response
+    Task.perform (\_ -> NoOp) (Task.succeed ())

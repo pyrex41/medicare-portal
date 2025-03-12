@@ -2663,7 +2663,7 @@ viewContactForm model form updateMsg submitMsg buttonText isSubmitting =
                 ]
     in
     Html.form [ onSubmit submitMsg ]
-        [ div [ class "grid grid-cols-2 gap-x-4 gap-y-3" ]
+        [ div [ class "grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3" ]
             [ viewFormInput "First Name" "text" form.firstName FirstName updateMsg True
             , viewFormInput "Last Name" "text" form.lastName LastName updateMsg True
             , emailField
@@ -2684,7 +2684,7 @@ viewContactForm model form updateMsg submitMsg buttonText isSubmitting =
                 updateMsg
                 [ ( "true", "Yes" ), ( "false", "No" ) ]
             , viewFormRadioGroup "Gender" form.gender Gender updateMsg [ ( "M", "Male" ), ( "F", "Female" ) ]
-            , div [ class "col-span-2 grid grid-cols-2 gap-x-4" ]
+            , div [ class "col-span-1 sm:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-x-4" ]
                 [ viewZipCodeField model form
                 , viewStateField form
                 ]
@@ -3087,7 +3087,7 @@ viewFilterDropdown model filterType =
             not (List.isEmpty activeFilters)
     in
     div
-        [ class "absolute left-0 mt-2 w-48 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-10"
+        [ class "absolute left-0 mt-2 w-60 sm:w-48 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-10"
 
         -- IMPORTANT: This mousedown handler prevents the dropdown from closing when clicking inside it
         , Html.Events.stopPropagationOn "mousedown" (Decode.succeed ( NoOp, True ))
@@ -3109,7 +3109,7 @@ viewFilterDropdown model filterType =
                     ]
                     [ text "Clear Filters" ]
                 ]
-            , div [ class "max-h-48 overflow-y-auto p-2" ]
+            , div [ class "max-h-56 sm:max-h-48 overflow-y-auto p-2" ]
                 (case filterType of
                     AgentFilter ->
                         -- Special handling for agent filter since it's using IDs
@@ -3340,10 +3340,10 @@ viewReassignAgentModal model =
                     )
                     agentList
     in
-    div [ class "fixed inset-0 bg-gray-500/75 flex items-center justify-center p-8" ]
-        [ div [ class "bg-white rounded-xl p-10 max-w-2xl w-full mx-4 shadow-xl relative" ]
+    div [ class "fixed inset-0 bg-gray-500/75 flex items-center justify-center p-4 sm:p-8" ]
+        [ div [ class "bg-white rounded-xl p-5 sm:p-8 md:p-10 max-w-2xl w-full mx-4 shadow-xl relative overflow-y-auto max-h-[90vh]" ]
             [ button
-                [ class "absolute top-4 right-4 text-gray-400 hover:text-gray-600 transition-colors duration-200"
+                [ class "absolute top-2 sm:top-4 right-2 sm:right-4 text-gray-400 hover:text-gray-600 transition-colors duration-200"
                 , onClick CloseModal
                 ]
                 [ viewIcon "M6 18L18 6M6 6l12 12" ]
@@ -3361,7 +3361,7 @@ viewReassignAgentModal model =
 
                       else
                         Html.select
-                            [ class "w-full px-4 py-3 bg-white border-[2.5px] border-purple-300 rounded-lg text-gray-700 placeholder-gray-400 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 focus:bg-white transition-all duration-200 appearance-none"
+                            [ class "w-full px-3 py-2 sm:px-4 sm:py-3 bg-white border-[2.5px] border-purple-300 rounded-lg text-gray-700 placeholder-gray-400 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 focus:bg-white transition-all duration-200 appearance-none"
                             , value (String.fromInt (Maybe.withDefault 0 model.editForm.contactOwnerId))
                             , onInput (\val -> SelectReassignAgent (String.toInt val |> Maybe.withDefault 0))
                             ]
@@ -3377,12 +3377,12 @@ viewReassignAgentModal model =
                 ]
             , div [ class "mt-8 flex justify-end space-x-4" ]
                 [ button
-                    [ class "px-6 py-3 bg-white text-gray-700 text-sm font-medium rounded-lg border-2 border-gray-200 hover:border-gray-300 hover:bg-gray-50 transition-colors duration-200 focus:ring-4 focus:ring-purple-100"
+                    [ class "px-4 py-2 sm:px-6 sm:py-3 bg-white text-gray-700 text-sm font-medium rounded-lg border-2 border-gray-200 hover:border-gray-300 hover:bg-gray-50 transition-colors duration-200 focus:ring-4 focus:ring-purple-100"
                     , onClick CloseModal
                     ]
                     [ text "Cancel" ]
                 , button
-                    [ class "px-6 py-3 bg-purple-500 text-white text-sm font-medium rounded-lg hover:bg-purple-600 transition-colors duration-200 focus:ring-4 focus:ring-purple-200"
+                    [ class "px-4 py-2 sm:px-6 sm:py-3 bg-purple-500 text-white text-sm font-medium rounded-lg hover:bg-purple-600 transition-colors duration-200 focus:ring-4 focus:ring-purple-200"
                     , onClick ReassignSelectedContacts
                     ]
                     [ text "Reassign" ]

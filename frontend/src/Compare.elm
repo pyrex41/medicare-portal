@@ -715,7 +715,7 @@ view : Model -> Browser.Document Msg
 view model =
     { title = "Compare Medicare Plans - Medicare Max"
     , body =
-        [ div [ class "container mx-auto px-4 py-8" ]
+        [ div [ class "container mx-auto px-4 py-6 sm:py-8" ]
             [ if model.isLoading then
                 viewLoading
 
@@ -725,12 +725,12 @@ view model =
                         viewError error
 
                     Nothing ->
-                        div [ class "flex flex-col gap-6 text-center mx-auto max-w-3xl" ]
-                            [ h1 [ class "text-2xl font-semibold text-[#1A1A1A] mb-2" ]
+                        div [ class "flex flex-col gap-4 sm:gap-6 text-center mx-auto max-w-3xl" ]
+                            [ h1 [ class "text-xl sm:text-2xl font-semibold text-[#1A1A1A] mb-1 sm:mb-2" ]
                                 [ text "Select a Plan from these recommendations" ]
-                            , div [ class "mt-6" ]
+                            , div [ class "mt-4 sm:mt-6" ]
                                 [ viewPlanToggle model ]
-                            , div [ class "flex justify-center mt-4" ]
+                            , div [ class "flex justify-center mt-3 sm:mt-4" ]
                                 [ viewPillButton "Learn About Plan G vs. Plan N" True OpenGvsNVideo ]
                             , viewPlansCarousel model
                             ]
@@ -779,17 +779,17 @@ viewPlanToggle model =
                 PlanN ->
                     ( "text-[#666666]", "font-medium text-[#1A1A1A]" )
     in
-    div [ class "flex justify-center items-center gap-3 text-base" ]
+    div [ class "flex justify-center items-center gap-2 sm:gap-3 text-sm sm:text-base" ]
         [ span [ class planGClass ] [ text (getPlanGName model) ]
         , button
             [ onClick TogglePlanType
-            , class "w-12 h-6 bg-[#0066FF] rounded-full relative"
+            , class "w-10 sm:w-12 h-5 sm:h-6 bg-[#0066FF] rounded-full relative"
             ]
             [ div
-                [ class "absolute top-0.5 left-0.5 bg-white w-5 h-5 rounded-full shadow-sm transform duration-300 ease-in-out"
+                [ class "absolute top-0.5 left-0.5 bg-white w-4 sm:w-5 h-4 sm:h-5 rounded-full shadow-sm transform duration-300 ease-in-out"
                 , class
                     (if model.selectedPlanType == PlanN then
-                        "translate-x-6"
+                        "translate-x-5 sm:translate-x-6"
 
                      else
                         "translate-x-0"
@@ -848,12 +848,12 @@ viewPlansCarousel model =
         totalCards =
             List.length currentPlans
     in
-    div [ class "relative w-full max-w-[640px] mx-auto mt-8" ]
-        [ div [ class "absolute left-1/2 transform -translate-x-1/2 -top-6 z-10" ]
+    div [ class "relative w-full max-w-[640px] mx-auto mt-6 sm:mt-8" ]
+        [ div [ class "absolute left-1/2 transform -translate-x-1/2 -top-4 sm:-top-6 z-10" ]
             [ viewCarouselDots model totalCards ]
         , if List.isEmpty currentPlans then
-            div [ class "text-center py-8" ]
-                [ p [ class "text-gray-500" ] [ text "No plans available to display." ] ]
+            div [ class "text-center py-4 sm:py-8" ]
+                [ p [ class "text-gray-500 text-sm sm:text-base" ] [ text "No plans available to display." ] ]
 
           else
             div [ class "overflow-hidden" ]
@@ -864,7 +864,7 @@ viewPlansCarousel model =
                     (List.map (viewPlanCard model) currentPlans)
                 ]
         , viewCarouselControls model totalCards
-        , div [ class "mt-8 text-center text-sm text-[#666666] max-w-lg mx-auto" ]
+        , div [ class "mt-6 sm:mt-8 text-center text-xs sm:text-sm text-[#666666] max-w-lg mx-auto px-2" ]
             [ p [ class "mb-2" ]
                 [ text "These are the three least expensive plans available. All Medicare Supplement plans of the same letter (G or N) provide identical coverage, as mandated by federal law." ]
             , p []
@@ -875,12 +875,12 @@ viewPlansCarousel model =
 
 viewCarouselDots : Model -> Int -> Html Msg
 viewCarouselDots model totalCards =
-    div [ class "flex space-x-3" ]
+    div [ class "flex space-x-2 sm:space-x-3" ]
         (List.range 0 (totalCards - 1)
             |> List.map
                 (\index ->
                     div
-                        [ class "w-3 h-3 rounded-full transition-colors duration-200"
+                        [ class "w-2 h-2 sm:w-3 sm:h-3 rounded-full transition-colors duration-200"
                         , class
                             (if index == model.currentCardIndex then
                                 "bg-[#0066FF]"
@@ -896,15 +896,15 @@ viewCarouselDots model totalCards =
 
 viewCarouselControls : Model -> Int -> Html Msg
 viewCarouselControls model totalCards =
-    div [ class "absolute w-full flex justify-between items-center", style "top" "50%" ]
+    div [ class "absolute w-full flex justify-between items-center px-1 sm:px-0", style "top" "50%" ]
         [ button
-            [ class "bg-[#F5F8FF] w-10 h-10 rounded-lg shadow-sm -ml-5 flex justify-center items-center disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[#E5EFFF] transition-colors"
+            [ class "bg-[#F5F8FF] w-9 h-9 sm:w-10 sm:h-10 rounded-lg shadow-sm -ml-1 sm:-ml-5 flex justify-center items-center disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[#E5EFFF] transition-colors"
             , onClick PreviousCard
             , disabled (model.currentCardIndex == 0)
             ]
             [ text "←" ]
         , button
-            [ class "bg-[#F5F8FF] w-10 h-10 rounded-lg shadow-sm -mr-5 flex justify-center items-center disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[#E5EFFF] transition-colors"
+            [ class "bg-[#F5F8FF] w-9 h-9 sm:w-10 sm:h-10 rounded-lg shadow-sm -mr-1 sm:-mr-5 flex justify-center items-center disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[#E5EFFF] transition-colors"
             , onClick NextCard
             , disabled (model.currentCardIndex == totalCards - 1)
             ]
@@ -922,19 +922,19 @@ viewPlanCard model plan =
             else
                 plan.price
     in
-    div [ class "flex-shrink-0 w-full px-4 relative" ]
-        [ div [ class "bg-white rounded-2xl shadow-sm p-8" ]
-            [ div [ class "mb-8 flex justify-center items-center h-16" ]
+    div [ class "flex-shrink-0 w-full px-2 sm:px-4 relative" ]
+        [ div [ class "bg-white rounded-2xl shadow-sm p-4 sm:p-8" ]
+            [ div [ class "mb-4 sm:mb-8 flex justify-center items-center h-12 sm:h-16" ]
                 [ img [ src plan.image, alt (plan.name ++ " logo"), class "h-full object-contain" ] [] ]
-            , div [ class "text-center mb-6" ]
+            , div [ class "text-center mb-4 sm:mb-6" ]
                 [ p [ class "text-[#1A1A1A]" ]
-                    [ span [ class "text-[48px] font-bold leading-none" ]
+                    [ span [ class "text-3xl sm:text-[48px] font-bold leading-none" ]
                         [ text ("$" ++ String.fromFloat displayPrice) ]
-                    , span [ class "text-lg text-[#666666] ml-1" ] [ text "/mo" ]
+                    , span [ class "text-base sm:text-lg text-[#666666] ml-1" ] [ text "/mo" ]
                     ]
                 ]
-            , div [ class "mb-6" ]
-                [ label [ class "flex items-center justify-center text-sm text-[#666666] gap-2" ]
+            , div [ class "mb-4 sm:mb-6" ]
+                [ label [ class "flex items-center justify-center text-xs sm:text-sm text-[#666666] gap-2" ]
                     [ input
                         [ type_ "checkbox"
                         , class "w-4 h-4 rounded border-gray-300 text-[#0066FF] focus:ring-[#0066FF]"
@@ -954,13 +954,13 @@ viewPlanCard model plan =
                         Nothing ->
                             "/eligibility"
                     )
-                , class "w-full bg-[#7C3AED] text-white py-4 px-4 rounded-lg hover:bg-[#6D28D9] transition-colors mb-8 font-medium text-base inline-block text-center"
+                , class "w-full bg-[#7C3AED] text-white py-3 sm:py-4 px-3 sm:px-4 rounded-lg hover:bg-[#6D28D9] transition-colors mb-4 sm:mb-8 font-medium text-sm sm:text-base inline-block text-center"
                 , onClick (SelectPlan plan)
                 ]
                 [ text "See If I Qualify" ]
-            , div [ class "border-t border-[#E5E5E5] pt-6" ]
-                [ h3 [ class "font-medium text-base text-[#1A1A1A] text-left mb-4" ] [ text "GAPS Plan G Covers:" ]
-                , ul [ class "space-y-3" ]
+            , div [ class "border-t border-[#E5E5E5] pt-4 sm:pt-6" ]
+                [ h3 [ class "font-medium text-sm sm:text-base text-[#1A1A1A] text-left mb-2 sm:mb-4" ] [ text "GAPS Plan G Covers:" ]
+                , ul [ class "space-y-2 sm:space-y-3" ]
                     (List.map viewCoverageItem plan.coverageSummary)
                 ]
             ]
@@ -978,26 +978,26 @@ calculateDiscount plan =
 
 viewCoverageItem : CoverageItem -> Html Msg
 viewCoverageItem item =
-    li [ class "flex flex-col" ]
-        [ div [ class "flex justify-between items-center" ]
-            [ span [ class "text-sm text-left font-medium text-neutral-700" ] [ text item.name ]
+    li [ class "flex flex-col sm:flex-row sm:items-center" ]
+        [ div [ class "flex justify-between items-center sm:w-full sm:flex-wrap gap-1" ]
+            [ span [ class "text-xs sm:text-sm text-left font-medium text-neutral-700" ] [ text item.name ]
             , div [ class "flex items-center" ]
                 [ if item.percentageCovered == 0 then
-                    span [ class "bg-medicare-danger-light text-medicare-danger text-xs font-medium px-2.5 py-1 rounded-full whitespace-nowrap" ]
+                    span [ class "bg-medicare-danger-light text-medicare-danger text-xs font-medium px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full whitespace-nowrap" ]
                         [ text "NOT COVERED" ]
 
                   else if item.percentageCovered == 100 then
-                    span [ class "bg-medicare-success-light text-medicare-success text-xs font-medium px-2.5 py-1 rounded-full" ]
+                    span [ class "bg-medicare-success-light text-medicare-success text-xs font-medium px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full" ]
                         [ text "COVERED" ]
 
                   else
-                    span [ class "bg-medicare-success-light text-medicare-success text-xs font-medium px-2.5 py-1 rounded-full whitespace-nowrap" ]
+                    span [ class "bg-medicare-success-light text-medicare-success text-xs font-medium px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full whitespace-nowrap" ]
                         [ text (String.fromInt item.percentageCovered ++ "% COVERED") ]
                 ]
             ]
         , case item.note of
             Just noteText ->
-                p [ class "text-xs text-neutral-500 mt-1 text-right" ] [ text noteText ]
+                p [ class "text-[10px] sm:text-xs text-neutral-500 mt-0.5 sm:mt-1 text-right w-full" ] [ text noteText ]
 
             Nothing ->
                 text ""
@@ -1007,13 +1007,13 @@ viewCoverageItem item =
 viewPillButton : String -> Bool -> Msg -> Html Msg
 viewPillButton label isVideo msg =
     button
-        [ class "mx-auto bg-white text-brand px-4 py-2 rounded-full border border-brand hover:bg-brand/5 transition-colors flex items-center justify-center gap-2"
+        [ class "mx-auto bg-white text-brand px-3 sm:px-4 py-1.5 sm:py-2 rounded-full border border-brand hover:bg-brand/5 transition-colors flex items-center justify-center gap-1 sm:gap-2 text-xs sm:text-sm"
         , onClick msg
         ]
         [ if isVideo then
-            div [ class "flex items-center justify-center gap-1" ]
+            div [ class "flex items-center justify-center gap-0.5 sm:gap-1" ]
                 [ text "▶"
-                , span [ class "text-xs" ] [ text "Video" ]
+                , span [ class "text-[10px] sm:text-xs" ] [ text "Video" ]
                 ]
 
           else
@@ -1026,17 +1026,17 @@ viewGvsNModal : Model -> Html Msg
 viewGvsNModal model =
     if model.showGvsNVideo then
         div [ class "fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" ]
-            [ div [ class "bg-white rounded-lg p-8 w-[95%] max-w-5xl mx-auto flex flex-col items-center relative" ]
+            [ div [ class "bg-white rounded-lg p-4 sm:p-8 w-[95%] max-w-5xl mx-auto flex flex-col items-center relative" ]
                 [ button
-                    [ class "absolute top-2 right-2 text-gray-500 hover:text-gray-700"
+                    [ class "absolute top-2 right-2 text-gray-500 hover:text-gray-700 text-xl p-1"
                     , onClick CloseGvsNVideo
                     ]
                     [ text "×" ]
-                , h2 [ class "text-2xl font-bold mb-4 text-center" ] [ text "Plan G vs. Plan N" ]
-                , p [ class "mb-4 text-center" ] [ text "Understanding the differences" ]
-                , p [ class "mb-4 text-center" ] [ text "Watch this video to learn about the key differences between Plan G and Plan N" ]
+                , h2 [ class "text-xl sm:text-2xl font-bold mb-2 sm:mb-4 text-center" ] [ text "Plan G vs. Plan N" ]
+                , p [ class "mb-2 sm:mb-4 text-center text-sm sm:text-base" ] [ text "Understanding the differences" ]
+                , p [ class "mb-3 sm:mb-4 text-center text-sm sm:text-base" ] [ text "Watch this video to learn about the key differences between Plan G and Plan N" ]
                 , div [ class "w-full max-w-3xl mx-auto" ]
-                    [ div [ class "relative", style "padding-top" "125%" ]
+                    [ div [ class "relative", style "padding-top" "100%" ]
                         [ iframe
                             [ src "https://player.vimeo.com/video/1018402330?autoplay=0&title=0&byline=0&portrait=0&responsive=1"
                             , class "w-full h-full absolute top-0 left-0"
@@ -1048,7 +1048,7 @@ viewGvsNModal model =
                         ]
                     ]
                 , button
-                    [ class "bg-med-green-500 text-white px-6 py-2 rounded hover:bg-med-green-600 mt-4"
+                    [ class "bg-med-green-500 text-white px-4 sm:px-6 py-2 rounded hover:bg-med-green-600 mt-4 w-full sm:w-auto"
                     , onClick CloseGvsNVideo
                     ]
                     [ text "Continue" ]
@@ -1063,17 +1063,17 @@ viewQualificationModal : Model -> Html Msg
 viewQualificationModal model =
     if model.showQualificationVideo then
         div [ class "fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" ]
-            [ div [ class "bg-white rounded-lg p-8 w-[95%] max-w-5xl mx-auto flex flex-col items-center relative" ]
+            [ div [ class "bg-white rounded-lg p-4 sm:p-8 w-[95%] max-w-5xl mx-auto flex flex-col items-center relative" ]
                 [ button
-                    [ class "absolute top-2 right-2 text-gray-500 hover:text-gray-700"
+                    [ class "absolute top-2 right-2 text-gray-500 hover:text-gray-700 text-xl p-1"
                     , onClick CloseQualificationVideo
                     ]
                     [ text "×" ]
-                , h1 [ class "text-2xl font-bold mb-4 text-center" ] [ text "Great Choice!" ]
-                , h2 [ class "text-xl font-bold mb-4 text-center" ] [ text "Now let's see if you qualify" ]
-                , p [ class "mb-4 text-center" ] [ text "Watch this video to understand the process of qualifying for the plan you selected" ]
+                , h1 [ class "text-xl sm:text-2xl font-bold mb-2 sm:mb-4 text-center" ] [ text "Great Choice!" ]
+                , h2 [ class "text-lg sm:text-xl font-bold mb-2 sm:mb-4 text-center" ] [ text "Now let's see if you qualify" ]
+                , p [ class "mb-3 sm:mb-4 text-center text-sm sm:text-base" ] [ text "Watch this video to understand the process of qualifying for the plan you selected" ]
                 , div [ class "w-full max-w-3xl mx-auto" ]
-                    [ div [ class "relative", style "padding-top" "125%" ]
+                    [ div [ class "relative", style "padding-top" "100%" ]
                         [ iframe
                             [ src "https://player.vimeo.com/video/1018421414?autoplay=0&title=0&byline=0&portrait=0&responsive=1"
                             , class "w-full h-full absolute top-0 left-0"
@@ -1085,7 +1085,7 @@ viewQualificationModal model =
                         ]
                     ]
                 , button
-                    [ class "bg-med-green-500 text-white px-6 py-2 rounded hover:bg-med-green-600 mt-4"
+                    [ class "bg-med-green-500 text-white px-4 sm:px-6 py-2 rounded hover:bg-med-green-600 mt-4 w-full sm:w-auto"
                     , onClick CloseQualificationVideo
                     ]
                     [ text "Continue" ]
@@ -1123,18 +1123,18 @@ viewRatesModal model =
                         "Plan N"
         in
         div [ class "fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" ]
-            [ div [ class "bg-white rounded-lg p-8 w-[95%] max-w-5xl mx-auto flex flex-col items-center relative" ]
+            [ div [ class "bg-white rounded-lg p-4 sm:p-8 w-[95%] max-w-5xl mx-auto flex flex-col items-center relative" ]
                 [ button
-                    [ class "absolute top-2 right-2 text-gray-500 hover:text-gray-700"
+                    [ class "absolute top-2 right-2 text-gray-500 hover:text-gray-700 text-xl p-1"
                     , onClick CloseRatesVideo
                     ]
                     [ text "×" ]
-                , h1 [ class "text-2xl font-bold mb-4 text-center" ] [ text "Good News!" ]
-                , h2 [ class "text-xl font-bold mb-4 text-center" ]
+                , h1 [ class "text-xl sm:text-2xl font-bold mb-2 sm:mb-4 text-center" ] [ text "Good News!" ]
+                , h2 [ class "text-base sm:text-xl font-bold mb-2 sm:mb-4 text-center leading-tight" ]
                     [ text ("We found " ++ planTypeText ++ " options as low as " ++ rateText ++ " in " ++ countyText ++ " County, " ++ stateText) ]
-                , p [ class "mb-4 text-center" ] [ text "Watch this quick video for 3 things to consider while reviewing your quotes" ]
+                , p [ class "mb-3 sm:mb-4 text-center text-sm sm:text-base" ] [ text "Watch this quick video for 3 things to consider while reviewing your quotes" ]
                 , div [ class "w-full max-w-3xl mx-auto" ]
-                    [ div [ class "relative", style "padding-top" "125%" ]
+                    [ div [ class "relative", style "padding-top" "100%" ]
                         [ iframe
                             [ src "https://player.vimeo.com/video/1018421439?autoplay=0&title=0&byline=0&portrait=0&responsive=1"
                             , class "w-full h-full absolute top-0 left-0"
@@ -1146,7 +1146,7 @@ viewRatesModal model =
                         ]
                     ]
                 , button
-                    [ class "bg-med-green-500 text-white px-6 py-2 rounded hover:bg-med-green-600 mt-4"
+                    [ class "bg-med-green-500 text-white px-4 sm:px-6 py-2 rounded hover:bg-med-green-600 mt-4 w-full sm:w-auto"
                     , onClick CloseRatesVideo
                     ]
                     [ text "Continue" ]

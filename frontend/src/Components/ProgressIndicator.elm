@@ -15,10 +15,11 @@ type alias Step =
 
 view : List Step -> Html msg
 view steps =
-    div [ class "fixed left-0 top-0 bottom-0 w-[280px] bg-white border-r border-[#eaecf0] overflow-y-auto" ]
-        [ div [ class "flex flex-col h-full px-8 py-8" ]
+    div 
+        [ class "md:fixed hidden md:block left-0 top-0 bottom-0 w-[280px] bg-white border-r border-[#eaecf0] overflow-y-auto" ]
+        [ div [ class "flex flex-col h-full px-4 sm:px-8 py-6 sm:py-8" ]
             [ -- Logo
-              div [ class "mb-14" ]
+              div [ class "mb-6 sm:mb-14" ]
                 [ div [ class "flex items-center" ]
                     [ a
                         [ href "/"
@@ -26,7 +27,7 @@ view steps =
                         ]
                         [ img
                             [ src "/images/medicare-max-logo.png"
-                            , class "h-8 w-auto"
+                            , class "h-6 sm:h-8 w-auto"
                             , alt "Medicare Max logo"
                             ]
                             []
@@ -36,11 +37,11 @@ view steps =
 
             -- Steps
             , div [ class "flex-1" ]
-                [ div [ class "space-y-7" ] (List.map viewStep steps)
+                [ div [ class "space-y-4 sm:space-y-7" ] (List.map viewStep steps)
                 ]
 
             -- Help email
-            , div [ class "text-sm text-[#667085] flex items-center mt-8" ]
+            , div [ class "text-xs sm:text-sm text-[#667085] flex items-center mt-6 sm:mt-8" ]
                 [ span [ class "mr-2" ] [ text "✉️" ]
                 , text "help@medicaremax.com"
                 ]

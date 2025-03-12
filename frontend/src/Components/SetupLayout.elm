@@ -2,7 +2,7 @@ module Components.SetupLayout exposing (SetupStep(..), view)
 
 import Components.ProgressIndicator as ProgressIndicator
 import Html exposing (..)
-import Html.Attributes exposing (class, style)
+import Html.Attributes exposing (alt, class, src, style)
 
 
 type SetupStep
@@ -23,9 +23,90 @@ view : SetupStep -> Bool -> Int -> List (Html msg) -> Html msg
 view currentStep isBasicPlan stepNumber content =
     div [ class "min-h-screen bg-gray-50 flex" ]
         [ viewProgressIndicator currentStep isBasicPlan stepNumber
-        , div [ class "flex-1 ml-[280px] pb-24" ]
-            [ div [ class "max-w-3xl mx-auto py-6 px-4 sm:px-6 lg:px-8" ]
-                content
+        , div [ class "flex-1 md:ml-[280px] pb-16 sm:pb-24" ]
+            [ div [ class "max-w-3xl mx-auto py-4 sm:py-6 px-4 sm:px-6 lg:px-8" ]
+                (viewMobileProgressSteps currentStep isBasicPlan stepNumber :: content)
+            ]
+        ]
+
+-- Mobile progress steps shown at the top of the content area on small screens
+viewMobileProgressSteps : SetupStep -> Bool -> Int -> Html msg
+viewMobileProgressSteps currentStep isBasicPlan stepNumber =
+    let
+        steps = 
+            if isBasicPlan then
+                5 -- Basic plan has 5 steps
+            else
+                6 -- Multi-agent plan has 6 steps
+                
+        currentStepIndex =
+            case currentStep of
+                PlanSelection ->
+                    0
+                    
+                OrganizationSetup ->
+                    stepNumber
+                    
+                AgentSetup ->
+                    stepNumber
+                    
+        -- Calculate progress percentage
+        progressPercentage =
+            String.fromInt (min 100 (ceiling (toFloat (currentStepIndex * 100) / toFloat (steps - 1))))
+            
+        -- Get current step number and title
+        stepTitle =
+            case (currentStep, stepNumber) of
+                (PlanSelection, _) ->
+                    "Choose Plan"
+                    
+                (OrganizationSetup, 2) ->
+                    "Personal Details"
+                    
+                (OrganizationSetup, 3) ->
+                    "Company Details"
+                    
+                (OrganizationSetup, 4) ->
+                    "Licensing Settings"
+                    
+                (AgentSetup, 5) ->
+                    "Add Team Members"
+                    
+                (OrganizationSetup, 5) ->
+                    if isBasicPlan then
+                        "Payment"
+                    else
+                        "Licensing Settings"
+                    
+                (OrganizationSetup, 6) ->
+                    "Payment"
+                    
+                _ ->
+                    "Setup"
+    in
+    div [ class "md:hidden mb-6 pb-4 border-b border-gray-200" ]
+        [ div [ class "flex justify-between items-center mb-4" ]
+            [ img
+                [ src "/images/medicare-max-logo.png"
+                , class "h-6 w-auto"
+                , alt "Medicare Max logo"
+                ]
+                []
+            , div [ class "text-xs text-gray-500" ]
+                [ text "Step "
+                , text (String.fromInt (currentStepIndex + 1))
+                , text " of "
+                , text (String.fromInt steps)
+                ]
+            ]
+        , h1 [ class "text-xl font-semibold text-gray-900 mb-2" ]
+            [ text stepTitle ]
+        , div [ class "h-1 w-full bg-gray-200 rounded overflow-hidden" ]
+            [ div
+                [ class "h-full bg-[#03045e] transition-all duration-300"
+                , style "width" (progressPercentage ++ "%")
+                ]
+                []
             ]
         ]
 
