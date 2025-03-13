@@ -2188,7 +2188,7 @@ updateCompanyDetails : String -> String -> CompanyDetails.Model -> Cmd Msg
 updateCompanyDetails orgSlug sessionToken model =
     let
         url =
-            "/api/organizations/" ++ orgSlug ++ "/update-company"
+            "/api/onboarding/company-details"
 
         body =
             Encode.object
@@ -2201,8 +2201,13 @@ updateCompanyDetails orgSlug sessionToken model =
                 ]
                 |> Http.jsonBody
 
-        headers =
-            [ Http.header "Authorization" ("Bearer " ++ sessionToken) ]
+        _ =
+            Debug.log "Updating company details"
+                { url = url
+                , agencyName = model.agencyName
+                , website = model.website
+                , phone = model.phone
+                }
 
         decoder =
             Decode.map
@@ -2212,11 +2217,11 @@ updateCompanyDetails orgSlug sessionToken model =
                 (Decode.field "onboardingStep" Decode.int)
     in
     Http.request
-        { method = "PUT"
+        { method = "POST"
         , url = url
         , body = body
         , expect = Http.expectJson CompanyUpdated decoder
-        , headers = headers
+        , headers = [] -- The session token is in the cookies, no need to pass it
         , timeout = Nothing
         , tracker = Nothing
         }

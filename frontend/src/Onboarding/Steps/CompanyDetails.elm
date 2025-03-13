@@ -342,18 +342,29 @@ isFormValid model =
 fetchCompanyDetails : String -> Cmd Msg
 fetchCompanyDetails orgSlug =
     Http.get
-        { url = "/api/organizations/" ++ orgSlug ++ "/company-details"
+        { url = "/api/onboarding/settings"
         , expect = Http.expectJson GotCompanyDetails companyDetailsDecoder
         }
 
 
 saveCompanyDetails : Model -> Cmd Msg
 saveCompanyDetails model =
+    let
+        url =
+            "/api/onboarding/company-details"
+
+        _ =
+            Debug.log "Saving company details"
+                { url = url
+                , agencyName = model.agencyName
+                , website = model.website
+                , phone = model.phone
+                }
+    in
     Http.request
-        { method = "PUT"
-        , headers =
-            [ Http.header "Authorization" ("Bearer " ++ model.sessionToken) ]
-        , url = "/api/organizations/" ++ model.orgSlug ++ "/update-company"
+        { method = "POST"
+        , headers = [] -- The session token is in the cookies, no need to pass it
+        , url = url
         , body = Http.jsonBody (encodeCompanyDetails model)
         , expect = Http.expectWhatever CompanyDetailsSaved
         , timeout = Nothing
