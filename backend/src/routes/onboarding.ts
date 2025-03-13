@@ -176,8 +176,19 @@ export function createOnboardingRoutes() {
         try {
           if (licensingInfo.length > 0 && licensingInfo[0].org_settings) {
             const settings = JSON.parse(licensingInfo[0].org_settings);
-            carrierContracts = settings.carrierContracts || [];
-            useSmartSendForGI = settings.useSmartSendForGI || false;
+            
+            // Check if settings has a licensing property (new structure)
+            if (settings.licensing && settings.licensing.carrierContracts) {
+              carrierContracts = settings.licensing.carrierContracts;
+            } else {
+              // Fallback to old structure
+              carrierContracts = settings.carrierContracts || [];
+            }
+            
+            // Check for useSmartSendForGI in both places
+            useSmartSendForGI = settings.useSmartSendForGI || 
+                               (settings.licensing && settings.licensing.useSmartSendForGI) || 
+                               false;
           }
         } catch (e) {
           logger.warn(`Error parsing org settings: ${e}`);
@@ -1641,8 +1652,19 @@ export function createOnboardingRoutes() {
         try {
           if (licensingInfo.length > 0 && licensingInfo[0].org_settings) {
             const settings = JSON.parse(licensingInfo[0].org_settings);
-            carrierContracts = settings.carrierContracts || [];
-            useSmartSendForGI = settings.useSmartSendForGI || false;
+            
+            // Check if settings has a licensing property (new structure)
+            if (settings.licensing && settings.licensing.carrierContracts) {
+              carrierContracts = settings.licensing.carrierContracts;
+            } else {
+              // Fallback to old structure
+              carrierContracts = settings.carrierContracts || [];
+            }
+            
+            // Check for useSmartSendForGI in both places
+            useSmartSendForGI = settings.useSmartSendForGI || 
+                               (settings.licensing && settings.licensing.useSmartSendForGI) || 
+                               false;
           }
         } catch (e) {
           logger.warn(`Error parsing org settings: ${e}`);

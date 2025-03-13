@@ -16,6 +16,8 @@ import Http
 import Json.Decode as Decode
 import Json.Decode.Pipeline as Pipeline
 import Json.Encode as Encode
+import Url
+import Url.Builder as UrlBuilder
 
 
 
@@ -29,6 +31,7 @@ type alias Model =
     , orgSlug : String
     , subscriptionDetails : Maybe SubscriptionDetails
     , processingPayment : Bool
+    , email : String
     }
 
 
@@ -64,8 +67,9 @@ init key orgSlug =
                 , trialEndsAt = Just "30 days after signup"
                 }
       , processingPayment = False
+      , email = ""
       }
-    , Cmd.none
+    , fetchUserEmail
     )
 
 
@@ -79,6 +83,7 @@ type Msg
     | GotSubscriptionDetails (Result Http.Error SubscriptionDetails)
     | PaymentProcessed (Result Http.Error String)
     | OnboardingCompleted (Result Http.Error ())
+    | GotUserEmail (Result Http.Error String)
     | NoOp
 
 
@@ -94,8 +99,8 @@ update msg model =
     case msg of
         CompleteOnboarding ->
             ( { model | processingPayment = True }
-            , Cmd.none
-            , NavigateToWalkthrough
+            , completeOnboarding model.orgSlug
+            , NoOutMsg
             )
 
         ProcessPayment ->
@@ -142,12 +147,33 @@ update msg model =
                     , ShowError "Failed to process payment"
                     )
 
+        GotUserEmail result ->
+            case result of
+                Ok email ->
+                    ( { model | email = email }
+                    , Cmd.none
+                    , NoOutMsg
+                    )
+
+                Err _ ->
+                    -- If we can't get the email, just continue without it
+                    ( model, Cmd.none, NoOutMsg )
+
         OnboardingCompleted result ->
             case result of
                 Ok _ ->
+                    -- Directly navigate to login with redirect to walkthrough
+                    let
+                        loginUrl =
+                            if String.isEmpty model.email then
+                                "/login?onboarding=completed&redirect=/walkthrough"
+
+                            else
+                                "/login?onboarding=completed&email=" ++ Url.percentEncode model.email ++ "&redirect=/walkthrough"
+                    in
                     ( { model | isLoading = False, processingPayment = False }
-                    , Cmd.none
-                    , Completed
+                    , Nav.pushUrl model.key loginUrl
+                    , NoOutMsg
                     )
 
                 Err _ ->
@@ -194,7 +220,7 @@ view model =
                         [ if model.processingPayment then
                             div [ class "flex items-center justify-center" ]
                                 [ div [ class "mr-2 animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-white" ] []
-                                , text "Processing..."
+                                , text "Finalizing your account... You'll be redirected to login shortly."
                                 ]
 
                           else
@@ -329,8 +355,8 @@ redirectToStripeCheckout sessionId =
 completeOnboarding : String -> Cmd Msg
 completeOnboarding orgSlug =
     Http.post
-        { url = "/api/organizations/complete-onboarding"
-        , body = Http.emptyBody -- The parent component will send the full payload
+        { url = "/api/onboarding/complete"
+        , body = Http.emptyBody
         , expect = Http.expectWhatever OnboardingCompleted
         }
 
@@ -367,3 +393,24 @@ encodeCheckoutRequest orgSlug =
 subscriptions : Model -> Sub Msg
 subscriptions _ =
     Sub.none
+
+
+
+-- New function to fetch user email
+
+
+fetchUserEmail : Cmd Msg
+fetchUserEmail =
+    Http.get
+        { url = "/api/onboarding/user-details"
+        , expect = Http.expectJson GotUserEmail userEmailDecoder
+        }
+
+
+
+-- New decoder for user email
+
+
+userEmailDecoder : Decode.Decoder String
+userEmailDecoder =
+    Decode.field "email" Decode.string

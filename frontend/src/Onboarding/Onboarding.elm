@@ -207,6 +207,7 @@ init key orgSlug session initialStep =
                   , orgSlug = orgSlug
                   , subscriptionDetails = Nothing
                   , processingPayment = False
+                  , email = ""
                   }
                 , Cmd.none
                 )
@@ -1136,9 +1137,9 @@ update msg model =
         CompleteOnboarding result ->
             case result of
                 Ok _ ->
-                    -- Redirect to login with special parameters instead of walkthrough
+                    -- Redirect to login with special parameters for magic link to redirect to walkthrough
                     ( { model | isLoading = False }
-                    , Nav.pushUrl model.key ("/login?onboarding=completed&email=" ++ Url.percentEncode model.userDetailsModel.email)
+                    , Nav.pushUrl model.key ("/login?onboarding=completed&email=" ++ Url.percentEncode model.userDetailsModel.email ++ "&redirect=/walkthrough")
                     )
 
                 Err _ ->
@@ -1407,7 +1408,7 @@ update msg model =
                     -- After licensing settings are updated, navigate to the next step
                     let
                         nextStep =
-                            if not model.isBasicPlan then
+                            if not response.isBasicPlan then
                                 AddAgentsStep
 
                             else
@@ -1426,6 +1427,10 @@ update msg model =
                     )
 
                 Err error ->
+                    let
+                        _ =
+                            Debug.log "Error updating licensing details" error
+                    in
                     ( { model
                         | isLoading = False
                         , error = Just "Failed to update licensing details. Please try again."
@@ -1962,14 +1967,8 @@ completeOnboarding model =
     case model.sessionToken of
         Just token ->
             Http.post
-                { url = "/api/organizations/finalize-onboarding"
-                , body =
-                    Http.jsonBody
-                        (Encode.object
-                            [ ( "orgSlug", Encode.string model.orgSlug )
-                            , ( "sessionToken", Encode.string token )
-                            ]
-                        )
+                { url = "/api/onboarding/complete"
+                , body = Http.emptyBody
                 , expect = Http.expectWhatever CompleteOnboarding
                 }
 
@@ -2390,7 +2389,12 @@ updateLicensingDetails orgSlug sessionToken model =
         , url = url
         , body = body
         , expect = Http.expectJson LicensingUpdated decoder
-        , headers = [] -- The session token is in the cookies, no need to pass it
+        , headers =
+            if String.isEmpty sessionToken then
+                []
+
+            else
+                [ Http.header "x-onboarding-session" sessionToken ]
         , timeout = Nothing
         , tracker = Nothing
         }

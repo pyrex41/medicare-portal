@@ -60,7 +60,7 @@ type Msg
     | ToggleSmartSendForGI Bool
     | NextStepClicked
     | GotLicensingSettings (Result Http.Error LicensingSettingsResponse)
-    | LicensingSettingsSaved (Result Http.Error ())
+    | LicensingSettingsSaved (Result Http.Error LicensingSettingsUpdateResponse)
     | NoOp
 
 
@@ -73,6 +73,13 @@ type OutMsg
 type alias LicensingSettingsResponse =
     { carrierContracts : List String
     , useSmartSendForGI : Bool
+    }
+
+
+type alias LicensingSettingsUpdateResponse =
+    { success : Bool
+    , message : String
+    , isBasicPlan : Bool
     }
 
 
@@ -126,10 +133,17 @@ update msg model =
             ( { model | useSmartSendForGI = useSmartSend }, Cmd.none, NoOutMsg )
 
         NextStepClicked ->
-            ( { model | isLoading = True }
-            , saveLicensingSettings model
-            , NoOutMsg
-            )
+            if List.isEmpty model.carrierContracts then
+                ( { model | error = Just "Please select at least one carrier contract" }
+                , Cmd.none
+                , ShowError "Please select at least one carrier contract"
+                )
+
+            else
+                ( { model | isLoading = True }
+                , saveLicensingSettings model
+                , NoOutMsg
+                )
 
         GotLicensingSettings result ->
             case result of
@@ -162,15 +176,25 @@ update msg model =
 
         LicensingSettingsSaved result ->
             case result of
-                Ok _ ->
+                Ok response ->
                     let
                         _ =
-                            Debug.log "Licensing settings saved successfully" ()
+                            Debug.log "Licensing settings saved successfully" response
                     in
-                    ( { model | isLoading = False }
-                    , Cmd.none
-                    , NextStep
-                    )
+                    if response.success then
+                        ( { model | isLoading = False }
+                        , Cmd.none
+                        , NextStep
+                        )
+
+                    else
+                        ( { model
+                            | error = Just response.message
+                            , isLoading = False
+                          }
+                        , Cmd.none
+                        , ShowError response.message
+                        )
 
                 Err error ->
                     let
@@ -202,41 +226,45 @@ view model =
             , p [ class "text-gray-600 mt-2" ]
                 [ text "Configure your carrier contracts" ]
             ]
-        , div [ class "space-y-6" ]
-            [ viewExpandableSection "Carrier Contracts"
-                (viewCarriersGrid model)
-                model.expandedSections
-            , viewGISettings model
-            , if model.error /= Nothing then
-                div [ class "bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded" ]
-                    [ text (Maybe.withDefault "" model.error) ]
+        , if model.isLoading && List.isEmpty model.carrierContracts then
+            viewLoading
 
-              else
-                text ""
-            , div [ class "flex justify-center" ]
-                [ button
-                    [ class "px-6 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                    , onClick NextStepClicked
-                    , disabled (List.isEmpty model.carrierContracts || model.isLoading)
-                    , title
-                        (if List.isEmpty model.carrierContracts then
-                            "Please select at least one carrier contract"
+          else
+            div [ class "space-y-6" ]
+                [ viewExpandableSection "Carrier Contracts"
+                    (viewCarriersGrid model)
+                    model.expandedSections
+                , viewGISettings model
+                , if model.error /= Nothing then
+                    div [ class "bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded" ]
+                        [ text (Maybe.withDefault "" model.error) ]
 
-                         else
-                            ""
-                        )
-                    ]
-                    [ if model.isLoading then
-                        div [ class "flex items-center justify-center" ]
-                            [ div [ class "animate-spin mr-2 h-4 w-4 border-t-2 border-b-2 border-white rounded-full" ] []
-                            , text "Saving..."
-                            ]
+                  else
+                    text ""
+                , div [ class "flex justify-center" ]
+                    [ button
+                        [ class "px-6 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                        , onClick NextStepClicked
+                        , disabled (List.isEmpty model.carrierContracts || model.isLoading)
+                        , title
+                            (if List.isEmpty model.carrierContracts then
+                                "Please select at least one carrier contract"
 
-                      else
-                        text "Continue"
+                             else
+                                ""
+                            )
+                        ]
+                        [ if model.isLoading then
+                            div [ class "flex items-center justify-center" ]
+                                [ div [ class "animate-spin mr-2 h-4 w-4 border-t-2 border-b-2 border-white rounded-full" ] []
+                                , text "Saving..."
+                                ]
+
+                          else
+                            text "Continue"
+                        ]
                     ]
                 ]
-            ]
         ]
 
 
@@ -367,7 +395,7 @@ td attributes children =
 
 
 fetchLicensingSettings : String -> Cmd Msg
-fetchLicensingSettings orgSlug =
+fetchLicensingSettings _ =
     Http.get
         { url = "/api/onboarding/settings"
         , expect = Http.expectJson GotLicensingSettings licensingSettingsDecoder
@@ -387,7 +415,7 @@ saveLicensingSettings model =
     Http.post
         { url = "/api/onboarding/licensing-settings"
         , body = Http.jsonBody (encodeLicensingSettings model)
-        , expect = Http.expectWhatever LicensingSettingsSaved
+        , expect = Http.expectJson LicensingSettingsSaved licensingSettingsUpdateResponseDecoder
         }
 
 
@@ -402,6 +430,14 @@ licensingSettingsDecoder =
             |> Pipeline.required "carrierContracts" (Decode.list Decode.string)
             |> Pipeline.required "useSmartSendForGI" Decode.bool
         )
+
+
+licensingSettingsUpdateResponseDecoder : Decode.Decoder LicensingSettingsUpdateResponse
+licensingSettingsUpdateResponseDecoder =
+    Decode.succeed LicensingSettingsUpdateResponse
+        |> Pipeline.required "success" Decode.bool
+        |> Pipeline.required "message" Decode.string
+        |> Pipeline.required "isBasicPlan" Decode.bool
 
 
 encodeLicensingSettings : Model -> Encode.Value
