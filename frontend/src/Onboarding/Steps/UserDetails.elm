@@ -13,7 +13,6 @@ module Onboarding.Steps.UserDetails exposing
 
 import Browser.Navigation as Nav
 import Char
-import Debug
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (..)
@@ -267,10 +266,6 @@ update msg model =
         UserDetailsSaved result ->
             case result of
                 Ok response ->
-                    let
-                        _ =
-                            Debug.log "User details saved response" response
-                    in
                     if response.success then
                         ( { model | isLoading = False, orgSlug = response.slug }
                         , Cmd.none
@@ -308,9 +303,6 @@ update msg model =
 
                                     else
                                         "Bad body: " ++ errorMessage
-
-                        _ =
-                            Debug.log "Failed to save user details" errorMsg
                     in
                     ( { model
                         | error = Just ("Failed to save user details: " ++ errorMsg)
@@ -441,12 +433,15 @@ view model =
                             ]
                         ]
                     ]
+
+                {--
                 , if model.error /= Nothing then
                     div [ class "bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded" ]
                         [ text (Maybe.withDefault "" model.error) ]
 
                   else
                     text ""
+                --}
                 , div [ class "flex justify-center" ]
                     [ button
                         [ class
@@ -672,15 +667,6 @@ saveUserDetails model =
 
         url =
             "/api/onboarding/user-details"
-
-        _ =
-            Debug.log "Saving user details"
-                { url = url
-                , firstName = model.firstName
-                , lastName = model.lastName
-                , email = model.email
-                , phone = phoneDigits
-                }
     in
     Http.request
         { method = "POST"

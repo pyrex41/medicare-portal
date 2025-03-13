@@ -365,14 +365,6 @@ saveCompanyDetails model =
     let
         url =
             "/api/onboarding/company-details"
-
-        _ =
-            Debug.log "Saving company details"
-                { url = url
-                , agencyName = model.agencyName
-                , website = model.website
-                , phone = model.phone
-                }
     in
     Http.request
         { method = "POST"

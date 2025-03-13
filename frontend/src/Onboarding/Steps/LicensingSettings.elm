@@ -9,7 +9,6 @@ module Onboarding.Steps.LicensingSettings exposing
     )
 
 import Browser.Navigation as Nav
-import Debug
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (..)
@@ -148,10 +147,6 @@ update msg model =
         GotLicensingSettings result ->
             case result of
                 Ok response ->
-                    let
-                        _ =
-                            Debug.log "Got licensing settings" response
-                    in
                     ( { model
                         | carrierContracts = response.carrierContracts
                         , useSmartSendForGI = response.useSmartSendForGI
@@ -162,10 +157,6 @@ update msg model =
                     )
 
                 Err error ->
-                    let
-                        _ =
-                            Debug.log "Error loading licensing settings" error
-                    in
                     ( { model
                         | error = Just "Failed to load licensing settings"
                         , isLoading = False
@@ -177,10 +168,6 @@ update msg model =
         LicensingSettingsSaved result ->
             case result of
                 Ok response ->
-                    let
-                        _ =
-                            Debug.log "Licensing settings saved successfully" response
-                    in
                     if response.success then
                         ( { model | isLoading = False }
                         , Cmd.none
@@ -197,10 +184,6 @@ update msg model =
                         )
 
                 Err error ->
-                    let
-                        _ =
-                            Debug.log "Error saving licensing settings" error
-                    in
                     ( { model
                         | error = Just "Failed to save licensing settings"
                         , isLoading = False
@@ -404,14 +387,6 @@ fetchLicensingSettings _ =
 
 saveLicensingSettings : Model -> Cmd Msg
 saveLicensingSettings model =
-    let
-        _ =
-            Debug.log "Saving licensing settings"
-                { url = "/api/onboarding/licensing-settings"
-                , carrierContracts = model.carrierContracts
-                , useSmartSendForGI = model.useSmartSendForGI
-                }
-    in
     Http.post
         { url = "/api/onboarding/licensing-settings"
         , body = Http.jsonBody (encodeLicensingSettings model)

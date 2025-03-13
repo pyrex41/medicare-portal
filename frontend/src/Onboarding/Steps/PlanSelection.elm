@@ -13,7 +13,6 @@ module Onboarding.Steps.PlanSelection exposing
 
 import Basics
 import Browser.Navigation as Nav
-import Debug
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (..)
@@ -184,10 +183,6 @@ update msg model =
         OnboardingInitialized result ->
             case result of
                 Ok response ->
-                    let
-                        _ =
-                            Debug.log "Onboarding initialized success" response
-                    in
                     ( { model | isLoading = False }
                     , Cmd.none
                     , OnboardingInitializedSuccess response
@@ -195,9 +190,6 @@ update msg model =
 
                 Err error ->
                     let
-                        _ =
-                            Debug.log "Onboarding initialized error" error
-
                         errorMsg =
                             case error of
                                 Http.BadUrl url ->
@@ -215,23 +207,28 @@ update msg model =
                                 Http.BadBody message ->
                                     "Onboarding initialized successfully, but there was an issue with the response format. Continuing..."
                     in
-                    if String.contains "planType" (Debug.toString error) then
-                        -- If the error is about planType, we can still proceed
-                        -- The decoder will use the default planType we sent in the request
-                        let
-                            _ =
-                                Debug.log "Proceeding despite planType error" model.selectedPlan
-                        in
-                        ( { model | isLoading = False }
-                        , Cmd.none
-                        , NextStep
-                        )
+                    -- Check for the specific error case without using Debug
+                    case error of
+                        Http.BadBody message ->
+                            if String.contains "planType" message then
+                                -- This is the specific error we're looking for - missing planType field
+                                ( { model | isLoading = False }
+                                , Cmd.none
+                                , NextStep
+                                )
 
-                    else
-                        ( { model | error = Just errorMsg, isLoading = False }
-                        , Cmd.none
-                        , ShowError errorMsg
-                        )
+                            else
+                                ( { model | error = Just errorMsg, isLoading = False }
+                                , Cmd.none
+                                , ShowError errorMsg
+                                )
+
+                        -- For all other error types, show the error message
+                        _ ->
+                            ( { model | error = Just errorMsg, isLoading = False }
+                            , Cmd.none
+                            , ShowError errorMsg
+                            )
 
         LoadPlanFromSession planType ->
             -- Handle loading a plan selection from the session
@@ -245,10 +242,6 @@ update msg model =
                 Just planId ->
                     if planId == "enterprise" then
                         -- For Enterprise, redirect to the Enterprise form
-                        let
-                            _ =
-                                Debug.log "Selected Enterprise plan" "Redirecting to Enterprise form"
-                        in
                         ( model
                         , Cmd.none
                         , SelectedPlan "enterprise"
@@ -256,10 +249,6 @@ update msg model =
 
                     else
                         -- Initialize onboarding with selected plan
-                        let
-                            _ =
-                                Debug.log "Initializing onboarding with plan" planId
-                        in
                         ( { model | isLoading = True }
                         , initializeOnboarding planId
                         , NextStep
@@ -599,12 +588,6 @@ initializeOnboarding planType =
                 , ( "organizationName", Encode.string "New Medicare Agency" )
                 ]
                 |> Http.jsonBody
-
-        _ =
-            Debug.log "Making API call to initialize onboarding"
-                { url = url
-                , planType = planType
-                }
 
         decoder =
             Decode.map5

@@ -162,17 +162,9 @@ update msg model =
         OnboardingCompleted result ->
             case result of
                 Ok _ ->
-                    -- Directly navigate to login with redirect to walkthrough
-                    let
-                        loginUrl =
-                            if String.isEmpty model.email then
-                                "/login?onboarding=completed&redirect=/walkthrough"
-
-                            else
-                                "/login?onboarding=completed&email=" ++ Url.percentEncode model.email ++ "&redirect=/walkthrough"
-                    in
+                    -- Directly navigate to walkthrough, bypassing login
                     ( { model | isLoading = False, processingPayment = False }
-                    , Nav.pushUrl model.key loginUrl
+                    , Nav.pushUrl model.key "/walkthrough"
                     , NoOutMsg
                     )
 

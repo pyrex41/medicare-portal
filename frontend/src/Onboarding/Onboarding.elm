@@ -12,7 +12,6 @@ import Browser
 import Browser.Dom as Dom
 import Browser.Navigation as Nav
 import Components.SetupLayout as SetupLayout
-import Debug
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (..)
@@ -460,10 +459,6 @@ update msg model =
                 updatedModelWithStep =
                     case outMsg of
                         PlanSelection.NextStep ->
-                            let
-                                _ =
-                                    Debug.log "PlanSelection.NextStep received in Onboarding.elm" "Changing to UserDetailsStep"
-                            in
                             changeStep UserDetailsStep model
 
                         _ ->
@@ -473,10 +468,6 @@ update msg model =
                 ( updatedModel, onboardingCmd ) =
                     case outMsg of
                         PlanSelection.OnboardingInitializedSuccess response ->
-                            let
-                                _ =
-                                    Debug.log "OnboardingInitializedSuccess in Onboarding.elm" response
-                            in
                             -- Only store onboarding state if we haven't already
                             if model.sessionToken == Nothing then
                                 let
@@ -496,9 +487,6 @@ update msg model =
 
                                     navigationCmd =
                                         Nav.pushUrl model.key "/onboarding/personal"
-
-                                    _ =
-                                        Debug.log "Navigating to UserDetails step" "/onboarding/personal"
                                 in
                                 ( { updatedModelWithStep
                                     | organizationId = Just response.organizationId
@@ -519,9 +507,6 @@ update msg model =
 
                         PlanSelection.NextStep ->
                             let
-                                _ =
-                                    Debug.log "PlanSelection.NextStep received" "Changing to UserDetailsStep"
-
                                 navigationCmd =
                                     Nav.pushUrl model.key "/onboarding/personal"
                             in
@@ -530,10 +515,6 @@ update msg model =
                             )
 
                         _ ->
-                            let
-                                _ =
-                                    Debug.log "Other PlanSelection outMsg" outMsg
-                            in
                             ( updatedModelWithStep, Cmd.none )
 
                 -- Handle error messages
@@ -1137,9 +1118,9 @@ update msg model =
         CompleteOnboarding result ->
             case result of
                 Ok _ ->
-                    -- Redirect to login with special parameters for magic link to redirect to walkthrough
+                    -- Redirect directly to walkthrough, bypassing login
                     ( { model | isLoading = False }
-                    , Nav.pushUrl model.key ("/login?onboarding=completed&email=" ++ Url.percentEncode model.userDetailsModel.email ++ "&redirect=/walkthrough")
+                    , Nav.pushUrl model.key "/walkthrough"
                     )
 
                 Err _ ->
@@ -1427,10 +1408,6 @@ update msg model =
                     )
 
                 Err error ->
-                    let
-                        _ =
-                            Debug.log "Error updating licensing details" error
-                    in
                     ( { model
                         | isLoading = False
                         , error = Just "Failed to update licensing details. Please try again."
@@ -1578,9 +1555,6 @@ update msg model =
         RandomOrgNameGenerated orgName ->
             -- When we get a random org name, update both the org slug and the CompanyDetails model
             let
-                _ =
-                    Debug.log "orgName" orgName
-
                 oldCompanyDetailsModel =
                     model.companyDetailsModel
 
@@ -1652,14 +1626,7 @@ view model =
                         model.isBasicPlan
                         (getStepNumber model.step)
                         [ div [ class "max-w-3xl mx-auto" ]
-                            [ case model.error of
-                                Just errorMsg ->
-                                    div [ class "bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4" ]
-                                        [ text errorMsg ]
-
-                                Nothing ->
-                                    text ""
-                            , viewCurrentStep model
+                            [ viewCurrentStep model
                             , viewNavigationControls model
                             ]
                         ]
@@ -1709,21 +1676,16 @@ viewCurrentStep model =
                     -- don't add another bracket here
 
                 else
-                    case model.addAgentsModel of
-                        Just addAgentsModel ->
-                            Html.map AddAgentsMsg (AddAgents.view addAgentsModel)
-
-                        Nothing ->
-                            div [ class "text-center p-8" ]
-                                [ text "There was an issue loading the team members form. Please try refreshing the page."
-                                , div [ class "mt-4" ]
-                                    [ button
-                                        [ class "px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-                                        , onClick (NavigateToStep PaymentStep)
-                                        ]
-                                        [ text "Continue to Payment" ]
-                                    ]
+                    div [ class "text-center p-8" ]
+                        [ text "This step is not available for the basic plan. Please continue to payment."
+                        , div [ class "mt-4" ]
+                            [ button
+                                [ class "px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+                                , onClick (NavigateToStep PaymentStep)
                                 ]
+                                [ text "Continue to Payment" ]
+                            ]
+                        ]
 
             -- don't add another bracket here
             PaymentStep ->
@@ -2211,15 +2173,6 @@ initializeOnboarding planType email orgSlug =
                 (Decode.field "sessionToken" Decode.string)
                 (Decode.field "onboardingStep" Decode.int)
                 (Decode.field "planType" (Decode.oneOf [ Decode.string, Decode.null "basic" ]))
-
-        _ =
-            Debug.log "Updating user details"
-                { url = url
-                , firstName = ""
-                , lastName = ""
-                , email = email
-                , phone = ""
-                }
     in
     Http.post
         { url = url
@@ -2282,15 +2235,6 @@ updateUserDetails orgSlug sessionToken model =
                 ]
                 |> Http.jsonBody
 
-        _ =
-            Debug.log "Updating user details"
-                { url = url
-                , firstName = model.firstName
-                , lastName = model.lastName
-                , email = model.email
-                , phone = phoneDigits
-                }
-
         decoder =
             Decode.map
                 (\onboardingStep ->
@@ -2326,14 +2270,6 @@ updateCompanyDetails orgSlug sessionToken model =
                 ]
                 |> Http.jsonBody
 
-        _ =
-            Debug.log "Updating company details"
-                { url = url
-                , agencyName = model.agencyName
-                , website = model.website
-                , phone = model.phone
-                }
-
         decoder =
             Decode.map
                 (\onboardingStep ->
@@ -2364,13 +2300,6 @@ updateLicensingDetails orgSlug sessionToken model =
                 , ( "useSmartSendForGI", Encode.bool model.useSmartSendForGI )
                 ]
                 |> Http.jsonBody
-
-        _ =
-            Debug.log "Updating licensing details"
-                { url = url
-                , carrierContracts = model.carrierContracts
-                , useSmartSendForGI = model.useSmartSendForGI
-                }
 
         decoder =
             Decode.map3
