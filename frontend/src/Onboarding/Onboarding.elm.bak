@@ -12,7 +12,6 @@ import Browser
 import Browser.Dom as Dom
 import Browser.Navigation as Nav
 import Components.SetupLayout as SetupLayout
-import Debug
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (..)
@@ -36,13 +35,13 @@ import Utils.RandomOrgName exposing (generateOrgName)
 -- Ports for local storage
 
 
-port storeOnboardingState : { organizationId : String, slug : String, sessionToken : String, step : Int, planType : String } -> Cmd msg
+port storeOnboardingState : { organizationId : String, slug : String, sessionToken : String, step : Int } -> Cmd msg
 
 
 port retrieveOnboardingState : () -> Cmd msg
 
 
-port onboardingStateReceived : (Maybe { organizationId : String, slug : String, sessionToken : String, step : Int, planType : String } -> msg) -> Sub msg
+port onboardingStateReceived : (Maybe { organizationId : String, slug : String, sessionToken : String, step : Int } -> msg) -> Sub msg
 
 
 
@@ -229,7 +228,6 @@ init key orgSlug session initialStep =
       }
     , Cmd.batch
         [ Cmd.map PlanSelectionMsg planSelectionCmd
-        , Cmd.map UserDetailsMsg userDetailsCmd
         , Cmd.map CompanyDetailsMsg companyDetailsCmd
         , Cmd.map LicensingSettingsMsg licensingSettingsCmd
         , Cmd.map PaymentMsg paymentCmd
@@ -284,7 +282,7 @@ type Msg
       -- New messages for progressive onboarding
     | InitOnboarding String String -- planType, email
     | OnboardingInitialized (Result Http.Error { organizationId : Int, slug : String, sessionToken : String, onboardingStep : Int, planType : String })
-    | OnboardingStateReceived (Maybe { organizationId : String, slug : String, sessionToken : String, step : Int, planType : String })
+    | OnboardingStateReceived (Maybe { organizationId : String, slug : String, sessionToken : String, step : Int })
     | UpdateUser
     | UserUpdated (Result Http.Error { onboardingStep : Int })
     | UpdateCompany
@@ -342,10 +340,6 @@ update msg model =
                 updatedModelWithStep =
                     case outMsg of
                         PlanSelection.NextStep ->
-                            let
-                                _ =
-                                    Debug.log "PlanSelection.NextStep received in Onboarding.elm" "Changing to UserDetailsStep"
-                            in
                             changeStep UserDetailsStep model
 
                         _ ->
@@ -355,10 +349,6 @@ update msg model =
                 ( updatedModel, onboardingCmd ) =
                     case outMsg of
                         PlanSelection.OnboardingInitializedSuccess response ->
-                            let
-                                _ =
-                                    Debug.log "OnboardingInitializedSuccess in Onboarding.elm" response
-                            in
                             -- Only store onboarding state if we haven't already
                             if model.sessionToken == Nothing then
                                 let
@@ -367,7 +357,6 @@ update msg model =
                                         , slug = response.slug
                                         , sessionToken = response.sessionToken
                                         , step = response.onboardingStep
-                                        , planType = response.planType
                                         }
 
                                     oldUserDetailsModel =
@@ -375,12 +364,6 @@ update msg model =
 
                                     updatedUserDetailsModel =
                                         { oldUserDetailsModel | orgSlug = response.slug }
-
-                                    navigationCmd =
-                                        Nav.pushUrl model.key "/onboarding/personal"
-
-                                    _ =
-                                        Debug.log "Navigating to UserDetails step" "/onboarding/personal"
                                 in
                                 ( { updatedModelWithStep
                                     | organizationId = Just response.organizationId
@@ -390,32 +373,13 @@ update msg model =
                                     , step = UserDetailsStep
                                     , userDetailsModel = updatedUserDetailsModel
                                   }
-                                , Cmd.batch
-                                    [ storeOnboardingState state
-                                    , navigationCmd
-                                    ]
+                                , storeOnboardingState state
                                 )
 
                             else
                                 ( updatedModelWithStep, Cmd.none )
 
-                        PlanSelection.NextStep ->
-                            let
-                                _ =
-                                    Debug.log "PlanSelection.NextStep received" "Changing to UserDetailsStep"
-
-                                navigationCmd =
-                                    Nav.pushUrl model.key "/onboarding/personal"
-                            in
-                            ( updatedModelWithStep
-                            , navigationCmd
-                            )
-
                         _ ->
-                            let
-                                _ =
-                                    Debug.log "Other PlanSelection outMsg" outMsg
-                            in
                             ( updatedModelWithStep, Cmd.none )
 
                 -- Handle error messages
@@ -439,7 +403,6 @@ update msg model =
                 , addAgentsCmd
                 , onboardingCmd
                 , storePlanCmd
-                , Task.perform (\_ -> ScrollToTop) (Task.succeed ())
                 ]
             )
 
@@ -723,7 +686,6 @@ update msg model =
                                     Cmd.none
 
                                 AddAgents.NextStep ->
-                                    Task.perform (\_ -> ScrollToTop) (Task.succeed ())
 
                                 AddAgents.ShowError err ->
                                     Cmd.none
@@ -856,7 +818,6 @@ update msg model =
                                     Cmd.none
 
                                 EnterpriseForm.BackToPlanSelection ->
-                                    Task.perform (\_ -> ScrollToTop) (Task.succeed ())
 
                                 EnterpriseForm.ShowError err ->
                                     Cmd.none
@@ -986,7 +947,6 @@ update msg model =
             , Cmd.batch
                 [ mainCmd
                 , urlUpdateCmd
-                , Task.perform (\_ -> ScrollToTop) (Task.succeed ())
                 ]
             )
 
@@ -999,7 +959,6 @@ update msg model =
                       }
                     , Cmd.batch
                         [ Nav.pushUrl model.key (getStepFragment previousStep)
-                        , Task.perform (\_ -> ScrollToTop) (Task.succeed ())
                         ]
                     )
 
@@ -1015,7 +974,6 @@ update msg model =
             ( changeStep nextStep model
             , Cmd.batch
                 [ Nav.pushUrl model.key (getStepFragment nextStep)
-                , Task.perform (\_ -> ScrollToTop) (Task.succeed ())
                 ]
             )
 
@@ -1084,7 +1042,6 @@ update msg model =
                     , Cmd.batch
                         [ storeOnboardingState state
                         , Nav.pushUrl model.key "/onboarding/personal"
-                        , Cmd.map UserDetailsMsg userDetailsCmd
                         ]
                     )
 
@@ -1124,12 +1081,13 @@ update msg model =
                         organizationId =
                             String.toInt state.organizationId
 
-                        -- Use the planType from the state
-                        planType =
-                            state.planType
-
                         -- Extract plan type from session - in a real app this should be retrieved from API
                         -- For now we'll load it from cookie/session storage via a port
+                        planType =
+                            "basic"
+
+                        -- This should actually be retrieved from API using state.slug and state.sessionToken
+                        -- Create command to fetch the plan type from the API
                         fetchPlanTypeCmd =
                             if not (String.isEmpty state.slug) && not (String.isEmpty state.sessionToken) then
                                 -- In a real implementation, issue an API request to get the plan
@@ -1188,7 +1146,6 @@ update msg model =
                                 -- Send command to load the plan from session if we have one
                                 case updatedPlanSelectionModel.selectedPlan of
                                     Just plan ->
-                                        Cmd.map PlanSelectionMsg (Task.perform (\_ -> PlanSelection.LoadPlanFromSession plan) (Task.succeed ()))
 
                                     Nothing ->
                                         Cmd.none
@@ -1432,7 +1389,6 @@ update msg model =
                 planSelectionCmd =
                     if model.step == PlanSelectionStep then
                         -- Pass the plan type to PlanSelection module
-                        Cmd.map PlanSelectionMsg (Task.perform (\_ -> PlanSelection.LoadPlanFromSession planType) (Task.succeed ()))
 
                     else
                         Cmd.none
@@ -1442,9 +1398,7 @@ update msg model =
         UserDetailsReceived maybeUserData ->
             case maybeUserData of
                 Just userData ->
-                    ( model
-                    , Cmd.map UserDetailsMsg (Task.perform (\_ -> UserDetails.loadUserFromSession userData) (Task.succeed ()))
-                    )
+                    ( model, Cmd.none )
 
                 Nothing ->
                     ( model, Cmd.none )
@@ -2082,12 +2036,12 @@ initializeOnboarding planType email orgSlug =
 
         decoder =
             Decode.map5
-                (\organizationId slug sessionToken onboardingStep planTypeValue ->
+                (\organizationId slug sessionToken onboardingStep planType ->
                     { organizationId = organizationId
                     , slug = slug
                     , sessionToken = sessionToken
                     , onboardingStep = onboardingStep
-                    , planType = planTypeValue
+                    , planType = planType
                     }
                 )
                 (Decode.field "organizationId" Decode.int)
@@ -2117,12 +2071,28 @@ resumeOnboarding email =
 
         decoder =
             Decode.map5
-                (\organizationId slug sessionToken onboardingStep planTypeValue ->
+                (\organizationId slug sessionToken onboardingStep planType ->
                     { organizationId = organizationId
                     , slug = slug
                     , sessionToken = sessionToken
                     , onboardingStep = onboardingStep
-                    , planType = planTypeValue
+                    , planType = planType
+                    }
+                )
+                (Decode.field "organizationId" Decode.int)
+                (Decode.field "slug" Decode.string)
+                (Decode.field "sessionToken" Decode.string)
+                (Decode.field "onboardingStep" Decode.int)
+                (Decode.field "planType" (Decode.oneOf [ Decode.string, Decode.null "basic" ]))
+
+        decoder =
+            Decode.map5
+                (\organizationId slug sessionToken onboardingStep planType ->
+                    { organizationId = organizationId
+                    , slug = slug
+                    , sessionToken = sessionToken
+                    , onboardingStep = onboardingStep
+                    , planType = planType
                     }
                 )
                 (Decode.field "organizationId" Decode.int)
@@ -2142,29 +2112,20 @@ updateUserDetails : String -> String -> UserDetails.Model -> Cmd Msg
 updateUserDetails orgSlug sessionToken model =
     let
         url =
-            "/api/onboarding/user-details"
-
-        -- Ensure phone number only contains digits
-        phoneDigits =
-            String.filter Char.isDigit model.phone
+            "/api/organizations/" ++ orgSlug ++ "/update-user"
 
         body =
             Encode.object
                 [ ( "firstName", Encode.string model.firstName )
                 , ( "lastName", Encode.string model.lastName )
                 , ( "email", Encode.string model.email )
-                , ( "phone", Encode.string phoneDigits )
+                , ( "phone", Encode.string model.phone )
+                , ( "tempSessionId", Encode.string sessionToken )
                 ]
                 |> Http.jsonBody
 
-        _ =
-            Debug.log "Updating user details"
-                { url = url
-                , firstName = model.firstName
-                , lastName = model.lastName
-                , email = model.email
-                , phone = phoneDigits
-                }
+        headers =
+            [ Http.header "Authorization" ("Bearer " ++ sessionToken) ]
 
         decoder =
             Decode.map
@@ -2174,11 +2135,11 @@ updateUserDetails orgSlug sessionToken model =
                 (Decode.field "onboardingStep" Decode.int)
     in
     Http.request
-        { method = "POST"
+        { method = "PUT"
         , url = url
         , body = body
         , expect = Http.expectJson UserUpdated decoder
-        , headers = [] -- The session token is in the cookies, no need to pass it
+        , headers = headers
         , timeout = Nothing
         , tracker = Nothing
         }

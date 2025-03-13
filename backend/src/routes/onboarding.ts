@@ -61,20 +61,31 @@ export function createOnboardingRoutes() {
   return new Elysia()
     .use(cookie())
     // Get onboarding settings using cookie
-    .get('/api/onboarding/settings', async ({ cookie, set }) => {
+    .get('/api/onboarding/settings', async ({ cookie, set, headers }) => {
       try {
         // Get org slug from cookie
         const orgSlug = cookie.orgSlug;
+        const sessionId = cookie.onboardingSession || headers['x-onboarding-session'];
+        
+        logger.info(`Fetching onboarding settings with cookies - orgSlug: ${orgSlug ? 'present' : 'missing'}, sessionId: ${sessionId ? 'present' : 'missing'}`);
         
         if (!orgSlug) {
           logger.warn('No organization slug found in cookie');
           set.status = 401;
           return { 
-            error: 'No organization found in session' 
+            error: 'No organization found in session',
+            code: 'NO_ORG_SLUG' 
           };
         }
         
-        logger.info(`Fetching onboarding settings for organization ${orgSlug} from cookie`);
+        if (!sessionId) {
+          logger.warn('No session ID found in cookie or header');
+          set.status = 401;
+          return { 
+            error: 'No valid session found',
+            code: 'NO_SESSION' 
+          };
+        }
         
         // Find organization and its admin user
         const orgInfo = await dbInstance.query<{ 
@@ -89,16 +100,33 @@ export function createOnboardingRoutes() {
         }>(
           `SELECT id, name, onboarding_step, subscription_tier, website, phone, primary_color, secondary_color
            FROM organizations 
-           WHERE slug = ? AND onboarding_completed = FALSE
+           WHERE slug = ? AND temp_session_id = ? AND onboarding_completed = FALSE
            LIMIT 1`,
-          [orgSlug]
+          [orgSlug, sessionId]
         );
         
         if (!orgInfo || orgInfo.length === 0) {
-          logger.warn(`Organization not found or onboarding already completed: ${orgSlug}`);
+          logger.warn(`Organization not found or onboarding already completed: ${orgSlug} (session: ${sessionId})`);
+          
+          // Try to find the organization without checking the session
+          const orgWithoutSession = await dbInstance.query<{ id: number }>(
+            `SELECT id FROM organizations WHERE slug = ? AND onboarding_completed = FALSE LIMIT 1`,
+            [orgSlug]
+          );
+          
+          if (orgWithoutSession && orgWithoutSession.length > 0) {
+            logger.warn(`Organization exists but invalid session for: ${orgSlug}`);
+            set.status = 401;
+            return { 
+              error: 'Invalid session for this organization',
+              code: 'INVALID_SESSION' 
+            };
+          }
+          
           set.status = 404;
           return { 
-            error: 'Organization not found or onboarding already completed' 
+            error: 'Organization not found or onboarding already completed',
+            code: 'ORG_NOT_FOUND' 
           };
         }
         
@@ -142,6 +170,53 @@ export function createOnboardingRoutes() {
           [orgId]
         );
         
+        // Get org settings for SmartSend preference
+        const orgSettings = await dbInstance.query<{
+          org_settings: string
+        }>(
+          `SELECT org_settings
+           FROM organizations
+           WHERE id = ?
+           LIMIT 1`,
+          [orgId]
+        );
+        
+        let useSmartSendForGI = false;
+        try {
+          if (orgSettings.length > 0 && orgSettings[0].org_settings) {
+            const settings = JSON.parse(orgSettings[0].org_settings);
+            useSmartSendForGI = settings.useSmartSendForGI || false;
+          }
+        } catch (e) {
+          logger.warn(`Error parsing org settings: ${e}`);
+        }
+        
+        // Get agent list
+        const agentList = await dbInstance.query<{
+          id: number,
+          email: string,
+          first_name: string,
+          last_name: string,
+          phone: string,
+          is_admin: number
+        }>(
+          `SELECT id, email, first_name, last_name, phone, is_admin
+           FROM users
+           WHERE organization_id = ? AND is_agent = 1 AND id NOT IN 
+               (SELECT id FROM users WHERE organization_id = ? AND is_admin = 1 LIMIT 1)`,
+          [orgId, orgId]
+        );
+        
+        const agents = agentList.map(agent => ({
+          id: agent.id,
+          firstName: agent.first_name || '',
+          lastName: agent.last_name || '',
+          email: agent.email || '',
+          phone: agent.phone || '',
+          isAdmin: Boolean(agent.is_admin),
+          isAgent: true
+        }));
+        
         // Build response structure
         const response = {
           onboardingStep: orgInfo[0].onboarding_step,
@@ -166,10 +241,10 @@ export function createOnboardingRoutes() {
           licensingSettingsModel: {
             carrierContracts: licensingInfo.length > 0 ? 
               JSON.parse(licensingInfo[0].carrier_contracts || '[]') : [],
-            useSmartSendForGI: false // Default value
+            useSmartSendForGI: useSmartSendForGI
           },
           addAgentsModel: {
-            agents: [] // Empty by default
+            agents: agents
           },
           paymentModel: {
             extraAgents: 0,
@@ -178,7 +253,7 @@ export function createOnboardingRoutes() {
           enterpriseFormModel: null
         };
         
-        logger.info(`Retrieved onboarding settings for org ${orgSlug} (ID: ${orgId})`);
+        logger.info(`Retrieved onboarding settings for org ${orgSlug} (ID: ${orgId}), step: ${orgInfo[0].onboarding_step}`);
         
         return response;
         
@@ -186,7 +261,8 @@ export function createOnboardingRoutes() {
         logger.error(`Error fetching onboarding settings: ${error}`);
         set.status = 500;
         return { 
-          error: 'Failed to fetch onboarding settings' 
+          error: 'Failed to fetch onboarding settings',
+          code: 'SERVER_ERROR'
         };
       }
     })
@@ -207,14 +283,16 @@ export function createOnboardingRoutes() {
         setCookie('onboardingSession', tempSessionId, {
           httpOnly: true,
           maxAge: 60 * 60 * 24, // 24 hours
-          path: '/'
+          path: '/',
+          sameSite: 'lax'
         });
         
         // Set org slug cookie (not HTTP only so frontend can access it)
         setCookie('orgSlug', slug, {
           httpOnly: false,
           maxAge: 60 * 60 * 24 * 30, // 30 days
-          path: '/'
+          path: '/',
+          sameSite: 'lax'
         });
         
         // Create organization with minimal info
@@ -267,14 +345,16 @@ export function createOnboardingRoutes() {
         setCookie('onboardingSession', tempSessionId, {
           httpOnly: true,
           maxAge: 60 * 60 * 24, // 24 hours
-          path: '/'
+          path: '/',
+          sameSite: 'lax'
         });
         
         // Set org slug cookie (not HTTP only so frontend can access it)
         setCookie('orgSlug', slug, {
           httpOnly: false,
           maxAge: 60 * 60 * 24 * 30, // 30 days
-          path: '/'
+          path: '/',
+          sameSite: 'lax'
         });
         
         // Create organization with minimal info
@@ -459,9 +539,10 @@ export function createOnboardingRoutes() {
           organization_id: number, 
           slug: string, 
           onboarding_step: number,
-          temp_session_id: string 
+          temp_session_id: string,
+          subscription_tier: string 
         }>(
-          `SELECT u.organization_id, o.slug, o.onboarding_step, o.temp_session_id
+          `SELECT u.organization_id, o.slug, o.onboarding_step, o.temp_session_id, o.subscription_tier
            FROM users u
            JOIN organizations o ON u.organization_id = o.id
            WHERE LOWER(u.email) = LOWER(?) AND o.onboarding_completed = FALSE`,
@@ -476,7 +557,7 @@ export function createOnboardingRoutes() {
           };
         }
         
-        const { organization_id, slug, onboarding_step, temp_session_id } = userData[0];
+        const { organization_id, slug, onboarding_step, temp_session_id, subscription_tier } = userData[0];
         
         // Update session token if needed
         let sessionToken = temp_session_id;
@@ -486,29 +567,33 @@ export function createOnboardingRoutes() {
             'UPDATE organizations SET temp_session_id = ? WHERE id = ?',
             [sessionToken, organization_id]
           );
+          logger.info(`Generated new session token for org ${organization_id}`);
         }
         
         // Set session cookie
         setCookie('onboardingSession', sessionToken, {
           httpOnly: true,
           maxAge: 60 * 60 * 24, // 24 hours
-          path: '/'
+          path: '/',
+          sameSite: 'lax'
         });
         
         // Set org slug cookie (not HTTP only so frontend can access it)
         setCookie('orgSlug', slug, {
           httpOnly: false,
           maxAge: 60 * 60 * 24 * 30, // 30 days
-          path: '/'
+          path: '/',
+          sameSite: 'lax'
         });
         
-        logger.info(`Resumed onboarding for organization: ${organization_id}, step: ${onboarding_step}`);
+        logger.info(`Resumed onboarding for organization: ${organization_id}, step: ${onboarding_step}, plan: ${subscription_tier}`);
         
         return {
           organizationId: organization_id,
           slug: slug,
           sessionToken: sessionToken,
-          onboardingStep: onboarding_step
+          onboardingStep: onboarding_step,
+          planType: subscription_tier || 'basic'
         };
         
       } catch (error) {
@@ -551,13 +636,15 @@ export function createOnboardingRoutes() {
           setCookie('onboardingSession', tempSessionId, {
             httpOnly: true,
             maxAge: 60 * 60 * 24, // 24 hours
-            path: '/'
+            path: '/',
+            sameSite: 'lax'
           });
           
           setCookie('orgSlug', slug, {
             httpOnly: false,
             maxAge: 60 * 60 * 24 * 30, // 30 days
-            path: '/'
+            path: '/',
+            sameSite: 'lax'
           });
           
           // Create organization with minimal info
@@ -607,7 +694,8 @@ export function createOnboardingRoutes() {
             message: 'User details saved successfully',
             onboardingStep: 2,
             userEmail: email,
-            slug: slug
+            slug: slug,
+            sessionToken: tempSessionId
           };
         }
         
@@ -620,25 +708,27 @@ export function createOnboardingRoutes() {
           };
         }
         
-        logger.info(`Updating user details for organization ${orgSlug} from cookie${sessionId ? ' with session ID' : ''}`);
-        
-        // Find organization from slug
-        let query = 'SELECT id FROM organizations WHERE slug = ? AND onboarding_completed = FALSE';
-        let params: any[] = [orgSlug];
-        
-        // If session ID is provided, also check it
-        if (sessionId) {
-          query = 'SELECT id FROM organizations WHERE slug = ? AND temp_session_id = ? AND onboarding_completed = FALSE';
-          params = [orgSlug, sessionId];
+        if (!sessionId) {
+          logger.warn('No session ID found in cookie or header');
+          set.status = 401;
+          return { 
+            error: 'No valid session found' 
+          };
         }
         
-        const orgInfo = await dbInstance.query<{ id: number }>(query, params);
+        logger.info(`Updating user details for organization ${orgSlug} with session ID ${sessionId}`);
+        
+        // Find organization from slug and session ID
+        const orgInfo = await dbInstance.query<{ id: number, subscription_tier: string }>(
+          'SELECT id, subscription_tier FROM organizations WHERE slug = ? AND temp_session_id = ? AND onboarding_completed = FALSE',
+          [orgSlug, sessionId]
+        );
         
         if (!orgInfo || orgInfo.length === 0) {
-          logger.warn(`Organization not found or onboarding already completed: ${orgSlug}`);
+          logger.warn(`Organization not found or session invalid for slug: ${orgSlug}`);
           set.status = 404;
           return { 
-            error: 'Organization not found or onboarding already completed' 
+            error: 'Organization not found or invalid session' 
           };
         }
         
@@ -716,7 +806,9 @@ export function createOnboardingRoutes() {
           message: 'User details updated successfully',
           onboardingStep: 2,
           userEmail: email,
-          slug: orgSlug
+          slug: orgSlug,
+          sessionToken: sessionId,
+          planType: orgInfo[0].subscription_tier || 'basic'
         };
         
       } catch (error) {
@@ -739,13 +831,24 @@ export function createOnboardingRoutes() {
           logger.warn('No organization slug found in cookie');
           set.status = 401;
           return { 
-            error: 'No organization found in session' 
+            error: 'No organization found in session',
+            success: false
           };
         }
         
         // Get session ID from cookie or header (prefer cookie)
         const sessionId = cookie.onboardingSession || request.headers.get('x-onboarding-session');
-        logger.info(`Updating company details for organization ${orgSlug} from cookie${sessionId ? ' with session ID' : ''}`);
+        
+        if (!sessionId) {
+          logger.warn('No session ID found in cookie or header');
+          set.status = 401;
+          return { 
+            error: 'No valid session found',
+            success: false
+          };
+        }
+        
+        logger.info(`Updating company details for organization ${orgSlug} with session ID ${sessionId}`);
         
         const { 
           agencyName, 
@@ -763,23 +866,18 @@ export function createOnboardingRoutes() {
           logo?: string
         };
         
-        // Find organization from slug
-        let query = 'SELECT id FROM organizations WHERE slug = ? AND onboarding_completed = FALSE';
-        let params: any[] = [orgSlug];
-        
-        // If session ID is provided, also check it
-        if (sessionId) {
-          query = 'SELECT id FROM organizations WHERE slug = ? AND temp_session_id = ? AND onboarding_completed = FALSE';
-          params = [orgSlug, sessionId];
-        }
-        
-        const orgInfo = await dbInstance.query<{ id: number }>(query, params);
+        // Find organization from slug and session ID
+        const orgInfo = await dbInstance.query<{ id: number, subscription_tier: string }>(
+          'SELECT id, subscription_tier FROM organizations WHERE slug = ? AND temp_session_id = ? AND onboarding_completed = FALSE',
+          [orgSlug, sessionId]
+        );
         
         if (!orgInfo || orgInfo.length === 0) {
-          logger.warn(`Organization not found or onboarding already completed: ${orgSlug}`);
+          logger.warn(`Organization not found or session invalid for slug: ${orgSlug}`);
           set.status = 404;
           return { 
-            error: 'Organization not found or onboarding already completed' 
+            error: 'Organization not found or invalid session',
+            success: false
           };
         }
         
@@ -843,7 +941,9 @@ export function createOnboardingRoutes() {
           success: true,
           message: 'Company details updated successfully',
           onboardingStep: 3,
-          slug: orgSlug
+          slug: orgSlug,
+          sessionToken: sessionId,
+          planType: orgInfo[0].subscription_tier || 'basic'
         };
         
       } catch (error) {
@@ -867,13 +967,24 @@ export function createOnboardingRoutes() {
           logger.warn('No organization slug found in cookie');
           set.status = 401;
           return { 
-            error: 'No organization found in session' 
+            error: 'No organization found in session',
+            success: false
           };
         }
         
         // Get session ID from cookie or header (prefer cookie)
         const sessionId = cookie.onboardingSession || request.headers.get('x-onboarding-session');
-        logger.info(`Updating licensing settings for organization ${orgSlug} from cookie${sessionId ? ' with session ID' : ''}`);
+        
+        if (!sessionId) {
+          logger.warn('No session ID found in cookie or header');
+          set.status = 401;
+          return { 
+            error: 'No valid session found',
+            success: false
+          };
+        }
+        
+        logger.info(`Updating licensing settings for organization ${orgSlug} with session ID ${sessionId}`);
         
         const { 
           carrierContracts,
@@ -883,23 +994,18 @@ export function createOnboardingRoutes() {
           useSmartSendForGI: boolean
         };
         
-        // Find organization from slug
-        let query = 'SELECT id, subscription_tier as tier FROM organizations WHERE slug = ? AND onboarding_completed = FALSE';
-        let params: any[] = [orgSlug];
-        
-        // If session ID is provided, also check it
-        if (sessionId) {
-          query = 'SELECT id, subscription_tier as tier FROM organizations WHERE slug = ? AND temp_session_id = ? AND onboarding_completed = FALSE';
-          params = [orgSlug, sessionId];
-        }
-        
-        const orgInfo = await dbInstance.query<{ id: number, tier: string }>(query, params);
+        // Find organization from slug and session ID
+        const orgInfo = await dbInstance.query<{ id: number, tier: string }>(
+          'SELECT id, subscription_tier as tier FROM organizations WHERE slug = ? AND temp_session_id = ? AND onboarding_completed = FALSE',
+          [orgSlug, sessionId]
+        );
         
         if (!orgInfo || orgInfo.length === 0) {
-          logger.warn(`Organization not found or onboarding already completed: ${orgSlug}`);
+          logger.warn(`Organization not found or session invalid for slug: ${orgSlug}`);
           set.status = 404;
           return { 
-            error: 'Organization not found or onboarding already completed' 
+            error: 'Organization not found or invalid session',
+            success: false
           };
         }
         
@@ -956,7 +1062,10 @@ export function createOnboardingRoutes() {
           message: 'Licensing settings updated successfully',
           onboardingStep: 4,
           nextStep: nextStep,
-          isBasicPlan: isBasicPlan
+          isBasicPlan: isBasicPlan,
+          sessionToken: sessionId,
+          slug: orgSlug,
+          planType: orgInfo[0].tier || 'basic'
         };
         
       } catch (error) {
@@ -970,22 +1079,33 @@ export function createOnboardingRoutes() {
     })
     
     // Endpoint to add agents
-    .post('/api/onboarding/agents', async ({ body, cookie, set }) => {
+    .post('/api/onboarding/agents', async ({ body, cookie, set, request }) => {
       try {
         // Get org slug and session ID from cookies
         const orgSlug = cookie.orgSlug;
-        const tempSessionId = cookie.onboardingSession;
+        const sessionId = cookie.onboardingSession || request.headers.get('x-onboarding-session');
         
-        if (!orgSlug || !tempSessionId) {
-          logger.warn('No organization slug or session ID found in cookie');
+        if (!orgSlug) {
+          logger.warn('No organization slug found in cookie');
           set.status = 401;
           return { 
             success: false,
-            message: 'No organization found in session or invalid session' 
+            message: 'No organization found in session',
+            code: 'NO_ORG_SLUG'
           };
         }
         
-        logger.info(`Adding agents for organization ${orgSlug} from cookie`);
+        if (!sessionId) {
+          logger.warn('No session ID found in cookie or header');
+          set.status = 401;
+          return { 
+            success: false,
+            message: 'Invalid session',
+            code: 'NO_SESSION'
+          };
+        }
+        
+        logger.info(`Adding agents for organization ${orgSlug} with session ID ${sessionId}`);
         
         const { agents } = body as { 
           agents: Array<{
@@ -999,9 +1119,9 @@ export function createOnboardingRoutes() {
         };
         
         // Find organization from slug and session token
-        const orgInfo = await dbInstance.query<{ id: number }>(
-          'SELECT id FROM organizations WHERE slug = ? AND temp_session_id = ?',
-          [orgSlug, tempSessionId]
+        const orgInfo = await dbInstance.query<{ id: number, subscription_tier: string }>(
+          'SELECT id, subscription_tier FROM organizations WHERE slug = ? AND temp_session_id = ?',
+          [orgSlug, sessionId]
         );
         
         if (!orgInfo || orgInfo.length === 0) {
@@ -1009,7 +1129,8 @@ export function createOnboardingRoutes() {
           set.status = 401;
           return { 
             success: false, 
-            message: 'Unauthorized: Invalid session' 
+            message: 'Unauthorized: Invalid session',
+            code: 'INVALID_SESSION'
           };
         }
         
@@ -1072,7 +1193,10 @@ export function createOnboardingRoutes() {
           success: true,
           message: `Added ${addedAgents.length} agents successfully`,
           addedAgents: addedAgents,
-          onboardingStep: 5
+          onboardingStep: 5,
+          sessionToken: sessionId,
+          slug: orgSlug,
+          planType: orgInfo[0].subscription_tier || 'basic'
         };
         
       } catch (error) {
@@ -1080,7 +1204,8 @@ export function createOnboardingRoutes() {
         set.status = 500;
         return { 
           success: false, 
-          message: 'Failed to add agents' 
+          message: 'Failed to add agents',
+          code: 'SERVER_ERROR'
         };
       }
     })

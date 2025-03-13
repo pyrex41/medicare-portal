@@ -11,6 +11,7 @@ module Onboarding.Steps.UserDetails exposing
 
 import Browser.Navigation as Nav
 import Char
+import Debug
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (..)
@@ -257,6 +258,10 @@ update msg model =
         UserDetailsSaved result ->
             case result of
                 Ok response ->
+                    let
+                        _ =
+                            Debug.log "User details saved response" response
+                    in
                     if response.success then
                         ( { model | isLoading = False, orgSlug = response.slug }
                         , Cmd.none
@@ -272,13 +277,38 @@ update msg model =
                         , ShowError response.message
                         )
 
-                Err _ ->
+                Err httpError ->
+                    let
+                        errorMsg =
+                            case httpError of
+                                Http.BadUrl url ->
+                                    "Invalid URL: " ++ url
+
+                                Http.Timeout ->
+                                    "Request timed out"
+
+                                Http.NetworkError ->
+                                    "Network error"
+
+                                Http.BadStatus statusCode ->
+                                    "Bad status: " ++ String.fromInt statusCode
+
+                                Http.BadBody errorMessage ->
+                                    if String.contains "phone" errorMessage then
+                                        "Invalid phone number format. Please enter a valid phone number."
+
+                                    else
+                                        "Bad body: " ++ errorMessage
+
+                        _ =
+                            Debug.log "Failed to save user details" errorMsg
+                    in
                     ( { model
-                        | error = Just "Failed to save user details"
+                        | error = Just ("Failed to save user details: " ++ errorMsg)
                         , isLoading = False
                       }
                     , Cmd.none
-                    , ShowError "Failed to save user details"
+                    , ShowError ("Failed to save user details: " ++ errorMsg)
                     )
 
         LoadUserFromSession userData ->
@@ -610,9 +640,36 @@ fetchUserDetails _ =
 
 saveUserDetails : Model -> Cmd Msg
 saveUserDetails model =
-    Http.post
-        { url = "/api/organizations/signup"
-        , body = Http.jsonBody (encodeUserDetails model)
+    let
+        -- Ensure phone number only contains digits
+        phoneDigits =
+            String.filter Char.isDigit model.phone
+
+        requestBody =
+            Encode.object
+                [ ( "firstName", Encode.string model.firstName )
+                , ( "lastName", Encode.string model.lastName )
+                , ( "email", Encode.string model.email )
+                , ( "phone", Encode.string phoneDigits )
+                ]
+
+        url =
+            "/api/onboarding/user-details"
+
+        _ =
+            Debug.log "Saving user details"
+                { url = url
+                , firstName = model.firstName
+                , lastName = model.lastName
+                , email = model.email
+                , phone = phoneDigits
+                }
+    in
+    Http.request
+        { method = "POST"
+        , url = url
+        , headers = [] -- The session token is in the cookies, no need to pass it
+        , body = Http.jsonBody requestBody
         , expect =
             Http.expectJson UserDetailsSaved
                 (Decode.map3 SignupResponse
@@ -620,6 +677,8 @@ saveUserDetails model =
                     (Decode.field "message" Decode.string)
                     (Decode.field "slug" Decode.string)
                 )
+        , timeout = Nothing
+        , tracker = Nothing
         }
 
 
@@ -709,17 +768,6 @@ emailCheckDecoder =
         [ baseDecoder
         , Decode.field "data" baseDecoder
         , Decode.succeed { available = True, message = "Email is available" } -- Last resort fallback
-        ]
-
-
-encodeUserDetails : Model -> Encode.Value
-encodeUserDetails model =
-    Encode.object
-        [ ( "adminFirstName", Encode.string model.firstName )
-        , ( "adminLastName", Encode.string model.lastName )
-        , ( "adminEmail", Encode.string model.email )
-        , ( "phone", Encode.string model.phone )
-        , ( "organizationName", Encode.string model.orgSlug )
         ]
 
 
