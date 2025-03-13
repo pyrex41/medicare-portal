@@ -1,7 +1,9 @@
 module Onboarding.Steps.UserDetails exposing
-    ( Model
+    ( EmailStatus(..)
+    , Model
     , Msg
     , OutMsg(..)
+    , fetchUserDetails
     , init
     , loadUserFromSession
     , subscriptions
@@ -58,7 +60,7 @@ init key orgSlug isNewSignup =
       , lastName = ""
       , email = ""
       , phone = ""
-      , isLoading = False
+      , isLoading = True -- Set to true while loading
       , error = Nothing
       , key = key
       , orgSlug = orgSlug
@@ -66,13 +68,8 @@ init key orgSlug isNewSignup =
       , loadedFromSession = False
       , sessionToken = ""
       }
-    , if isNewSignup || String.isEmpty (String.trim orgSlug) then
-        -- Don't fetch user details for new users in signup flow
-        Cmd.none
-
-      else
-        -- For existing users, try to fetch from backend and session
-        fetchUserDetails orgSlug
+    , fetchUserDetails orgSlug
+      -- Fetch user details from backend using session cookie
     )
 
 
@@ -119,6 +116,7 @@ type alias UserDetailsResponse =
     , lastName : String
     , email : String
     , phone : String
+    , slug : String
     }
 
 
@@ -220,7 +218,7 @@ update msg model =
                         , phone = model.phone
                         }
                 in
-                ( model
+                ( { model | isLoading = True }
                 , saveUserDetails model
                 , SaveUserToCookie userData
                 )
@@ -234,6 +232,15 @@ update msg model =
         GotUserDetails result ->
             case result of
                 Ok response ->
+                    let
+                        -- Use the slug from the response if it's not empty
+                        updatedSlug =
+                            if String.isEmpty response.slug then
+                                model.orgSlug
+
+                            else
+                                response.slug
+                    in
                     ( { model
                         | firstName = response.firstName
                         , lastName = response.lastName
@@ -241,6 +248,8 @@ update msg model =
                         , phone = response.phone
                         , isLoading = False
                         , emailStatus = Available -- Consider email as valid since it's already registered
+                        , loadedFromSession = True -- Mark as loaded from session
+                        , orgSlug = updatedSlug
                       }
                     , Cmd.none
                     , NoOutMsg
@@ -448,9 +457,17 @@ view model =
                                 "px-4 py-2 sm:px-6 sm:py-3 bg-gray-300 text-gray-500 rounded-md cursor-not-allowed"
                             )
                         , onClick NextStepClicked
-                        , disabled (not (isFormValid model))
+                        , disabled (not (isFormValid model) || model.isLoading)
                         ]
-                        [ text "Continue" ]
+                        [ if model.isLoading then
+                            div [ class "flex items-center justify-center" ]
+                                [ div [ class "animate-spin mr-2 h-4 w-4 border-t-2 border-b-2 border-white rounded-full" ] []
+                                , text "Saving..."
+                                ]
+
+                          else
+                            text "Continue"
+                        ]
                     ]
                 ]
         ]
@@ -633,7 +650,7 @@ isFormValid model =
 fetchUserDetails : String -> Cmd Msg
 fetchUserDetails _ =
     Http.get
-        { url = "/api/me"
+        { url = "/api/onboarding/user-details"
         , expect = Http.expectJson GotUserDetails userDetailsDecoder
         }
 
@@ -736,12 +753,15 @@ handleEmailCheckResponse response =
 
 userDetailsDecoder : Decode.Decoder UserDetailsResponse
 userDetailsDecoder =
-    Decode.field "user"
-        (Decode.map4 UserDetailsResponse
-            (Decode.field "firstName" Decode.string)
-            (Decode.field "lastName" Decode.string)
-            (Decode.field "email" Decode.string)
-            (Decode.field "phone" Decode.string)
+    Decode.map5 UserDetailsResponse
+        (Decode.field "firstName" Decode.string)
+        (Decode.field "lastName" Decode.string)
+        (Decode.field "email" Decode.string)
+        (Decode.field "phone" Decode.string)
+        (Decode.oneOf
+            [ Decode.field "slug" Decode.string
+            , Decode.succeed "" -- Default to empty string if slug is not present
+            ]
         )
 
 

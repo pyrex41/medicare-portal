@@ -9,6 +9,7 @@ module Onboarding.Steps.LicensingSettings exposing
     )
 
 import Browser.Navigation as Nav
+import Debug
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (..)
@@ -37,13 +38,13 @@ init : Nav.Key -> String -> ( Model, Cmd Msg )
 init key orgSlug =
     ( { carrierContracts = []
       , useSmartSendForGI = True
-      , isLoading = False
+      , isLoading = True
       , error = Nothing
       , key = key
       , orgSlug = orgSlug
       , expandedSections = [ "Carrier Contracts", "Guaranteed Issue Settings" ]
       }
-    , Cmd.none
+    , fetchLicensingSettings orgSlug
     )
 
 
@@ -125,11 +126,18 @@ update msg model =
             ( { model | useSmartSendForGI = useSmartSend }, Cmd.none, NoOutMsg )
 
         NextStepClicked ->
-            ( model, Cmd.none, NextStep )
+            ( { model | isLoading = True }
+            , saveLicensingSettings model
+            , NoOutMsg
+            )
 
         GotLicensingSettings result ->
             case result of
                 Ok response ->
+                    let
+                        _ =
+                            Debug.log "Got licensing settings" response
+                    in
                     ( { model
                         | carrierContracts = response.carrierContracts
                         , useSmartSendForGI = response.useSmartSendForGI
@@ -139,7 +147,11 @@ update msg model =
                     , NoOutMsg
                     )
 
-                Err _ ->
+                Err error ->
+                    let
+                        _ =
+                            Debug.log "Error loading licensing settings" error
+                    in
                     ( { model
                         | error = Just "Failed to load licensing settings"
                         , isLoading = False
@@ -151,12 +163,20 @@ update msg model =
         LicensingSettingsSaved result ->
             case result of
                 Ok _ ->
+                    let
+                        _ =
+                            Debug.log "Licensing settings saved successfully" ()
+                    in
                     ( { model | isLoading = False }
                     , Cmd.none
                     , NextStep
                     )
 
-                Err _ ->
+                Err error ->
+                    let
+                        _ =
+                            Debug.log "Error saving licensing settings" error
+                    in
                     ( { model
                         | error = Just "Failed to save licensing settings"
                         , isLoading = False
@@ -197,7 +217,7 @@ view model =
                 [ button
                     [ class "px-6 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
                     , onClick NextStepClicked
-                    , disabled (List.isEmpty model.carrierContracts)
+                    , disabled (List.isEmpty model.carrierContracts || model.isLoading)
                     , title
                         (if List.isEmpty model.carrierContracts then
                             "Please select at least one carrier contract"
@@ -206,7 +226,15 @@ view model =
                             ""
                         )
                     ]
-                    [ text "Continue" ]
+                    [ if model.isLoading then
+                        div [ class "flex items-center justify-center" ]
+                            [ div [ class "animate-spin mr-2 h-4 w-4 border-t-2 border-b-2 border-white rounded-full" ] []
+                            , text "Saving..."
+                            ]
+
+                      else
+                        text "Continue"
+                    ]
                 ]
             ]
         ]
@@ -341,15 +369,23 @@ td attributes children =
 fetchLicensingSettings : String -> Cmd Msg
 fetchLicensingSettings orgSlug =
     Http.get
-        { url = "/api/organizations/" ++ orgSlug ++ "/licensing-settings"
+        { url = "/api/onboarding/settings"
         , expect = Http.expectJson GotLicensingSettings licensingSettingsDecoder
         }
 
 
 saveLicensingSettings : Model -> Cmd Msg
 saveLicensingSettings model =
+    let
+        _ =
+            Debug.log "Saving licensing settings"
+                { url = "/api/onboarding/licensing-settings"
+                , carrierContracts = model.carrierContracts
+                , useSmartSendForGI = model.useSmartSendForGI
+                }
+    in
     Http.post
-        { url = "/api/organizations/" ++ model.orgSlug ++ "/licensing-settings"
+        { url = "/api/onboarding/licensing-settings"
         , body = Http.jsonBody (encodeLicensingSettings model)
         , expect = Http.expectWhatever LicensingSettingsSaved
         }
@@ -361,9 +397,11 @@ saveLicensingSettings model =
 
 licensingSettingsDecoder : Decode.Decoder LicensingSettingsResponse
 licensingSettingsDecoder =
-    Decode.succeed LicensingSettingsResponse
-        |> Pipeline.required "carrierContracts" (Decode.list Decode.string)
-        |> Pipeline.required "useSmartSendForGI" Decode.bool
+    Decode.field "licensingSettingsModel"
+        (Decode.succeed LicensingSettingsResponse
+            |> Pipeline.required "carrierContracts" (Decode.list Decode.string)
+            |> Pipeline.required "useSmartSendForGI" Decode.bool
+        )
 
 
 encodeLicensingSettings : Model -> Encode.Value

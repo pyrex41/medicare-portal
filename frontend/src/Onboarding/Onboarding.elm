@@ -148,24 +148,75 @@ init key orgSlug session initialStep =
         isNewSignup =
             String.isEmpty (String.trim orgSlug) || initialStep == PlanSelectionStep
 
+        -- Initialize UserDetails model
         ( userDetailsModel, userDetailsCmd ) =
             UserDetails.init key orgSlug isNewSignup
 
+        -- Initialize CompanyDetails model only if needed
         ( companyDetailsModel, companyDetailsCmd ) =
-            CompanyDetails.init key orgSlug session
+            if initialStep == CompanyDetailsStep then
+                CompanyDetails.init key orgSlug session
 
+            else
+                -- Create an empty model without making API calls
+                ( { agencyName = ""
+                  , website = ""
+                  , phone = ""
+                  , primaryColor = "#0047AB" -- Default blue
+                  , secondaryColor = "#FFFFFF" -- Default white
+                  , logo = Nothing
+                  , isLoading = False
+                  , error = Nothing
+                  , key = key
+                  , orgSlug = orgSlug
+                  , uploadingLogo = False
+                  , sessionToken = session
+                  , loadedFromSession = False
+                  }
+                , Cmd.none
+                )
+
+        -- Initialize LicensingSettings model only if needed
         ( licensingSettingsModel, licensingSettingsCmd ) =
-            LicensingSettings.init key orgSlug
+            if initialStep == LicensingSettingsStep then
+                LicensingSettings.init key orgSlug
 
+            else
+                -- Create an empty model without making API calls
+                ( { carrierContracts = []
+                  , useSmartSendForGI = True
+                  , isLoading = False
+                  , error = Nothing
+                  , key = key
+                  , orgSlug = orgSlug
+                  , expandedSections = [ "Carrier Contracts", "Guaranteed Issue Settings" ]
+                  }
+                , Cmd.none
+                )
+
+        -- Initialize Payment model only if needed
         ( paymentModel, paymentCmd ) =
-            Payment.init key orgSlug
+            if initialStep == PaymentStep then
+                Payment.init key orgSlug
+
+            else
+                -- Create an empty model without making API calls
+                ( { isLoading = False
+                  , error = Nothing
+                  , key = key
+                  , orgSlug = orgSlug
+                  , subscriptionDetails = Nothing
+                  , processingPayment = False
+                  }
+                , Cmd.none
+                )
 
         -- Check if we need to initialize the AddAgents model based on the initial step
         -- or if we're starting with a non-basic plan
         shouldInitAddAgents =
             initialStep
                 == AddAgentsStep
-                || (planSelectionModel.selectedPlan |> Maybe.map (\p -> p /= "basic") |> Maybe.withDefault False)
+                && (planSelectionModel.selectedPlan |> Maybe.map (\p -> p /= "basic") |> Maybe.withDefault False)
 
         ( addAgentsModel, addAgentsCmd ) =
             if shouldInitAddAgents then
@@ -195,6 +246,46 @@ init key orgSlug session initialStep =
             planSelectionModel.selectedPlan
                 |> Maybe.map (\p -> p == "basic")
                 |> Maybe.withDefault True
+
+        -- Determine which commands to run based on the current step
+        initCmds =
+            case initialStep of
+                PlanSelectionStep ->
+                    [ Cmd.map PlanSelectionMsg planSelectionCmd
+                    , retrieveOnboardingState () -- Check for any in-progress onboarding
+                    , if not (String.isEmpty orgSlug) then
+                        -- When on plan selection, also try to get the plan type directly
+                        retrievePlanType orgSlug
+
+                      else
+                        Cmd.none
+                    ]
+
+                UserDetailsStep ->
+                    [ Cmd.map UserDetailsMsg userDetailsCmd
+                    , retrieveOnboardingState () -- Check for any in-progress onboarding
+                    , if not isNewSignup && not (String.isEmpty orgSlug) then
+                        -- When on user details step and not a new signup, fetch user details
+                        fetchUserDetails orgSlug ""
+
+                      else
+                        Cmd.none
+                    ]
+
+                CompanyDetailsStep ->
+                    [ Cmd.map CompanyDetailsMsg companyDetailsCmd ]
+
+                LicensingSettingsStep ->
+                    [ Cmd.map LicensingSettingsMsg licensingSettingsCmd ]
+
+                AddAgentsStep ->
+                    [ addAgentsCmd ]
+
+                PaymentStep ->
+                    [ Cmd.map PaymentMsg paymentCmd ]
+
+                EnterpriseFormStep ->
+                    [ enterpriseFormCmd ]
     in
     ( { step = initialStep
       , planSelectionModel = planSelectionModel
@@ -217,32 +308,17 @@ init key orgSlug session initialStep =
       , onboardingInProgress = False
 
       -- Initialize step tracking to match current models
-      , userDetailsInitialized = True
-      , companyDetailsInitialized = True
-      , licensingSettingsInitialized = True
+      , userDetailsInitialized = initialStep == UserDetailsStep
+      , companyDetailsInitialized = initialStep == CompanyDetailsStep
+      , licensingSettingsInitialized = initialStep == LicensingSettingsStep
       , addAgentsInitialized = shouldInitAddAgents
-      , paymentInitialized = True
+      , paymentInitialized = initialStep == PaymentStep
       , enterpriseFormInitialized = initialStep == EnterpriseFormStep
 
       -- Initialize step history
       , stepHistory = []
       }
-    , Cmd.batch
-        [ Cmd.map PlanSelectionMsg planSelectionCmd
-        , Cmd.map UserDetailsMsg userDetailsCmd
-        , Cmd.map CompanyDetailsMsg companyDetailsCmd
-        , Cmd.map LicensingSettingsMsg licensingSettingsCmd
-        , Cmd.map PaymentMsg paymentCmd
-        , addAgentsCmd
-        , enterpriseFormCmd
-        , retrieveOnboardingState () -- Check for any in-progress onboarding
-        , if initialStep == PlanSelectionStep && not (String.isEmpty orgSlug) then
-            -- When on plan selection, also try to get the plan type directly
-            retrievePlanType orgSlug
-
-          else
-            Cmd.none
-        ]
+    , Cmd.batch initCmds
     )
 
 
@@ -257,6 +333,44 @@ changeStep newStep model =
         { model
             | step = newStep
             , stepHistory = model.step :: model.stepHistory
+
+            -- Reset initialization flags based on the new step
+            , userDetailsInitialized =
+                if newStep == UserDetailsStep then
+                    False
+
+                else
+                    model.userDetailsInitialized
+            , companyDetailsInitialized =
+                if newStep == CompanyDetailsStep then
+                    False
+
+                else
+                    model.companyDetailsInitialized
+            , licensingSettingsInitialized =
+                if newStep == LicensingSettingsStep then
+                    False
+
+                else
+                    model.licensingSettingsInitialized
+            , addAgentsInitialized =
+                if newStep == AddAgentsStep then
+                    False
+
+                else
+                    model.addAgentsInitialized
+            , paymentInitialized =
+                if newStep == PaymentStep then
+                    False
+
+                else
+                    model.paymentInitialized
+            , enterpriseFormInitialized =
+                if newStep == EnterpriseFormStep then
+                    False
+
+                else
+                    model.enterpriseFormInitialized
         }
 
     else
@@ -300,6 +414,9 @@ type Msg
     | UserDetailsReceived (Maybe { firstName : String, lastName : String, email : String, phone : String })
     | ScrollToTop
     | RandomOrgNameGenerated String
+    | GotUserDetails (Result Http.Error { firstName : String, lastName : String, email : String, phone : String })
+    | InitializeCurrentStep
+    | CompanyDetailsSaved (Result Http.Error { onboardingStep : Int })
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -455,8 +572,15 @@ update msg model =
                             let
                                 nextStep =
                                     getNextStep UserDetailsStep model.isBasicPlan
+
+                                stepChangedModel =
+                                    changeStep nextStep model
+
+                                -- Initialize the next step
+                                ( _, initializedModel ) =
+                                    initializeStep nextStep stepChangedModel
                             in
-                            changeStep nextStep model
+                            initializedModel
 
                         _ ->
                             model
@@ -602,25 +726,43 @@ update msg model =
                             let
                                 nextStep =
                                     getNextStep CompanyDetailsStep model.isBasicPlan
+
+                                -- Add navigation command
+                                navigationCmd =
+                                    Nav.pushUrl model.key (getStepFragment nextStep)
+
+                                stepChangedModel =
+                                    changeStep nextStep model
                             in
-                            changeStep nextStep model
+                            stepChangedModel
 
                         _ ->
                             model
 
-                -- When NextStep is triggered, also update company details
+                -- When NextStep is triggered, also update company details and navigate
                 outCmd =
                     case outMsg of
                         CompanyDetails.NoOutMsg ->
                             Cmd.none
 
                         CompanyDetails.NextStep ->
-                            case model.sessionToken of
-                                Just token ->
-                                    updateCompanyDetails model.orgSlug token updatedCompanyDetailsModel
+                            let
+                                nextStep =
+                                    getNextStep CompanyDetailsStep model.isBasicPlan
 
-                                Nothing ->
-                                    Cmd.none
+                                -- Add URL navigation command
+                                navCmd =
+                                    Nav.pushUrl model.key (getStepFragment nextStep)
+
+                                updateCmd =
+                                    case model.sessionToken of
+                                        Just token ->
+                                            updateCompanyDetails model.orgSlug token updatedCompanyDetailsModel
+
+                                        Nothing ->
+                                            Cmd.none
+                            in
+                            Cmd.batch [ updateCmd, navCmd ]
 
                         CompanyDetails.ShowError err ->
                             Cmd.none
@@ -637,6 +779,26 @@ update msg model =
                 , outCmd
                 ]
             )
+
+        CompanyDetailsSaved result ->
+            case result of
+                Ok response ->
+                    let
+                        nextStep =
+                            getNextStep CompanyDetailsStep model.isBasicPlan
+
+                        -- Add URL navigation command
+                        navCmd =
+                            Nav.pushUrl model.key (getStepFragment nextStep)
+                    in
+                    ( { model | isLoading = False, companyDetailsInitialized = True }
+                    , navCmd
+                    )
+
+                Err error ->
+                    ( { model | error = Just "Failed to save company details. Please try again." }
+                    , Cmd.none
+                    )
 
         LicensingSettingsMsg subMsg ->
             let
@@ -662,8 +824,15 @@ update msg model =
                             let
                                 nextStep =
                                     getNextStep LicensingSettingsStep model.isBasicPlan
+
+                                stepChangedModel =
+                                    changeStep nextStep model
+
+                                -- Initialize the next step
+                                ( _, initializedModel ) =
+                                    initializeStep nextStep stepChangedModel
                             in
-                            changeStep nextStep model
+                            initializedModel
 
                         _ ->
                             model
@@ -762,65 +931,75 @@ update msg model =
                             Cmd.none
 
                         Payment.Completed ->
-                            -- First update company details if needed
-                            if not model.companyDetailsInitialized then
-                                case model.sessionToken of
-                                    Just token ->
-                                        updateCompanyDetails model.orgSlug token model.companyDetailsModel
+                            -- Only complete onboarding if we're at the final step
+                            if model.step == PaymentStep then
+                                -- First update company details if needed
+                                if not model.companyDetailsInitialized then
+                                    case model.sessionToken of
+                                        Just token ->
+                                            updateCompanyDetails model.orgSlug token model.companyDetailsModel
 
-                                    Nothing ->
-                                        Cmd.none
-                                -- Then update licensing settings if needed
+                                        Nothing ->
+                                            Cmd.none
+                                    -- Then update licensing settings if needed
 
-                            else if not model.licensingSettingsInitialized then
-                                case model.sessionToken of
-                                    Just token ->
-                                        updateLicensingDetails model.orgSlug token model.licensingSettingsModel
+                                else if not model.licensingSettingsInitialized then
+                                    case model.sessionToken of
+                                        Just token ->
+                                            updateLicensingDetails model.orgSlug token model.licensingSettingsModel
 
-                                    Nothing ->
-                                        Cmd.none
-                                -- Then add team members if needed (for non-basic plans)
+                                        Nothing ->
+                                            Cmd.none
+                                    -- Then add team members if needed (for non-basic plans)
 
-                            else if not model.isBasicPlan && not model.addAgentsInitialized then
-                                case ( model.sessionToken, model.addAgentsModel ) of
-                                    ( Just token, Just agentsModel ) ->
-                                        addTeamMembers model.orgSlug token agentsModel
+                                else if not model.isBasicPlan && not model.addAgentsInitialized then
+                                    case ( model.sessionToken, model.addAgentsModel ) of
+                                        ( Just token, Just agentsModel ) ->
+                                            addTeamMembers model.orgSlug token agentsModel
 
-                                    _ ->
-                                        Cmd.none
-                                -- Finally complete the onboarding
+                                        _ ->
+                                            Cmd.none
+                                    -- Finally complete the onboarding
+
+                                else
+                                    completeOnboarding model
 
                             else
-                                completeOnboarding model
+                                Cmd.none
 
                         Payment.NavigateToWalkthrough ->
-                            -- Same flow as Completed
-                            if not model.companyDetailsInitialized then
-                                case model.sessionToken of
-                                    Just token ->
-                                        updateCompanyDetails model.orgSlug token model.companyDetailsModel
+                            -- Only complete onboarding if we're at the final step
+                            if model.step == PaymentStep then
+                                -- Same flow as Completed
+                                if not model.companyDetailsInitialized then
+                                    case model.sessionToken of
+                                        Just token ->
+                                            updateCompanyDetails model.orgSlug token model.companyDetailsModel
 
-                                    Nothing ->
-                                        Cmd.none
+                                        Nothing ->
+                                            Cmd.none
 
-                            else if not model.licensingSettingsInitialized then
-                                case model.sessionToken of
-                                    Just token ->
-                                        updateLicensingDetails model.orgSlug token model.licensingSettingsModel
+                                else if not model.licensingSettingsInitialized then
+                                    case model.sessionToken of
+                                        Just token ->
+                                            updateLicensingDetails model.orgSlug token model.licensingSettingsModel
 
-                                    Nothing ->
-                                        Cmd.none
+                                        Nothing ->
+                                            Cmd.none
 
-                            else if not model.isBasicPlan && not model.addAgentsInitialized then
-                                case ( model.sessionToken, model.addAgentsModel ) of
-                                    ( Just token, Just agentsModel ) ->
-                                        addTeamMembers model.orgSlug token agentsModel
+                                else if not model.isBasicPlan && not model.addAgentsInitialized then
+                                    case ( model.sessionToken, model.addAgentsModel ) of
+                                        ( Just token, Just agentsModel ) ->
+                                            addTeamMembers model.orgSlug token agentsModel
 
-                                    _ ->
-                                        Cmd.none
+                                        _ ->
+                                            Cmd.none
+
+                                else
+                                    completeOnboarding model
 
                             else
-                                completeOnboarding model
+                                Cmd.none
 
                         Payment.ShowError err ->
                             Cmd.none
@@ -886,106 +1065,21 @@ update msg model =
 
         NavigateToStep step ->
             let
-                -- Only initialize models if they haven't been initialized yet
-                ( mainCmd, updatedModel ) =
-                    case step of
-                        PlanSelectionStep ->
-                            -- When navigating to plan selection, keep existing state
-                            ( Cmd.none, model )
-
-                        UserDetailsStep ->
-                            -- Keep existing user details state
-                            ( Cmd.none, model )
-
-                        CompanyDetailsStep ->
-                            if not model.companyDetailsInitialized then
-                                let
-                                    ( newModel, subCmd ) =
-                                        case model.sessionToken of
-                                            Just token ->
-                                                CompanyDetails.init model.key model.orgSlug token
-
-                                            Nothing ->
-                                                CompanyDetails.init model.key model.orgSlug model.session
-
-                                    -- Preserve existing company details if they exist
-                                    modelWithDetails =
-                                        { newModel
-                                            | agencyName = model.companyDetailsModel.agencyName
-                                            , website = model.companyDetailsModel.website
-                                            , phone = model.companyDetailsModel.phone
-                                            , primaryColor = model.companyDetailsModel.primaryColor
-                                            , secondaryColor = model.companyDetailsModel.secondaryColor
-                                            , logo = model.companyDetailsModel.logo
-                                        }
-                                in
-                                ( Cmd.map CompanyDetailsMsg subCmd
-                                , { model | companyDetailsModel = modelWithDetails, companyDetailsInitialized = True }
-                                )
-
-                            else
-                                ( Cmd.none, model )
-
-                        LicensingSettingsStep ->
-                            if not model.licensingSettingsInitialized then
-                                let
-                                    ( newModel, subCmd ) =
-                                        LicensingSettings.init model.key model.orgSlug
-                                in
-                                ( Cmd.map LicensingSettingsMsg subCmd
-                                , { model | licensingSettingsModel = newModel, licensingSettingsInitialized = True }
-                                )
-
-                            else
-                                ( Cmd.none, model )
-
-                        AddAgentsStep ->
-                            if not model.addAgentsInitialized then
-                                let
-                                    ( newModel, subCmd ) =
-                                        AddAgents.init model.key model.orgSlug True
-                                in
-                                ( Cmd.map AddAgentsMsg subCmd
-                                , { model | addAgentsModel = Just newModel, addAgentsInitialized = True }
-                                )
-
-                            else
-                                ( Cmd.none, model )
-
-                        PaymentStep ->
-                            if not model.paymentInitialized then
-                                let
-                                    ( newModel, subCmd ) =
-                                        Payment.init model.key model.orgSlug
-                                in
-                                ( Cmd.map PaymentMsg subCmd
-                                , { model | paymentModel = newModel, paymentInitialized = True }
-                                )
-
-                            else
-                                ( Cmd.none, model )
-
-                        EnterpriseFormStep ->
-                            if not model.enterpriseFormInitialized then
-                                let
-                                    ( newModel, subCmd ) =
-                                        EnterpriseForm.init model.key
-                                in
-                                ( Cmd.map EnterpriseFormMsg subCmd
-                                , { model | enterpriseFormModel = Just newModel, enterpriseFormInitialized = True }
-                                )
-
-                            else
-                                ( Cmd.none, model )
+                updatedModel =
+                    changeStep step model
 
                 -- Update URL fragment without page reload to preserve state in browser history
                 urlUpdateCmd =
                     Nav.pushUrl model.key (getStepFragment step)
+
+                -- Initialize the step directly
+                ( initCmd, finalModel ) =
+                    initializeStep step updatedModel
             in
-            ( changeStep step updatedModel
+            ( finalModel
             , Cmd.batch
-                [ mainCmd
-                , urlUpdateCmd
+                [ urlUpdateCmd
+                , initCmd
                 , Task.perform (\_ -> ScrollToTop) (Task.succeed ())
                 ]
             )
@@ -993,12 +1087,21 @@ update msg model =
         NavigateBack ->
             case model.stepHistory of
                 previousStep :: restHistory ->
-                    ( { model
-                        | step = previousStep
-                        , stepHistory = restHistory
-                      }
+                    let
+                        updatedModel =
+                            { model
+                                | step = previousStep
+                                , stepHistory = restHistory
+                            }
+
+                        -- Initialize the step directly
+                        ( initCmd, finalModel ) =
+                            initializeStep previousStep updatedModel
+                    in
+                    ( finalModel
                     , Cmd.batch
                         [ Nav.pushUrl model.key (getStepFragment previousStep)
+                        , initCmd
                         , Task.perform (\_ -> ScrollToTop) (Task.succeed ())
                         ]
                     )
@@ -1011,10 +1114,18 @@ update msg model =
             let
                 nextStep =
                     getNextStep model.step model.isBasicPlan
+
+                updatedModel =
+                    changeStep nextStep model
+
+                -- Initialize the step directly
+                ( initCmd, finalModel ) =
+                    initializeStep nextStep updatedModel
             in
-            ( changeStep nextStep model
+            ( finalModel
             , Cmd.batch
                 [ Nav.pushUrl model.key (getStepFragment nextStep)
+                , initCmd
                 , Task.perform (\_ -> ScrollToTop) (Task.succeed ())
                 ]
             )
@@ -1293,26 +1404,25 @@ update msg model =
         LicensingUpdated result ->
             case result of
                 Ok response ->
-                    -- After licensing settings are updated, add team members if needed
+                    -- After licensing settings are updated, navigate to the next step
                     let
-                        nextCmd =
+                        nextStep =
                             if not model.isBasicPlan then
-                                case ( model.sessionToken, model.addAgentsModel ) of
-                                    ( Just token, Just agentsModel ) ->
-                                        addTeamMembers model.orgSlug token agentsModel
-
-                                    _ ->
-                                        completeOnboarding model
+                                AddAgentsStep
 
                             else
-                                completeOnboarding model
+                                PaymentStep
+
+                        navCmd =
+                            Nav.pushUrl model.key (getStepFragment nextStep)
                     in
                     ( { model
                         | isLoading = False
                         , licensingSettingsInitialized = True
                         , isBasicPlan = response.isBasicPlan
+                        , step = nextStep
                       }
-                    , nextCmd
+                    , navCmd
                     )
 
                 Err error ->
@@ -1345,12 +1455,20 @@ update msg model =
         TeamMembersAdded result ->
             case result of
                 Ok response ->
-                    -- After team members are added, complete the onboarding
+                    -- After team members are added, navigate to payment step
+                    let
+                        nextStep =
+                            PaymentStep
+
+                        navCmd =
+                            Nav.pushUrl model.key (getStepFragment nextStep)
+                    in
                     ( { model
                         | isLoading = False
                         , addAgentsInitialized = True
+                        , step = nextStep
                       }
-                    , completeOnboarding model
+                    , navCmd
                     )
 
                 Err error ->
@@ -1393,6 +1511,7 @@ update msg model =
                         ]
                     )
 
+                -- don't remove the parens here
                 Err error ->
                     ( { model
                         | isLoading = False
@@ -1446,6 +1565,8 @@ update msg model =
                     , Cmd.map UserDetailsMsg (Task.perform (\_ -> UserDetails.loadUserFromSession userData) (Task.succeed ()))
                     )
 
+                -- don't remove this paren
+                -- don't remove the parens here
                 Nothing ->
                     ( model, Cmd.none )
 
@@ -1474,6 +1595,35 @@ update msg model =
               }
             , Cmd.none
             )
+
+        GotUserDetails result ->
+            case result of
+                Ok userDetails ->
+                    let
+                        oldUserDetailsModel =
+                            model.userDetailsModel
+
+                        updatedUserDetailsModel =
+                            { oldUserDetailsModel
+                                | firstName = userDetails.firstName
+                                , lastName = userDetails.lastName
+                                , email = userDetails.email
+                                , phone = userDetails.phone
+                                , emailStatus = UserDetails.Available -- Consider email as valid since it's already registered
+                            }
+                    in
+                    ( { model | userDetailsModel = updatedUserDetailsModel }, Cmd.none )
+
+                Err error ->
+                    ( { model | error = Just ("Failed to load user details: " ++ httpErrorToString error) }, Cmd.none )
+
+        InitializeCurrentStep ->
+            -- Initialize the current step based on the model's step field
+            let
+                ( cmd, updatedModel ) =
+                    initializeStep model.step model
+            in
+            ( updatedModel, cmd )
 
 
 
@@ -1551,6 +1701,7 @@ viewCurrentStep model =
                                 [ text "Continue to Payment" ]
                             ]
                         ]
+                    -- don't add another bracket here
 
                 else
                     case model.addAgentsModel of
@@ -1569,6 +1720,7 @@ viewCurrentStep model =
                                     ]
                                 ]
 
+            -- don't add another bracket here
             PaymentStep ->
                 Html.map PaymentMsg (Payment.view model.paymentModel)
 
@@ -1600,42 +1752,7 @@ viewNavigationControls model =
             div [] []
 
         -- Empty spacer
-        , let
-            canSkip =
-                case model.step of
-                    PlanSelectionStep ->
-                        False
-
-                    -- Can't skip plan selection
-                    PaymentStep ->
-                        False
-
-                    -- Can't skip payment
-                    EnterpriseFormStep ->
-                        False
-
-                    -- Can't skip enterprise form
-                    _ ->
-                        True
-
-            -- Can skip other steps
-            nextStep =
-                getNextStep model.step model.isBasicPlan
-
-            isLastStep =
-                model.step == PaymentStep
-          in
-          if canSkip && not isLastStep then
-            button
-                [ class "px-4 py-2 text-gray-600 hover:text-gray-800"
-                , onClick SkipStep
-                ]
-                [ text ("Skip to " ++ getStepLabel nextStep) ]
-
-          else
-            div [] []
-
-        -- Empty spacer
+        , div [] [] -- Removed "Skip to X" link
         ]
 
 
@@ -1791,9 +1908,9 @@ encodeOnboardingData model =
         -- Agents (if applicable)
         agents =
             case model.addAgentsModel of
-                Just agentsModel ->
+                Just addAgentsModel ->
                     -- Use the agents from the model (already correct type)
-                    Encode.list encodeAgent agentsModel.agents
+                    Encode.list encodeAgent addAgentsModel.agents
 
                 Nothing ->
                     Encode.list identity []
@@ -1918,12 +2035,12 @@ encodeStateCarrierSetting setting =
 
 
 
--- Helper function to get URL fragment for a step (instead of full URL)
+-- Helper function to get URL for a step (full URL instead of just fragment)
 
 
 getStepFragment : Step -> String
 getStepFragment step =
-    "#"
+    "/onboarding/"
         ++ (case step of
                 PlanSelectionStep ->
                     "plan"
@@ -2095,6 +2212,15 @@ initializeOnboarding planType email orgSlug =
                 (Decode.field "sessionToken" Decode.string)
                 (Decode.field "onboardingStep" Decode.int)
                 (Decode.field "planType" (Decode.oneOf [ Decode.string, Decode.null "basic" ]))
+
+        _ =
+            Debug.log "Updating user details"
+                { url = url
+                , firstName = ""
+                , lastName = ""
+                , email = email
+                , phone = ""
+                }
     in
     Http.post
         { url = url
@@ -2231,7 +2357,7 @@ updateLicensingDetails : String -> String -> LicensingSettings.Model -> Cmd Msg
 updateLicensingDetails orgSlug sessionToken model =
     let
         url =
-            "/api/onboarding/" ++ orgSlug ++ "/licensing"
+            "/api/onboarding/licensing-settings"
 
         body =
             Encode.object
@@ -2240,8 +2366,12 @@ updateLicensingDetails orgSlug sessionToken model =
                 ]
                 |> Http.jsonBody
 
-        headers =
-            [ Http.header "Authorization" ("Bearer " ++ sessionToken) ]
+        _ =
+            Debug.log "Updating licensing details"
+                { url = url
+                , carrierContracts = model.carrierContracts
+                , useSmartSendForGI = model.useSmartSendForGI
+                }
 
         decoder =
             Decode.map3
@@ -2256,11 +2386,11 @@ updateLicensingDetails orgSlug sessionToken model =
                 (Decode.field "isBasicPlan" Decode.bool)
     in
     Http.request
-        { method = "PUT"
+        { method = "POST"
         , url = url
         , body = body
         , expect = Http.expectJson LicensingUpdated decoder
-        , headers = headers
+        , headers = [] -- The session token is in the cookies, no need to pass it
         , timeout = Nothing
         , tracker = Nothing
         }
@@ -2270,7 +2400,7 @@ addTeamMembers : String -> String -> AddAgents.Model -> Cmd Msg
 addTeamMembers orgSlug sessionToken model =
     let
         url =
-            "/api/onboarding/" ++ orgSlug ++ "/team-members"
+            "/api/onboarding/agents"
 
         encodeTeamMember agent =
             Encode.object
@@ -2289,7 +2419,7 @@ addTeamMembers orgSlug sessionToken model =
                 |> Http.jsonBody
 
         headers =
-            [ Http.header "Authorization" ("Bearer " ++ sessionToken) ]
+            [ Http.header "x-onboarding-session" sessionToken ]
 
         decoder =
             Decode.map
@@ -2299,7 +2429,7 @@ addTeamMembers orgSlug sessionToken model =
                 (Decode.field "onboardingStep" Decode.int)
     in
     Http.request
-        { method = "PUT"
+        { method = "POST"
         , url = url
         , body = body
         , expect = Http.expectJson TeamMembersAdded decoder
@@ -2386,3 +2516,154 @@ viewResumeOnboarding model =
                 [ text "Start New" ]
             ]
         ]
+
+
+
+-- Add this function near the other HTTP functions
+
+
+fetchUserDetails : String -> String -> Cmd Msg
+fetchUserDetails _ _ =
+    let
+        url =
+            "/api/onboarding/user-details"
+
+        decoder =
+            Decode.map4
+                (\firstName lastName email phone ->
+                    { firstName = firstName
+                    , lastName = lastName
+                    , email = email
+                    , phone = phone
+                    }
+                )
+                (Decode.field "firstName" Decode.string)
+                (Decode.field "lastName" Decode.string)
+                (Decode.field "email" Decode.string)
+                (Decode.field "phone" Decode.string)
+    in
+    Http.request
+        { method = "GET"
+        , url = url
+        , body = Http.emptyBody
+        , expect = Http.expectJson GotUserDetails decoder
+        , headers = [] -- The session token is in the cookies, no need to pass it
+        , timeout = Nothing
+        , tracker = Nothing
+        }
+
+
+
+-- Helper function to convert Http.Error to a readable string
+
+
+httpErrorToString : Http.Error -> String
+httpErrorToString error =
+    case error of
+        Http.BadUrl url ->
+            "Bad URL: " ++ url
+
+        Http.Timeout ->
+            "Request timed out"
+
+        Http.NetworkError ->
+            "Network error"
+
+        Http.BadStatus statusCode ->
+            "Bad status: " ++ String.fromInt statusCode
+
+        Http.BadBody message ->
+            "Bad body: " ++ message
+
+
+
+-- Helper function to initialize a specific step
+
+
+initializeStep : Step -> Model -> ( Cmd Msg, Model )
+initializeStep step model =
+    case step of
+        PlanSelectionStep ->
+            -- Plan selection is always initialized in init, so just return the model
+            ( Cmd.none, model )
+
+        UserDetailsStep ->
+            -- Always fetch user details from backend when navigating to this step
+            let
+                fetchCmd =
+                    case model.sessionToken of
+                        Just token ->
+                            -- If we have a session token, fetch user details from backend
+                            fetchUserDetails model.orgSlug token
+
+                        Nothing ->
+                            -- Otherwise, just initialize the model
+                            Cmd.map UserDetailsMsg (UserDetails.fetchUserDetails model.orgSlug)
+            in
+            ( fetchCmd, { model | userDetailsInitialized = True } )
+
+        CompanyDetailsStep ->
+            -- Always initialize company details from backend when navigating to this step
+            let
+                ( newModel, subCmd ) =
+                    case model.sessionToken of
+                        Just token ->
+                            CompanyDetails.init model.key model.orgSlug token
+
+                        Nothing ->
+                            CompanyDetails.init model.key model.orgSlug model.session
+
+                -- Preserve existing company details if they exist
+                modelWithDetails =
+                    { newModel
+                        | agencyName = model.companyDetailsModel.agencyName
+                        , website = model.companyDetailsModel.website
+                        , phone = model.companyDetailsModel.phone
+                        , primaryColor = model.companyDetailsModel.primaryColor
+                        , secondaryColor = model.companyDetailsModel.secondaryColor
+                        , logo = model.companyDetailsModel.logo
+                    }
+            in
+            ( Cmd.map CompanyDetailsMsg subCmd
+            , { model | companyDetailsModel = modelWithDetails, companyDetailsInitialized = True }
+            )
+
+        LicensingSettingsStep ->
+            -- Always initialize licensing settings from backend when navigating to this step
+            let
+                ( newModel, subCmd ) =
+                    LicensingSettings.init model.key model.orgSlug
+            in
+            ( Cmd.map LicensingSettingsMsg subCmd
+            , { model | licensingSettingsModel = newModel, licensingSettingsInitialized = True }
+            )
+
+        AddAgentsStep ->
+            -- Always initialize add agents from backend when navigating to this step
+            let
+                ( newModel, subCmd ) =
+                    AddAgents.init model.key model.orgSlug True
+            in
+            ( Cmd.map AddAgentsMsg subCmd
+            , { model | addAgentsModel = Just newModel, addAgentsInitialized = True }
+            )
+
+        PaymentStep ->
+            -- Always initialize payment from backend when navigating to this step
+            let
+                ( newModel, subCmd ) =
+                    Payment.init model.key model.orgSlug
+            in
+            ( Cmd.map PaymentMsg subCmd
+            , { model | paymentModel = newModel, paymentInitialized = True }
+            )
+
+        EnterpriseFormStep ->
+            -- Always initialize enterprise form from backend when navigating to this step
+            let
+                ( newModel, subCmd ) =
+                    EnterpriseForm.init model.key
+            in
+            ( Cmd.map EnterpriseFormMsg subCmd
+            , { model | enterpriseFormModel = Just newModel, enterpriseFormInitialized = True }
+            )

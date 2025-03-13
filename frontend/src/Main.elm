@@ -1933,39 +1933,74 @@ updatePage url ( model, cmd ) =
 
                                     PublicRoute (OnboardingRoute step) ->
                                         -- Check if we already have an onboarding page
-                                        case modelWithUpdatedSetup.page of
+                                        case model.page of
                                             OnboardingPage existingModel ->
-                                                -- We already have an onboarding model, just update the step
-                                                -- This preserves all state between steps
-                                                ( { modelWithUpdatedSetup
-                                                    | page = OnboardingPage { existingModel | step = onboardingStepToStep step }
-                                                  }
-                                                , Cmd.none
+                                                -- We already have an onboarding model, update the step and reset initialization flags
+                                                let
+                                                    newStep =
+                                                        onboardingStepToStep step
+
+                                                    updatedModel =
+                                                        { existingModel
+                                                            | step = newStep
+
+                                                            -- Reset initialization flags based on the new step
+                                                            , userDetailsInitialized =
+                                                                if newStep == Onboarding.UserDetailsStep then
+                                                                    False
+
+                                                                else
+                                                                    existingModel.userDetailsInitialized
+                                                            , companyDetailsInitialized =
+                                                                if newStep == Onboarding.CompanyDetailsStep then
+                                                                    False
+
+                                                                else
+                                                                    existingModel.companyDetailsInitialized
+                                                            , licensingSettingsInitialized =
+                                                                if newStep == Onboarding.LicensingSettingsStep then
+                                                                    False
+
+                                                                else
+                                                                    existingModel.licensingSettingsInitialized
+                                                            , addAgentsInitialized =
+                                                                if newStep == Onboarding.AddAgentsStep then
+                                                                    False
+
+                                                                else
+                                                                    existingModel.addAgentsInitialized
+                                                            , paymentInitialized =
+                                                                if newStep == Onboarding.PaymentStep then
+                                                                    False
+
+                                                                else
+                                                                    existingModel.paymentInitialized
+                                                            , enterpriseFormInitialized =
+                                                                if newStep == Onboarding.EnterpriseFormStep then
+                                                                    False
+
+                                                                else
+                                                                    existingModel.enterpriseFormInitialized
+                                                        }
+                                                in
+                                                ( { model | page = OnboardingPage updatedModel }
+                                                , Cmd.map OnboardingMsg (Task.perform (\_ -> Onboarding.InitializeCurrentStep) (Task.succeed ()))
                                                 )
 
                                             _ ->
                                                 -- Initialize onboarding without authenticated calls for new users
                                                 let
-                                                    -- Extract session if available
-                                                    sessionToken =
-                                                        extractSession model.session
-
-                                                    -- Get organization slug if available, empty string for new users
-                                                    orgSlug =
-                                                        model.currentUser
-                                                            |> Maybe.map .organizationSlug
-                                                            |> Maybe.withDefault ""
-
-                                                    -- Initialize onboarding with correct step
                                                     ( onboardingModel, onboardingCmd ) =
                                                         Onboarding.init
-                                                            modelWithUpdatedSetup.key
-                                                            orgSlug
-                                                            sessionToken
+                                                            model.key
+                                                            (model.currentUser
+                                                                |> Maybe.map .organizationSlug
+                                                                |> Maybe.withDefault ""
+                                                            )
+                                                            (extractSession model.session)
                                                             (onboardingStepToStep step)
                                                 in
-                                                -- Always set up the onboarding page, even if no session exists
-                                                ( { modelWithUpdatedSetup | page = OnboardingPage onboardingModel }
+                                                ( { model | page = OnboardingPage onboardingModel }
                                                 , Cmd.map OnboardingMsg onboardingCmd
                                                 )
 
@@ -2517,20 +2552,77 @@ updatePageForcePublic url ( model, cmd ) =
                             )
 
                         PublicRoute (OnboardingRoute step) ->
-                            let
-                                ( onboardingModel, onboardingCmd ) =
-                                    Onboarding.init
-                                        model.key
-                                        (model.currentUser
-                                            |> Maybe.map .organizationSlug
-                                            |> Maybe.withDefault ""
-                                        )
-                                        (extractSession model.session)
-                                        (onboardingStepToStep step)
-                            in
-                            ( { model | page = OnboardingPage onboardingModel }
-                            , Cmd.map OnboardingMsg onboardingCmd
-                            )
+                            -- Check if we already have an onboarding page
+                            case model.page of
+                                OnboardingPage existingModel ->
+                                    -- We already have an onboarding model, update the step and reset initialization flags
+                                    let
+                                        newStep =
+                                            onboardingStepToStep step
+
+                                        updatedModel =
+                                            { existingModel
+                                                | step = newStep
+
+                                                -- Reset initialization flags based on the new step
+                                                , userDetailsInitialized =
+                                                    if newStep == Onboarding.UserDetailsStep then
+                                                        False
+
+                                                    else
+                                                        existingModel.userDetailsInitialized
+                                                , companyDetailsInitialized =
+                                                    if newStep == Onboarding.CompanyDetailsStep then
+                                                        False
+
+                                                    else
+                                                        existingModel.companyDetailsInitialized
+                                                , licensingSettingsInitialized =
+                                                    if newStep == Onboarding.LicensingSettingsStep then
+                                                        False
+
+                                                    else
+                                                        existingModel.licensingSettingsInitialized
+                                                , addAgentsInitialized =
+                                                    if newStep == Onboarding.AddAgentsStep then
+                                                        False
+
+                                                    else
+                                                        existingModel.addAgentsInitialized
+                                                , paymentInitialized =
+                                                    if newStep == Onboarding.PaymentStep then
+                                                        False
+
+                                                    else
+                                                        existingModel.paymentInitialized
+                                                , enterpriseFormInitialized =
+                                                    if newStep == Onboarding.EnterpriseFormStep then
+                                                        False
+
+                                                    else
+                                                        existingModel.enterpriseFormInitialized
+                                            }
+                                    in
+                                    ( { model | page = OnboardingPage updatedModel }
+                                    , Cmd.map OnboardingMsg (Task.perform (\_ -> Onboarding.InitializeCurrentStep) (Task.succeed ()))
+                                    )
+
+                                _ ->
+                                    -- Initialize onboarding without authenticated calls for new users
+                                    let
+                                        ( onboardingModel, onboardingCmd ) =
+                                            Onboarding.init
+                                                model.key
+                                                (model.currentUser
+                                                    |> Maybe.map .organizationSlug
+                                                    |> Maybe.withDefault ""
+                                                )
+                                                (extractSession model.session)
+                                                (onboardingStepToStep step)
+                                    in
+                                    ( { model | page = OnboardingPage onboardingModel }
+                                    , Cmd.map OnboardingMsg onboardingCmd
+                                    )
 
                         PublicRoute (CompareRoute params) ->
                             let

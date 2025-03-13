@@ -37,6 +37,7 @@ type alias Model =
     , orgSlug : String
     , uploadingLogo : Bool
     , sessionToken : String
+    , loadedFromSession : Bool
     }
 
 
@@ -48,14 +49,15 @@ init key orgSlug sessionToken =
       , primaryColor = "#6B46C1"
       , secondaryColor = "#9F7AEA"
       , logo = Nothing
-      , isLoading = False
+      , isLoading = True
       , error = Nothing
       , key = key
       , orgSlug = orgSlug
       , uploadingLogo = False
       , sessionToken = sessionToken
+      , loadedFromSession = False
       }
-    , Cmd.none
+    , fetchCompanyDetails orgSlug
     )
 
 
@@ -154,6 +156,7 @@ update msg model =
                         , secondaryColor = response.secondaryColor
                         , logo = response.logo
                         , isLoading = False
+                        , loadedFromSession = True
                       }
                     , Cmd.none
                     , NoOutMsg
@@ -195,6 +198,12 @@ view model =
                 [ text "Company Details" ]
             , p [ class "text-gray-600 mt-2" ]
                 [ text "Tell us about your agency (all fields are optional)" ]
+            , if model.loadedFromSession then
+                p [ class "text-blue-600 mt-2 italic" ]
+                    [ text "Your previously entered information has been loaded." ]
+
+              else
+                text ""
             ]
         , if model.isLoading then
             viewLoading
@@ -300,17 +309,21 @@ view model =
 
                   else
                     text ""
-                , div [ class "flex justify-between mt-8" ]
+                , div [ class "flex justify-center mt-8" ]
                     [ button
-                        [ class "px-6 py-3 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500"
-                        , onClick SkipStepClicked
-                        ]
-                        [ text "Skip" ]
-                    , button
                         [ class "px-6 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
                         , onClick NextStepClicked
+                        , disabled model.isLoading
                         ]
-                        [ text "Continue" ]
+                        [ if model.isLoading then
+                            div [ class "flex items-center justify-center" ]
+                                [ div [ class "animate-spin mr-2 h-4 w-4 border-t-2 border-b-2 border-white rounded-full" ] []
+                                , text "Saving..."
+                                ]
+
+                          else
+                            text "Continue"
+                        ]
                     ]
                 ]
         ]
@@ -340,7 +353,7 @@ isFormValid model =
 
 
 fetchCompanyDetails : String -> Cmd Msg
-fetchCompanyDetails orgSlug =
+fetchCompanyDetails _ =
     Http.get
         { url = "/api/onboarding/settings"
         , expect = Http.expectJson GotCompanyDetails companyDetailsDecoder
@@ -378,13 +391,15 @@ saveCompanyDetails model =
 
 companyDetailsDecoder : Decode.Decoder CompanyDetailsResponse
 companyDetailsDecoder =
-    Decode.map6 CompanyDetailsResponse
-        (Decode.field "agencyName" Decode.string)
-        (Decode.field "website" Decode.string)
-        (Decode.field "phone" Decode.string)
-        (Decode.field "primaryColor" Decode.string)
-        (Decode.field "secondaryColor" Decode.string)
-        (Decode.field "logo" (Decode.nullable Decode.string))
+    Decode.field "companyDetailsModel"
+        (Decode.map6 CompanyDetailsResponse
+            (Decode.field "agencyName" Decode.string)
+            (Decode.field "website" Decode.string)
+            (Decode.field "phone" Decode.string)
+            (Decode.field "primaryColor" Decode.string)
+            (Decode.field "secondaryColor" Decode.string)
+            (Decode.field "logo" (Decode.nullable Decode.string))
+        )
 
 
 encodeCompanyDetails : Model -> Encode.Value
