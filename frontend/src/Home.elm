@@ -7,7 +7,7 @@ import Html.Attributes exposing (..)
 import Html.Events exposing (onClick)
 import Http
 import Json.Decode as Decode
-import Ports exposing (clearSessionCookie)
+import Ports exposing (getOrgSlug, receiveOrgSlug)
 
 
 

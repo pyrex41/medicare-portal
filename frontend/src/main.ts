@@ -54,6 +54,22 @@ try {
       })
     }
 
+    // get org slug
+    if (app.ports.getOrgSlug) {
+      app.ports.getOrgSlug.subscribe(() => {
+        console.log('Getting org slug')
+        const orgSlug = getCookie('orgSlug')
+        if (orgSlug) {
+          app.ports.receiveOrgSlug.send(orgSlug)
+        } else {
+          console.log('No orgSlug cookie found')
+          if (app.ports.receiveOrgSlug) {
+            app.ports.receiveOrgSlug.send("")
+          }
+        }
+      })
+    }
+
     // Process payment
     if (app.ports.processPayment) {
       app.ports.processPayment.subscribe((clientSecret: string) => {

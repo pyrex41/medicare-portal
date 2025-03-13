@@ -1,4 +1,16 @@
-port module Ports exposing (clearSessionCookie)
+port module Ports exposing
+    ( getOrgSlug
+    , receiveOrgSlug
+    )
+
+-- Port for requesting the orgSlug from JavaScript
 
 
-port clearSessionCookie : () -> Cmd msg
+port getOrgSlug : () -> Cmd msg
+
+
+
+-- Port for receiving the orgSlug from JavaScript
+
+
+port receiveOrgSlug : (String -> msg) -> Sub msg

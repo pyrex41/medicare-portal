@@ -8,6 +8,7 @@ import { logger } from '../logger';
 import { AuthService } from '../services/auth';
 import { config } from '../config';
 import sgMail from '@sendgrid/mail';
+import { cookie } from '@elysiajs/cookie';
 
 // Update the validation schema to include slug rules
 const signupSchema = z.object({
@@ -18,6 +19,8 @@ const signupSchema = z.object({
   adminFirstName: z.string().min(1, "First name is required"),
   adminLastName: z.string().min(1, "Last name is required"),
   adminEmail: z.string().email("Invalid email address"),
+  phone: z.string().optional(),
+  planType: z.string().optional(),
 });
 
 // Enhanced slug generation with uniqueness check
@@ -903,4 +906,186 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
       set.status = 500;
       return { success: false, error: 'Failed to process inquiry' };
     }
-  }); 
+  });
+
+export function createOrganizationRoutes() {
+  const dbInstance = new Database();
+  const authService = new AuthService();
+
+  return new Elysia()
+    .use(cookie())
+    // Add a new endpoint for direct signup from UserDetails page
+    .post('/api/organizations/signup', async ({ body, set, setCookie }) => {
+      try {
+        const { adminFirstName, adminLastName, adminEmail, phone, organizationName, planType } = body as {
+          adminFirstName: string;
+          adminLastName: string;
+          adminEmail: string;
+          phone?: string;
+          organizationName: string;
+          planType?: string;
+        };
+
+        // Validate input
+        const validation = signupSchema.safeParse(body);
+        if (!validation.success) {
+          set.status = 400;
+          return {
+            success: false,
+            message: validation.error.errors[0].message
+          };
+        }
+
+        // Check if email already exists
+        const existingUser = await dbInstance.query<{ count: number }>(
+          'SELECT COUNT(*) as count FROM users WHERE LOWER(email) = LOWER(?)',
+          [adminEmail]
+        );
+
+        if (existingUser[0]?.count > 0) {
+          set.status = 400;
+          return {
+            success: false,
+            message: 'This email address is already registered'
+          };
+        }
+
+        // Generate a unique slug from the organization name
+        const slug = await generateUniqueSlug(dbInstance, organizationName);
+
+        // Create temporary session token
+        const tempSessionId = generateToken();
+
+        // Set session cookie for 24 hours
+        setCookie('onboardingSession', tempSessionId, {
+          httpOnly: true,
+          maxAge: 60 * 60 * 24, // 24 hours
+          path: '/'
+        });
+
+        // Set org slug cookie (not HTTP only so frontend can access it)
+        setCookie('orgSlug', slug, {
+          httpOnly: false,
+          maxAge: 60 * 60 * 24 * 30, // 30 days
+          path: '/'
+        });
+
+        // Create organization
+        const orgResult = await dbInstance.execute(`
+          INSERT INTO organizations (
+            name, 
+            subscription_tier, 
+            created_at, 
+            onboarding_completed, 
+            slug, 
+            onboarding_step,
+            temp_session_id
+          ) VALUES (?, ?, datetime('now'), FALSE, ?, ?, ?)`,
+          [organizationName, planType || 'basic', slug, 2, tempSessionId]
+        );
+
+        const orgId = Number(orgResult.lastInsertRowid);
+        logger.info(`Created organization: ${orgId} with slug: ${slug}`);
+
+        // Create admin user
+        await dbInstance.execute(
+          `INSERT INTO users (
+            email, 
+            first_name, 
+            last_name, 
+            phone, 
+            is_admin, 
+            is_agent, 
+            organization_id, 
+            created_at,
+            is_active
+          ) VALUES (?, ?, ?, ?, 1, 1, ?, datetime('now'), 0)`,
+          [adminEmail, adminFirstName, adminLastName, phone || '', orgId]
+        );
+
+        logger.info(`Created admin user for org ${slug} - Name: ${adminFirstName} ${adminLastName}, Email: ${adminEmail}`);
+
+        // Generate a magic link for verification
+        const magicLink = `${config.clientUrl}/auth/verify/${slug}/${tempSessionId}`;
+
+        // Send welcome email
+        try {
+          await sendMagicLink({
+            email: adminEmail,
+            magicLink: magicLink,
+            name: adminFirstName
+          });
+          logger.info(`Sent welcome email to ${adminEmail}`);
+        } catch (emailError) {
+          logger.error(`Failed to send welcome email: ${emailError}`);
+          // Continue even if email fails
+        }
+
+        return {
+          success: true,
+          message: 'Organization and admin user created successfully',
+          slug: slug
+        };
+
+      } catch (error) {
+        logger.error(`Error creating organization: ${error}`);
+        set.status = 500;
+        return {
+          success: false,
+          message: 'Failed to create organization'
+        };
+      }
+    })
+    
+    // Add a new endpoint to check email availability
+    .get('/api/organizations/check-email/:email', async ({ params, set }) => {
+      try {
+        const { email } = params;
+        
+        if (!email || !email.trim()) {
+          set.status = 400;
+          return {
+            available: false,
+            message: 'Email is required'
+          };
+        }
+        
+        // Basic email format validation
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+          return {
+            available: false,
+            message: 'Invalid email format'
+          };
+        }
+        
+        // Check if email already exists
+        const existingUser = await dbInstance.query<{ count: number }>(
+          'SELECT COUNT(*) as count FROM users WHERE LOWER(email) = LOWER(?)',
+          [email]
+        );
+        
+        const count = existingUser[0]?.count || 0;
+        
+        if (count > 0) {
+          return {
+            available: false,
+            message: 'This email address is already registered'
+          };
+        }
+        
+        // If we get here, the email is available
+        return {
+          available: true,
+          message: 'Email is available'
+        };
+        
+      } catch (error) {
+        logger.error(`Error checking email availability: ${error}`);
+        set.status = 500;
+        return {
+          available: false,
+          message: 'Error checking email availability'
+        };
+      }
+    });
+} 

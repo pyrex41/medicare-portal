@@ -36,8 +36,8 @@ Notes:
 ------
 - Some files may have been excluded based on .gitignore rules and Repomix's configuration
 - Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
-- Only files matching these patterns are included: **/*.ts, **/*.html, **/package.json, **/*.js
-- Files matching these patterns are excluded: backend/node_modules/*, frontend/node_modules/*, node_modules/*
+- Only files matching these patterns are included: **/*.elm, **/*.ts
+- Files matching these patterns are excluded: node_modules/
 - Files matching patterns in .gitignore are excluded
 - Files matching default ignore patterns are excluded
 
@@ -57,6 +57,7 @@ src/
   config/
     turso.ts
   middleware/
+    account-status.ts
     auth.ts
     error.ts
   routes/
@@ -65,14 +66,17 @@ src/
     auth.ts
     brand.ts
     contacts.ts
+    onboarding.ts
     organizations.ts
     quotes.ts
     settings.ts
+    stripe.ts
   services/
     agentSettings.ts
     auth.ts
     email.ts
     stripe.ts
+    subscription.ts
     turso.ts
   utils/
     quoteId.ts
@@ -82,7 +86,6 @@ src/
   index.ts
   logger.ts
   types.ts
-package.json
 
 ================================================================
 Files
@@ -855,6 +858,59 @@ export const TURSO_CONFIG = {
 }
 
 ================
+File: src/middleware/account-status.ts
+================
+import { Elysia } from 'elysia';
+import { getUserFromSession } from '../services/auth';
+import { logger } from '../logger';
+import { Database } from '../database';
+
+/**
+ * Middleware to check if an organization's account is in good standing
+ * This can be used on routes that should be blocked if the account has issues
+ */
+export const accountStatusMiddleware = new Elysia()
+  .derive(async ({ request, set }) => {
+    try {
+      // Get current user from session
+      const currentUser = await getUserFromSession(request);
+      if (!currentUser) {
+        // If no user, let the auth middleware handle it
+        return { accountStatus: null };
+      }
+      
+      const db = new Database();
+      
+      // Query organization status from the view
+      const statusResult = await db.query<{
+        account_status: string;
+        subscription_status: string;
+      }>('SELECT account_status, subscription_status FROM organization_status WHERE id = ?', 
+         [currentUser.organization_id]);
+      
+      if (!statusResult || statusResult.length === 0) {
+        logger.error(`Could not find organization status for org ID: ${currentUser.organization_id}`);
+        return { accountStatus: null };
+      }
+      
+      const status = statusResult[0];
+      
+      // If account is not in good standing, block access to certain operations
+      if (status.account_status !== 'good_standing') {
+        logger.warn(`Blocked access due to account status: ${status.account_status} for org ${currentUser.organization_id}`);
+        return { accountStatus: status.account_status, subscription_status: status.subscription_status };
+      }
+      
+      // Account is in good standing
+      return { accountStatus: 'good_standing' };
+      
+    } catch (error) {
+      logger.error(`Error in account status middleware:`, error);
+      return { accountStatus: null };
+    }
+  });
+
+================
 File: src/middleware/auth.ts
 ================
 import { Request, Response, NextFunction } from 'express';
@@ -1186,7 +1242,7 @@ export function createAuthRoutes() {
         const magicLink = await auth.createMagicLink(
           email,
           'default', // Default organization for now
-          { redirectUrl: '/dashboard' }
+          { redirectUrl: '/walkthrough' }
         );
 
         // Always send the email, but also log in development
@@ -1276,10 +1332,10 @@ export function createAuthRoutes() {
 
         const verificationResult = {
           success: true,
-          redirectUrl: result.redirectUrl || '/dashboard',
+          redirectUrl: '/walkthrough',  // Always redirect to walkthrough page instead of dashboard
           session: sessionId,
           email: result.email,
-          orgSlug: user.organization_slug
+          orgSlug: user.organization_id.toString()  // Use organization_id since organization_slug may not exist
         };
         logger.info(`Sending verification response: ${JSON.stringify(verificationResult)}`);
         return verificationResult;
@@ -1547,6 +1603,1530 @@ app.post('/api/contacts/upload', async (req, res) => {
 // Similar updates needed for other contact endpoints
 
 ================
+File: src/routes/onboarding.ts
+================
+import { Elysia } from 'elysia'
+import { logger } from '../logger'
+import { Database } from '../database'
+import { config } from '../config'
+import { generateToken, getUserFromSession } from '../services/auth'
+import { cookie } from '@elysiajs/cookie'
+
+// Define types for onboarding data
+interface OnboardingData {
+  plan: {
+    type: string
+    price: number
+    billingCycle: string
+    extraAgents: number
+    extraContacts: number
+  }
+  user: {
+    firstName: string
+    lastName: string
+    email: string
+    phone: string
+    bookingLink: string
+  }
+  company: {
+    agencyName: string
+    website: string
+    phone: string
+    primaryColor: string
+    secondaryColor: string
+    logo?: string
+  }
+  licensing: {
+    stateLicenses: string[]
+    carrierContracts: string[]
+    stateCarrierSettings: StateCarrierSetting[]
+  }
+  agents: any[] // Using any for flexibility, could be more specific
+}
+
+interface StateCarrierSetting {
+  state: string
+  carrier: string
+  active: boolean
+  targetGI: boolean
+}
+
+// Helper function for generating random slugs
+const generateRandomSlug = () => {
+  const characters = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  const length = 12;
+  let result = '';
+  for (let i = 0; i < length; i++) {
+    result += characters.charAt(Math.floor(Math.random() * characters.length));
+  }
+  return result;
+};
+
+export function createOnboardingRoutes() {
+  const dbInstance = new Database()
+
+  return new Elysia()
+    .use(cookie())
+    // Get onboarding settings using cookie
+    .get('/api/onboarding/settings', async ({ cookie, set }) => {
+      try {
+        // Get org slug from cookie
+        const orgSlug = cookie.orgSlug;
+        
+        if (!orgSlug) {
+          logger.warn('No organization slug found in cookie');
+          set.status = 401;
+          return { 
+            error: 'No organization found in session' 
+          };
+        }
+        
+        logger.info(`Fetching onboarding settings for organization ${orgSlug} from cookie`);
+        
+        // Find organization and its admin user
+        const orgInfo = await dbInstance.query<{ 
+          id: number, 
+          name: string,
+          onboarding_step: number,
+          subscription_tier: string,
+          website: string,
+          phone: string,
+          primary_color: string,
+          secondary_color: string
+        }>(
+          `SELECT id, name, onboarding_step, subscription_tier, website, phone, primary_color, secondary_color
+           FROM organizations 
+           WHERE slug = ? AND onboarding_completed = FALSE
+           LIMIT 1`,
+          [orgSlug]
+        );
+        
+        if (!orgInfo || orgInfo.length === 0) {
+          logger.warn(`Organization not found or onboarding already completed: ${orgSlug}`);
+          set.status = 404;
+          return { 
+            error: 'Organization not found or onboarding already completed' 
+          };
+        }
+        
+        const orgId = orgInfo[0].id;
+        
+        // Get admin user details
+        const userInfo = await dbInstance.query<{
+          id: number,
+          email: string,
+          first_name: string,
+          last_name: string,
+          phone: string,
+          booking_link: string
+        }>(
+          `SELECT id, email, first_name, last_name, phone, booking_link
+           FROM users
+           WHERE organization_id = ? AND is_admin = 1
+           LIMIT 1`,
+          [orgId]
+        );
+        
+        // Get brand settings (for logo)
+        const brandInfo = await dbInstance.query<{
+          logo_data: string
+        }>(
+          `SELECT logo_data
+           FROM brand_settings
+           WHERE organization_id = ?
+           LIMIT 1`,
+          [orgId]
+        );
+        
+        // Get licensing settings
+        const licensingInfo = await dbInstance.query<{
+          carrier_contracts: string
+        }>(
+          `SELECT carrier_contracts
+           FROM agent_settings
+           WHERE organization_id = ? AND settings_type = 'organization'
+           LIMIT 1`,
+          [orgId]
+        );
+        
+        // Build response structure
+        const response = {
+          onboardingStep: orgInfo[0].onboarding_step,
+          planSelectionModel: {
+            selectedPlan: orgInfo[0].subscription_tier || 'basic'
+          },
+          userDetailsModel: userInfo.length > 0 ? {
+            firstName: userInfo[0].first_name || '',
+            lastName: userInfo[0].last_name || '',
+            email: userInfo[0].email || '',
+            phone: userInfo[0].phone || '',
+            bookingLink: userInfo[0].booking_link || ''
+          } : null,
+          companyDetailsModel: {
+            agencyName: orgInfo[0].name || '',
+            website: orgInfo[0].website || '',
+            phone: orgInfo[0].phone || '',
+            primaryColor: orgInfo[0].primary_color || '#0A0F4F',
+            secondaryColor: orgInfo[0].secondary_color || '#7B61FF',
+            logo: brandInfo.length > 0 ? brandInfo[0].logo_data : ''
+          },
+          licensingSettingsModel: {
+            carrierContracts: licensingInfo.length > 0 ? 
+              JSON.parse(licensingInfo[0].carrier_contracts || '[]') : [],
+            useSmartSendForGI: false // Default value
+          },
+          addAgentsModel: {
+            agents: [] // Empty by default
+          },
+          paymentModel: {
+            extraAgents: 0,
+            extraContacts: 0
+          },
+          enterpriseFormModel: null
+        };
+        
+        logger.info(`Retrieved onboarding settings for org ${orgSlug} (ID: ${orgId})`);
+        
+        return response;
+        
+      } catch (error) {
+        logger.error(`Error fetching onboarding settings: ${error}`);
+        set.status = 500;
+        return { 
+          error: 'Failed to fetch onboarding settings' 
+        };
+      }
+    })
+    // New endpoint for initial account creation without email requirement
+    .post('/api/onboarding/initialize', async ({ body, set, setCookie }) => {
+      try {
+        const { planType } = body as { planType: string };
+        
+        logger.info(`Initializing onboarding with plan: ${planType}`);
+        
+        // Generate a completely random slug (12 characters)
+        const slug = generateRandomSlug();
+        
+        // Create temporary session token
+        const tempSessionId = generateToken();
+        
+        // Set session cookie for 24 hours
+        setCookie('onboardingSession', tempSessionId, {
+          httpOnly: true,
+          maxAge: 60 * 60 * 24, // 24 hours
+          path: '/'
+        });
+        
+        // Set org slug cookie (not HTTP only so frontend can access it)
+        setCookie('orgSlug', slug, {
+          httpOnly: false,
+          maxAge: 60 * 60 * 24 * 30, // 30 days
+          path: '/'
+        });
+        
+        // Create organization with minimal info
+        const orgResult = await dbInstance.execute(`
+          INSERT INTO organizations (
+            name, 
+            subscription_tier, 
+            created_at, 
+            onboarding_completed, 
+            slug, 
+            onboarding_step,
+            temp_session_id
+          ) VALUES (?, ?, datetime('now'), FALSE, ?, ?, ?)`,
+          ['New Organization', planType || 'basic', slug, 1, tempSessionId]
+        );
+        
+        const orgId = Number(orgResult.lastInsertRowid);
+        logger.info(`Created initial organization: ${orgId} with slug: ${slug}`);
+        
+        return {
+          organizationId: orgId,
+          slug: slug,
+          sessionToken: tempSessionId,
+          onboardingStep: 1
+        };
+        
+      } catch (error) {
+        logger.error(`Error initializing onboarding: ${error}`);
+        set.status = 500;
+        return { 
+          error: 'Failed to initialize onboarding' 
+        };
+      }
+    })
+    
+    // Alias endpoint for '/api/onboarding/initialize' to support frontend expectations
+    .post('/api/onboarding/start', async ({ body, set, setCookie }) => {
+      try {
+        const { planType } = body as { planType: string };
+        
+        logger.info(`Starting onboarding with plan: ${planType}`);
+        
+        // Generate a completely random slug (12 characters)
+        const slug = generateRandomSlug();
+        
+        // Create temporary session token
+        const tempSessionId = generateToken();
+        
+        // Set session cookie for 24 hours
+        setCookie('onboardingSession', tempSessionId, {
+          httpOnly: true,
+          maxAge: 60 * 60 * 24, // 24 hours
+          path: '/'
+        });
+        
+        // Set org slug cookie (not HTTP only so frontend can access it)
+        setCookie('orgSlug', slug, {
+          httpOnly: false,
+          maxAge: 60 * 60 * 24 * 30, // 30 days
+          path: '/'
+        });
+        
+        // Create organization with minimal info
+        const orgResult = await dbInstance.execute(`
+          INSERT INTO organizations (
+            name, 
+            subscription_tier, 
+            created_at, 
+            onboarding_completed, 
+            slug, 
+            onboarding_step,
+            temp_session_id
+          ) VALUES (?, ?, datetime('now'), FALSE, ?, ?, ?)`,
+          ['New Organization', planType || 'basic', slug, 1, tempSessionId]
+        );
+        
+        const orgId = Number(orgResult.lastInsertRowid);
+        logger.info(`Created initial organization: ${orgId} with slug: ${slug}`);
+        
+        // Return the response in the format expected by the frontend
+        return {
+          sessionId: tempSessionId,
+          planType: planType || 'basic',
+          step: 1
+        };
+        
+      } catch (error) {
+        logger.error(`Error starting onboarding: ${error}`);
+        set.status = 500;
+        return { 
+          error: 'Failed to start onboarding' 
+        };
+      }
+    })
+    
+    // Endpoint to check if an email is available during onboarding
+    .post('/api/onboarding/check-email', async ({ body, set }) => {
+      try {
+        const { email } = body as { email: string, endpoint?: string };
+        
+        logger.info(`Checking email availability during onboarding: "${email}"`);
+        
+        if (!email || !email.trim()) {
+          set.status = 400;
+          return {
+            available: false,
+            message: 'Email is required'
+          };
+        }
+        
+        // Basic email format validation
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+          logger.info(`Email validation failed for: "${email}"`);
+          return {
+            available: false,
+            message: 'Invalid email format'
+          };
+        }
+        
+        // Check if email already exists
+        const existingUser = await dbInstance.query<{ count: number }>(
+          'SELECT COUNT(*) as count FROM users WHERE LOWER(email) = LOWER(?)',
+          [email]
+        );
+        
+        const count = existingUser[0]?.count || 0;
+        logger.info(`Email check query result count: ${count} for email: "${email}"`);
+        
+        if (count > 0) {
+          return {
+            available: false,
+            message: 'This email address is already registered'
+          };
+        }
+        
+        // If we get here, the email is available
+        return {
+          available: true,
+          message: 'Email is available'
+        };
+        
+      } catch (error) {
+        logger.error(`Error checking email availability: ${error}`);
+        set.status = 500;
+        return {
+          available: false,
+          message: 'Failed to check email availability'
+        };
+      }
+    })
+    
+    // Endpoint to check if an agent email is available during onboarding
+    .post('/api/onboarding/check-agent-email', async ({ body, set }) => {
+      try {
+        const { email, sessionId } = body as { email: string, sessionId: string };
+        
+        logger.info(`Checking agent email availability during onboarding: "${email}"`);
+        
+        if (!email || !email.trim()) {
+          set.status = 400;
+          return {
+            available: false,
+            message: 'Email is required'
+          };
+        }
+        
+        // Basic email format validation
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+          logger.info(`Agent email validation failed for: "${email}"`);
+          return {
+            available: false,
+            message: 'Invalid email format'
+          };
+        }
+        
+        // Find the organization based on the session ID
+        const orgData = await dbInstance.query<{ id: number }>(
+          'SELECT id FROM organizations WHERE temp_session_id = ?',
+          [sessionId]
+        );
+        
+        if (!orgData || orgData.length === 0) {
+          logger.warn(`No organization found for session: ${sessionId}`);
+          set.status = 401;
+          return {
+            available: false,
+            message: 'Invalid session'
+          };
+        }
+        
+        const organizationId = orgData[0].id;
+        
+        // Check if email already exists
+        const existingUser = await dbInstance.query<{ count: number }>(
+          'SELECT COUNT(*) as count FROM users WHERE LOWER(email) = LOWER(?)',
+          [email]
+        );
+        
+        const count = existingUser[0]?.count || 0;
+        logger.info(`Agent email check query result count: ${count} for email: "${email}"`);
+        
+        if (count > 0) {
+          return {
+            available: false,
+            message: 'This email address is already registered'
+          };
+        }
+        
+        // If we get here, the email is available
+        return {
+          available: true,
+          message: 'Email is available'
+        };
+        
+      } catch (error) {
+        logger.error(`Error checking agent email availability: ${error}`);
+        set.status = 500;
+        return {
+          available: false,
+          message: 'Failed to check email availability'
+        };
+      }
+    })
+    
+    // New endpoint to resume onboarding by email
+    .post('/api/onboarding/resume-onboarding', async ({ body, set, setCookie }) => {
+      try {
+        const { email } = body as { email: string };
+        
+        logger.info(`Attempting to resume onboarding for email: ${email}`);
+        
+        if (!email || !email.trim()) {
+          logger.warn('Attempt to resume onboarding with empty email');
+          set.status = 400;
+          return { 
+            error: 'Email is required' 
+          };
+        }
+        
+        // Find user and organization by email
+        const userData = await dbInstance.query<{ 
+          organization_id: number, 
+          slug: string, 
+          onboarding_step: number,
+          temp_session_id: string 
+        }>(
+          `SELECT u.organization_id, o.slug, o.onboarding_step, o.temp_session_id
+           FROM users u
+           JOIN organizations o ON u.organization_id = o.id
+           WHERE LOWER(u.email) = LOWER(?) AND o.onboarding_completed = FALSE`,
+          [email]
+        );
+        
+        if (!userData || userData.length === 0) {
+          logger.warn(`No in-progress onboarding found for email: ${email}`);
+          set.status = 404;
+          return { 
+            error: 'No onboarding in progress for this email' 
+          };
+        }
+        
+        const { organization_id, slug, onboarding_step, temp_session_id } = userData[0];
+        
+        // Update session token if needed
+        let sessionToken = temp_session_id;
+        if (!sessionToken) {
+          sessionToken = generateToken();
+          await dbInstance.execute(
+            'UPDATE organizations SET temp_session_id = ? WHERE id = ?',
+            [sessionToken, organization_id]
+          );
+        }
+        
+        // Set session cookie
+        setCookie('onboardingSession', sessionToken, {
+          httpOnly: true,
+          maxAge: 60 * 60 * 24, // 24 hours
+          path: '/'
+        });
+        
+        // Set org slug cookie (not HTTP only so frontend can access it)
+        setCookie('orgSlug', slug, {
+          httpOnly: false,
+          maxAge: 60 * 60 * 24 * 30, // 30 days
+          path: '/'
+        });
+        
+        logger.info(`Resumed onboarding for organization: ${organization_id}, step: ${onboarding_step}`);
+        
+        return {
+          organizationId: organization_id,
+          slug: slug,
+          sessionToken: sessionToken,
+          onboardingStep: onboarding_step
+        };
+        
+      } catch (error) {
+        logger.error(`Error resuming onboarding: ${error}`);
+        set.status = 500;
+        return { 
+          error: 'Failed to resume onboarding' 
+        };
+      }
+    })
+    
+    // Endpoint to update user details
+    .post('/api/onboarding/user-details', async ({ body, cookie, set, request }) => {
+      try {
+        // Get org slug from cookie
+        const orgSlug = cookie.orgSlug;
+        
+        if (!orgSlug) {
+          logger.warn('No organization slug found in cookie');
+          set.status = 401;
+          return { 
+            error: 'No organization found in session' 
+          };
+        }
+        
+        // Get session ID from cookie or header (prefer cookie since it's more secure)
+        const sessionId = cookie.onboardingSession || request.headers.get('x-onboarding-session');
+        logger.info(`Updating user details for organization ${orgSlug} from cookie${sessionId ? ' with session ID' : ''}`);
+        
+        const { firstName, lastName, email, phone, bookingLink } = body as { 
+          firstName: string, 
+          lastName: string, 
+          email: string,
+          phone: string,
+          bookingLink?: string 
+        };
+        
+        // Find organization from slug
+        let query = 'SELECT id FROM organizations WHERE slug = ? AND onboarding_completed = FALSE';
+        let params: any[] = [orgSlug];
+        
+        // If session ID is provided, also check it
+        if (sessionId) {
+          query = 'SELECT id FROM organizations WHERE slug = ? AND temp_session_id = ? AND onboarding_completed = FALSE';
+          params = [orgSlug, sessionId];
+        }
+        
+        const orgInfo = await dbInstance.query<{ id: number }>(query, params);
+        
+        if (!orgInfo || orgInfo.length === 0) {
+          logger.warn(`Organization not found or onboarding already completed: ${orgSlug}`);
+          set.status = 404;
+          return { 
+            error: 'Organization not found or onboarding already completed' 
+          };
+        }
+        
+        const orgId = orgInfo[0].id;
+        
+        // Check if user already exists for this email but different org
+        const existingUserCheck = await dbInstance.query<{ count: number, org_id: number | null }>(
+          `SELECT COUNT(*) as count, organization_id as org_id
+           FROM users 
+           WHERE LOWER(email) = LOWER(?) AND organization_id != ?
+           LIMIT 1`,
+          [email, orgId]
+        );
+        
+        if (existingUserCheck[0]?.count > 0) {
+          logger.warn(`Email ${email} is already in use by another organization`);
+          set.status = 400;
+          return { 
+            success: false, 
+            message: 'This email address is already registered with another account' 
+          };
+        }
+        
+        // Check if user exists for this org
+        const adminUserCheck = await dbInstance.query<{ id: number | null }>(
+          `SELECT id FROM users WHERE organization_id = ? AND is_admin = 1 LIMIT 1`,
+          [orgId]
+        );
+        
+        if (adminUserCheck.length > 0 && adminUserCheck[0].id) {
+          // Update existing user
+          await dbInstance.execute(
+            `UPDATE users 
+             SET first_name = ?, last_name = ?, email = ?, phone = ?, booking_link = ?
+             WHERE id = ?`,
+            [firstName, lastName, email, phone, bookingLink || '', adminUserCheck[0].id]
+          );
+        } else {
+          // Create new user
+          await dbInstance.execute(
+            `INSERT INTO users (
+              email, 
+              first_name, 
+              last_name, 
+              phone, 
+              booking_link,
+              is_admin, 
+              is_agent, 
+              organization_id, 
+              created_at,
+              is_active
+            ) VALUES (?, ?, ?, ?, ?, 1, 1, ?, datetime('now'), 0)`,
+            [email, firstName, lastName, phone, bookingLink || '', orgId]
+          );
+        }
+        
+        // Update onboarding step
+        await dbInstance.execute(
+          'UPDATE organizations SET onboarding_step = 2 WHERE id = ?',
+          [orgId]
+        );
+        
+        logger.info(`Updated user details for org ${orgSlug} - Name: ${firstName} ${lastName}, Email: ${email}`);
+        
+        return {
+          success: true,
+          message: 'User details updated successfully',
+          onboardingStep: 2,
+          userEmail: email,
+          slug: orgSlug
+        };
+        
+      } catch (error) {
+        logger.error(`Error updating user details: ${error}`);
+        set.status = 500;
+        return { 
+          success: false, 
+          message: 'Failed to update user details' 
+        };
+      }
+    })
+    
+    // Endpoint to update company details
+    .post('/api/onboarding/company-details', async ({ body, cookie, set, request }) => {
+      try {
+        // Get org slug from cookie
+        const orgSlug = cookie.orgSlug;
+        
+        if (!orgSlug) {
+          logger.warn('No organization slug found in cookie');
+          set.status = 401;
+          return { 
+            error: 'No organization found in session' 
+          };
+        }
+        
+        // Get session ID from cookie or header (prefer cookie)
+        const sessionId = cookie.onboardingSession || request.headers.get('x-onboarding-session');
+        logger.info(`Updating company details for organization ${orgSlug} from cookie${sessionId ? ' with session ID' : ''}`);
+        
+        const { 
+          agencyName, 
+          website, 
+          phone, 
+          primaryColor, 
+          secondaryColor,
+          logo
+        } = body as { 
+          agencyName: string,
+          website: string,
+          phone: string,
+          primaryColor: string,
+          secondaryColor: string,
+          logo?: string
+        };
+        
+        // Find organization from slug
+        let query = 'SELECT id FROM organizations WHERE slug = ? AND onboarding_completed = FALSE';
+        let params: any[] = [orgSlug];
+        
+        // If session ID is provided, also check it
+        if (sessionId) {
+          query = 'SELECT id FROM organizations WHERE slug = ? AND temp_session_id = ? AND onboarding_completed = FALSE';
+          params = [orgSlug, sessionId];
+        }
+        
+        const orgInfo = await dbInstance.query<{ id: number }>(query, params);
+        
+        if (!orgInfo || orgInfo.length === 0) {
+          logger.warn(`Organization not found or onboarding already completed: ${orgSlug}`);
+          set.status = 404;
+          return { 
+            error: 'Organization not found or onboarding already completed' 
+          };
+        }
+        
+        const orgId = orgInfo[0].id;
+        
+        // Update organization info with default values if empty
+        await dbInstance.execute(`
+          UPDATE organizations 
+          SET name = COALESCE(NULLIF(?, ''), name, 'New Organization'), 
+              website = COALESCE(NULLIF(?, ''), website, ''), 
+              phone = COALESCE(NULLIF(?, ''), phone, ''), 
+              primary_color = COALESCE(NULLIF(?, ''), primary_color, '#6B46C1'), 
+              secondary_color = COALESCE(NULLIF(?, ''), secondary_color, '#9F7AEA')
+          WHERE id = ?`,
+          [agencyName, website, phone, primaryColor, secondaryColor, orgId]
+        );
+        
+        // Store logo if provided
+        if (logo) {
+          // Check if brand settings already exist
+          const brandCheck = await dbInstance.query<{ count: number }>(
+            'SELECT COUNT(*) as count FROM brand_settings WHERE organization_id = ?',
+            [orgId]
+          );
+          
+          if (brandCheck[0]?.count > 0) {
+            // Update existing brand settings
+            await dbInstance.execute(`
+              UPDATE brand_settings 
+              SET brand_name = COALESCE(NULLIF(?, ''), brand_name, 'New Organization'),
+                  primary_color = COALESCE(NULLIF(?, ''), primary_color, '#6B46C1'),
+                  secondary_color = COALESCE(NULLIF(?, ''), secondary_color, '#9F7AEA'),
+                  logo_data = ?
+              WHERE organization_id = ?`,
+              [agencyName, primaryColor, secondaryColor, logo, orgId]
+            );
+          } else {
+            // Create new brand settings
+            await dbInstance.execute(`
+              INSERT INTO brand_settings (
+                organization_id, brand_name, primary_color, secondary_color, logo_data
+              ) VALUES (?, ?, ?, ?, ?)`,
+              [orgId, 
+               agencyName || 'New Organization', 
+               primaryColor || '#6B46C1', 
+               secondaryColor || '#9F7AEA', 
+               logo]
+            );
+          }
+        }
+        
+        // Update onboarding step
+        await dbInstance.execute(
+          'UPDATE organizations SET onboarding_step = 3 WHERE id = ?',
+          [orgId]
+        );
+        
+        logger.info(`Updated company details for org ${orgSlug} - Name: ${agencyName}`);
+        
+        return {
+          success: true,
+          message: 'Company details updated successfully',
+          onboardingStep: 3,
+          slug: orgSlug
+        };
+        
+      } catch (error) {
+        logger.error(`Error updating company details: ${error}`);
+        set.status = 500;
+        return { 
+          success: false, 
+          message: 'Failed to update company details',
+          slug: ""  // Include an empty slug in error responses for decoder compatibility
+        };
+      }
+    })
+    
+    // Endpoint to update licensing settings
+    .post('/api/onboarding/licensing-settings', async ({ body, cookie, set, request }) => {
+      try {
+        // Get org slug from cookie
+        const orgSlug = cookie.orgSlug;
+        
+        if (!orgSlug) {
+          logger.warn('No organization slug found in cookie');
+          set.status = 401;
+          return { 
+            error: 'No organization found in session' 
+          };
+        }
+        
+        // Get session ID from cookie or header (prefer cookie)
+        const sessionId = cookie.onboardingSession || request.headers.get('x-onboarding-session');
+        logger.info(`Updating licensing settings for organization ${orgSlug} from cookie${sessionId ? ' with session ID' : ''}`);
+        
+        const { 
+          carrierContracts,
+          useSmartSendForGI
+        } = body as { 
+          carrierContracts: string[],
+          useSmartSendForGI: boolean
+        };
+        
+        // Find organization from slug
+        let query = 'SELECT id, subscription_tier as tier FROM organizations WHERE slug = ? AND onboarding_completed = FALSE';
+        let params: any[] = [orgSlug];
+        
+        // If session ID is provided, also check it
+        if (sessionId) {
+          query = 'SELECT id, subscription_tier as tier FROM organizations WHERE slug = ? AND temp_session_id = ? AND onboarding_completed = FALSE';
+          params = [orgSlug, sessionId];
+        }
+        
+        const orgInfo = await dbInstance.query<{ id: number, tier: string }>(query, params);
+        
+        if (!orgInfo || orgInfo.length === 0) {
+          logger.warn(`Organization not found or onboarding already completed: ${orgSlug}`);
+          set.status = 404;
+          return { 
+            error: 'Organization not found or onboarding already completed' 
+          };
+        }
+        
+        const orgId = orgInfo[0].id;
+        
+        // Store licensing information in agent_settings table
+        try {
+          // First delete any existing settings
+          await dbInstance.execute(
+            'DELETE FROM agent_settings WHERE organization_id = ?',
+            [orgId]
+          );
+          
+          // Insert new settings - using org-level settings
+          await dbInstance.execute(`
+            INSERT INTO agent_settings (
+              organization_id,
+              carrier_contracts,
+              settings_type
+            ) VALUES (?, ?, 'organization')`,
+            [
+              orgId,
+              JSON.stringify(carrierContracts)
+            ]
+          );
+          
+          // Store SmartSend setting in org_settings
+          const orgSettings = {
+            useSmartSendForGI: useSmartSendForGI
+          };
+          
+          await dbInstance.execute(
+            'UPDATE organizations SET org_settings = ? WHERE id = ?',
+            [JSON.stringify(orgSettings), orgId]
+          );
+          
+          logger.info(`Saved licensing settings for org ${orgSlug} (ID: ${orgId}) - Carriers: ${carrierContracts.length}`);
+        } catch (settingsError) {
+          logger.error(`Error saving licensing settings: ${settingsError}`);
+          // Continue execution even if this fails - non-critical
+        }
+        
+        // Update onboarding step
+        await dbInstance.execute(
+          'UPDATE organizations SET onboarding_step = 4 WHERE id = ?',
+          [orgId]
+        );
+        
+        const isBasicPlan = orgInfo[0]?.tier === 'basic';
+        const nextStep = isBasicPlan ? 5 : 4; // Skip agents step if basic plan
+        
+        return {
+          success: true,
+          message: 'Licensing settings updated successfully',
+          onboardingStep: 4,
+          nextStep: nextStep,
+          isBasicPlan: isBasicPlan
+        };
+        
+      } catch (error) {
+        logger.error(`Error updating licensing settings: ${error}`);
+        set.status = 500;
+        return { 
+          success: false, 
+          message: 'Failed to update licensing settings' 
+        };
+      }
+    })
+    
+    // Endpoint to add agents
+    .post('/api/onboarding/agents', async ({ body, cookie, set }) => {
+      try {
+        // Get org slug and session ID from cookies
+        const orgSlug = cookie.orgSlug;
+        const tempSessionId = cookie.onboardingSession;
+        
+        if (!orgSlug || !tempSessionId) {
+          logger.warn('No organization slug or session ID found in cookie');
+          set.status = 401;
+          return { 
+            success: false,
+            message: 'No organization found in session or invalid session' 
+          };
+        }
+        
+        logger.info(`Adding agents for organization ${orgSlug} from cookie`);
+        
+        const { agents } = body as { 
+          agents: Array<{
+            firstName: string,
+            lastName: string,
+            email: string,
+            phone: string,
+            isAdmin: boolean,
+            isAgent: boolean
+          }>
+        };
+        
+        // Find organization from slug and session token
+        const orgInfo = await dbInstance.query<{ id: number }>(
+          'SELECT id FROM organizations WHERE slug = ? AND temp_session_id = ?',
+          [orgSlug, tempSessionId]
+        );
+        
+        if (!orgInfo || orgInfo.length === 0) {
+          logger.warn(`Invalid session or organization slug: ${orgSlug}`);
+          set.status = 401;
+          return { 
+            success: false, 
+            message: 'Unauthorized: Invalid session' 
+          };
+        }
+        
+        const orgId = orgInfo[0].id;
+        
+        // Process agents in transaction to ensure all-or-nothing
+        const addedAgents = await dbInstance.transaction(async (db) => {
+          const addedEmails = [];
+          
+          for (const agent of agents) {
+            // Check if email already exists
+            const emailCheck = await db.query<{ count: number }>(
+              'SELECT COUNT(*) as count FROM users WHERE LOWER(email) = LOWER(?)',
+              [agent.email]
+            );
+            
+            if (emailCheck[0]?.count > 0) {
+              logger.warn(`Skip adding agent with email ${agent.email} - already exists`);
+              continue; // Skip this agent, email already exists
+            }
+            
+            // Insert new agent
+            await db.execute(`
+              INSERT INTO users (
+                email,
+                first_name,
+                last_name,
+                phone,
+                is_admin,
+                is_agent,
+                organization_id,
+                created_at,
+                is_active
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), 1)`,
+              [
+                agent.email,
+                agent.firstName,
+                agent.lastName,
+                agent.phone || '',
+                agent.isAdmin ? 1 : 0,
+                agent.isAgent ? 1 : 0,
+                orgId
+              ]
+            );
+            
+            logger.info(`Added agent: ${agent.firstName} ${agent.lastName} (${agent.email})`);
+            addedEmails.push(agent.email);
+          }
+          
+          return addedEmails;
+        });
+        
+        // Update onboarding step
+        await dbInstance.execute(
+          'UPDATE organizations SET onboarding_step = 5 WHERE id = ?',
+          [orgId]
+        );
+        
+        return {
+          success: true,
+          message: `Added ${addedAgents.length} agents successfully`,
+          addedAgents: addedAgents,
+          onboardingStep: 5
+        };
+        
+      } catch (error) {
+        logger.error(`Error adding agents: ${error}`);
+        set.status = 500;
+        return { 
+          success: false, 
+          message: 'Failed to add agents' 
+        };
+      }
+    })
+    
+    // Endpoint to process payment and complete subscription
+    .post('/api/onboarding/payment', async ({ body, cookie, set }) => {
+      try {
+        // Get org slug and session ID from cookies
+        const orgSlug = cookie.orgSlug;
+        const tempSessionId = cookie.onboardingSession;
+        
+        if (!orgSlug || !tempSessionId) {
+          logger.warn('No organization slug or session ID found in cookie');
+          set.status = 401;
+          return { 
+            success: false,
+            message: 'No organization found in session or invalid session' 
+          };
+        }
+        
+        logger.info(`Processing payment for organization ${orgSlug} from cookie`);
+        
+        const { 
+          tierId, 
+          extraAgents, 
+          extraContacts 
+        } = body as {
+          tierId: string,
+          extraAgents: number,
+          extraContacts: number
+        };
+        
+        // Find organization from slug and session token
+        const orgInfo = await dbInstance.query<{ id: number, email: string }>(
+          `SELECT o.id, (SELECT email FROM users WHERE organization_id = o.id AND is_admin = 1 LIMIT 1) as email 
+           FROM organizations o WHERE o.slug = ? AND o.temp_session_id = ?`,
+          [orgSlug, tempSessionId]
+        );
+        
+        if (!orgInfo || orgInfo.length === 0) {
+          logger.warn(`Invalid session or organization slug: ${orgSlug}`);
+          set.status = 401;
+          return { 
+            success: false, 
+            message: 'Unauthorized: Invalid session' 
+          };
+        }
+        
+        const orgId = orgInfo[0].id;
+        
+        // Import the Stripe service here
+        const { createOrUpdateSubscription } = await import('../services/stripe');
+        
+        try {
+          // Get admin user's email for Stripe customer
+          const userEmail = orgInfo[0]?.email;
+          if (!userEmail) {
+            throw new Error('Admin user email not found');
+          }
+          
+          // Create or update the Stripe subscription
+          const stripeResult = await createOrUpdateSubscription({
+            tierId: tierId as 'basic' | 'pro' | 'enterprise',
+            organizationId: orgId,
+            email: userEmail,
+            extraAgents: extraAgents || 0,
+            extraContacts: extraContacts || 0
+          });
+          
+          // Update organization with Stripe IDs and subscription tier
+          await dbInstance.execute(`
+            UPDATE organizations 
+            SET subscription_tier = ?,
+                stripe_customer_id = ?,
+                stripe_subscription_id = ?,
+                onboarding_completed = TRUE,
+                onboarding_step = 6,
+                extra_agents = ?,
+                extra_contacts = ?,
+                temp_session_id = NULL
+            WHERE id = ?`,
+            [
+              tierId, 
+              stripeResult.customerId, 
+              stripeResult.subscriptionId, 
+              extraAgents || 0,
+              extraContacts || 0,
+              orgId
+            ]
+          );
+          
+          // Activate the admin user
+          await dbInstance.execute(`
+            UPDATE users
+            SET is_active = 1
+            WHERE organization_id = ? AND is_admin = 1`,
+            [orgId]
+          );
+          
+          // Set up the database for the organization
+          const { TursoService } = await import('../services/turso');
+          const turso = new TursoService();
+          
+          try {
+            const { url, token } = await turso.createOrganizationDatabase(orgId.toString());
+            
+            // Update organization with Turso database credentials
+            await dbInstance.execute(
+              'UPDATE organizations SET turso_db_url = ?, turso_auth_token = ? WHERE id = ?',
+              [url, token, orgId]
+            );
+            
+            logger.info(`Created Turso database for organization ${orgId}`);
+          } catch (dbError) {
+            logger.error(`Error creating database: ${dbError}`);
+            // Continue execution even if this fails - can be set up later
+          }
+          
+          logger.info(`Successfully completed payment for org ${orgSlug} (ID: ${orgId}) with plan ${tierId}`);
+          
+          // Return the client secret for frontend payment completion
+          return {
+            success: true,
+            message: 'Subscription activated successfully',
+            clientSecret: stripeResult.clientSecret,
+            publishableKey: config.stripe.publishableKey,
+            organizationId: orgId
+          };
+          
+        } catch (stripeError) {
+          logger.error(`Stripe subscription error: ${stripeError}`);
+          set.status = 400;
+          return {
+            success: false,
+            error: 'Failed to process subscription payment'
+          };
+        }
+        
+      } catch (error) {
+        logger.error(`Error processing payment: ${error}`);
+        set.status = 500;
+        return { 
+          success: false, 
+          message: 'Failed to process payment' 
+        };
+      }
+    })
+    
+    // Endpoint to handle enterprise plan inquiries
+    .post('/api/onboarding/enterprise', async ({ body, cookie, set }) => {
+      try {
+        // Get org slug from cookie
+        const orgSlug = cookie.orgSlug;
+        
+        if (!orgSlug) {
+          logger.warn('No organization slug found in cookie');
+          set.status = 401;
+          return { 
+            success: false,
+            message: 'No organization found in session' 
+          };
+        }
+        
+        logger.info(`Processing enterprise inquiry for organization ${orgSlug}`);
+        
+        const { 
+          companyName,
+          contactName,
+          email,
+          phone,
+          message
+        } = body as { 
+          companyName: string, 
+          contactName: string, 
+          email: string,
+          phone: string,
+          message?: string
+        };
+        
+        // Find organization by slug
+        const orgInfo = await dbInstance.query<{ id: number }>(
+          'SELECT id FROM organizations WHERE slug = ?',
+          [orgSlug]
+        );
+        
+        if (!orgInfo || orgInfo.length === 0) {
+          logger.warn(`Organization not found: ${orgSlug}`);
+          set.status = 404;
+          return { 
+            success: false, 
+            message: 'Organization not found' 
+          };
+        }
+        
+        const orgId = orgInfo[0].id;
+        
+        // Update organization to enterprise tier
+        await dbInstance.execute(
+          'UPDATE organizations SET subscription_tier = ?, onboarding_step = 6 WHERE id = ?',
+          ['enterprise', orgId]
+        );
+        
+        // Import SendGrid to send enterprise request email
+        const sgMail = await import('@sendgrid/mail');
+        sgMail.default.setApiKey(process.env.SENDGRID_API_KEY || '');
+        
+        const emailContent = `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h2 style="color: #333;">New Enterprise Plan Inquiry (Onboarding)</h2>
+            
+            <div style="margin: 20px 0; background-color: #f7f7f7; padding: 20px; border-radius: 5px;">
+              <p><strong>Company:</strong> ${companyName}</p>
+              <p><strong>Contact Name:</strong> ${contactName}</p>
+              <p><strong>Email:</strong> ${email}</p>
+              <p><strong>Phone:</strong> ${phone}</p>
+              <p><strong>Message:</strong></p>
+              <p style="white-space: pre-line;">${message || 'No message provided'}</p>
+            </div>
+            
+            <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee;">
+              <p><strong>Organization Info:</strong></p>
+              <p>Organization ID: ${orgId}</p>
+              <p>Organization Slug: ${orgSlug}</p>
+            </div>
+            
+            <p style="color: #666; font-size: 14px;">
+              This inquiry was submitted through the Enterprise Form during the onboarding process on MedicareMax.
+            </p>
+          </div>
+        `;
+        
+        try {
+          // Send email notification
+          const emailMsg = {
+            to: ['information@medicaremax.ai', 'reuben.brooks@medicaremax.ai'],
+            from: process.env.SENDGRID_FROM_EMAIL || 'information@medicaremax.ai',
+            subject: `Enterprise Plan Inquiry from ${contactName} at ${companyName} (Onboarding)`,
+            text: `New Enterprise Plan Inquiry (Onboarding):\n\nCompany: ${companyName}\nContact Name: ${contactName}\nEmail: ${email}\nPhone: ${phone}\n\nMessage: ${message || 'No message provided'}\n\nOrganization ID: ${orgId}\nOrganization Slug: ${orgSlug}\n\nThis inquiry was submitted through the Enterprise Form during onboarding on MedicareMax.`,
+            html: emailContent
+          };
+          
+          await sgMail.default.send(emailMsg);
+          logger.info(`Enterprise inquiry email sent for organization ${orgSlug}`);
+        } catch (emailError) {
+          logger.error(`Error sending enterprise inquiry email: ${emailError}`);
+          // Continue execution even if email fails
+        }
+        
+        // Update onboarding step
+        await dbInstance.execute(
+          'UPDATE organizations SET onboarding_completed = TRUE, onboarding_step = 6 WHERE id = ?',
+          [orgId]
+        );
+        
+        // Activate the admin user
+        await dbInstance.execute(
+          'UPDATE users SET is_active = 1 WHERE organization_id = ? AND is_admin = 1',
+          [orgId]
+        );
+        
+        logger.info(`Successfully submitted enterprise inquiry for org ${orgSlug}`);
+        
+        return {
+          success: true,
+          message: 'Enterprise inquiry submitted successfully. Our sales team will contact you shortly.'
+        };
+        
+      } catch (error) {
+        logger.error(`Error processing enterprise inquiry: ${error}`);
+        set.status = 500;
+        return { 
+          success: false, 
+          message: 'Failed to process enterprise inquiry' 
+        };
+      }
+    })
+    
+    // Endpoint to complete the onboarding process
+    .post('/api/onboarding/complete', async ({ cookie, set }) => {
+      try {
+        // Get org slug and session ID from cookies
+        const orgSlug = cookie.orgSlug;
+        const sessionToken = cookie.onboardingSession;
+        
+        if (!orgSlug || !sessionToken) {
+          logger.warn('No organization slug or session ID found in cookie');
+          set.status = 401;
+          return { 
+            success: false,
+            message: 'No organization found in session or invalid session' 
+          };
+        }
+        
+        logger.info(`Finalizing onboarding for organization ${orgSlug}`);
+        
+        // Find organization by slug and session token
+        const orgInfo = await dbInstance.query<{ id: number }>(
+          'SELECT id FROM organizations WHERE slug = ? AND temp_session_id = ?',
+          [orgSlug, sessionToken]
+        );
+        
+        if (!orgInfo || orgInfo.length === 0) {
+          logger.warn(`Invalid session or organization slug: ${orgSlug}`);
+          set.status = 401;
+          return { 
+            success: false, 
+            message: 'Unauthorized: Invalid session' 
+          };
+        }
+        
+        const orgId = orgInfo[0].id;
+        
+        // Mark onboarding as completed and clear temp session
+        await dbInstance.execute(`
+          UPDATE organizations 
+          SET onboarding_completed = TRUE,
+              onboarding_step = 6,
+              temp_session_id = NULL
+          WHERE id = ?`,
+          [orgId]
+        );
+        
+        // Activate the admin user
+        await dbInstance.execute(`
+          UPDATE users
+          SET is_active = 1
+          WHERE organization_id = ? AND is_admin = 1`,
+          [orgId]
+        );
+        
+        logger.info(`Successfully finalized onboarding for org ${orgSlug} (ID: ${orgId})`);
+        
+        return {
+          success: true,
+          message: 'Onboarding completed successfully'
+        };
+        
+      } catch (error) {
+        logger.error(`Error finalizing onboarding: ${error}`);
+        set.status = 500;
+        return { 
+          success: false, 
+          message: 'Failed to finalize onboarding process' 
+        };
+      }
+    })
+
+    // New endpoint to get all onboarding settings for an organization
+    .get('/api/organizations/:orgSlug/onboarding-settings', async ({ params, set, request }) => {
+      try {
+        const { orgSlug } = params;
+        
+        logger.info(`Fetching onboarding settings for organization ${orgSlug}`);
+        
+        // Find organization and its admin user
+        const orgInfo = await dbInstance.query<{ 
+          id: number, 
+          name: string,
+          onboarding_step: number,
+          subscription_tier: string,
+          website: string,
+          phone: string,
+          primary_color: string,
+          secondary_color: string
+        }>(
+          `SELECT id, name, onboarding_step, subscription_tier, website, phone, primary_color, secondary_color
+           FROM organizations 
+           WHERE slug = ? AND onboarding_completed = FALSE
+           LIMIT 1`,
+          [orgSlug]
+        );
+        
+        if (!orgInfo || orgInfo.length === 0) {
+          logger.warn(`Organization not found or onboarding already completed: ${orgSlug}`);
+          set.status = 404;
+          return { 
+            error: 'Organization not found or onboarding already completed' 
+          };
+        }
+        
+        const orgId = orgInfo[0].id;
+        
+        // Get admin user details
+        const userInfo = await dbInstance.query<{
+          id: number,
+          email: string,
+          first_name: string,
+          last_name: string,
+          phone: string,
+          booking_link: string
+        }>(
+          `SELECT id, email, first_name, last_name, phone, booking_link
+           FROM users
+           WHERE organization_id = ? AND is_admin = 1
+           LIMIT 1`,
+          [orgId]
+        );
+        
+        // Get brand settings (for logo)
+        const brandInfo = await dbInstance.query<{
+          logo_data: string
+        }>(
+          `SELECT logo_data
+           FROM brand_settings
+           WHERE organization_id = ?
+           LIMIT 1`,
+          [orgId]
+        );
+        
+        // Get licensing settings
+        const licensingInfo = await dbInstance.query<{
+          carrier_contracts: string
+        }>(
+          `SELECT carrier_contracts
+           FROM agent_settings
+           WHERE organization_id = ? AND settings_type = 'organization'
+           LIMIT 1`,
+          [orgId]
+        );
+        
+        // Build response structure
+        const response = {
+          onboardingStep: orgInfo[0].onboarding_step,
+          planSelectionModel: {
+            selectedPlan: orgInfo[0].subscription_tier || 'basic'
+          },
+          userDetailsModel: userInfo.length > 0 ? {
+            firstName: userInfo[0].first_name || '',
+            lastName: userInfo[0].last_name || '',
+            email: userInfo[0].email || '',
+            phone: userInfo[0].phone || '',
+            bookingLink: userInfo[0].booking_link || ''
+          } : null,
+          companyDetailsModel: {
+            agencyName: orgInfo[0].name || '',
+            website: orgInfo[0].website || '',
+            phone: orgInfo[0].phone || '',
+            primaryColor: orgInfo[0].primary_color || '#0A0F4F',
+            secondaryColor: orgInfo[0].secondary_color || '#7B61FF',
+            logo: brandInfo.length > 0 ? brandInfo[0].logo_data : ''
+          },
+          licensingSettingsModel: {
+            carrierContracts: licensingInfo.length > 0 ? 
+              JSON.parse(licensingInfo[0].carrier_contracts || '[]') : [],
+            useSmartSendForGI: false // Default value
+          },
+          addAgentsModel: {
+            agents: [] // Empty by default
+          },
+          paymentModel: {
+            extraAgents: 0,
+            extraContacts: 0
+          },
+          enterpriseFormModel: null
+        };
+        
+        logger.info(`Retrieved onboarding settings for org ${orgSlug} (ID: ${orgId})`);
+        
+        return response;
+        
+      } catch (error) {
+        logger.error(`Error fetching onboarding settings: ${error}`);
+        set.status = 500;
+        return { 
+          error: 'Failed to fetch onboarding settings' 
+        };
+      }
+    })
+}
+
+// Function to clean up old organizations that haven't completed onboarding
+export async function cleanupOldOrganizations() {
+  const dbInstance = new Database();
+  
+  try {
+    logger.info('Running cleanup job for old organizations');
+    
+    // Find organizations older than 7 days
+    const oldOrgs = await dbInstance.query<{ id: number }>(
+      `SELECT id FROM organizations 
+       WHERE created_at < datetime('now', '-7 days') 
+       AND onboarding_completed = FALSE`
+    );
+    
+    if (!oldOrgs || oldOrgs.length === 0) {
+      logger.info('No old organizations to clean up');
+      return;
+    }
+    
+    logger.info(`Found ${oldOrgs.length} old organizations to check for cleanup`);
+    
+    for (const org of oldOrgs) {
+      // Check if the organization has users
+      const userCount = await dbInstance.query<{ count: number }>(
+        'SELECT COUNT(*) as count FROM users WHERE organization_id = ?',
+        [org.id]
+      );
+      
+      // Check if the organization has a contact database
+      const contactDbCount = await dbInstance.query<{ count: number }>(
+        'SELECT COUNT(*) as count FROM contact_databases WHERE organization_id = ?',
+        [org.id]
+      );
+      
+      // If no users and no contact database, delete the organization
+      if (userCount[0]?.count === 0 && contactDbCount[0]?.count === 0) {
+        logger.info(`Deleting old organization: ${org.id}`);
+        await dbInstance.execute(
+          'DELETE FROM organizations WHERE id = ?',
+          [org.id]
+        );
+      }
+    }
+    
+    logger.info('Completed cleanup job for old organizations');
+  } catch (error) {
+    logger.error(`Error in cleanup job: ${error}`);
+  }
+}
+
+export default createOnboardingRoutes
+
+================
 File: src/routes/organizations.ts
 ================
 import { Elysia } from 'elysia';
@@ -1558,6 +3138,7 @@ import { generateToken, getUserFromSession } from '../services/auth';
 import { logger } from '../logger';
 import { AuthService } from '../services/auth';
 import { config } from '../config';
+import sgMail from '@sendgrid/mail';
 
 // Update the validation schema to include slug rules
 const signupSchema = z.object({
@@ -1616,7 +3197,7 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
       
       // Check if email is already registered in any organization
       const existingUser = await db.query<{ count: number }>(
-        'SELECT COUNT(*) as count FROM users WHERE email = ?',
+        'SELECT COUNT(*) as count FROM users WHERE LOWER(email) = LOWER(?)',
         [data.adminEmail]
       );
 
@@ -1698,30 +3279,12 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
         return orgId;
       });
 
-      // Generate and send magic link outside the transaction
-      logger.info('Generating magic link');
-      const magicLink = await auth.createMagicLink(
-        data.adminEmail, 
-        slug,
-        {
-          redirectUrl: '/choose-plan',
-          orgId,
-          name: `${data.adminFirstName} ${data.adminLastName}`
-        }
-      );
-
-      logger.info(`Magic link generated successfully: ${magicLink}`);
-      await sendMagicLink({
-        email: data.adminEmail,
-        magicLink,
-        name: `${data.adminFirstName} ${data.adminLastName}`
-      });
-
-      logger.info('Magic link email sent successfully');
+      // Return success response without sending magic link
       set.status = 201;
       return { 
         success: true,
-        message: 'Please check your email to verify your account'
+        message: 'Organization created successfully',
+        slug: slug
       };
 
     } catch (error) {
@@ -1786,29 +3349,36 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
 
     try {
       const decodedEmail = decodeURIComponent(params.email);
+      logger.info(`Checking email availability for: "${decodedEmail}"`);
       
       // Basic email format validation
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(decodedEmail)) {
+        logger.info(`Email validation failed for: "${decodedEmail}"`);
         return {
           available: false,
           message: 'Invalid email format'
         };
       }
 
+      // Use LOWER() for case-insensitive comparison to match unique constraint behavior
+      logger.info(`Running SQL query: SELECT COUNT(*) as count FROM users WHERE LOWER(email) = LOWER('${decodedEmail}')`);
       const existingUser = await db.query<{ count: number }>(
-        'SELECT COUNT(*) as count FROM users WHERE email = ?',
+        'SELECT COUNT(*) as count FROM users WHERE LOWER(email) = LOWER(?)',
         [decodedEmail]
       );
 
       const count = existingUser[0]?.count || 0;
+      logger.info(`Email check query result count: ${count} for email: "${decodedEmail}"`);
 
       if (count > 0) {
+        logger.info(`Email "${decodedEmail}" is already registered`);
         return {
           available: false,
           message: 'This email address is already registered'
         };
       }
 
+      logger.info(`Email "${decodedEmail}" is available`);
       return {
         available: true,
         message: 'Email is available'
@@ -1849,6 +3419,177 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
       logger.error(`Error fetching subscription tiers: ${error}`);
       set.status = 500;
       return { success: false, error: 'Failed to fetch subscription tiers' };
+    }
+  })
+  .get('/organizations/:orgSlug/subscription', async ({ params, request, set }) => {
+    try {
+      const db = new Database();
+      const orgSlug = params.orgSlug;
+      
+      logger.info(`GET /organizations/${orgSlug}/subscription - Request received`);
+      
+      // Get session cookie for debugging
+      const sessionCookie = request.headers.get('cookie');
+      logger.info(`Session cookie: ${sessionCookie ? 'Present' : 'Missing'}`);
+      
+      // Get current user from session to determine their org
+      const currentUser = await getUserFromSession(request);
+      logger.info(`User authentication result: ${currentUser ? `Authenticated as ${currentUser.email}` : 'Not authenticated'}`);
+      
+      if (!currentUser) {
+        set.status = 401;
+        logger.error('Subscription fetch failed: User not authenticated');
+        return {
+          success: false,
+          error: 'You must be logged in to perform this action'
+        };
+      }
+
+      // Log request information for debugging
+      logger.info(`Fetching subscription - orgSlug: ${orgSlug}, userId: ${currentUser.id}, orgId: ${currentUser.organization_id}`);
+      
+      // Get organization details
+      const orgResult = await db.query<{ 
+        id: number,
+        subscription_tier: string,
+        agent_limit: number,
+        contact_limit: number
+      }>(
+        'SELECT id, subscription_tier, agent_limit, contact_limit FROM organizations WHERE slug = ?',
+        [orgSlug]
+      );
+
+      if (!orgResult || orgResult.length === 0) {
+        set.status = 404;
+        logger.error(`Subscription fetch failed: Organization not found - ${orgSlug}`);
+        return {
+          success: false,
+          error: 'Organization not found'
+        };
+      }
+
+      const organization = orgResult[0];
+      
+      // Verify user has permission for this org
+      if (organization.id !== currentUser.organization_id) {
+        logger.error(`Subscription fetch failed: Permission denied - User from org ${currentUser.organization_id} attempted to access org ${organization.id}`);
+        set.status = 403;
+        return {
+          success: false,
+          error: 'You do not have permission to view this organization'
+        };
+      }
+      
+      // Set up the response with subscription details
+      const response = {
+        success: true,
+        tierId: organization.subscription_tier,
+        agentLimit: organization.agent_limit,
+        contactLimit: organization.contact_limit
+      };
+
+      logger.info(`Successfully fetched subscription for org ${organization.id}: tier=${organization.subscription_tier}, agents=${organization.agent_limit}, contacts=${organization.contact_limit}`);
+      
+      return response;
+      
+    } catch (error) {
+      logger.error(`Error fetching organization subscription: ${error}`);
+      set.status = 500;
+      return {
+        success: false,
+        error: 'Failed to fetch subscription details'
+      };
+    }
+  })
+  .get('/organizations/my-subscription', async ({ request, set }) => {
+    try {
+      const db = new Database();
+      
+      logger.info('GET /organizations/my-subscription - Request received');
+      
+      // Get current user from session
+      const currentUser = await getUserFromSession(request);
+      logger.info(`User authentication result: ${currentUser ? `Authenticated as ${currentUser.email}` : 'Not authenticated'}`);
+      
+      if (!currentUser) {
+        set.status = 401;
+        logger.error('My subscription fetch failed: User not authenticated');
+        return {
+          success: false,
+          error: 'You must be logged in to perform this action'
+        };
+      }
+
+      // Get organization details using user's organization_id
+      const orgResult = await db.query<{ 
+        id: number,
+        name: string,
+        slug: string,
+        subscription_tier: string,
+        agent_limit: number,
+        contact_limit: number,
+        stripe_subscription_id: string | null
+      }>(
+        'SELECT id, name, slug, subscription_tier, agent_limit, contact_limit, stripe_subscription_id FROM organizations WHERE id = ?',
+        [currentUser.organization_id]
+      );
+
+      if (!orgResult || orgResult.length === 0) {
+        set.status = 404;
+        logger.error(`My subscription fetch failed: Organization not found for user ${currentUser.id}`);
+        return {
+          success: false,
+          error: 'Organization not found'
+        };
+      }
+
+      const organization = orgResult[0];
+      
+      // Get subscription tier details from subscription_tiers table
+      const tierResult = await db.query<{
+        name: string,
+        agent_limit: number,
+        contact_limit: number,
+        features: string
+      }>(
+        'SELECT name, agent_limit, contact_limit, features FROM subscription_tiers WHERE id = ?',
+        [organization.subscription_tier]
+      );
+      
+      const tier = tierResult[0] || null;
+      
+      // Determine subscription status based on Stripe subscription
+      const subscriptionStatus = organization.stripe_subscription_id ? 'active' : 'inactive';
+      
+      // Set up the response with complete subscription details
+      const response = {
+        success: true,
+        organization: {
+          id: organization.id,
+          name: organization.name,
+          slug: organization.slug
+        },
+        subscription: {
+          tierId: organization.subscription_tier,
+          tierName: tier?.name || organization.subscription_tier,
+          status: subscriptionStatus,
+          agentLimit: organization.agent_limit,
+          contactLimit: organization.contact_limit,
+          features: tier ? JSON.parse(tier.features) : []
+        }
+      };
+
+      logger.info(`Successfully fetched my subscription for org ${organization.id}: tier=${organization.subscription_tier}, agents=${organization.agent_limit}, contacts=${organization.contact_limit}`);
+      
+      return response;
+      
+    } catch (error) {
+      logger.error(`Error fetching my organization subscription: ${error}`);
+      set.status = 500;
+      return {
+        success: false,
+        error: 'Failed to fetch subscription details'
+      };
     }
   })
   .post('/organizations/:orgSlug/subscription', async ({ params: { orgSlug }, body, request, set }) => {
@@ -1907,7 +3648,7 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
       };
       
       // Import the Stripe service here to avoid circular dependencies
-      const { createOrUpdateSubscription, PlanTier } = await import('../services/stripe');
+      const { createOrUpdateSubscription } = await import('../services/stripe');
       
       try {
         // Get user's email for Stripe customer
@@ -1922,7 +3663,7 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
         
         // Create or update the Stripe subscription
         const stripeResult = await createOrUpdateSubscription({
-          tierId: tierId as PlanTier,
+          tierId: tierId as 'basic' | 'pro' | 'enterprise',
           organizationId: organization.id,
           email: userResult[0].email,
           extraAgents,
@@ -2041,6 +3782,67 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
       };
     }
   })
+  // Get organization account status
+  .get('/organizations/:orgSlug/account-status', async ({ params, set, request }) => {
+    try {
+      const db = new Database();
+      
+      // Authenticate the request
+      const currentUser = await getUserFromSession(request);
+      if (!currentUser) {
+        set.status = 401;
+        return {
+          success: false,
+          error: 'You must be logged in to perform this action'
+        };
+      }
+      
+      // Get organization ID from slug
+      const orgResult = await db.query<{ id: number }>(
+        'SELECT id FROM organizations WHERE slug = ?',
+        [params.orgSlug]
+      );
+      
+      if (!orgResult || orgResult.length === 0) {
+        set.status = 404;
+        return {
+          success: false,
+          error: 'Organization not found'
+        };
+      }
+      
+      const organizationId = orgResult[0].id;
+      
+      // Verify user has permission to access this organization
+      if (organizationId !== currentUser.organization_id) {
+        set.status = 403;
+        return {
+          success: false,
+          error: 'You do not have permission to access this organization'
+        };
+      }
+      
+      // Import the subscription service
+      const { checkAccountStatus } = await import('../services/subscription');
+      
+      // Check account status
+      const statusDetails = await checkAccountStatus(organizationId);
+      
+      return {
+        success: true,
+        status: statusDetails
+      };
+      
+    } catch (error) {
+      logger.error(`Error checking account status: ${error}`);
+      set.status = 500;
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  })
+  
   // Stripe webhook handler
   .post('/stripe-webhook', async ({ body, set, request }) => {
     try {
@@ -2054,7 +3856,7 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
       // Import Stripe to verify the webhook
       const Stripe = await import('stripe');
       const stripe = new Stripe.default(config.stripe.secretKey, {
-        apiVersion: '2023-10-16',
+        apiVersion: '2025-02-24.acacia',
       });
       
       const event = stripe.webhooks.constructEvent(
@@ -2078,6 +3880,160 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
         error: error instanceof Error ? error.message : 'Unknown error'
       };
     }
+  })
+  // Add interface for enterprise contact form data
+  .post('/enterprise-contact', async ({ body, set, request }: { 
+    body: { name: string; email: string; phone: string; company: string; companySize?: string; message?: string }, 
+    set: { status: number },
+    request: Request 
+  }) => {
+    try {
+      const { name, email, phone, company, companySize, message } = body;
+      
+      // Validate required fields
+      if (!name || !email || !phone || !company) {
+        set.status = 400;
+        return { success: false, error: 'Missing required fields' };
+      }
+      
+      // Try to get user/organization info from session if available
+      let orgInfo = "";
+      try {
+        const user = await getUserFromSession(request);
+        if (user) {
+          orgInfo = `
+          <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee;">
+            <p><strong>User is logged in with the following details:</strong></p>
+            <p>Organization: ${user.organization_name} (ID: ${user.organization_id})</p>
+            <p>User: ${user.first_name} ${user.last_name} (${user.email})</p>
+          </div>`;
+        }
+      } catch (sessionError) {
+        // Just log the error but continue - the session info is optional
+        logger.warn(`Unable to get session info: ${sessionError}`);
+      }
+      
+      // Format the email content
+      const emailContent = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #333;">New Enterprise Plan Inquiry</h2>
+          
+          <div style="margin: 20px 0; background-color: #f7f7f7; padding: 20px; border-radius: 5px;">
+            <p><strong>Name:</strong> ${name}</p>
+            <p><strong>Email:</strong> ${email}</p>
+            <p><strong>Phone:</strong> ${phone}</p>
+            <p><strong>Company:</strong> ${company}</p>
+            <p><strong>Company Size:</strong> ${companySize || 'Not specified'}</p>
+            <p><strong>Message:</strong></p>
+            <p style="white-space: pre-line;">${message || 'No message provided'}</p>
+          </div>
+          ${orgInfo}
+          <p style="color: #666; font-size: 14px;">
+            This inquiry was submitted through the Enterprise Contact form on the MedicareMax portal.
+          </p>
+        </div>
+      `;
+      
+      // Configure email
+      const msg = {
+        to: ['information@medicaremax.ai', 'reuben.brooks@medicaremax.ai'],
+        from: process.env.SENDGRID_FROM_EMAIL || 'information@medicaremax.ai',
+        subject: `Enterprise Plan Inquiry from ${name} at ${company}`,
+        text: `New Enterprise Plan Inquiry:\n\nName: ${name}\nEmail: ${email}\nPhone: ${phone}\nCompany: ${company}\nCompany Size: ${companySize || 'Not specified'}\n\nMessage: ${message || 'No message provided'}\n\n${orgInfo ? `User is logged in from organization: ${orgInfo}` : ''}\n\nThis inquiry was submitted through the Enterprise Contact form on the MedicareMax portal.`,
+        html: emailContent
+      };
+      
+      // Send the email
+      await sgMail.send(msg);
+      
+      // Log successful submission
+      logger.info(`Enterprise plan inquiry submitted by ${name} from ${company}`);
+      
+      // Return success response
+      return { success: true };
+    } catch (error) {
+      logger.error(`Error processing enterprise contact submission: ${error}`);
+      set.status = 500;
+      return { 
+        success: false, 
+        error: 'Failed to process your request. Please try again later.' 
+      };
+    }
+  })
+  // Add endpoint for enterprise inquiry during onboarding
+  .post('/enterprise-inquiry', async ({ body, set, request }: { 
+    body: { companyName: string; contactName: string; email: string; phone: string; message?: string }, 
+    set: { status: number },
+    request: Request 
+  }) => {
+    try {
+      const { companyName, contactName, email, phone, message } = body;
+      
+      // Validate required fields
+      if (!companyName || !contactName || !email || !phone) {
+        set.status = 400;
+        return { success: false, error: 'Missing required fields' };
+      }
+      
+      // Try to get user/organization info from session if available
+      let orgInfo = "";
+      try {
+        const user = await getUserFromSession(request);
+        if (user) {
+          orgInfo = `
+          <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee;">
+            <p><strong>User is logged in with the following details:</strong></p>
+            <p>Organization: ${user.organization_name} (ID: ${user.organization_id})</p>
+            <p>User: ${user.first_name} ${user.last_name} (${user.email})</p>
+          </div>`;
+        }
+      } catch (sessionError) {
+        // Just log the error but continue - the session info is optional
+        logger.warn(`Unable to get session info: ${sessionError}`);
+      }
+      
+      // Format the email content
+      const emailContent = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #333;">New Enterprise Plan Inquiry (Onboarding)</h2>
+          
+          <div style="margin: 20px 0; background-color: #f7f7f7; padding: 20px; border-radius: 5px;">
+            <p><strong>Company:</strong> ${companyName}</p>
+            <p><strong>Contact Name:</strong> ${contactName}</p>
+            <p><strong>Email:</strong> ${email}</p>
+            <p><strong>Phone:</strong> ${phone}</p>
+            <p><strong>Message:</strong></p>
+            <p style="white-space: pre-line;">${message || 'No message provided'}</p>
+          </div>
+          ${orgInfo}
+          <p style="color: #666; font-size: 14px;">
+            This inquiry was submitted through the Enterprise Form during the onboarding process on MedicareMax.
+          </p>
+        </div>
+      `;
+      
+      // Configure email
+      const msg = {
+        to: ['information@medicaremax.ai', 'reuben.brooks@medicaremax.ai'],
+        from: process.env.SENDGRID_FROM_EMAIL || 'information@medicaremax.ai',
+        subject: `Enterprise Plan Inquiry from ${contactName} at ${companyName} (Onboarding)`,
+        text: `New Enterprise Plan Inquiry (Onboarding):\n\nCompany: ${companyName}\nContact Name: ${contactName}\nEmail: ${email}\nPhone: ${phone}\n\nMessage: ${message || 'No message provided'}\n\n${orgInfo ? `User is logged in from organization: ${orgInfo}` : ''}\n\nThis inquiry was submitted through the Enterprise Form during onboarding on MedicareMax.`,
+        html: emailContent
+      };
+      
+      // Send the email
+      await sgMail.send(msg);
+      
+      // Log successful submission
+      logger.info(`Enterprise plan inquiry (onboarding) submitted by ${contactName} from ${companyName}`);
+      
+      // Return success response
+      return { success: true };
+    } catch (error) {
+      logger.error(`Error processing enterprise inquiry submission: ${error}`);
+      set.status = 500;
+      return { success: false, error: 'Failed to process inquiry' };
+    }
   });
 
 ================
@@ -2090,6 +4046,8 @@ import { logger } from '../logger';
 import { Database } from '../database';
 import { generateQuoteId, decodeQuoteId } from '../utils/quoteId';
 import { getUserFromSession } from '../services/auth';
+import { readFile } from 'fs/promises';
+import { join } from 'path';
 
 interface Quote {
     age: number;
@@ -2137,6 +4095,7 @@ interface ContactQuoteInfo {
     first_name: string;
     last_name: string;
     current_carrier: string;
+    phone_number: string;
 }
 
 // Add new interface for org info response
@@ -2160,7 +4119,7 @@ export const quotesRoutes = (app: Elysia) => {
             }
 
             // Get org-specific database
-            const orgDb = await Database.getOrgDb(user.organization_id.toString());
+            const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString());
             
             // Verify contact exists and belongs to this org
             const contact = await orgDb.fetchOne(
@@ -2193,17 +4152,18 @@ export const quotesRoutes = (app: Elysia) => {
             }
 
             // Get org-specific database
-            const orgDb = await Database.getOrgDb(decoded.orgId.toString());
+            const orgDb = await Database.getOrInitOrgDb(decoded.orgId.toString());
             
             // Fetch contact details
             const contact = await orgDb.fetchOne<ContactQuoteInfo>(
-                'SELECT zip_code, birth_date, tobacco_user, gender, email, first_name, last_name, current_carrier FROM contacts WHERE id = ?',
+                'SELECT zip_code, birth_date, tobacco_user, gender, email, first_name, last_name, current_carrier, phone_number FROM contacts WHERE id = ?',
                 [decoded.contactId]
             );
 
             if (!contact) {
                 throw new Error('Contact not found');
             }
+            logger.info(`Contact details: ${JSON.stringify(contact, null, 2)}`);
 
             return {
                 success: true,
@@ -2215,7 +4175,8 @@ export const quotesRoutes = (app: Elysia) => {
                     email: contact.email,
                     firstName: contact.first_name,
                     lastName: contact.last_name,
-                    currentCarrier: contact.current_carrier
+                    currentCarrier: contact.current_carrier,
+                    phoneNumber: contact.phone_number
                 }
             };
         } catch (e) {
@@ -2253,30 +4214,16 @@ export const quotesRoutes = (app: Elysia) => {
                 data: requestBody
             };
 
-            // Log complete request details
-            logger.info(`Full request details: ${JSON.stringify({
-                url: requestConfig.url,
-                method: requestConfig.method,
-                headers: requestConfig.headers,
-                data: requestConfig.data
-            }, null, 2)}`);
+            // Make request to quote engine API
+            const response = await axios(requestConfig);
             
-            const response = await axios.request<QuoteResponse[]>(requestConfig);
+            logger.info(`Quote engine response status: ${response.status}`);
             
-            // Log response summary without full data
-            const quotes = response.data;
-            const planTypes = new Set(quotes.flatMap(q => q.quotes.map(quote => quote.plan)));
-            logger.info(`Quote response summary: ${JSON.stringify({
-                total_quotes: quotes.length,
-                plan_types: Array.from(planTypes),
-                carriers: quotes.map(q => q.company_name)
-            }, null, 2)}`);
-            
+            // Return quotes from response data
             return response.data;
         } catch (error) {
-            console.error('Error fetching quotes:', error);
-            const message = error instanceof Error ? error.message : 'Unknown error';
-            throw new Error(`Failed to fetch quotes: ${message}`);
+            logger.error(`Error fetching quotes: ${error}`);
+            throw new Error(String(error));
         }
     })
     .get('/api/contact-request/org-info/:orgId', async ({ params }) => {
@@ -2294,7 +4241,7 @@ export const quotesRoutes = (app: Elysia) => {
             }
 
             // Get org-specific database
-            const orgDb = await Database.getOrgDb(params.orgId);
+            const orgDb = await Database.getOrInitOrgDb(params.orgId);
 
             // Try to get default agent (first admin or agent)
             const defaultAgent = await orgDb.fetchOne<{ first_name: string, last_name: string }>(
@@ -2347,7 +4294,7 @@ export const quotesRoutes = (app: Elysia) => {
             contactId = decoded.contactId;
 
             // Get org-specific database
-            const orgDb = await Database.getOrgDb(orgId.toString());
+            const orgDb = await Database.getOrInitOrgDb(orgId.toString());
 
             // If we have a contact ID, try to get the assigned agent's name
             if (contactId) {
@@ -2400,6 +4347,37 @@ export const quotesRoutes = (app: Elysia) => {
         } catch (e) {
             logger.error(`Error saving contact request: ${e}`);
             throw new Error(String(e));
+        }
+    })
+    // Add new endpoint for zip code information
+    .get('/api/zipinfo/:zipCode', async ({ params }) => {
+        try {
+            const { zipCode } = params;
+            
+            // Read the zip data file from the ROOT directory, not the backend directory
+            const zipDataPath = join(process.cwd(), '..', 'zipData.json');
+            logger.info(`Looking for zip data at: ${zipDataPath}`);
+            const zipDataContent = await readFile(zipDataPath, 'utf-8');
+            const zipData = JSON.parse(zipDataContent);
+            
+            // Look up the zip code
+            if (zipData[zipCode]) {
+                return {
+                    success: true,
+                    data: zipData[zipCode]
+                };
+            } else {
+                return {
+                    success: false,
+                    error: 'Zip code not found'
+                };
+            }
+        } catch (error) {
+            logger.error(`Error fetching zip code info: ${error}`);
+            return {
+                success: false,
+                error: 'Failed to fetch zip code information'
+            };
         }
     });
 
@@ -2728,6 +4706,293 @@ export const settingsRoutes = new Elysia()
       return { success: false, error: 'Failed to fetch carriers with aliases' };
     }
   });
+
+================
+File: src/routes/stripe.ts
+================
+import { Elysia } from 'elysia';
+import { Database } from '../database';
+import { logger } from '../logger';
+import { config } from '../config';
+import { getUserFromSession } from '../services/auth';
+
+// Mock Stripe if not available
+let stripe: any;
+try {
+  if (config.stripeApiKey) {
+    // @ts-ignore - Dynamic import for Stripe
+    stripe = require('stripe')(config.stripeApiKey);
+  } else {
+    // Mock Stripe for development
+    stripe = {
+      checkout: {
+        sessions: {
+          create: async () => ({ id: `test_session_id_${Date.now()}` })
+        }
+      },
+      webhooks: {
+        constructEvent: () => ({ 
+          type: 'test.event', 
+          data: { object: {} } 
+        })
+      }
+    };
+    logger.info('Using mock Stripe implementation');
+  }
+} catch (error) {
+  logger.error(`Error loading Stripe: ${error}`);
+  // Create a mock implementation
+  stripe = {
+    checkout: {
+      sessions: {
+        create: async () => ({ id: `test_session_id_${Date.now()}` })
+      }
+    },
+    webhooks: {
+      constructEvent: () => ({ 
+        type: 'test.event', 
+        data: { object: {} } 
+      })
+    }
+  };
+  logger.info('Using mock Stripe implementation due to error');
+}
+
+export const createStripeRoutes = () => {
+  return new Elysia({ prefix: '/api/stripe' })
+    // Create a Stripe checkout session
+    .post('/create-checkout-session', async ({ body, set, request }) => {
+      const db = new Database();
+      
+      try {
+        const user = await getUserFromSession(request);
+        if (!user) {
+          set.status = 401;
+          return { error: 'Unauthorized' };
+        }
+        
+        const { orgSlug, tierId, extraAgents, extraContacts } = body as {
+          orgSlug: string;
+          tierId: string;
+          extraAgents: number;
+          extraContacts: number;
+        };
+        
+        // Get the organization
+        const organization = await db.query(
+          'SELECT id, name, stripe_customer_id FROM organizations WHERE slug = ?',
+          [orgSlug]
+        ).then(rows => rows[0]);
+        
+        if (!organization) {
+          set.status = 404;
+          return { error: 'Organization not found' };
+        }
+        
+        // Get the subscription tier pricing
+        const tier = await db.query(
+          'SELECT id, name, price_monthly, agent_limit, contact_limit FROM subscription_tiers WHERE id = ?',
+          [tierId]
+        ).then(rows => rows[0]);
+        
+        if (!tier) {
+          set.status = 404;
+          return { error: 'Subscription tier not found' };
+        }
+        
+        // Calculate the total price
+        const basePriceInCents = Number(tier.price_monthly);
+        const extraAgentPriceInCents = extraAgents * 2000; // $20 per agent
+        const extraContactsPackages = Math.ceil(extraContacts / 5000);
+        const extraContactsPriceInCents = extraContactsPackages * 5000; // $50 per 5000 contacts
+        
+        const totalPriceInCents = basePriceInCents + extraAgentPriceInCents + extraContactsPriceInCents;
+        
+        let sessionConfig: any = {
+          payment_method_types: ['card'],
+          line_items: [
+            {
+              price_data: {
+                currency: 'usd',
+                product_data: {
+                  name: tier.name + ' Plan',
+                  description: `Includes ${tier.agent_limit} agents and ${tier.contact_limit} contacts`
+                },
+                unit_amount: basePriceInCents
+              },
+              quantity: 1
+            }
+          ],
+          mode: 'subscription',
+          success_url: config.clientUrl + '/dashboard?payment_success=true',
+          cancel_url: config.clientUrl + '/change-plan?payment_canceled=true',
+        };
+        
+        // Add extra agents if any
+        if (extraAgents > 0) {
+          sessionConfig.line_items.push({
+            price_data: {
+              currency: 'usd',
+              product_data: {
+                name: 'Extra Agents',
+                description: `${extraAgents} additional agents at $20/agent/month`
+              },
+              unit_amount: 2000,
+            },
+            quantity: extraAgents
+          });
+        }
+        
+        // Add extra contacts if any
+        if (extraContacts > 0) {
+          sessionConfig.line_items.push({
+            price_data: {
+              currency: 'usd',
+              product_data: {
+                name: 'Extra Contacts',
+                description: `${extraContactsPackages} packages of 5,000 contacts at $50/package/month`
+              },
+              unit_amount: 5000,
+            },
+            quantity: extraContactsPackages
+          });
+        }
+        
+        // If organization already has a Stripe customer ID, use it
+        if (organization.stripe_customer_id) {
+          sessionConfig.customer = organization.stripe_customer_id;
+        } else {
+          sessionConfig.customer_email = user.email;
+        }
+
+        // Create the checkout session
+        let session;
+        if (config.stripeApiKey) {
+          session = await stripe.checkout.sessions.create(sessionConfig);
+        } else {
+          // For development without Stripe API key
+          logger.info('Creating test checkout session with config:', sessionConfig);
+          session = { id: 'test_session_id_' + Date.now() };
+        }
+        
+        // Store the checkout session ID in the database for later verification
+        await db.execute(
+          `UPDATE organizations 
+           SET stripe_checkout_session = ? 
+           WHERE id = ?`,
+          [session.id, organization.id]
+        );
+        
+        // Return the session ID to the client
+        return { sessionId: session.id };
+        
+      } catch (error) {
+        logger.error('Error creating checkout session:', error);
+        set.status = 500;
+        return { error: 'Failed to create checkout session' };
+      }
+    })
+    
+    // Redirect to Stripe checkout
+    .get('/redirect-to-checkout', async ({ query, set }) => {
+      const sessionId = query.session_id as string;
+      
+      if (!sessionId) {
+        set.status = 400;
+        return { error: 'Session ID is required' };
+      }
+      
+      // In production, you would use Stripe's client-side SDK to redirect
+      // For this demo, we'll simulate by redirecting to a success page
+      if (config.stripeApiKey) {
+        set.redirect = `https://checkout.stripe.com/pay/${sessionId}`;
+      } else {
+        // Simulate successful payment in development
+        set.redirect = '/dashboard?payment_success=true&test_mode=true';
+      }
+      
+      return {};
+    })
+    
+    // Webhook for Stripe events (payment completion, etc.)
+    .post('/webhook', async ({ body, request, set }) => {
+      let event;
+      const db = new Database();
+      
+      try {
+        const signature = request.headers.get('stripe-signature');
+        
+        if (config.stripeWebhookSecret && config.stripeApiKey && signature) {
+          event = stripe.webhooks.constructEvent(
+            body, // Raw body needed here
+            signature,
+            config.stripeWebhookSecret
+          );
+        } else {
+          // For development without Stripe
+          event = { 
+            type: 'checkout.session.completed',
+            data: { object: body } 
+          };
+        }
+        
+        // Handle the event
+        if (event.type === 'checkout.session.completed') {
+          await handleCheckoutComplete(event.data.object, db);
+        } else {
+          logger.info(`Unhandled event type ${event.type}`);
+        }
+        
+        set.status = 200;
+        return { received: true };
+      } catch (error) {
+        logger.error('Error processing webhook:', error);
+        set.status = 400;
+        return { error: `Webhook Error: ${error instanceof Error ? error.message : 'Unknown error'}` };
+      }
+    });
+};
+
+async function handleCheckoutComplete(session: any, db: Database): Promise<void> {
+  try {
+    // Find the organization by checkout session ID
+    const organization = await db.query(
+      `SELECT id, slug FROM organizations WHERE stripe_checkout_session = ?`,
+      [session.id]
+    ).then(rows => rows[0]);
+    
+    if (!organization) {
+      logger.error('Organization not found for checkout session:', session.id);
+      return;
+    }
+    
+    // Update the organization with the subscription info
+    await db.execute(
+      `UPDATE organizations 
+       SET stripe_subscription_id = ?, 
+           stripe_customer_id = ?,
+           stripe_checkout_session = NULL,
+           agent_limit = (SELECT agent_limit FROM subscription_tiers WHERE id = ?) + ?,
+           contact_limit = (SELECT contact_limit FROM subscription_tiers WHERE id = ?) + ?,
+           subscription_tier = ?
+       WHERE id = ?`,
+      [
+        session.subscription, 
+        session.customer, 
+        session.metadata?.tierId || 'basic',
+        Number(session.metadata?.extraAgents || 0),
+        session.metadata?.tierId || 'basic',
+        Number(session.metadata?.extraContacts || 0),
+        session.metadata?.tierId || 'basic',
+        organization.id
+      ]
+    );
+    
+    logger.info(`Subscription updated for organization: ${organization.slug}`);
+  } catch (error) {
+    logger.error('Error handling checkout completion:', error);
+  }
+}
 
 ================
 File: src/services/agentSettings.ts
@@ -3213,6 +5478,60 @@ export class EmailService {
       throw new Error('Failed to send magic link email');
     }
   }
+
+  async sendQuoteEmail(params: {
+    email: string;
+    firstName: string;
+    lastName: string;
+    quoteUrl: string;
+    planType: string;
+  }) {
+    try {
+      const { email, firstName, lastName, quoteUrl, planType } = params;
+      const fullName = `${firstName} ${lastName}`;
+      
+      const msg = {
+        to: email,
+        from: process.env.SENDGRID_FROM_EMAIL || 'information@medicaremax.ai',
+        subject: 'Your Personalized Medicare Quote',
+        text: `Hello ${fullName},\n\nThank you for your interest in Medicare coverage options. We've prepared a personalized quote for your ${planType} plan. You can view and compare your options by clicking the link below:\n\n${quoteUrl}\n\nIf you have any questions, please don't hesitate to reach out.\n\nThe MedicareMax Team`,
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h2 style="color: #333;">Your Medicare Quote is Ready</h2>
+            <p>Hello ${firstName},</p>
+            <p>Thank you for your interest in Medicare coverage options. We've prepared a personalized quote for your ${planType} plan.</p>
+            <div style="margin: 30px 0;">
+              <a href="${quoteUrl}" 
+                 style="background-color: #4F46E5; color: white; padding: 12px 24px; 
+                        text-decoration: none; border-radius: 4px; display: inline-block;">
+                View Your Quote
+              </a>
+            </div>
+            <p>This quote has been tailored specifically for your needs based on the information you provided.</p>
+            <p style="color: #666; font-size: 14px;">
+              If the button doesn't work, copy and paste this link into your browser:
+              <br>
+              <a href="${quoteUrl}" style="color: #4F46E5;">${quoteUrl}</a>
+            </p>
+            <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee;">
+              <p style="color: #888; font-size: 14px;">
+                If you have any questions, please don't hesitate to contact us.
+                <br>
+                The MedicareMax Team
+              </p>
+            </div>
+          </div>
+        `
+      };
+
+      await sgMail.send(msg);
+      logger.info(`Quote email sent successfully to ${email}`);
+      return { success: true };
+    } catch (error) {
+      logger.error(`Error sending quote email: ${error}`);
+      throw new Error('Failed to send quote email');
+    }
+  }
 }
 
 // For the organization signup flow
@@ -3388,28 +5707,383 @@ export async function createOrUpdateSubscription({
  */
 export async function handleStripeWebhook(event: Stripe.Event): Promise<void> {
   logger.info(`Processing Stripe webhook: ${event.type}`);
+  const db = new Database();
 
   try {
     switch (event.type) {
       case 'customer.subscription.updated': {
         const subscription = event.data.object as Stripe.Subscription;
-        // Handle subscription updates (e.g., when a payment succeeds)
-        // You would typically update your database here
-        logger.info(`Subscription updated: ${subscription.id}, status: ${subscription.status}`);
+        // Find organization with this subscription
+        const orgResult = await db.query<{ id: number }>(
+          'SELECT id FROM organizations WHERE stripe_subscription_id = ?',
+          [subscription.id]
+        );
+        
+        if (orgResult && orgResult.length > 0) {
+          const organizationId = orgResult[0].id;
+          
+          // Map Stripe status to our status
+          let subscriptionStatus = 'active';
+          if (subscription.status === 'active' || subscription.status === 'trialing') {
+            subscriptionStatus = 'active';
+          } else if (subscription.status === 'past_due') {
+            subscriptionStatus = 'past_due';
+          } else {
+            subscriptionStatus = 'inactive';
+          }
+          
+          // Get extra agents and contacts
+          const extraAgents = parseInt(subscription.metadata.extraAgents || '0', 10);
+          const extraContacts = parseInt(subscription.metadata.extraContacts || '0', 10);
+          
+          // Update organization with subscription status
+          await db.execute(
+            `UPDATE organizations 
+             SET subscription_status = ?,
+                 billing_cycle_end = ?,
+                 trial_end_date = ?,
+                 extra_agents = ?,
+                 extra_contacts = ?
+             WHERE id = ?`,
+            [
+              subscriptionStatus,
+              new Date(subscription.current_period_end * 1000).toISOString(),
+              subscription.trial_end ? new Date(subscription.trial_end * 1000).toISOString() : null,
+              extraAgents,
+              extraContacts,
+              organizationId
+            ]
+          );
+          
+          logger.info(`Updated organization ${organizationId} with subscription status: ${subscriptionStatus}`);
+        } else {
+          logger.warn(`No organization found for subscription: ${subscription.id}`);
+        }
+        break;
+      }
+      
+      case 'invoice.payment_succeeded': {
+        const invoice = event.data.object as Stripe.Invoice;
+        if (invoice.subscription) {
+          // Find organization with this subscription
+          const orgResult = await db.query<{ id: number }>(
+            'SELECT id FROM organizations WHERE stripe_subscription_id = ?',
+            [invoice.subscription]
+          );
+          
+          if (orgResult && orgResult.length > 0) {
+            // Update last payment date and reset failure count
+            await db.execute(
+              `UPDATE organizations 
+               SET last_payment_date = ?,
+                   payment_failure_count = 0,
+                   subscription_status = 'active'
+               WHERE id = ?`,
+              [new Date().toISOString(), orgResult[0].id]
+            );
+            
+            logger.info(`Payment succeeded for organization ${orgResult[0].id}`);
+          }
+        }
         break;
       }
       
       case 'invoice.payment_failed': {
         const invoice = event.data.object as Stripe.Invoice;
-        // Handle failed payments
-        logger.warn(`Payment failed for invoice: ${invoice.id}`);
+        if (invoice.subscription) {
+          // Find organization with this subscription
+          const orgResult = await db.query<{ id: number, payment_failure_count: number }>(
+            'SELECT id, payment_failure_count FROM organizations WHERE stripe_subscription_id = ?',
+            [invoice.subscription]
+          );
+          
+          if (orgResult && orgResult.length > 0) {
+            const org = orgResult[0];
+            const newFailureCount = org.payment_failure_count + 1;
+            
+            // Update payment failure count
+            await db.execute(
+              `UPDATE organizations 
+               SET payment_failure_count = ?,
+                   subscription_status = ?
+               WHERE id = ?`,
+              [
+                newFailureCount,
+                newFailureCount >= 3 ? 'past_due' : 'active', // Mark as past_due after 3 failures
+                org.id
+              ]
+            );
+            
+            logger.warn(`Payment failed for organization ${org.id}. Failure count: ${newFailureCount}`);
+          }
+        }
         break;
       }
       
-      // Add other event types as needed
+      case 'customer.subscription.deleted': {
+        const subscription = event.data.object as Stripe.Subscription;
+        const orgResult = await db.query<{ id: number }>(
+          'SELECT id FROM organizations WHERE stripe_subscription_id = ?',
+          [subscription.id]
+        );
+        
+        if (orgResult && orgResult.length > 0) {
+          // Mark subscription as canceled
+          await db.execute(
+            `UPDATE organizations SET subscription_status = 'canceled' WHERE id = ?`,
+            [orgResult[0].id]
+          );
+          
+          logger.info(`Subscription canceled for organization ${orgResult[0].id}`);
+        }
+        break;
+      }
     }
   } catch (error) {
     logger.error('Error handling Stripe webhook:', error);
+    throw error;
+  }
+}
+
+================
+File: src/services/subscription.ts
+================
+import { Database } from '../database';
+import { logger } from '../logger';
+import Stripe from 'stripe';
+import { config } from '../config';
+
+// Define possible account statuses
+export type AccountStatus = 
+  | 'good_standing'           // Everything is fine
+  | 'inactive'                // Subscription inactive (canceled, past_due, etc.)
+  | 'agent_limit_exceeded'    // Too many agents for current plan
+  | 'contact_limit_exceeded'; // Too many contacts for current plan
+
+export interface AccountStatusDetails {
+  status: AccountStatus;
+  message: string;
+  organizationId: number;
+  organizationName: string;
+  organizationSlug: string;
+  subscriptionTier: string;
+  subscriptionStatus: string;
+  agentLimit: number;
+  contactLimit: number;
+  currentAgentCount: number;
+  currentContactCount: number;
+  billingCycleEnd?: Date;
+  paymentFailureCount: number;
+}
+
+/**
+ * Updates organization subscription status from Stripe
+ */
+export async function syncSubscriptionStatus(organizationId: number): Promise<void> {
+  const db = new Database();
+  
+  try {
+    // Get organization details
+    const orgResult = await db.execute(
+      'SELECT stripe_subscription_id, stripe_customer_id FROM organizations WHERE id = ?', 
+      [organizationId]
+    );
+    
+    if (!orgResult.rows || orgResult.rows.length === 0) {
+      logger.error(`Organization not found: ${organizationId}`);
+      return;
+    }
+    
+    const org = orgResult.rows[0];
+    
+    // If no Stripe subscription ID, nothing to sync
+    if (!org[0]) {
+      logger.info(`No Stripe subscription for organization ${organizationId}`);
+      return;
+    }
+    
+    // Initialize Stripe client
+    const stripe = new Stripe(config.stripe.secretKey, {
+      apiVersion: '2025-02-24.acacia' as Stripe.LatestApiVersion,
+    });
+    
+    // Fetch the subscription from Stripe
+    const subscription = await stripe.subscriptions.retrieve(org[0]);
+    
+    // Map Stripe status to our status
+    let subscriptionStatus = 'active';
+    if (subscription.status === 'active' || subscription.status === 'trialing') {
+      subscriptionStatus = 'active';
+    } else if (subscription.status === 'past_due') {
+      subscriptionStatus = 'past_due';
+    } else {
+      subscriptionStatus = 'inactive';
+    }
+    
+    // Get the billing cycle end
+    const billingCycleEnd = new Date(subscription.current_period_end * 1000);
+    
+    // Get trial end if applicable
+    const trialEnd = subscription.trial_end 
+      ? new Date(subscription.trial_end * 1000) 
+      : null;
+    
+    // Get extra agents and contacts from subscription metadata
+    const extraAgents = parseInt(subscription.metadata.extraAgents || '0', 10);
+    const extraContacts = parseInt(subscription.metadata.extraContacts || '0', 10);
+    
+    // Update the organization with Stripe data
+    await db.execute(`
+      UPDATE organizations 
+      SET 
+        subscription_status = ?,
+        billing_cycle_end = ?,
+        trial_end_date = ?,
+        extra_agents = ?,
+        extra_contacts = ?
+      WHERE id = ?
+    `, [
+      subscriptionStatus,
+      billingCycleEnd.toISOString(),
+      trialEnd?.toISOString() || null,
+      extraAgents,
+      extraContacts,
+      organizationId
+    ]);
+    
+    logger.info(`Updated subscription status for organization ${organizationId}: ${subscriptionStatus}`);
+    
+  } catch (error) {
+    logger.error(`Error syncing subscription status for organization ${organizationId}:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Checks if an organization's account is in good standing
+ */
+export async function checkAccountStatus(organizationId: number): Promise<AccountStatusDetails> {
+  const db = new Database();
+  
+  try {
+    // Try to sync with Stripe first
+    try {
+      await syncSubscriptionStatus(organizationId);
+    } catch (error) {
+      logger.warn(`Could not sync with Stripe for organization ${organizationId}:`, error);
+    }
+    
+    // Get basic organization info first (this should always work)
+    const orgResult = await db.execute(
+      'SELECT id, name, slug, subscription_tier, subscription_status, agent_limit, contact_limit, extra_agents, extra_contacts, billing_cycle_end, payment_failure_count FROM organizations WHERE id = ?', 
+      [organizationId]
+    );
+    
+    if (!orgResult.rows || orgResult.rows.length === 0) {
+      throw new Error(`Organization not found: ${organizationId}`);
+    }
+    
+    const org = orgResult.rows[0];
+    
+    try {
+      // Try to query the organization_status view
+      const statusResult = await db.execute(
+        'SELECT * FROM organization_status WHERE id = ?', 
+        [organizationId]
+      );
+      
+      if (statusResult.rows && statusResult.rows.length > 0) {
+        const status = statusResult.rows[0];
+        const columns = statusResult.columns || [];
+        
+        // Create an object from the row array using column names
+        const statusObj: any = {};
+        columns.forEach((col, i) => {
+          statusObj[col] = status[i];
+        });
+        
+        // Prepare status details with appropriate message
+        let message = '';
+        switch (statusObj.account_status) {
+          case 'inactive':
+            message = `Your subscription is ${statusObj.subscription_status}. Please update your payment method.`;
+            break;
+            
+          case 'agent_limit_exceeded':
+            message = `Your account has ${statusObj.current_agent_count} agents, but your plan only allows for ${statusObj.agent_limit + statusObj.extra_agents}. Please remove some agents or upgrade your plan.`;
+            break;
+            
+          case 'contact_limit_exceeded':
+            message = `Your account has ${statusObj.current_contact_count} contacts, but your plan only allows for ${statusObj.contact_limit + statusObj.extra_contacts}. Please remove some contacts or upgrade your plan.`;
+            break;
+            
+          case 'good_standing':
+          default:
+            message = 'Your account is in good standing.';
+            break;
+        }
+        
+        return {
+          status: statusObj.account_status,
+          message,
+          organizationId: statusObj.id,
+          organizationName: statusObj.name,
+          organizationSlug: statusObj.slug,
+          subscriptionTier: statusObj.subscription_tier,
+          subscriptionStatus: statusObj.subscription_status,
+          agentLimit: statusObj.agent_limit + statusObj.extra_agents,
+          contactLimit: statusObj.contact_limit + statusObj.extra_contacts,
+          currentAgentCount: statusObj.current_agent_count,
+          currentContactCount: statusObj.current_contact_count,
+          billingCycleEnd: statusObj.billing_cycle_end ? new Date(statusObj.billing_cycle_end) : undefined,
+          paymentFailureCount: statusObj.payment_failure_count
+        };
+      }
+    } catch (viewError) {
+      // If there's an error querying the view (e.g., it doesn't exist),
+      // we'll fall through to the default implementation below
+      logger.warn(`Error querying organization_status view: ${viewError}`);
+    }
+    
+    // If we get here, either the view doesn't exist or there was no result
+    // Provide default values based on the organization record
+    
+    // Default to good standing
+    const accountStatus: AccountStatus = 'good_standing';
+    const message = 'Your account is in good standing.';
+    
+    // Extract values from the row array
+    const columns = orgResult.columns || [];
+    const orgObj: any = {};
+    columns.forEach((col, i) => {
+      orgObj[col] = org[i];
+    });
+    
+    // Use defaults for missing values
+    const subscriptionStatus = orgObj.subscription_status || 'active';
+    const agentLimit = orgObj.agent_limit || 5;
+    const contactLimit = orgObj.contact_limit || 100;
+    const extraAgents = orgObj.extra_agents || 0;
+    const extraContacts = orgObj.extra_contacts || 0;
+    
+    return {
+      status: accountStatus,
+      message,
+      organizationId: orgObj.id,
+      organizationName: orgObj.name,
+      organizationSlug: orgObj.slug,
+      subscriptionTier: orgObj.subscription_tier,
+      subscriptionStatus,
+      agentLimit: agentLimit + extraAgents,
+      contactLimit: contactLimit + extraContacts,
+      currentAgentCount: 0, // Default to 0 since we can't query agents table
+      currentContactCount: 0, // Default to 0 since we can't query contacts table
+      billingCycleEnd: orgObj.billing_cycle_end ? new Date(orgObj.billing_cycle_end) : undefined,
+      paymentFailureCount: orgObj.payment_failure_count || 0
+    };
+    
+  } catch (error) {
+    logger.error(`Error checking account status for organization ${organizationId}:`, error);
     throw error;
   }
 }
@@ -3525,7 +6199,16 @@ export class TursoService {
         agent_name TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (contact_id) REFERENCES contacts(id)
-      )`
+      )`,
+      `CREATE TABLE eligibility_answers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        contact_id INTEGER NOT NULL,
+        quote_id TEXT NOT NULL,
+        answers TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (contact_id) REFERENCES contacts(id)
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_eligibility_answers_contact_id ON eligibility_answers(contact_id)`
     ];
 
     // Execute each statement
@@ -3657,7 +6340,10 @@ export const config = {
       extraAgent: process.env.STRIPE_PRICE_EXTRA_AGENT || '',
       extraContact: process.env.STRIPE_PRICE_EXTRA_CONTACT || '',
     }
-  }
+  },
+  stripeApiKey: process.env.STRIPE_API_KEY,
+  stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
+  clientUrl: process.env.CLIENT_URL || 'http://localhost:3000',
 }
 
 // Log loaded config (safely)
@@ -3669,6 +6355,7 @@ File: src/database.ts
 import { createClient } from '@libsql/client'
 import { config } from './config'
 import { logger } from './logger'
+import { TursoService } from './services/turso'
 
 export class Database {
   private client: any
@@ -3710,6 +6397,119 @@ export class Database {
       return new Database(org.turso_db_url, org.turso_auth_token)
     } catch (error) {
       logger.error(`Failed to get org database: ${error}`)
+      throw error
+    }
+  }
+
+  /**
+   * Get organization's database or initialize it if it doesn't exist
+   * This method is used as a fallback when the database needs to be created on the fly
+   */
+  static async getOrInitOrgDb(orgId: string): Promise<Database> {
+    try {
+      // First try to get the existing database
+      const db = await Database.getOrgDb(orgId)
+      
+      // Ensure schema is up to date
+      await Database.ensureDatabaseSchema(orgId)
+      
+      return db
+    } catch (error) {
+      // If the error is that the database doesn't exist, initialize it
+      if (error instanceof Error && error.message === 'Organization database not configured') {
+        logger.info(`No database found for org ${orgId}, initializing new database`)
+        
+        try {
+          // Use main DB to check if the organization exists
+          const mainDb = new Database()
+          const orgExists = await mainDb.fetchOne<{id: number}>(
+            'SELECT id FROM organizations WHERE id = ?',
+            [orgId]
+          )
+
+          if (!orgExists) {
+            logger.error(`Cannot initialize database: Organization ${orgId} does not exist`)
+            throw new Error('Organization not found')
+          }
+
+          // Create the database using the TursoService
+          const turso = new TursoService()
+          const { url, token } = await turso.createOrganizationDatabase(orgId)
+
+          // Update the organization record with the new database credentials
+          await mainDb.execute(
+            'UPDATE organizations SET turso_db_url = ?, turso_auth_token = ? WHERE id = ?',
+            [url, token, orgId]
+          )
+
+          logger.info(`Successfully initialized database for organization ${orgId}`)
+          
+          // Return a new database instance with the created credentials
+          return new Database(url, token)
+        } catch (initError) {
+          logger.error(`Failed to initialize database for org ${orgId}: ${initError}`)
+          throw initError
+        }
+      } else {
+        // If it's some other error, rethrow it
+        throw error
+      }
+    }
+  }
+
+  /**
+   * Ensure that the organization database has all required tables
+   * This can be used to add new tables to existing databases when the schema changes
+   */
+  static async ensureDatabaseSchema(orgId: string): Promise<void> {
+    try {
+      // Get the organization database
+      const orgDb = await Database.getOrgDb(orgId)
+      
+      // Check for existence of each table and create if missing
+      const tables = [
+        {
+          name: 'eligibility_answers',
+          createStatement: `CREATE TABLE IF NOT EXISTS eligibility_answers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            contact_id INTEGER NOT NULL,
+            quote_id TEXT NOT NULL,
+            answers TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (contact_id) REFERENCES contacts(id)
+          )`,
+          indexStatements: [
+            `CREATE INDEX IF NOT EXISTS idx_eligibility_answers_contact_id ON eligibility_answers(contact_id)`
+          ]
+        }
+        // Add more tables here as needed
+      ]
+      
+      // Execute each table creation statement
+      for (const table of tables) {
+        try {
+          // Check if table exists
+          const tableExists = await orgDb.fetchOne<{cnt: number}>(
+            `SELECT COUNT(*) as cnt FROM sqlite_master WHERE type='table' AND name=?`,
+            [table.name]
+          )
+          
+          if (!tableExists || (tableExists.cnt === 0)) {
+            logger.info(`Creating missing table ${table.name} for org ${orgId}`)
+            await orgDb.execute(table.createStatement)
+            
+            // Create indexes
+            for (const indexStatement of table.indexStatements) {
+              await orgDb.execute(indexStatement)
+            }
+          }
+        } catch (e) {
+          logger.error(`Error checking/creating table ${table.name}: ${e}`)
+          // Continue to next table
+        }
+      }
+    } catch (error) {
+      logger.error(`Error ensuring database schema for org ${orgId}: ${error}`)
       throw error
     }
   }
@@ -3870,10 +6670,14 @@ import { settingsRoutes } from './routes/settings'
 import { organizationRoutes } from './routes/organizations'
 import { createBrandRoutes } from './routes/brand'
 import { quotesRoutes } from './routes/quotes'
+import { createStripeRoutes } from './routes/stripe'
+import { createOnboardingRoutes, cleanupOldOrganizations } from './routes/onboarding'
 import { errorHandler } from './middleware/error'
 import { getUserFromSession } from './services/auth'
 import { join } from 'path'
 import { existsSync } from 'fs'
+import { EmailService } from './services/email'
+import * as cron from 'node-cron'
 
 // At the top of the file, add interface for ZIP data
 interface ZipInfo {
@@ -4121,8 +6925,8 @@ const startServer = async () => {
 
           logger.info(`GET /api/contacts - Attempting to fetch contacts for org ${user.organization_id}`)
           
-          // Get org-specific database
-          const orgDb = await Database.getOrgDb(user.organization_id.toString())
+          // Get org-specific database, initializing it if needed
+          const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString())
           
           // First get all unique carriers and states for filter options
           const [carrierResults, stateResults] = await Promise.all([
@@ -4247,7 +7051,7 @@ const startServer = async () => {
             throw new Error('No organization ID found in session')
           }
 
-          const orgDb = await Database.getOrgDb(user.organization_id.toString())
+          const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString())
           
           const result = await orgDb.fetchOne(
             'SELECT 1 FROM contacts WHERE LOWER(TRIM(email)) = LOWER(TRIM(?))',
@@ -4272,7 +7076,7 @@ const startServer = async () => {
           logger.info(`GET /api/contacts/${id} - Fetching contact for org ${user.organization_id}`)
           
           // Get org-specific database
-          const orgDb = await Database.getOrgDb(user.organization_id.toString())
+          const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString())
           
           // Fetch the contact
           const result = await orgDb.fetchOne<ContactRow>(
@@ -4318,7 +7122,7 @@ const startServer = async () => {
           logger.info(`Attempting to create contact for org ${user.organization_id}: ${contact.first_name} ${contact.last_name}`)
           
           // Get org-specific database
-          const orgDb = await Database.getOrgDb(user.organization_id.toString())
+          const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString())
 
           // Check for existing email
           const existingContact = await orgDb.fetchOne(
@@ -4390,7 +7194,7 @@ const startServer = async () => {
           throw new Error(String(e))
         }
       })
-      .put('/api/contacts/:id', async ({ params: { id }, body, request }) => {
+      .put('/api/contacts/:id', async ({ params: { id }, body, request }: { body: ContactCreate, request: Request }) => {
         try {
           // Get user and org info
           const user = await getUserFromSession(request)
@@ -4399,7 +7203,7 @@ const startServer = async () => {
           }
 
           // Get org-specific database
-          const orgDb = await Database.getOrgDb(user.organization_id.toString())
+          const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString())
 
           const contact = body as ContactCreate
           logger.info(`PUT /api/contacts/${id} - Updating contact for org ${user.organization_id}`)
@@ -4415,6 +7219,7 @@ const startServer = async () => {
             UPDATE contacts SET 
               first_name = ?,
               last_name = ?,
+              email = ?,
               current_carrier = ?,
               plan_type = ?,
               effective_date = ?,
@@ -4424,12 +7229,13 @@ const startServer = async () => {
               state = ?,
               zip_code = ?,
               phone_number = ?
-            WHERE LOWER(email) = ?
+            WHERE id = ?
           `
 
           const updateParams = [
             contact.first_name,
             contact.last_name,
+            contact.email,
             contact.current_carrier,
             contact.plan_type,
             contact.effective_date,
@@ -4439,7 +7245,7 @@ const startServer = async () => {
             zipInfo.state, // Use state from ZIP code
             contact.zip_code,
             contact.phone_number || '',
-            contact.email.toLowerCase()
+            id
           ]
 
           // Execute the update
@@ -4481,18 +7287,26 @@ const startServer = async () => {
         }
       })
       // Add DELETE endpoint for contacts
-      .delete('/api/contacts', async ({ body, request }) => {
+      .delete('/api/contacts', async ({ request }) => {
         try {
           const user = await getUserFromSession(request)
           if (!user?.organization_id) {
             throw new Error('No organization ID found in session')
           }
 
-          const contactIds = body as number[]
-          logger.info(`DELETE /api/contacts - Attempting to delete contacts with IDs: ${contactIds} for org ${user.organization_id}`)
+          // Parse contact IDs from the request
+          const url = new URL(request.url)
+          const ids = url.searchParams.get('ids')
+          if (!ids) {
+            throw new Error('No contact IDs provided')
+          }
+
+          const contactIds = ids.split(',').map(id => parseInt(id.trim(), 10))
+          
+          logger.info(`DELETE /api/contacts - Attempting to delete ${contactIds.length} contacts for org ${user.organization_id}`)
           
           // Get org-specific database
-          const orgDb = await Database.getOrgDb(user.organization_id.toString())
+          const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString())
 
           // Create placeholders for SQL IN clause
           const placeholders = contactIds.map(() => '?').join(',')
@@ -4519,24 +7333,22 @@ const startServer = async () => {
         }
       })
       // Add endpoint for reassigning contacts to a different agent
-      .put('/api/contacts/reassign', async ({ body, request }) => {
+      .put('/api/contacts/reassign', async ({ request, body }: { request: Request, body: { contact_ids: number[], agent_id: number | null } }) => {
         try {
           const user = await getUserFromSession(request)
           if (!user?.organization_id) {
             throw new Error('No organization ID found in session')
           }
 
-          // Only admins can reassign contacts
-          if (!user.is_admin) {
-            throw new Error('Only administrators can reassign contacts')
+          const { contact_ids, agent_id } = body
+          if (!contact_ids || !Array.isArray(contact_ids) || contact_ids.length === 0) {
+            throw new Error('Invalid or empty contact_ids array')
           }
 
-          // Parse the request body
-          const { contact_ids, agent_id } = body as { contact_ids: number[], agent_id: number }
-          logger.info(`PUT /api/contacts/reassign - Attempting to reassign contacts with IDs: ${contact_ids} to agent ${agent_id} for org ${user.organization_id}`)
-
+          logger.info(`PUT /api/contacts/reassign - Reassigning ${contact_ids.length} contacts to agent ${agent_id} for org ${user.organization_id}`)
+          
           // Get org-specific database
-          const orgDb = await Database.getOrgDb(user.organization_id.toString())
+          const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString())
 
           // Create placeholders for SQL IN clause
           const placeholders = contact_ids.map(() => '?').join(',')
@@ -4565,16 +7377,15 @@ const startServer = async () => {
         }
       })
       // Add file upload endpoint
-      .post('/api/contacts/upload', async ({ body, request }) => {
+      .post('/api/contacts/upload', async ({ request, body }: { request: Request, body: { contacts: any[], file_type?: string, sheet_name?: string } }) => {
         try {
-          // Get user and org info
           const user = await getUserFromSession(request)
           if (!user?.organization_id) {
             throw new Error('No organization ID found in session')
           }
 
           // Get org-specific database
-          const orgDb = await Database.getOrgDb(user.organization_id.toString())
+          const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString())
 
           // Extract file and overwrite flag from form data
           const formData = body as { file: File, overwrite_duplicates: boolean | string, duplicateStrategy: string, agent_id?: string }
@@ -5008,6 +7819,10 @@ const startServer = async () => {
       .use(createBrandRoutes())
       // Add quotes routes
       .use(quotesRoutes)
+      // Add Stripe routes
+      .use(createStripeRoutes())
+      // Add onboarding routes
+      .use(createOnboardingRoutes())
       // In production, serve the frontend static files
       .use(process.env.NODE_ENV === 'production' 
         ? async (app) => {
@@ -5138,6 +7953,39 @@ const startServer = async () => {
 
           // Get the libSQL client
           const client = db.getClient()
+          
+          // Check if the organization has reached its agent limit
+          const orgLimitResult = await client.execute({
+            sql: `
+              SELECT 
+                o.agent_limit, 
+                COUNT(u.id) as current_agent_count
+              FROM 
+                organizations o
+              LEFT JOIN 
+                users u ON o.id = u.organization_id AND (u.is_agent = 1 OR u.is_admin = 1) AND u.is_active = 1
+              WHERE 
+                o.id = ?
+              GROUP BY 
+                o.id
+            `,
+            args: [currentUser.organization_id]
+          })
+          
+          if (orgLimitResult.rows.length > 0) {
+            const { agent_limit, current_agent_count } = orgLimitResult.rows[0]
+            
+            if (Number(current_agent_count) >= Number(agent_limit)) {
+              logger.warn(`Organization ${currentUser.organization_id} has reached its agent limit (${agent_limit}). Cannot create new agent.`)
+              set.status = 403
+              return {
+                success: false,
+                error: `You have reached your plan's agent limit (${agent_limit}). Please upgrade your plan to add more agents.`
+              }
+            }
+            
+            logger.info(`Organization has ${current_agent_count}/${agent_limit} agents (before adding new agent)`)
+          }
           
           // Get organization settings to inherit carriers and state licenses
           const orgSettingsResult = await client.execute({
@@ -5919,18 +8767,92 @@ const startServer = async () => {
           }
         }
       })
-      .post('/api/contact-request', async ({ body, request }) => {
+      
+      // Send quote email to contact
+      .post('/api/contacts/:contactId/send-quote-email', async ({ params, request }) => {
+        try {
+          const user = await getUserFromSession(request);
+          if (!user) {
+            return {
+              success: false,
+              message: 'Authentication required'
+            };
+          }
+
+          const contactId = Number(params.contactId);
+          if (isNaN(contactId)) {
+            return {
+              success: false,
+              message: 'Invalid contact ID'
+            };
+          }
+
+          // Get org-specific database
+          const orgDb = await Database.getOrgDb(user.organization_id.toString());
+
+          // Fetch contact details
+          const contact = await orgDb.fetchOne<{id: number, first_name: string, last_name: string, email: string, plan_type: string}>(
+            'SELECT id, first_name, last_name, email, plan_type FROM contacts WHERE id = ?',
+            [contactId]
+          );
+
+          if (!contact) {
+            return {
+              success: false,
+              message: 'Contact not found'
+            };
+          }
+
+          // Create a quote link
+          const quoteId = `${user.organization_id.toString(36)}-${contactId.toString(36)}-${Math.random().toString(36).substring(2, 10)}`;
+          
+          // Calculate base URL
+          const baseUrl = process.env.PUBLIC_URL || 'http://localhost:5173';
+          const quoteUrl = `${baseUrl}/quote?id=${quoteId}&planType=${contact.plan_type}`;
+
+          // Send the email via SendGrid
+          const emailService = new EmailService();
+          await emailService.sendQuoteEmail({
+            email: contact.email,
+            firstName: contact.first_name,
+            lastName: contact.last_name,
+            quoteUrl,
+            planType: contact.plan_type
+          });
+
+          // Update last_emailed timestamp
+          await orgDb.execute(
+            'UPDATE contacts SET last_emailed = CURRENT_TIMESTAMP WHERE id = ?',
+            [contactId]
+          );
+
+          return {
+            success: true,
+            message: 'Quote email sent successfully'
+          };
+        } catch (error) {
+          logger.error(`Error sending quote email: ${error}`);
+          return {
+            success: false,
+            message: 'Failed to send quote email',
+            error: String(error)
+          };
+        }
+      })
+      
+      .post('/api/contact-request', async ({ body }: { body: { name: string; email: string; type: string; quoteId?: string } }) => {
         try {
           const user = await getUserFromSession(request)
           if (!user?.organization_id) {
             throw new Error('No organization ID found in session')
           }
 
-          const { name, email, type, quoteId } = body
+          const contactRequest = body as { name: string, email: string, type: string, quoteId: string }
+          const { name, email, type, quoteId } = contactRequest
           logger.info(`Processing contact request for ${email} (type: ${type})`)
           
           // Get org-specific database
-          const orgDb = await Database.getOrgDb(user.organization_id.toString())
+          const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString())
 
           // Check for existing contact
           const existingContact = await orgDb.fetchOne<{ id: number }>(
@@ -5995,7 +8917,7 @@ const startServer = async () => {
           logger.info(`GET /api/contacts/${id}/eligibility - Fetching eligibility results`)
           
           // Get org-specific database
-          const orgDb = await Database.getOrgDb(user.organization_id.toString())
+          const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString())
           
           // Get most recent eligibility answers for this contact
           const result = await orgDb.fetchOne(
@@ -6039,7 +8961,7 @@ const startServer = async () => {
           logger.info(`GET /api/contacts/${id}/follow-ups - Fetching follow-up requests`)
           
           // Get org-specific database
-          const orgDb = await Database.getOrgDb(user.organization_id.toString())
+          const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString())
           
           // Get follow-up requests from contact_events table
           const result = await orgDb.execute(
@@ -6055,20 +8977,20 @@ const startServer = async () => {
           )
 
           // Map results to a more friendly format
-          const followUps = result.rows.map(row => {
+          const followUps = result.rows?.map((row: { metadata: string, created_at: string }) => {
             const metadata = JSON.parse(row.metadata)
             return {
               type: metadata.requestType,
               quoteId: metadata.quoteId,
               createdAt: row.created_at
             }
-          })
+          }) || []
 
           return followUps
 
         } catch (e) {
-          logger.error(`Error fetching follow-up requests: ${e}`)
-          throw new Error(String(e))
+          logger.error(`Error fetching follow-up requests: ${e instanceof Error ? e.message : String(e)}`)
+          throw new Error(e instanceof Error ? e.message : String(e))
         }
       })
       .post('/api/eligibility-answers', async ({ body, request }) => {
@@ -6193,12 +9115,196 @@ const startServer = async () => {
           }
         }
       })
+      .get('/api/agents/:id/contacts', async ({ params, request }) => {
+        try {
+          const currentUser = await getUserFromSession(request)
+          if (!currentUser?.organization_id) {
+            throw new Error('No organization ID found in session')
+          }
+          
+          logger.info(`GET /api/agents/${params.id}/contacts - Fetching contacts for agent ${params.id}`)
+          
+          // Get organization-specific database
+          const orgDb = await Database.getOrInitOrgDb(currentUser.organization_id.toString())
+          
+          // Fetch all contacts for the agent
+          const result = await orgDb.fetchAll('SELECT * FROM contacts WHERE agent_id = ?', [params.id])
+          
+          logger.info(`GET /api/agents/${params.id}/contacts - Found ${result.length} contacts`)
+          
+          // Map the database results to the expected format with camelCase field names
+          const contacts = result.map(contact => ({
+            id: contact.id,
+            first_name: contact.first_name,
+            last_name: contact.last_name,
+            email: contact.email,
+            current_carrier: contact.current_carrier,
+            plan_type: contact.plan_type,
+            effective_date: contact.effective_date,
+            birth_date: contact.birth_date,
+            tobacco_user: Boolean(contact.tobacco_user),
+            gender: contact.gender,
+            state: contact.state,
+            zip_code: contact.zip_code,
+            agent_id: contact.agent_id,
+            last_emailed: contact.last_emailed,
+            phone_number: contact.phone_number || ''
+          }))
+          
+          return {
+            success: true,
+            contacts: contacts
+          }
+        } catch (e) {
+          logger.error(`Error fetching contacts for agent ${params.id}: ${e}`)
+          return {
+            success: false,
+            error: String(e)
+          }
+        }
+      })
+      .get('/api/contact-requests', async ({ request }) => {
+        try {
+          const user = await getUserFromSession(request)
+          if (!user?.organization_id) {
+            throw new Error('No organization ID found in session')
+          }
+
+          logger.info(`GET /api/contact-requests - Fetching follow-up requests`)
+          
+          // Get org-specific database
+          const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString())
+          
+          // Fetch all follow-up requests
+          const result = await orgDb.fetchAll('SELECT * FROM contact_events WHERE event_type = ?', ['followup_request'])
+          
+          logger.info(`GET /api/contact-requests - Found ${result.length} follow-up requests`)
+          
+          // Map the database results to the expected format with camelCase field names
+          const followUps = result.map(followUp => ({
+            id: followUp.id,
+            event_type: followUp.event_type,
+            metadata: JSON.parse(followUp.metadata),
+            created_at: followUp.created_at
+          }))
+          
+          return {
+            success: true,
+            followUps: followUps
+          }
+        } catch (e) {
+          logger.error(`Error fetching follow-up requests: ${e}`)
+          return {
+            success: false,
+            error: String(e)
+          }
+        }
+      })
+      .get('/api/contacts/:id/eligibility', async ({ params, request }) => {
+        try {
+          const user = await getUserFromSession(request)
+          if (!user?.organization_id) {
+            throw new Error('No organization ID found in session')
+          }
+
+          logger.info(`GET /api/contacts/${params.id}/eligibility - Fetching eligibility status`)
+          
+          // Get org-specific database
+          const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString())
+          
+          // Get most recent eligibility answers for this contact
+          const result = await orgDb.fetchOne(
+            `SELECT answers 
+             FROM eligibility_answers 
+             WHERE contact_id = ? 
+             ORDER BY created_at DESC 
+             LIMIT 1`,
+            [params.id]
+          )
+
+          if (!result) {
+            return {
+              status: "incomplete",
+              answers: null
+            }
+          }
+
+          // Parse answers JSON and determine status
+          const answers = JSON.parse(result.answers)
+          const allTrue = Object.values(answers).every(value => value === true)
+
+          return {
+            status: allTrue ? "pass" : "flagged",
+            answers: answers
+          }
+        } catch (e) {
+          logger.error(`Error fetching eligibility status: ${e}`)
+          return {
+            success: false,
+            error: String(e)
+          }
+        }
+      })
+      .get('/api/contacts/:id/follow-ups', async ({ params: { id }, request }) => {
+        try {
+          const user = await getUserFromSession(request)
+          if (!user?.organization_id) {
+            throw new Error('No organization ID found in session')
+          }
+
+          logger.info(`GET /api/contacts/${id}/follow-ups - Fetching follow-up requests`)
+          
+          // Get org-specific database
+          const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString())
+          
+          // Get follow-up requests from contact_events table
+          const result = await orgDb.execute(
+            `SELECT 
+              event_type,
+              metadata,
+              created_at
+             FROM contact_events 
+             WHERE contact_id = ? 
+               AND event_type = 'followup_request'
+             ORDER BY created_at DESC`,
+            [id]
+          )
+
+          // Map results to a more friendly format
+          const followUps = result.rows?.map((row: { metadata: string, created_at: string }) => {
+            const metadata = JSON.parse(row.metadata)
+            return {
+              type: metadata.requestType,
+              quoteId: metadata.quoteId,
+              createdAt: row.created_at
+            }
+          }) || []
+
+          return followUps
+
+        } catch (e) {
+          logger.error(`Error fetching follow-up requests: ${e instanceof Error ? e.message : String(e)}`)
+          throw new Error(e instanceof Error ? e.message : String(e))
+        }
+      })
       .listen(8000)
 
     logger.info('Server started on port 8000')
+
+    // Schedule the cleanup job to run daily at midnight
+    cron.schedule('0 0 * * *', () => {
+      logger.info('Running scheduled cleanup job for old organizations');
+      cleanupOldOrganizations().catch(error => {
+        logger.error(`Error in scheduled cleanup job: ${error}`);
+      });
+    });
+    
+    logger.info('Scheduled daily cleanup job for old organizations');
+
+    return app
   } catch (error) {
     logger.error(`Error starting server: ${error}`)
-    process.exit(1)
+    throw error
   }
 }
 
@@ -6259,41 +9365,6 @@ export interface User {
   last_name: string;
   phone: string;
   organization_name?: string;
-}
-
-================
-File: package.json
-================
-{
-  "name": "backend",
-  "module": "index.ts",
-  "type": "module",
-  "scripts": {
-    "dev": "bun run --watch --env-file .env src/index.ts",
-    "add-agent": "bun run scripts/add-agent.ts",
-    "manage-recommendations": "bun run scripts/manage-recommendations.ts",
-    "manage-turso": "bun run scripts/manage-turso.ts",
-    "start": "NODE_ENV=production bun run --no-env-file src/index.ts"
-  },
-  "dependencies": {
-    "@clack/prompts": "^0.7.0",
-    "@elysiajs/cookie": "^0.8.0",
-    "@elysiajs/cors": "^0.8.0",
-    "@elysiajs/static": "^1.2.0",
-    "@libsql/client": "^0.15.0-pre.1",
-    "@sendgrid/mail": "^8.1.4",
-    "@types/bun": "latest",
-    "chalk": "^5.4.1",
-    "csv-parse": "^5.6.0",
-    "dotenv": "^16.3.1",
-    "elysia": "^0.8.9",
-    "prompts": "^2.4.2",
-    "stripe": "^17.7.0",
-    "zod": "^3.24.1"
-  },
-  "devDependencies": {
-    "bun-types": "latest"
-  }
 }
 
 
