@@ -1120,7 +1120,7 @@ update msg model =
                 Ok _ ->
                     -- Redirect directly to walkthrough, bypassing login
                     ( { model | isLoading = False }
-                    , Nav.load "/walkthrough"
+                    , Nav.pushUrl model.key "/walkthrough"
                     )
 
                 Err _ ->
@@ -1387,11 +1387,7 @@ update msg model =
             case result of
                 Ok response ->
                     -- After licensing settings are updated, navigate to the next step
-                    -- Only navigate if we have actual data (carrier contracts or useSmartSendForGI is true)
                     let
-                        hasLicensingData =
-                            not (List.isEmpty model.licensingSettingsModel.carrierContracts) || model.licensingSettingsModel.useSmartSendForGI
-
                         nextStep =
                             if not response.isBasicPlan then
                                 AddAgentsStep
@@ -1399,9 +1395,13 @@ update msg model =
                             else
                                 PaymentStep
 
-                        -- Only navigate if we have actual licensing data
+                        -- Use the nextStep field from the response to determine if we should navigate
+                        -- instead of checking carrierContracts which doesn't exist in the response
+                        gotoNextStep =
+                            response.nextStep > 0
+
                         navCmd =
-                            if hasLicensingData then
+                            if gotoNextStep then
                                 Nav.pushUrl model.key (getStepFragment nextStep)
 
                             else
@@ -1412,13 +1412,13 @@ update msg model =
                         , licensingSettingsInitialized = True
                         , isBasicPlan = response.isBasicPlan
                         , step =
-                            if hasLicensingData then
-                                nextStep
-
-                            else
-                                model.step
+                            --if gotoNextStep then
+                            --    nextStep
+                            --else
+                            model.step
                       }
-                    , navCmd
+                    , Cmd.none
+                      -- navCmd
                     )
 
                 Err error ->
@@ -1561,7 +1561,6 @@ update msg model =
                     , Cmd.map UserDetailsMsg (Task.perform (\_ -> UserDetails.loadUserFromSession userData) (Task.succeed ()))
                     )
 
-                -- don't remove this paren
                 -- don't remove the parens here
                 Nothing ->
                     ( model, Cmd.none )
@@ -1690,16 +1689,19 @@ viewCurrentStep model =
                     -- don't add another bracket here
 
                 else
-                    div [ class "text-center p-8" ]
-                        [ text "This step is not available for the basic plan. Please continue to payment."
-                        , div [ class "mt-4" ]
-                            [ button
-                                [ class "px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-                                , onClick (NavigateToStep PaymentStep)
+                    case model.addAgentsModel of
+                        Just aamodel ->
+                            Html.map AddAgentsMsg (AddAgents.view aamodel)
+
+                        Nothing ->
+                            div [ class "text-center p-8" ]
+                                [ text "Error: Add Agents model not initialized."
+                                , button
+                                    [ class "px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+                                    , onClick (NavigateToStep PaymentStep)
+                                    ]
+                                    [ text "Continue to Payment" ]
                                 ]
-                                [ text "Continue to Payment" ]
-                            ]
-                        ]
 
             -- don't add another bracket here
             PaymentStep ->

@@ -209,129 +209,136 @@ view model =
             viewLoading
 
           else
-            div [ class "space-y-8" ]
-                [ div [ class "bg-white shadow rounded-lg p-8" ]
-                    [ div [ class "space-y-8 max-w-3xl mx-auto" ]
-                        [ div [ class "mb-6" ]
-                            [ label [ class "block text-sm font-medium text-gray-700 mb-3" ]
-                                [ text "Agency Name" ]
+            viewCompanyDetailsForm model
+        ]
+
+
+viewCompanyDetailsForm : Model -> Html Msg
+viewCompanyDetailsForm model =
+    div [ class "space-y-8" ]
+        [ div [ class "bg-white shadow rounded-lg p-6" ]
+            [ h2 [ class "text-lg font-medium mb-4" ] [ text "Agency Settings" ]
+            , div [ class "space-y-6" ]
+                [ div [ class "space-y-4" ]
+                    [ viewFormGroup "Agency Name"
+                        (input
+                            [ type_ "text"
+                            , class "w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                            , value model.agencyName
+                            , onInput UpdateAgencyName
+                            , placeholder "Enter your agency name"
+                            ]
+                            []
+                        )
+                    , viewFormGroup "Primary Color"
+                        (div [ class "flex items-center space-x-4" ]
+                            [ input
+                                [ type_ "color"
+                                , class "w-16 h-10 p-1 border border-gray-300 rounded"
+                                , value model.primaryColor
+                                , onInput UpdatePrimaryColor
+                                ]
+                                []
                             , input
                                 [ type_ "text"
-                                , class "mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 px-4 py-3"
-                                , value model.agencyName
-                                , onInput UpdateAgencyName
-                                , placeholder "Enter your agency name"
+                                , class "flex-1 px-4 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                                , value model.primaryColor
+                                , onInput UpdatePrimaryColor
                                 ]
                                 []
                             ]
-                        , div [ class "grid grid-cols-1 md:grid-cols-2 gap-8 mb-6" ]
-                            [ div []
-                                [ label [ class "block text-sm font-medium text-gray-700 mb-3" ]
-                                    [ text "Primary Color (Optional)" ]
-                                , div [ class "mt-1 flex items-center space-x-4" ]
-                                    [ input
-                                        [ type_ "color"
-                                        , class "h-12 w-12 border border-gray-300 rounded"
-                                        , value model.primaryColor
-                                        , onInput UpdatePrimaryColor
-                                        ]
-                                        []
-                                    , input
-                                        [ type_ "text"
-                                        , class "flex-1 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 px-4 py-3"
-                                        , value model.primaryColor
-                                        , onInput UpdatePrimaryColor
-                                        ]
-                                        []
-                                    ]
+                        )
+                    , viewFormGroup "Secondary Color"
+                        (div [ class "flex items-center space-x-4" ]
+                            [ input
+                                [ type_ "color"
+                                , class "w-16 h-10 p-1 border border-gray-300 rounded"
+                                , value model.secondaryColor
+                                , onInput UpdateSecondaryColor
                                 ]
-                            , div []
-                                [ label [ class "block text-sm font-medium text-gray-700 mb-3" ]
-                                    [ text "Secondary Color (Optional)" ]
-                                , div [ class "mt-1 flex items-center space-x-4" ]
-                                    [ input
-                                        [ type_ "color"
-                                        , class "h-12 w-12 border border-gray-300 rounded"
-                                        , value model.secondaryColor
-                                        , onInput UpdateSecondaryColor
-                                        ]
-                                        []
-                                    , input
-                                        [ type_ "text"
-                                        , class "flex-1 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 px-4 py-3"
-                                        , value model.secondaryColor
-                                        , onInput UpdateSecondaryColor
-                                        ]
-                                        []
-                                    ]
+                                []
+                            , input
+                                [ type_ "text"
+                                , class "flex-1 px-4 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                                , value model.secondaryColor
+                                , onInput UpdateSecondaryColor
                                 ]
+                                []
                             ]
-                        , div [ class "mb-6" ]
-                            [ label [ class "block text-sm font-medium text-gray-700 mb-3" ]
-                                [ text "Logo (Optional)" ]
-                            , div [ class "mt-1 flex items-center space-x-4" ]
-                                [ case model.logo of
-                                    Just logoUrl ->
-                                        div [ class "flex items-center space-x-6" ]
-                                            [ img
-                                                [ src logoUrl
-                                                , class "h-20 w-20 object-contain border border-gray-200 rounded p-1"
-                                                ]
-                                                []
-                                            , button
-                                                [ class "px-5 py-2.5 text-sm text-blue-600 hover:text-blue-800 border border-blue-200 rounded-md"
-                                                , onClick UploadLogo
-                                                , disabled model.uploadingLogo
-                                                ]
-                                                [ text "Change Logo" ]
+                        )
+                    , viewFormGroup "Logo"
+                        (div [ class "flex items-center space-x-4" ]
+                            [ case model.logo of
+                                Just logoUrl ->
+                                    div [ class "flex items-center space-x-4" ]
+                                        [ img
+                                            [ src logoUrl
+                                            , class "h-16 w-16 object-contain border border-gray-200 rounded"
+                                            ]
+                                            []
+                                        , button
+                                            [ class "px-4 py-2 text-sm text-blue-600 hover:text-blue-800 border border-blue-200 rounded"
+                                            , onClick UploadLogo
+                                            , disabled model.uploadingLogo
+                                            ]
+                                            [ text "Change Logo" ]
+                                        ]
+
+                                Nothing ->
+                                    if model.uploadingLogo then
+                                        div [ class "flex items-center space-x-2" ]
+                                            [ div [ class "animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-blue-500" ] []
+                                            , text "Uploading..."
                                             ]
 
-                                    Nothing ->
-                                        if model.uploadingLogo then
-                                            div [ class "flex items-center space-x-2" ]
-                                                [ div [ class "animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-blue-500" ] []
-                                                , text "Uploading..."
-                                                ]
-
-                                        else
-                                            button
-                                                [ class "px-5 py-2.5 text-sm text-blue-600 hover:text-blue-800 border border-blue-200 rounded-md"
-                                                , onClick UploadLogo
-                                                ]
-                                                [ text "Upload Logo" ]
-                                ]
+                                    else
+                                        button
+                                            [ class "px-4 py-2 text-sm text-blue-600 hover:text-blue-800 border border-blue-200 rounded"
+                                            , onClick UploadLogo
+                                            ]
+                                            [ text "Upload Logo" ]
                             ]
-                        ]
-                    ]
-                , if model.error /= Nothing then
-                    div [ class "bg-red-100 border border-red-400 text-red-700 px-6 py-4 rounded" ]
-                        [ text (Maybe.withDefault "" model.error) ]
-
-                  else
-                    text ""
-                , div [ class "flex justify-center mt-8" ]
-                    [ button
-                        [ class "px-6 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                        , onClick NextStepClicked
-                        , disabled model.isLoading
-                        ]
-                        [ if model.isLoading then
-                            div [ class "flex items-center justify-center" ]
-                                [ div [ class "animate-spin mr-2 h-4 w-4 border-t-2 border-b-2 border-white rounded-full" ] []
-                                , text "Saving..."
-                                ]
-
-                          else
-                            text "Continue"
-                        ]
+                        )
                     ]
                 ]
+            ]
+        , if model.error /= Nothing then
+            div [ class "bg-red-100 border border-red-400 text-red-700 px-6 py-4 rounded" ]
+                [ text (Maybe.withDefault "" model.error) ]
+
+          else
+            text ""
+        , div [ class "flex justify-center mt-8" ]
+            [ button
+                [ class "px-6 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                , onClick NextStepClicked
+                , disabled model.isLoading
+                ]
+                [ if model.isLoading then
+                    div [ class "flex items-center justify-center" ]
+                        [ div [ class "animate-spin mr-2 h-4 w-4 border-t-2 border-b-2 border-white rounded-full" ] []
+                        , text "Saving..."
+                        ]
+
+                  else
+                    text "Continue"
+                ]
+            ]
+        ]
+
+
+viewFormGroup : String -> Html Msg -> Html Msg
+viewFormGroup labelText content =
+    div [ class "mb-4" ]
+        [ label [ class "block text-sm font-medium text-gray-700 mb-2" ]
+            [ text labelText ]
+        , content
         ]
 
 
 viewLoading : Html msg
 viewLoading =
-    div [ class "text-center py-12" ]
+    div [ class "flex justify-center items-center py-12" ]
         [ div [ class "animate-spin rounded-full h-12 w-12 border-t-4 border-b-4 border-blue-500 mx-auto" ] []
         , p [ class "mt-4 text-gray-500" ]
             [ text "Loading..." ]
