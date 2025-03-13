@@ -164,7 +164,7 @@ update msg model =
                 Ok _ ->
                     -- Directly navigate to walkthrough, bypassing login
                     ( { model | isLoading = False, processingPayment = False }
-                    , Nav.pushUrl model.key "/walkthrough"
+                    , Nav.load "/walkthrough"
                     , NoOutMsg
                     )
 

@@ -1120,7 +1120,7 @@ update msg model =
                 Ok _ ->
                     -- Redirect directly to walkthrough, bypassing login
                     ( { model | isLoading = False }
-                    , Nav.pushUrl model.key "/walkthrough"
+                    , Nav.load "/walkthrough"
                     )
 
                 Err _ ->
@@ -1387,7 +1387,11 @@ update msg model =
             case result of
                 Ok response ->
                     -- After licensing settings are updated, navigate to the next step
+                    -- Only navigate if we have actual data (carrier contracts or useSmartSendForGI is true)
                     let
+                        hasLicensingData =
+                            not (List.isEmpty model.licensingSettingsModel.carrierContracts) || model.licensingSettingsModel.useSmartSendForGI
+
                         nextStep =
                             if not response.isBasicPlan then
                                 AddAgentsStep
@@ -1395,14 +1399,24 @@ update msg model =
                             else
                                 PaymentStep
 
+                        -- Only navigate if we have actual licensing data
                         navCmd =
-                            Nav.pushUrl model.key (getStepFragment nextStep)
+                            if hasLicensingData then
+                                Nav.pushUrl model.key (getStepFragment nextStep)
+
+                            else
+                                Cmd.none
                     in
                     ( { model
                         | isLoading = False
                         , licensingSettingsInitialized = True
                         , isBasicPlan = response.isBasicPlan
-                        , step = nextStep
+                        , step =
+                            if hasLicensingData then
+                                nextStep
+
+                            else
+                                model.step
                       }
                     , navCmd
                     )
