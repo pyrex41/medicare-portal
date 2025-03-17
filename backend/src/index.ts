@@ -21,6 +21,8 @@ import { join } from 'path'
 import { existsSync } from 'fs'
 import { EmailService } from './services/email'
 import * as cron from 'node-cron'
+import { eligibilityRoutes } from './routes/eligibility'
+import { generateQuoteId } from './utils/quoteId'
 
 // At the top of the file, add interface for ZIP data
 interface ZipInfo {
@@ -1166,6 +1168,8 @@ const startServer = async () => {
       .use(createStripeRoutes())
       // Add onboarding routes
       .use(createOnboardingRoutes())
+      // Add eligibility routes
+      .use(eligibilityRoutes)
       // In production, serve the frontend static files
       .use(process.env.NODE_ENV === 'production' 
         ? async (app) => {
@@ -2112,7 +2116,7 @@ const startServer = async () => {
       })
       
       // Send quote email to contact
-      .post('/api/contacts/:contactId/send-quote-email', async ({ params, request }) => {
+      .post('/api/contacts/:contactId/send-quote-email', async ({ params, request, body }) => {
         try {
           const user = await getUserFromSession(request);
           if (!user) {
@@ -2146,12 +2150,15 @@ const startServer = async () => {
             };
           }
 
-          // Create a quote link
-          const quoteId = `${user.organization_id.toString(36)}-${contactId.toString(36)}-${Math.random().toString(36).substring(2, 10)}`;
+          // Use the proper generateQuoteId function
+          const quoteId = generateQuoteId(user.organization_id, contactId);
           
           // Calculate base URL
           const baseUrl = process.env.PUBLIC_URL || 'http://localhost:5173';
-          const quoteUrl = `${baseUrl}/quote?id=${quoteId}&planType=${contact.plan_type}`;
+          let quoteUrl = `${baseUrl}/quote?id=${quoteId}&planType=${contact.plan_type}`;
+
+          // Add organization ID to URL
+          quoteUrl += `&orgId=${user.organization_id}`;
 
           // Send the email via SendGrid
           const emailService = new EmailService();
@@ -2270,7 +2277,7 @@ const startServer = async () => {
              ORDER BY created_at DESC 
              LIMIT 1`,
             [id]
-          )
+          ) as { answers: string } | null
 
           if (!result) {
             return {
@@ -2285,7 +2292,7 @@ const startServer = async () => {
 
           return {
             status: allTrue ? "pass" : "flagged",
-            answers: answers
+            answers: result.answers  // Return the raw JSON string instead of the parsed object
           }
 
         } catch (e) {
@@ -2334,74 +2341,6 @@ const startServer = async () => {
         } catch (e) {
           logger.error(`Error fetching follow-up requests: ${e instanceof Error ? e.message : String(e)}`)
           throw new Error(e instanceof Error ? e.message : String(e))
-        }
-      })
-      .post('/api/eligibility-answers', async ({ body, request }) => {
-        try {
-          const user = await getUserFromSession(request)
-          if (!user?.organization_id) {
-            throw new Error('No organization ID found in session')
-          }
-
-          type EligibilityAnswers = {
-            quote_id: string;
-            answers: Record<string, boolean>;
-          }
-          const { quote_id, answers } = body as EligibilityAnswers
-          logger.info(`POST /api/eligibility-answers - Recording answers for quote ${quote_id}`)
-
-          // Get org-specific database
-          const orgDb = await Database.getOrgDb(user.organization_id.toString())
-
-          // Decode the quote ID - format is {orgId-base36}-{contactId-base36}-{hash}
-          const [encodedOrgId, encodedContactId] = quote_id.split('-')
-          if (!encodedOrgId || !encodedContactId) {
-            throw new Error('Invalid quote ID format')
-          }
-
-          // Convert from base36 back to numbers
-          const orgId = parseInt(encodedOrgId, 36)
-          const contactId = parseInt(encodedContactId, 36)
-          
-          if (isNaN(orgId) || isNaN(contactId)) {
-            throw new Error('Invalid quote ID format - could not decode IDs')
-          }
-
-          // Verify the contact exists
-          const contactResult = await orgDb.fetchOne(
-            'SELECT id FROM contacts WHERE id = ?',
-            [contactId]
-          )
-            
-          if (!contactResult) {
-            throw new Error('Contact not found')
-          }
-
-          // Create eligibility_answers table if it doesn't exist
-          await orgDb.execute(`
-            CREATE TABLE IF NOT EXISTS eligibility_answers (
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              contact_id INTEGER NOT NULL,
-              answers TEXT NOT NULL,
-              created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-              FOREIGN KEY (contact_id) REFERENCES contacts(id)
-            )
-          `)
-
-          // Insert the answers
-          await orgDb.execute(
-            'INSERT INTO eligibility_answers (contact_id, answers) VALUES (?, ?)',
-            [contactId, JSON.stringify(answers)]
-          )
-
-          return {
-            success: true,
-            message: 'Eligibility answers recorded successfully'
-          }
-
-        } catch (e) {
-          logger.error(`Error recording eligibility answers: ${e}`)
-          throw new Error(String(e))
         }
       })
       // Add profile update endpoint
@@ -2537,51 +2476,6 @@ const startServer = async () => {
           }
         } catch (e) {
           logger.error(`Error fetching follow-up requests: ${e}`)
-          return {
-            success: false,
-            error: String(e)
-          }
-        }
-      })
-      .get('/api/contacts/:id/eligibility', async ({ params, request }) => {
-        try {
-          const user = await getUserFromSession(request)
-          if (!user?.organization_id) {
-            throw new Error('No organization ID found in session')
-          }
-
-          logger.info(`GET /api/contacts/${params.id}/eligibility - Fetching eligibility status`)
-          
-          // Get org-specific database
-          const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString())
-          
-          // Get most recent eligibility answers for this contact
-          const result = await orgDb.fetchOne(
-            `SELECT answers 
-             FROM eligibility_answers 
-             WHERE contact_id = ? 
-             ORDER BY created_at DESC 
-             LIMIT 1`,
-            [params.id]
-          )
-
-          if (!result) {
-            return {
-              status: "incomplete",
-              answers: null
-            }
-          }
-
-          // Parse answers JSON and determine status
-          const answers = JSON.parse(result.answers)
-          const allTrue = Object.values(answers).every(value => value === true)
-
-          return {
-            status: allTrue ? "pass" : "flagged",
-            answers: answers
-          }
-        } catch (e) {
-          logger.error(`Error fetching eligibility status: ${e}`)
           return {
             success: false,
             error: String(e)

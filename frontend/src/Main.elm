@@ -385,6 +385,7 @@ type alias CompareParams =
     , dateOfBirth : String
     , quoteId : Maybe String
     , trackingId : Maybe String
+    , orgId : Maybe String -- Add this field
     }
 
 
@@ -423,8 +424,8 @@ type PublicPage
     | OnboardingRoute OnboardingStep
     | VerifyRoute VerifyParams
     | CompareRoute CompareParams
-    | QuoteRoute ( Maybe String, Maybe String, Maybe String )
-    | EligibilityRoute ( Maybe String, Maybe String )
+    | QuoteRoute { quoteId : Maybe String, trackingId : Maybe String, planType : Maybe String, orgId : Maybe String }
+    | EligibilityRoute ( Maybe String, Maybe String, Maybe String ) -- Change from String to Maybe String
     | ScheduleRoute ( Maybe String, Maybe String, Maybe String )
 
 
@@ -496,7 +497,7 @@ compareParamsParser =
                 (Query.string "planType" |> Query.map (Maybe.withDefault "G"))
                 (Query.string "currentCarrier")
 
-        combineParams p1 p2 dateOfBirth quoteId trackingId =
+        combineParams p1 p2 dateOfBirth quoteId trackingId orgId =
             { state = p1.state
             , zip = p1.zip
             , county = p1.county
@@ -508,14 +509,20 @@ compareParamsParser =
             , dateOfBirth = dateOfBirth
             , quoteId = quoteId
             , trackingId = trackingId
+            , orgId = orgId -- Include the orgId
             }
     in
-    Query.map5 combineParams
+    Query.map6 combineParams
         part1
         part2
         (Query.string "dateOfBirth" |> Query.map (Maybe.withDefault ""))
         (Query.string "id")
         (Query.string "tid")
+        (Query.string "orgId")
+
+
+
+-- Parse the orgId
 
 
 routeParser : Parser (Route -> a) a
@@ -537,16 +544,24 @@ routeParser =
         , map (PublicRoute << CompareRoute) (s "compare" <?> compareParamsParser)
         , map (PublicRoute << QuoteRoute)
             (s "quote"
-                <?> Query.map3 (\id tid planType -> ( id, tid, planType ))
+                <?> Query.map4
+                        (\id tid planType orgId ->
+                            { quoteId = id, trackingId = tid, planType = planType, orgId = orgId }
+                        )
                         (Query.string "id")
                         (Query.string "tid")
                         (Query.string "planType")
+                        (Query.string "orgId")
             )
         , map (PublicRoute << EligibilityRoute)
             (s "eligibility"
-                <?> Query.map2 Tuple.pair
+                <?> Query.map3
+                        (\id tid orgId ->
+                            ( id, tid, orgId )
+                        )
                         (Query.string "id")
                         (Query.string "tid")
+                        (Query.string "orgId")
             )
         , map (PublicRoute << ScheduleRoute)
             (s "schedule"
@@ -2021,40 +2036,66 @@ updatePage url ( model, cmd ) =
                                         ( model, verifyCmd )
 
                                     PublicRoute (CompareRoute params) ->
-                                        let
-                                            ( compareModel, compareCmd ) =
-                                                Compare.init model.key (Just params)
-                                        in
-                                        ( { model | page = ComparePage compareModel }
-                                        , Cmd.map CompareMsg compareCmd
-                                        )
+                                        if isValidOrgId params.orgId then
+                                            let
+                                                ( compareModel, compareCmd ) =
+                                                    Compare.init model.key (Just params)
+                                            in
+                                            ( { model | page = ComparePage compareModel }
+                                            , Cmd.map CompareMsg compareCmd
+                                            )
+
+                                        else
+                                            -- Redirect to an error page or show an error
+                                            ( { model | page = NotFoundPage }
+                                            , Nav.pushUrl model.key "/error?message=Missing%20or%20invalid%20organization%20ID"
+                                            )
 
                                     PublicRoute (QuoteRoute params) ->
-                                        let
-                                            initialValues =
-                                                { zipCode = Nothing
-                                                , dateOfBirth = Nothing
-                                                , tobacco = Nothing
-                                                , gender = Nothing
-                                                , quoteId = (\( id, _, _ ) -> id) params
-                                                , planType = (\( _, _, planType ) -> planType) params
-                                                }
+                                        if isValidOrgId params.orgId then
+                                            let
+                                                initialValues =
+                                                    { zipCode = Nothing
+                                                    , dateOfBirth = Nothing
+                                                    , tobacco = Nothing
+                                                    , gender = Nothing
+                                                    , quoteId = params.quoteId
+                                                    , planType = params.planType
+                                                    , orgId = params.orgId
+                                                    }
 
-                                            ( quoteModel, quoteCmd ) =
-                                                Quote.init model.key initialValues
-                                        in
-                                        ( { model | page = QuotePage quoteModel }
-                                        , Cmd.map QuoteMsg quoteCmd
-                                        )
+                                                ( quoteModel, quoteCmd ) =
+                                                    Quote.init model.key initialValues
+                                            in
+                                            ( { model | page = QuotePage quoteModel }
+                                            , Cmd.map QuoteMsg quoteCmd
+                                            )
+
+                                        else
+                                            -- Redirect to an error page or show an error
+                                            ( { model | page = NotFoundPage }
+                                            , Nav.pushUrl model.key "/error?message=Missing%20or%20invalid%20organization%20ID"
+                                            )
 
                                     PublicRoute (EligibilityRoute params) ->
                                         let
-                                            ( eligibilityModel, eligibilityCmd ) =
-                                                Eligibility.init model.key (Tuple.first params)
+                                            ( quoteId, _, orgIdStr ) =
+                                                params
                                         in
-                                        ( { model | page = EligibilityPage eligibilityModel }
-                                        , Cmd.map EligibilityMsg eligibilityCmd
-                                        )
+                                        if isValidOrgId orgIdStr then
+                                            let
+                                                ( eligibilityModel, eligibilityCmd ) =
+                                                    Eligibility.init model.key { quoteId = quoteId, orgId = orgIdStr }
+                                            in
+                                            ( { model | page = EligibilityPage eligibilityModel }
+                                            , Cmd.map EligibilityMsg eligibilityCmd
+                                            )
+
+                                        else
+                                            -- Redirect to an error page or show an error
+                                            ( { model | page = NotFoundPage }
+                                            , Nav.pushUrl model.key "/error?message=Missing%20or%20invalid%20organization%20ID"
+                                            )
 
                                     PublicRoute (ScheduleRoute params) ->
                                         let
@@ -2625,40 +2666,65 @@ updatePageForcePublic url ( model, cmd ) =
                                     )
 
                         PublicRoute (CompareRoute params) ->
-                            let
-                                ( compareModel, compareCmd ) =
-                                    Compare.init model.key (Just params)
-                            in
-                            ( { model | page = ComparePage compareModel }
-                            , Cmd.map CompareMsg compareCmd
-                            )
+                            if isValidOrgId params.orgId then
+                                let
+                                    ( compareModel, compareCmd ) =
+                                        Compare.init model.key (Just params)
+                                in
+                                ( { model | page = ComparePage compareModel }
+                                , Cmd.map CompareMsg compareCmd
+                                )
+
+                            else
+                                ( { model | page = NotFoundPage }
+                                , Nav.pushUrl model.key "/error?message=Missing%20or%20invalid%20organization%20ID"
+                                )
 
                         PublicRoute (QuoteRoute params) ->
-                            let
-                                initialValues =
-                                    { zipCode = Nothing
-                                    , dateOfBirth = Nothing
-                                    , tobacco = Nothing
-                                    , gender = Nothing
-                                    , quoteId = (\( id, _, _ ) -> id) params
-                                    , planType = (\( _, _, planType ) -> planType) params
-                                    }
+                            if isValidOrgId params.orgId then
+                                let
+                                    initialValues =
+                                        { zipCode = Nothing
+                                        , dateOfBirth = Nothing
+                                        , tobacco = Nothing
+                                        , gender = Nothing
+                                        , quoteId = params.quoteId
+                                        , planType = params.planType
+                                        , orgId = params.orgId
+                                        }
 
-                                ( quoteModel, quoteCmd ) =
-                                    Quote.init model.key initialValues
-                            in
-                            ( { model | page = QuotePage quoteModel }
-                            , Cmd.map QuoteMsg quoteCmd
-                            )
+                                    ( quoteModel, quoteCmd ) =
+                                        Quote.init model.key initialValues
+                                in
+                                ( { model | page = QuotePage quoteModel }
+                                , Cmd.map QuoteMsg quoteCmd
+                                )
+
+                            else
+                                -- Redirect to an error page or show an error
+                                ( { model | page = NotFoundPage }
+                                , Nav.pushUrl model.key "/error?message=Missing%20or%20invalid%20organization%20ID"
+                                )
 
                         PublicRoute (EligibilityRoute params) ->
                             let
-                                ( eligibilityModel, eligibilityCmd ) =
-                                    Eligibility.init model.key (Tuple.first params)
+                                ( quoteId, _, orgIdStr ) =
+                                    params
                             in
-                            ( { model | page = EligibilityPage eligibilityModel }
-                            , Cmd.map EligibilityMsg eligibilityCmd
-                            )
+                            if isValidOrgId orgIdStr then
+                                let
+                                    ( eligibilityModel, eligibilityCmd ) =
+                                        Eligibility.init model.key { quoteId = quoteId, orgId = orgIdStr }
+                                in
+                                ( { model | page = EligibilityPage eligibilityModel }
+                                , Cmd.map EligibilityMsg eligibilityCmd
+                                )
+
+                            else
+                                -- Redirect to an error page or show an error
+                                ( { model | page = NotFoundPage }
+                                , Nav.pushUrl model.key "/error?message=Missing%20or%20invalid%20organization%20ID"
+                                )
 
                         PublicRoute (ScheduleRoute params) ->
                             let
@@ -2700,3 +2766,18 @@ updatePageForcePublic url ( model, cmd ) =
             ( { model | page = NotFoundPage }
             , cmd
             )
+
+
+
+-- Add a helper function to check if an organization ID is valid
+-- It should return True only if the orgId is not empty, not "default", and is a proper string
+
+
+isValidOrgId : Maybe String -> Bool
+isValidOrgId maybeOrgId =
+    case maybeOrgId of
+        Just orgId ->
+            not (String.isEmpty orgId) && orgId /= "default"
+
+        Nothing ->
+            False

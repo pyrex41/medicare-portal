@@ -32,6 +32,7 @@ type alias Model =
     , selectedCounty : Maybe String
     , isLoadingZipData : Bool
     , zipError : Maybe String
+    , orgId : Maybe String
     }
 
 
@@ -54,6 +55,7 @@ type alias InitialValues =
     , gender : Maybe String
     , quoteId : Maybe String
     , planType : Maybe String
+    , orgId : Maybe String
     }
 
 
@@ -91,6 +93,7 @@ init key initialValues =
             , selectedCounty = Nothing
             , isLoadingZipData = False
             , zipError = Nothing
+            , orgId = initialValues.orgId
             }
 
         commands =
@@ -343,6 +346,13 @@ update msg model =
                                         Nothing ->
                                             [ Builder.string "planType" "G" ]
                                     -- Default to G if no plan type provided
+                                   )
+                                ++ (case model.orgId of
+                                        Just id ->
+                                            [ Builder.string "orgId" id ]
+
+                                        Nothing ->
+                                            []
                                    )
                             )
                 in
