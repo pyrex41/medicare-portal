@@ -2666,6 +2666,10 @@ updatePageForcePublic url ( model, cmd ) =
                             ( { model | page = ComparePage compareModel }
                             , Cmd.map CompareMsg compareCmd
                             )
+                                -- Redirect to an error page or show an error
+                                ( { model | page = NotFoundPage }
+                                , Nav.pushUrl model.key "/error?message=Missing%20or%20invalid%20organization%20ID"
+                                )
 
                         PublicRoute (QuoteRoute params) ->
                             let

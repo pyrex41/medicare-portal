@@ -50,6 +50,7 @@ type alias CompareParams =
     , dateOfBirth : String
     , quoteId : Maybe String
     , trackingId : Maybe String
+    , orgId : Maybe String
     }
 
 
@@ -116,6 +117,7 @@ type alias Model =
     , quoteId : Maybe String
     , orgSettings : Maybe Settings
     , currentDate : Maybe Date
+    , orgId : Maybe String
     }
 
 
@@ -194,11 +196,25 @@ init key maybeParams =
             , dateOfBirth = ""
             , quoteId = Nothing
             , trackingId = Nothing
+            , orgId = Nothing
             }
 
         params =
             maybeParams
                 |> Maybe.withDefault defaultParams
+
+        -- Extract org ID from quote ID if not provided explicitly
+        -- Quote IDs are formatted as "orgId-contactId-hash"
+        extractedOrgId =
+            case ( params.orgId, params.quoteId ) of
+                ( Nothing, Just quoteId ) ->
+                    -- Try to extract orgId from the quoteId (first part before the first dash)
+                    quoteId
+                        |> String.split "-"
+                        |> List.head
+
+                ( orgId, _ ) ->
+                    orgId
 
         -- Extract plan type directly from params
         initialPlanType =
@@ -245,6 +261,7 @@ init key maybeParams =
             , quoteId = params.quoteId
             , orgSettings = Nothing
             , currentDate = Nothing
+            , orgId = extractedOrgId
             }
     in
     ( model
@@ -565,10 +582,34 @@ update msg model =
             , Nav.pushUrl model.key
                 (case model.quoteId of
                     Just id ->
-                        "/eligibility?id=" ++ id
+                        let
+                            orgIdParam =
+                                case model.orgId of
+                                    Just orgId ->
+                                        "&orgId=" ++ orgId
+
+                                    Nothing ->
+                                        -- Try to extract orgId from the quoteId as a fallback
+                                        case String.split "-" id |> List.head of
+                                            Just extractedOrgId ->
+                                                "&orgId=" ++ extractedOrgId
+
+                                            Nothing ->
+                                                ""
+                        in
+                        "/eligibility?id=" ++ id ++ orgIdParam
 
                     Nothing ->
-                        "/eligibility"
+                        let
+                            orgIdParam =
+                                case model.orgId of
+                                    Just orgId ->
+                                        "?orgId=" ++ orgId
+
+                                    Nothing ->
+                                        ""
+                        in
+                        "/eligibility" ++ orgIdParam
                 )
             )
 
@@ -590,7 +631,29 @@ update msg model =
 
         CloseQualificationVideo ->
             ( { model | showQualificationVideo = False }
-            , Nav.pushUrl model.key "/eligibility"
+            , Nav.pushUrl model.key
+                (let
+                    orgIdParam =
+                        case model.orgId of
+                            Just orgId ->
+                                "?orgId=" ++ orgId
+
+                            Nothing ->
+                                -- Try to extract orgId from the quoteId as a fallback
+                                case model.quoteId of
+                                    Just id ->
+                                        case String.split "-" id |> List.head of
+                                            Just extractedOrgId ->
+                                                "?orgId=" ++ extractedOrgId
+
+                                            Nothing ->
+                                                ""
+
+                                    Nothing ->
+                                        ""
+                 in
+                 "/eligibility" ++ orgIdParam
+                )
             )
 
         ShowFAQ ->
@@ -949,7 +1012,13 @@ viewPlanCard model plan =
                 [ href
                     (case model.quoteId of
                         Just id ->
-                            "/eligibility?id=" ++ id
+                            let
+                                orgId =
+                                    model.orgId
+                                        |> Maybe.map (\id0 -> "&orgId=" ++ id0)
+                                        |> Maybe.withDefault ""
+                            in
+                            "/eligibility?id=" ++ id ++ orgId
 
                         Nothing ->
                             "/eligibility"

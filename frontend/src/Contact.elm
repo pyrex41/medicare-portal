@@ -113,10 +113,29 @@ type ActivityStatus
     | EmailSent Int -- Int represents which email number (1, 2, etc.)
 
 
+type QuestionType
+    = MainQuestion
+    | FollowUpQuestion Int -- Parent question ID
+
+
+type alias EligibilityQuestion =
+    { id : Int
+    , text : String
+    , questionType : QuestionType
+    , answer : Maybe (Either Bool String)
+    }
+
+
+type Either a b
+    = Left a
+    | Right b
+
+
 type Modal
     = NoModal
     | EditModal
     | DeleteConfirmModal
+    | HealthAssessmentModal
 
 
 type alias Model =
@@ -134,6 +153,7 @@ type alias Model =
     , quoteUrl : Maybe String
     , isGeneratingQuote : Bool
     , healthStatus : Maybe HealthStatus
+    , eligibilityQuestions : List EligibilityQuestion
     , followUps : List FollowUpRequest
     , timeZone : Zone
     , showAllFollowUps : Bool
@@ -144,7 +164,7 @@ type alias Model =
 
 type alias HealthStatus =
     { status : String
-    , answers : Maybe (Dict String Bool)
+    , answers : Maybe String
     }
 
 
@@ -220,7 +240,7 @@ healthStatusDecoder : Decoder HealthStatus
 healthStatusDecoder =
     Decode.map2 HealthStatus
         (Decode.field "status" Decode.string)
-        (Decode.field "answers" (Decode.nullable (Decode.dict Decode.bool)))
+        (Decode.field "answers" (Decode.nullable Decode.string))
 
 
 settingsDecoder : Decoder Settings
@@ -301,6 +321,7 @@ init key contactId =
       , quoteUrl = Nothing
       , isGeneratingQuote = False
       , healthStatus = Nothing
+      , eligibilityQuestions = []
       , followUps = []
       , timeZone = Time.utc
       , showAllFollowUps = False
@@ -351,6 +372,7 @@ type Msg
     | GenerateQuoteLink
     | GotQuoteLink (Result Http.Error { quoteId : String, redirectUrl : String })
     | GotHealthStatus (Result Http.Error HealthStatus)
+    | ShowHealthAssessmentModal
     | GotFollowUps (Result Http.Error (List FollowUpRequest))
     | ToggleFollowUps
     | GotOrgSettings (Result Http.Error Settings)
@@ -688,7 +710,27 @@ update msg model =
                 | quoteUrl =
                     case model.contact of
                         Just contact ->
-                            Just ("/quote?id=" ++ response.quoteId ++ "&planType=" ++ contact.planType)
+                            let
+                                orgId : Maybe String
+                                orgId =
+                                    response.quoteId
+                                        |> String.split "-"
+                                        |> List.head
+
+                                outStr0 : String
+                                outStr0 =
+                                    "/quote?id=" ++ response.quoteId ++ "&planType=" ++ contact.planType
+
+                                outStr : String
+                                outStr =
+                                    case orgId of
+                                        Just s ->
+                                            outStr0 ++ "&orgId=" ++ s
+
+                                        Nothing ->
+                                            outStr0
+                            in
+                            Just outStr
 
                         Nothing ->
                             Just ("/quote?id=" ++ response.quoteId)
@@ -706,12 +748,27 @@ update msg model =
             )
 
         GotHealthStatus (Ok status) ->
-            ( { model | healthStatus = Just status }
+            let
+                parsedQuestions =
+                    case status.answers of
+                        Just answersJson ->
+                            parseEligibilityAnswers answersJson
+
+                        Nothing ->
+                            []
+            in
+            ( { model
+                | healthStatus = Just status
+                , eligibilityQuestions = parsedQuestions
+              }
             , Cmd.none
             )
 
         GotHealthStatus (Err _) ->
             ( model, Cmd.none )
+
+        ShowHealthAssessmentModal ->
+            ( { model | showModal = HealthAssessmentModal }, Cmd.none )
 
         GotFollowUps (Ok followUps) ->
             ( { model | followUps = followUps }
@@ -747,10 +804,20 @@ update msg model =
         SendQuoteEmail ->
             case model.contact of
                 Just contact ->
+                    let
+                        orgId =
+                            contact.contactOwner
+                                |> Maybe.map (\owner -> owner.organizationId)
+                                |> Maybe.withDefault 0
+
+                        encodedBody =
+                            Encode.object
+                                [ ( "orgId", Encode.int orgId ) ]
+                    in
                     ( { model | isGeneratingQuote = True, emailSendSuccess = False }
                     , Http.post
                         { url = "/api/contacts/" ++ String.fromInt contact.id ++ "/send-quote-email"
-                        , body = Http.emptyBody
+                        , body = Http.jsonBody encodedBody
                         , expect =
                             Http.expectJson QuoteEmailSent
                                 (Decode.map2 (\s m -> { success = s, message = m })
@@ -810,7 +877,7 @@ view model =
                     Just contact ->
                         div []
                             [ viewHeader contact model
-                            , viewContactSummary contact model.quoteUrl model.isGeneratingQuote model.healthStatus model.followUps model.timeZone model.showAllFollowUps
+                            , viewContactSummary contact model.quoteUrl model.isGeneratingQuote model.healthStatus model.eligibilityQuestions model.followUps model.timeZone model.showAllFollowUps
                             , if model.orgSettings /= Nothing && isStateActive model.emailSchedule then
                                 div [ class "bg-white rounded-lg border border-gray-200 p-6 mb-8" ]
                                     [ viewFutureActivity (getScheduledEmails model.emailSchedule) ]
@@ -892,8 +959,8 @@ viewHeader contact model =
         ]
 
 
-viewContactSummary : Contact -> Maybe String -> Bool -> Maybe HealthStatus -> List FollowUpRequest -> Zone -> Bool -> Html Msg
-viewContactSummary contact quoteUrl isGeneratingQuote healthStatus followUps zone showAllFollowUps =
+viewContactSummary : Contact -> Maybe String -> Bool -> Maybe HealthStatus -> List EligibilityQuestion -> List FollowUpRequest -> Zone -> Bool -> Html Msg
+viewContactSummary contact quoteUrl isGeneratingQuote healthStatus eligibilityQuestions followUps zone showAllFollowUps =
     let
         followUpsSection =
             if not (List.isEmpty followUps) then
@@ -958,7 +1025,7 @@ viewContactSummary contact quoteUrl isGeneratingQuote healthStatus followUps zon
                 , viewField "Effective Date" contact.effectiveDate
                 , viewField "Plan Type" contact.planType
                 , viewQuoteField quoteUrl isGeneratingQuote
-                , viewHealthStatusField healthStatus
+                , viewHealthStatusField healthStatus eligibilityQuestions
                 ]
             ]
         , followUpsSection
@@ -989,29 +1056,44 @@ viewQuoteField quoteUrl isGeneratingQuote =
         ]
 
 
-viewHealthStatusField : Maybe HealthStatus -> Html Msg
-viewHealthStatusField maybeStatus =
+viewHealthStatusField : Maybe HealthStatus -> List EligibilityQuestion -> Html Msg
+viewHealthStatusField maybeStatus questions =
     div []
         [ div [ class "text-sm font-medium text-gray-500" ] [ text "Health Status" ]
         , div [ class "mt-1" ]
             [ case maybeStatus of
                 Just status ->
-                    case status.status of
-                        "pass" ->
-                            div [ class "flex items-center text-green-600 text-sm" ]
-                                [ span [ class "mr-1" ] [ text "✓" ]
-                                , text "Pass"
-                                ]
+                    let
+                        hasYesAnswers =
+                            List.any
+                                (\q ->
+                                    case q.answer of
+                                        Just (Left True) ->
+                                            q.questionType == MainQuestion
 
-                        "flagged" ->
+                                        _ ->
+                                            False
+                                )
+                                questions
+                    in
+                    div [ class "flex items-center" ]
+                        [ if hasYesAnswers then
                             div [ class "flex items-center text-red-600 text-sm" ]
                                 [ span [ class "mr-1" ] [ text "✕" ]
                                 , text "Issue Flagged"
                                 ]
 
-                        _ ->
-                            div [ class "text-gray-600 text-sm" ]
-                                [ text "Incomplete" ]
+                          else
+                            div [ class "flex items-center text-green-600 text-sm" ]
+                                [ span [ class "mr-1" ] [ text "✓" ]
+                                , text "Pass"
+                                ]
+                        , button
+                            [ class "ml-3 text-blue-600 text-sm hover:text-blue-800 underline"
+                            , onClick ShowHealthAssessmentModal
+                            ]
+                            [ text "View Details" ]
+                        ]
 
                 Nothing ->
                     div [ class "text-gray-600 text-sm" ]
@@ -1110,35 +1192,6 @@ viewStatus status =
         [ text status ]
 
 
-viewHealthStatus : Maybe HealthStatus -> Html Msg
-viewHealthStatus maybeStatus =
-    div [ class "p-4 rounded-lg flex items-center" ]
-        [ div [ class "text-sm font-medium mr-2" ] [ text "Health Status:" ]
-        , case maybeStatus of
-            Just status ->
-                case status.status of
-                    "pass" ->
-                        div [ class "flex items-center text-green-600" ]
-                            [ span [ class "mr-2" ] [ text "✓" ]
-                            , text "Pass"
-                            ]
-
-                    "flagged" ->
-                        div [ class "flex items-center text-red-600" ]
-                            [ span [ class "mr-2" ] [ text "✕" ]
-                            , text "Issue Flagged"
-                            ]
-
-                    _ ->
-                        div [ class "flex items-center text-gray-600" ]
-                            [ text "Incomplete" ]
-
-            Nothing ->
-                div [ class "flex items-center text-gray-600" ]
-                    [ text "Loading..." ]
-        ]
-
-
 viewModals : Model -> Html Msg
 viewModals model =
     case model.showModal of
@@ -1150,6 +1203,9 @@ viewModals model =
 
         DeleteConfirmModal ->
             viewDeleteConfirmModal model
+
+        HealthAssessmentModal ->
+            viewHealthAssessmentModal model
 
 
 viewEditModal : Model -> Html Msg
@@ -1732,3 +1788,301 @@ updateContact updated contacts =
                 contact
         )
         contacts
+
+
+
+-- Helper function to parse eligibility answers from JSON string
+
+
+parseEligibilityAnswers : String -> List EligibilityQuestion
+parseEligibilityAnswers jsonStr =
+    let
+        jsonResult =
+            Decode.decodeString (Decode.dict eligibilityQuestionDecoder) jsonStr
+    in
+    case jsonResult of
+        Ok dict ->
+            Dict.toList dict
+                |> List.map
+                    (\( idStr, question ) ->
+                        let
+                            id =
+                                String.toInt idStr |> Maybe.withDefault 0
+                        in
+                        { question | id = id }
+                    )
+                |> List.sortBy .id
+
+        Err _ ->
+            []
+
+
+eligibilityQuestionDecoder : Decode.Decoder EligibilityQuestion
+eligibilityQuestionDecoder =
+    Decode.map4 EligibilityQuestion
+        (Decode.succeed 0)
+        -- Temporary ID that will be replaced
+        (Decode.field "question_text" Decode.string)
+        (Decode.field "question_type" questionTypeDecoder)
+        (Decode.field "answer" answerDecoder)
+
+
+questionTypeDecoder : Decode.Decoder QuestionType
+questionTypeDecoder =
+    Decode.string
+        |> Decode.andThen
+            (\typeStr ->
+                if typeStr == "main" then
+                    Decode.succeed MainQuestion
+
+                else if String.startsWith "followup_" typeStr then
+                    let
+                        parentIdStr =
+                            String.dropLeft 9 typeStr
+
+                        parentId =
+                            String.toInt parentIdStr |> Maybe.withDefault 0
+                    in
+                    Decode.succeed (FollowUpQuestion parentId)
+
+                else
+                    Decode.fail ("Unknown question type: " ++ typeStr)
+            )
+
+
+answerDecoder : Decode.Decoder (Maybe (Either Bool String))
+answerDecoder =
+    Decode.oneOf
+        [ Decode.bool |> Decode.map (\b -> Just (Left b))
+        , Decode.string |> Decode.map (\s -> Just (Right s))
+        , Decode.null Nothing
+        ]
+
+
+viewHealthAssessmentModal : Model -> Html Msg
+viewHealthAssessmentModal model =
+    div [ class "fixed inset-0 bg-gray-500/75 flex items-center justify-center p-4 sm:p-8 z-50 overflow-auto" ]
+        [ div [ class "bg-white rounded-xl shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col" ]
+            [ div [ class "px-6 py-4 border-b border-gray-200 flex justify-between items-center" ]
+                [ h2 [ class "text-xl font-semibold text-gray-900" ]
+                    [ text "Health Assessment Results" ]
+                , button
+                    [ class "text-gray-400 hover:text-gray-600 focus:outline-none"
+                    , onClick CloseModal
+                    ]
+                    [ text "×" ]
+                ]
+            , div [ class "p-6 overflow-auto flex-grow" ]
+                [ viewHealthAssessmentContent model.eligibilityQuestions ]
+            , div [ class "px-6 py-4 border-t border-gray-200 flex justify-end" ]
+                [ button
+                    [ class "px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 font-medium"
+                    , onClick CloseModal
+                    ]
+                    [ text "Close" ]
+                ]
+            ]
+        ]
+
+
+viewHealthAssessmentContent : List EligibilityQuestion -> Html Msg
+viewHealthAssessmentContent questions =
+    let
+        mainQuestions =
+            List.filter (\q -> q.questionType == MainQuestion) questions
+                |> List.sortBy .id
+
+        hasAnyYes =
+            List.any
+                (\q ->
+                    case q.answer of
+                        Just (Left True) ->
+                            q.questionType == MainQuestion
+
+                        _ ->
+                            False
+                )
+                questions
+
+        statusBorderClass =
+            if hasAnyYes then
+                "border-red-200 bg-red-50"
+
+            else
+                "border-green-200 bg-green-50"
+
+        statusIconClass =
+            if hasAnyYes then
+                "bg-red-100 text-red-600"
+
+            else
+                "bg-green-100 text-green-600"
+
+        statusTitleClass =
+            if hasAnyYes then
+                "text-red-800"
+
+            else
+                "text-green-800"
+
+        statusTextClass =
+            if hasAnyYes then
+                "text-red-700"
+
+            else
+                "text-green-700"
+    in
+    div []
+        [ div [ class ("mb-6 p-4 rounded-lg border " ++ statusBorderClass) ]
+            [ div [ class "flex items-center" ]
+                [ span [ class ("inline-flex items-center justify-center w-8 h-8 rounded-full " ++ statusIconClass) ]
+                    [ if hasAnyYes then
+                        text "!"
+
+                      else
+                        text "✓"
+                    ]
+                , div [ class "ml-3" ]
+                    [ h3 [ class ("font-medium " ++ statusTitleClass) ]
+                        [ if hasAnyYes then
+                            text "Health Issues Identified"
+
+                          else
+                            text "All Health Checks Passed"
+                        ]
+                    , p [ class ("text-sm " ++ statusTextClass) ]
+                        [ if hasAnyYes then
+                            text "This contact has flagged health conditions that may affect their eligibility."
+
+                          else
+                            text "This contact has no health conditions that would affect their eligibility."
+                        ]
+                    ]
+                ]
+            ]
+        , div [ class "space-y-6" ]
+            (List.map (viewMainQuestionWithFollowups questions) mainQuestions)
+        ]
+
+
+viewMainQuestionWithFollowups : List EligibilityQuestion -> EligibilityQuestion -> Html Msg
+viewMainQuestionWithFollowups allQuestions mainQuestion =
+    let
+        followUps =
+            List.filter
+                (\q ->
+                    case q.questionType of
+                        FollowUpQuestion parentId ->
+                            parentId == mainQuestion.id
+
+                        MainQuestion ->
+                            False
+                )
+                allQuestions
+                |> List.sortBy .id
+
+        hasFollowUps =
+            not (List.isEmpty followUps)
+
+        isYes =
+            case mainQuestion.answer of
+                Just (Left True) ->
+                    True
+
+                _ ->
+                    False
+
+        borderClass =
+            if isYes then
+                "border-red-300"
+
+            else
+                "border-gray-200"
+    in
+    div [ class ("rounded-lg border " ++ borderClass ++ " overflow-hidden") ]
+        [ div
+            [ class
+                ("p-4 "
+                    ++ (if isYes then
+                            "bg-red-50"
+
+                        else
+                            "bg-gray-50"
+                       )
+                )
+            ]
+            [ div [ class "flex items-start" ]
+                [ div [ class "flex-grow" ]
+                    [ div [ class "font-medium mb-1" ]
+                        [ text mainQuestion.text ]
+                    , div
+                        [ class
+                            ("text-sm font-medium "
+                                ++ (if isYes then
+                                        "text-red-700"
+
+                                    else
+                                        "text-green-700"
+                                   )
+                            )
+                        ]
+                        [ text
+                            (if isYes then
+                                "Yes"
+
+                             else
+                                "No"
+                            )
+                        ]
+                    ]
+                ]
+            ]
+        , if isYes && hasFollowUps then
+            div [ class "divide-y divide-gray-100" ]
+                (List.map viewFollowUpQuestionAnswer followUps)
+
+          else
+            text ""
+        ]
+
+
+viewFollowUpQuestionAnswer : EligibilityQuestion -> Html Msg
+viewFollowUpQuestionAnswer question =
+    div [ class "p-4 bg-white" ]
+        [ div [ class "font-medium text-sm text-gray-700 mb-1" ]
+            [ text question.text ]
+        , div [ class "text-sm" ]
+            [ case question.answer of
+                Just (Left isYes) ->
+                    div
+                        [ class
+                            (if isYes then
+                                "text-red-600 font-medium"
+
+                             else
+                                "text-green-600 font-medium"
+                            )
+                        ]
+                        [ text
+                            (if isYes then
+                                "Yes"
+
+                             else
+                                "No"
+                            )
+                        ]
+
+                Just (Right textAnswer) ->
+                    if String.isEmpty textAnswer then
+                        div [ class "text-gray-500 italic" ]
+                            [ text "No answer provided" ]
+
+                    else
+                        div [ class "text-gray-900 bg-gray-50 p-2 rounded border border-gray-200" ]
+                            [ text textAnswer ]
+
+                Nothing ->
+                    div [ class "text-gray-500 italic" ]
+                        [ text "No answer" ]
+            ]
+        ]
