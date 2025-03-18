@@ -27,6 +27,7 @@ import Process
 import Profile
 import Quote
 import Schedule
+import SelfServiceOnboarding
 import Settings
 import Signup
 import Svg exposing (path, svg)
@@ -194,6 +195,7 @@ type Page
     | LogoutPage Logout.Model
     | OnboardingPage Onboarding.Model
     | WalkthroughPage Walkthrough.Model
+    | SelfOnboardingPage SelfServiceOnboarding.Model
 
 
 type Msg
@@ -234,6 +236,7 @@ type Msg
     | ToggleStatusBanner
     | PerformRedirect String
     | DirectPageUpdate
+    | SelfOnboardingMsg SelfServiceOnboarding.Msg
 
 
 type alias Flags =
@@ -427,6 +430,7 @@ type PublicPage
     | QuoteRoute { quoteId : Maybe String, trackingId : Maybe String, planType : Maybe String, orgId : Maybe String }
     | EligibilityRoute ( Maybe String, Maybe String, Maybe String ) -- Change from String to Maybe String
     | ScheduleRoute ( Maybe String, Maybe String, Maybe String )
+    | SelfOnboardingRoute String
 
 
 type ProtectedPage
@@ -509,7 +513,7 @@ compareParamsParser =
             , dateOfBirth = dateOfBirth
             , quoteId = quoteId
             , trackingId = trackingId
-            , orgId = orgId -- Include the orgId
+            , orgId = orgId
             }
     in
     Query.map6 combineParams
@@ -517,6 +521,7 @@ compareParamsParser =
         part2
         (Query.string "dateOfBirth" |> Query.map (Maybe.withDefault ""))
         (Query.string "id")
+        -- quoteId is the most important parameter now
         (Query.string "tid")
         (Query.string "orgId")
 
@@ -570,6 +575,8 @@ routeParser =
                         (Query.string "status")
                         (Query.string "tid")
             )
+        , map (\orgSlug -> PublicRoute (SelfOnboardingRoute orgSlug))
+            (s "self-onboarding" </> string)
         , map (ProtectedRoute ChangePlanRoute) (s "change-plan")
         , map (ProtectedRoute ContactsRoute) (s "contacts")
         , map (AdminRoute SettingsRoute) (s "settings")
@@ -1120,6 +1127,20 @@ update msg model =
                 _ ->
                     ( model, Cmd.none )
 
+        SelfOnboardingMsg subMsg ->
+            case model.page of
+                SelfOnboardingPage pageModel ->
+                    let
+                        ( newPageModel, newCmd ) =
+                            SelfServiceOnboarding.update subMsg pageModel
+                    in
+                    ( { model | page = SelfOnboardingPage newPageModel }
+                    , Cmd.map SelfOnboardingMsg newCmd
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
+
         ShowDropdown ->
             ( { model | showDropdown = True }, Cmd.none )
 
@@ -1315,6 +1336,15 @@ view model =
                     in
                     { title = walkthroughView.title
                     , body = [ viewWithNav model (Html.map WalkthroughMsg (div [] walkthroughView.body)) ]
+                    }
+
+                SelfOnboardingPage pageModel ->
+                    let
+                        selfOnboardingView =
+                            SelfServiceOnboarding.view pageModel
+                    in
+                    { title = selfOnboardingView.title
+                    , body = List.map (Html.map SelfOnboardingMsg) selfOnboardingView.body
                     }
     in
     viewPage
@@ -1618,6 +1648,9 @@ subscriptions model =
 
                 WalkthroughPage pageModel ->
                     Sub.map WalkthroughMsg (Walkthrough.subscriptions pageModel)
+
+                SelfOnboardingPage _ ->
+                    Sub.none
     in
     Sub.batch [ dropdownSub, pageSubs ]
 
@@ -2036,20 +2069,34 @@ updatePage url ( model, cmd ) =
                                         ( model, verifyCmd )
 
                                     PublicRoute (CompareRoute params) ->
-                                        if isValidOrgId params.orgId then
-                                            let
-                                                ( compareModel, compareCmd ) =
-                                                    Compare.init model.key (Just params)
-                                            in
-                                            ( { model | page = ComparePage compareModel }
-                                            , Cmd.map CompareMsg compareCmd
-                                            )
+                                        case params.quoteId of
+                                            Just quoteId ->
+                                                -- We have a quote ID, which is what we prefer
+                                                let
+                                                    ( compareModel, compareCmd ) =
+                                                        Compare.init model.key (Just params)
+                                                in
+                                                ( { model | page = ComparePage compareModel }
+                                                , Cmd.map CompareMsg compareCmd
+                                                )
 
-                                        else
-                                            -- Redirect to an error page or show an error
-                                            ( { model | page = NotFoundPage }
-                                            , Nav.pushUrl model.key "/error?message=Missing%20or%20invalid%20organization%20ID"
-                                            )
+                                            Nothing ->
+                                                -- No quote ID, check if we have a valid orgId
+                                                if isValidOrgId params.orgId then
+                                                    -- We have a valid orgId but no quoteId, so use the params
+                                                    let
+                                                        ( compareModel, compareCmd ) =
+                                                            Compare.init model.key (Just params)
+                                                    in
+                                                    ( { model | page = ComparePage compareModel }
+                                                    , Cmd.map CompareMsg compareCmd
+                                                    )
+
+                                                else
+                                                    -- No valid orgId either, redirect to 404
+                                                    ( { model | page = NotFoundPage }
+                                                    , Nav.pushUrl model.key "/404"
+                                                    )
 
                                     PublicRoute (QuoteRoute params) ->
                                         if isValidOrgId params.orgId then
@@ -2410,6 +2457,15 @@ updatePage url ( model, cmd ) =
                                     NotFound ->
                                         ( modelWithUpdatedSetup, Cmd.none )
 
+                                    PublicRoute (SelfOnboardingRoute orgSlug) ->
+                                        let
+                                            ( selfOnboardingModel, selfOnboardingCmd ) =
+                                                SelfServiceOnboarding.init model.key url
+                                        in
+                                        ( { model | page = SelfOnboardingPage selfOnboardingModel }
+                                        , Cmd.map SelfOnboardingMsg selfOnboardingCmd
+                                        )
+
                 Nothing ->
                     ( { model | page = NotFoundPage }
                     , cmd
@@ -2666,19 +2722,34 @@ updatePageForcePublic url ( model, cmd ) =
                                     )
 
                         PublicRoute (CompareRoute params) ->
-                            if isValidOrgId params.orgId then
-                                let
-                                    ( compareModel, compareCmd ) =
-                                        Compare.init model.key (Just params)
-                                in
-                                ( { model | page = ComparePage compareModel }
-                                , Cmd.map CompareMsg compareCmd
-                                )
+                            case params.quoteId of
+                                Just quoteId ->
+                                    -- We have a quote ID, which is what we prefer
+                                    let
+                                        ( compareModel, compareCmd ) =
+                                            Compare.init model.key (Just params)
+                                    in
+                                    ( { model | page = ComparePage compareModel }
+                                    , Cmd.map CompareMsg compareCmd
+                                    )
 
-                            else
-                                ( { model | page = NotFoundPage }
-                                , Nav.pushUrl model.key "/error?message=Missing%20or%20invalid%20organization%20ID"
-                                )
+                                Nothing ->
+                                    -- No quote ID, check if we have a valid orgId
+                                    if isValidOrgId params.orgId then
+                                        -- We have a valid orgId but no quoteId, so use the params
+                                        let
+                                            ( compareModel, compareCmd ) =
+                                                Compare.init model.key (Just params)
+                                        in
+                                        ( { model | page = ComparePage compareModel }
+                                        , Cmd.map CompareMsg compareCmd
+                                        )
+
+                                    else
+                                        -- No valid orgId either, redirect to 404
+                                        ( { model | page = NotFoundPage }
+                                        , Nav.pushUrl model.key "/404"
+                                        )
 
                         PublicRoute (QuoteRoute params) ->
                             if isValidOrgId params.orgId then
@@ -2735,6 +2806,15 @@ updatePageForcePublic url ( model, cmd ) =
                             in
                             ( { model | page = SchedulePage scheduleModel }
                             , Cmd.map ScheduleMsg scheduleCmd
+                            )
+
+                        PublicRoute (SelfOnboardingRoute orgSlug) ->
+                            let
+                                ( selfOnboardingModel, selfOnboardingCmd ) =
+                                    SelfServiceOnboarding.init model.key url
+                            in
+                            ( { model | page = SelfOnboardingPage selfOnboardingModel }
+                            , Cmd.map SelfOnboardingMsg selfOnboardingCmd
                             )
 
                         PublicRoute (VerifyRoute params) ->

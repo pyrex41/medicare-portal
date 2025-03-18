@@ -23,6 +23,7 @@ import { EmailService } from './services/email'
 import * as cron from 'node-cron'
 import { eligibilityRoutes } from './routes/eligibility'
 import { generateQuoteId } from './utils/quoteId'
+import { createSelfServiceRoutes } from './routes/self-service'
 
 // At the top of the file, add interface for ZIP data
 interface ZipInfo {
@@ -1170,6 +1171,8 @@ const startServer = async () => {
       .use(createOnboardingRoutes())
       // Add eligibility routes
       .use(eligibilityRoutes)
+      // Add self-service routes
+      .use(createSelfServiceRoutes())
       // In production, serve the frontend static files
       .use(process.env.NODE_ENV === 'production' 
         ? async (app) => {

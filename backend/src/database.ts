@@ -266,3 +266,59 @@ export class Database {
 }
 
 export const db = new Database() 
+
+/**
+ * Get user from session cookie
+ */
+export async function getUserFromSession(request: Request): Promise<any> {
+  try {
+    const db = new Database();
+    const sessionCookie = request.headers.get('cookie')?.split(';')
+      .find(c => c.trim().startsWith('session='))
+      ?.split('=')[1];
+
+    if (!sessionCookie) {
+      return null;
+    }
+
+    const user = await db.query(
+      'SELECT * FROM users WHERE session_id = ? AND session_expires > datetime("now")',
+      [sessionCookie]
+    );
+
+    if (!user || user.length === 0) {
+      return null;
+    }
+
+    return user[0];
+  } catch (error) {
+    logger.error(`Error getting user from session: ${error}`);
+    return null;
+  }
+}
+
+/**
+ * Get organization by ID
+ */
+export async function getOrganizationById(orgId: number): Promise<any> {
+  try {
+    const db = new Database();
+    const org = await db.query(
+      'SELECT * FROM organizations WHERE id = ?',
+      [orgId]
+    );
+
+    if (!org || org.length === 0) {
+      return null;
+    }
+
+    return org[0];
+  } catch (error) {
+    logger.error(`Error getting organization: ${error}`);
+    return null;
+  }
+}
+
+// Add these methods to the Database class
+Database.getUserFromSession = getUserFromSession;
+Database.getOrganizationById = getOrganizationById;

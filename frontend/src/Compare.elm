@@ -15,6 +15,7 @@ import Browser
 import Browser.Navigation as Nav
 import CarrierNaic exposing (carrierToNaics, carrierToString, naicToCarrier, stringToCarrier)
 import Date exposing (Date)
+import Dict
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (onClick)
@@ -51,6 +52,20 @@ type alias CompareParams =
     , quoteId : Maybe String
     , trackingId : Maybe String
     , orgId : Maybe String
+    }
+
+
+type alias Contact =
+    { firstName : String
+    , lastName : String
+    , email : String
+    , phone : String
+    , dateOfBirth : String
+    , gender : String
+    , tobacco : Bool
+    , state : String
+    , zipCode : String
+    , currentCarrier : Maybe String
     }
 
 
@@ -104,6 +119,7 @@ type alias Model =
     , gender : String
     , tobacco : Bool
     , selectedPlanType : PlanType
+    , selectedPlan : Maybe Plan
     , showReviewVideo : Bool
     , showQualificationVideo : Bool
     , showGvsNVideo : Bool
@@ -118,6 +134,11 @@ type alias Model =
     , orgSettings : Maybe Settings
     , currentDate : Maybe Date
     , orgId : Maybe String
+    , name : String
+    , contact : Maybe Contact
+    , orgSlug : Maybe String
+    , loadingContact : Bool
+    , showDiscountInfo : Bool
     }
 
 
@@ -145,6 +166,7 @@ type Msg
     = GotPlans (Result Http.Error Plans)
     | TogglePlanType
     | SelectPlan Plan
+    | SelectPlanCard Plan
     | CloseReviewVideo
     | OpenGvsNVideo
     | CloseGvsNVideo
@@ -157,8 +179,10 @@ type Msg
     | CloseRatesVideo
     | NavigateTo String
     | ToggleDiscount
+    | ToggleDiscountInfo
     | GotOrgSettings (Result Http.Error Settings)
     | GotCurrentDate Date
+    | GotContactData (Result Http.Error ContactResponse)
     | NoOp
 
 
@@ -248,6 +272,7 @@ init key maybeParams =
                     "F"
             , tobacco = params.tobacco
             , selectedPlanType = initialPlanType
+            , selectedPlan = Nothing
             , showReviewVideo = False
             , showQualificationVideo = False
             , showGvsNVideo = False
@@ -262,18 +287,47 @@ init key maybeParams =
             , orgSettings = Nothing
             , currentDate = Nothing
             , orgId = extractedOrgId
+            , name = "Loading..." -- Will be updated with real name
+            , contact = Nothing
+            , orgSlug = Nothing
+            , loadingContact = True
+            , showDiscountInfo = False
             }
+
+        -- Commands to execute
+        quoteCommand =
+            case params.quoteId of
+                Just quoteId ->
+                    fetchContactData quoteId
+
+                Nothing ->
+                    Cmd.none
+
+        initialCommands =
+            [ fetchPlans model
+            , quoteCommand
+            , Task.perform GotCurrentDate Date.today
+            ]
+
+        -- If we have a quote ID, fetch contact data
+        commands =
+            case params.quoteId of
+                Just quoteId ->
+                    fetchContactData quoteId :: initialCommands
+
+                Nothing ->
+                    -- No quote ID, check if we have an org ID
+                    case extractedOrgId of
+                        Just orgId ->
+                            -- We have an org ID but no quote ID - in a real implementation, we might
+                            -- redirect to a self-service page, but for now we'll continue with default data
+                            initialCommands
+
+                        Nothing ->
+                            -- No org ID either - this is an error case
+                            [ Nav.pushUrl key "/404" ]
     in
-    ( model
-    , Cmd.batch
-        [ fetchPlans model
-        , Http.get
-            { url = "/api/settings"
-            , expect = Http.expectJson GotOrgSettings settingsDecoder
-            }
-        , Task.perform GotCurrentDate Date.today
-        ]
-    )
+    ( model, Cmd.batch commands )
 
 
 defaultPlanType : Flags -> PlanType
@@ -291,6 +345,14 @@ defaultPlanType flags =
 
 
 -- HTTP
+
+
+fetchContactData : String -> Cmd Msg
+fetchContactData quoteId =
+    Http.get
+        { url = "/api/quotes/decode/" ++ quoteId
+        , expect = Http.expectJson GotContactData contactResponseDecoder
+        }
 
 
 fetchPlans : Model -> Cmd Msg
@@ -539,6 +601,11 @@ update msg model =
             , Cmd.none
             )
 
+        ToggleDiscountInfo ->
+            ( { model | showDiscountInfo = not model.showDiscountInfo }
+            , Cmd.none
+            )
+
         GotPlans result ->
             case result of
                 Ok plans ->
@@ -573,6 +640,7 @@ update msg model =
             ( { model
                 | selectedPlanType = togglePlanType model.selectedPlanType
                 , currentCardIndex = 0
+                , selectedPlan = Nothing
               }
             , Cmd.none
             )
@@ -611,6 +679,21 @@ update msg model =
                         in
                         "/eligibility" ++ orgIdParam
                 )
+            )
+
+        SelectPlanCard plan ->
+            ( { model
+                | selectedPlan =
+                    if Just plan == model.selectedPlan then
+                        Nothing
+                        -- Deselect if clicking the same plan again
+
+                    else
+                        Just plan
+
+                -- Otherwise select the new plan
+              }
+            , Cmd.none
             )
 
         CloseReviewVideo ->
@@ -685,6 +768,41 @@ update msg model =
         GotCurrentDate date ->
             ( { model | currentDate = Just date }, Cmd.none )
 
+        GotContactData result ->
+            case result of
+                Ok response ->
+                    let
+                        contact =
+                            response.contact
+
+                        orgSlug =
+                            response.orgSlug
+
+                        -- Update model with contact data
+                        updatedModel =
+                            { model
+                                | contact = Just contact
+                                , orgSlug = Just orgSlug
+                                , loadingContact = False
+                                , name = contact.firstName ++ " " ++ contact.lastName
+                                , gender = contact.gender
+                                , tobacco = contact.tobacco
+                                , state = contact.state
+                                , zip = contact.zipCode
+                                , dateOfBirth = contact.dateOfBirth
+                                , currentCarrier = contact.currentCarrier
+                            }
+                    in
+                    ( updatedModel, fetchPlans updatedModel )
+
+                Err error ->
+                    ( { model
+                        | error = Just "Failed to load contact data. Please try again later."
+                        , loadingContact = False
+                      }
+                    , Cmd.none
+                    )
+
         NoOp ->
             ( model, Cmd.none )
 
@@ -707,12 +825,17 @@ getSelectedPlans : Model -> List Plan
 getSelectedPlans model =
     let
         plans =
-            case model.selectedPlanType of
-                PlanG ->
-                    model.plans.planG
+            case model.selectedPlan of
+                Just plan ->
+                    [ plan ]
 
-                PlanN ->
-                    model.plans.planN
+                Nothing ->
+                    case model.selectedPlanType of
+                        PlanG ->
+                            model.plans.planG
+
+                        PlanN ->
+                            model.plans.planN
 
         carrierNaics =
             model.currentCarrier
@@ -739,7 +862,39 @@ getSelectedPlans model =
 
 
 
--- Only take the three cheapest plans
+-- Get the top N cheapest plans for a specific plan type
+
+
+getTopPlans : Model -> List Plan -> Int -> List Plan
+getTopPlans model plans count =
+    let
+        carrierNaics =
+            model.currentCarrier
+                |> Maybe.andThen stringToCarrier
+                |> Maybe.map carrierToNaics
+
+        filteredPlans =
+            case carrierNaics of
+                Just naicList ->
+                    List.filter
+                        (\plan ->
+                            not (List.member plan.naic naicList)
+                        )
+                        plans
+
+                Nothing ->
+                    plans
+    in
+    List.sortBy
+        (\plan ->
+            if model.showDiscount then
+                plan.priceDiscount
+
+            else
+                plan.price
+        )
+        filteredPlans
+        |> List.take count
 
 
 httpErrorToString : Http.Error -> String
@@ -776,10 +931,121 @@ subscriptions _ =
 
 view : Model -> Browser.Document Msg
 view model =
-    { title = "Compare Medicare Plans - Medicare Max"
+    { title = "Quote - Medicare Max"
     , body =
-        [ div [ class "container mx-auto px-4 py-6 sm:py-8" ]
-            [ if model.isLoading then
+        [ div [ class "bg-gray-50 min-h-screen pb-12" ]
+            [ div [ class "max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-3" ]
+                [ div [ class "bg-white rounded-lg shadow-sm p-4 mb-3 max-w-2xl mx-auto" ]
+                    [ div [ class "flex flex-col space-y-3" ]
+                        [ -- Top row - Quote and date info
+                          div [ class "flex justify-between" ]
+                            [ div []
+                                [ p [ class "text-xs text-gray-500" ] [ text "Quote for:" ]
+                                , p [ class "text-sm font-medium" ] [ text model.name ]
+                                ]
+                            , div [ class "text-right" ]
+                                [ p [ class "text-xs text-gray-500" ] [ text "Policy Effective Date:" ]
+                                , p [ class "text-sm font-medium" ] [ text "April 2025" ]
+                                ]
+                            ]
+                        , -- Middle row
+                          div [ class "flex justify-between" ]
+                            [ div []
+                                [ p [ class "text-xs text-gray-500" ] [ text "Email:" ]
+                                , p [ class "text-sm" ]
+                                    [ text (model.contact |> Maybe.map .email |> Maybe.withDefault "loading...") ]
+                                ]
+                            , div [ class "text-right" ]
+                                [ p [ class "text-xs text-gray-500" ] [ text "Birth Date:" ]
+                                , p [ class "text-sm" ] [ text (formatBirthDate model.dateOfBirth) ]
+                                ]
+                            ]
+                        , -- Bottom row
+                          div [ class "flex justify-between" ]
+                            [ div []
+                                [ p [ class "text-xs text-gray-500" ] [ text "Phone:" ]
+                                , p [ class "text-sm" ]
+                                    [ text (model.contact |> Maybe.map .phone |> Maybe.map formatPhoneNumber |> Maybe.withDefault "loading...") ]
+                                ]
+                            , div [ class "text-right" ]
+                                [ p [ class "text-xs text-gray-500" ] [ text "Details:" ]
+                                , p [ class "text-sm" ]
+                                    [ text
+                                        (String.join ", "
+                                            [ if model.gender == "M" then
+                                                "Male"
+
+                                              else
+                                                "Female"
+                                            , formatAddress model.state model.zip
+                                            , if model.tobacco then
+                                                "Tobacco User"
+
+                                              else
+                                                "Non-Tobacco User"
+                                            ]
+                                        )
+                                    ]
+                                ]
+                            ]
+                        , div [ class "flex justify-between" ]
+                            [ div []
+                                [ p [ class "text-xs text-gray-500" ] [ text "Zip Code:" ]
+                                , p [ class "text-sm" ] [ text model.zip ]
+                                ]
+                            , -- Current carrier (only if available)
+                              if model.currentCarrier /= Nothing then
+                                div [ class "text-right" ]
+                                    [ p [ class "text-xs text-gray-500" ] [ text "Current Carrier:" ]
+                                    , p [ class "text-sm" ]
+                                        [ text (Maybe.withDefault "" model.currentCarrier) ]
+                                    ]
+
+                              else
+                                text ""
+                            ]
+                        ]
+                    ]
+                ]
+            , -- Household Discount Checkbox
+              div [ class "flex justify-center mb-3" ]
+                [ div [ class "flex items-center" ]
+                    [ input
+                        [ type_ "checkbox"
+                        , class "form-checkbox h-4 w-4"
+                        , checked model.showDiscount
+                        , onClick ToggleDiscount
+                        ]
+                        []
+                    , span [ class "ml-3 text-sm text-gray-700" ]
+                        [ text "Apply Household Discount" ]
+                    , span
+                        [ class "ml-2 text-xs text-purple-600 underline cursor-pointer"
+                        , onClick ToggleDiscountInfo
+                        ]
+                        [ text "(what's this?)" ]
+                    ]
+                ]
+            , if model.showDiscountInfo then
+                div [ class "bg-purple-50 p-3 mt-2 rounded-md max-w-md mx-auto text-sm" ]
+                    [ p [ class "mb-2 text-gray-700" ]
+                        [ text "Some arriers offer premium discounts based on the number of people in the same household. Eligibility criteria and discount amounts vary by carrier." ]
+                    , div [ class "flex justify-center" ]
+                        [ button
+                            [ class "text-xs text-purple-600 hover:text-purple-800 mt-1"
+                            , onClick ToggleDiscountInfo
+                            ]
+                            [ text "Close" ]
+                        ]
+                    ]
+
+              else
+                text ""
+            , -- G vs N Video Pill
+              div [ class "flex justify-center mb-4" ]
+                [ viewPillButton "Learn About Plan G vs. Plan N" True OpenGvsNVideo ]
+            , -- Main Content
+              if model.isLoading then
                 viewLoading
 
               else
@@ -788,14 +1054,27 @@ view model =
                         viewError error
 
                     Nothing ->
-                        div [ class "flex flex-col gap-4 sm:gap-6 text-center mx-auto max-w-3xl" ]
-                            [ h1 [ class "text-xl sm:text-2xl font-semibold text-[#1A1A1A] mb-1 sm:mb-2" ]
-                                [ text "Select a Plan from these recommendations" ]
-                            , div [ class "mt-4 sm:mt-6" ]
-                                [ viewPlanToggle model ]
-                            , div [ class "flex justify-center mt-3 sm:mt-4" ]
-                                [ viewPillButton "Learn About Plan G vs. Plan N" True OpenGvsNVideo ]
-                            , viewPlansCarousel model
+                        div [ class "max-w-[700px] mx-auto px-2" ]
+                            [ -- Plan G Section
+                              viewPlanTypeSection model "Plan G Monthly Premiums" "G" model.plans.planG
+                            , -- Plan N Section
+                              viewPlanTypeSection model "Plan N Monthly Premiums" "N" model.plans.planN
+                            , -- Continue button
+                              div [ class "flex justify-center mt-12" ]
+                                [ button
+                                    [ class "bg-purple-500 hover:bg-purple-600 text-white font-bold px-8 py-2 rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
+                                    , disabled (model.selectedPlan == Nothing)
+                                    , onClick
+                                        (case model.selectedPlan of
+                                            Just plan ->
+                                                SelectPlan plan
+
+                                            Nothing ->
+                                                NoOp
+                                        )
+                                    ]
+                                    [ text "Continue with Selected Plan" ]
+                                ]
                             ]
             ]
         , viewGvsNModal model
@@ -808,8 +1087,8 @@ view model =
 viewLoading : Html Msg
 viewLoading =
     div [ class "flex flex-col items-center justify-center gap-4 text-center min-h-[400px]" ]
-        [ div [ class "animate-spin text-brand w-10 h-10 border-4 border-current border-t-transparent rounded-full" ] []
-        , p [ class "text-center text-lg font-medium text-neutral-600" ]
+        [ div [ class "animate-spin rounded-full h-12 w-12 border-4 border-purple-600 border-t-transparent" ] []
+        , p [ class "text-center text-lg font-medium text-gray-600" ]
             [ text "Searching plans..." ]
         ]
 
@@ -823,7 +1102,7 @@ viewError error =
             [ text error ]
         , div [ class "mt-6 flex justify-center" ]
             [ button
-                [ class "px-6 py-3 bg-[#0066FF] text-white rounded-lg hover:bg-blue-700 transition-colors"
+                [ class "px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
                 , onClick (NavigateTo "/")
                 ]
                 [ text "Return to Home" ]
@@ -831,263 +1110,133 @@ viewError error =
         ]
 
 
-viewPlanToggle : Model -> Html Msg
-viewPlanToggle model =
-    let
-        ( planGClass, planNClass ) =
-            case model.selectedPlanType of
-                PlanG ->
-                    ( "font-medium text-[#1A1A1A]", "text-[#666666]" )
-
-                PlanN ->
-                    ( "text-[#666666]", "font-medium text-[#1A1A1A]" )
-    in
-    div [ class "flex justify-center items-center gap-2 sm:gap-3 text-sm sm:text-base" ]
-        [ span [ class planGClass ] [ text (getPlanGName model) ]
-        , button
-            [ onClick TogglePlanType
-            , class "w-10 sm:w-12 h-5 sm:h-6 bg-[#0066FF] rounded-full relative"
-            ]
-            [ div
-                [ class "absolute top-0.5 left-0.5 bg-white w-4 sm:w-5 h-4 sm:h-5 rounded-full shadow-sm transform duration-300 ease-in-out"
-                , class
-                    (if model.selectedPlanType == PlanN then
-                        "translate-x-5 sm:translate-x-6"
-
-                     else
-                        "translate-x-0"
-                    )
-                ]
-                []
-            ]
-        , span [ class planNClass ] [ text (getPlanNName model) ]
-        ]
-
-
-getPlanGName : Model -> String
-getPlanGName model =
-    case List.head model.plans.planG of
-        Just firstPlan ->
-            if firstPlan.state == "MN" || firstPlan.state == "WI" then
-                "Extended"
-
-            else if firstPlan.state == "MA" then
-                "Expanded"
-
-            else
-                "Plan G"
-
-        Nothing ->
-            "Plan G"
-
-
-getPlanNName : Model -> String
-getPlanNName model =
-    case List.head model.plans.planN of
-        Just firstPlan ->
-            case firstPlan.state of
-                "MN" ->
-                    "Basic"
-
-                "WI" ->
-                    ""
-
-                "MA" ->
-                    "Core"
-
-                _ ->
-                    "Plan N"
-
-        Nothing ->
-            "Plan N"
-
-
-viewPlansCarousel : Model -> Html Msg
-viewPlansCarousel model =
-    let
-        currentPlans =
-            getSelectedPlans model
-
-        totalCards =
-            List.length currentPlans
-    in
-    div [ class "relative w-full max-w-[640px] mx-auto mt-6 sm:mt-8" ]
-        [ div [ class "absolute left-1/2 transform -translate-x-1/2 -top-4 sm:-top-6 z-10" ]
-            [ viewCarouselDots model totalCards ]
-        , if List.isEmpty currentPlans then
-            div [ class "text-center py-4 sm:py-8" ]
-                [ p [ class "text-gray-500 text-sm sm:text-base" ] [ text "No plans available to display." ] ]
-
-          else
-            div [ class "overflow-hidden" ]
-                [ div
-                    [ class "flex transition-transform duration-300 ease-in-out"
-                    , style "transform" ("translateX(-" ++ String.fromInt (model.currentCardIndex * 100) ++ "%)")
-                    ]
-                    (List.map (viewPlanCard model) currentPlans)
-                ]
-        , viewCarouselControls model totalCards
-        , div [ class "mt-6 sm:mt-8 text-center text-xs sm:text-sm text-[#666666] max-w-lg mx-auto px-2" ]
-            [ p [ class "mb-2" ]
-                [ text "These are the three least expensive plans available. All Medicare Supplement plans of the same letter (G or N) provide identical coverage, as mandated by federal law." ]
-            , p []
-                [ text "Our recommendation: Choose an established insurance company with a strong financial rating, then select their most affordable plan since the coverage will be identical to other companies offering the same plan letter." ]
-            ]
-        ]
-
-
-viewCarouselDots : Model -> Int -> Html Msg
-viewCarouselDots model totalCards =
-    div [ class "flex space-x-2 sm:space-x-3" ]
-        (List.range 0 (totalCards - 1)
-            |> List.map
-                (\index ->
-                    div
-                        [ class "w-2 h-2 sm:w-3 sm:h-3 rounded-full transition-colors duration-200"
-                        , class
-                            (if index == model.currentCardIndex then
-                                "bg-[#0066FF]"
-
-                             else
-                                "bg-[#E5E5E5]"
-                            )
-                        ]
-                        []
-                )
-        )
-
-
-viewCarouselControls : Model -> Int -> Html Msg
-viewCarouselControls model totalCards =
-    div [ class "absolute w-full flex justify-between items-center px-1 sm:px-0", style "top" "50%" ]
-        [ button
-            [ class "bg-[#F5F8FF] w-9 h-9 sm:w-10 sm:h-10 rounded-lg shadow-sm -ml-1 sm:-ml-5 flex justify-center items-center disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[#E5EFFF] transition-colors"
-            , onClick PreviousCard
-            , disabled (model.currentCardIndex == 0)
-            ]
-            [ text "←" ]
-        , button
-            [ class "bg-[#F5F8FF] w-9 h-9 sm:w-10 sm:h-10 rounded-lg shadow-sm -mr-1 sm:-mr-5 flex justify-center items-center disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[#E5EFFF] transition-colors"
-            , onClick NextCard
-            , disabled (model.currentCardIndex == totalCards - 1)
-            ]
-            [ text "→" ]
-        ]
-
-
 viewPlanCard : Model -> Plan -> Html Msg
 viewPlanCard model plan =
     let
-        displayPrice =
-            if model.showDiscount then
-                plan.priceDiscount
+        planType =
+            if String.toUpper plan.planType == "G" then
+                "Plan G"
 
             else
-                plan.price
+                "Plan N"
+
+        bgColor =
+            if plan.planType == "G" then
+                "bg-slate-100"
+
+            else
+                "bg-stone-100"
+
+        isSelected =
+            model.selectedPlan == Just plan
+
+        selectionClass =
+            if isSelected then
+                "ring-2 ring-purple-400 shadow-sm"
+
+            else
+                "hover:border-gray-300"
+
+        totalPrice =
+            "$" ++ formatFloat plan.price
+
+        discountPrice =
+            "$" ++ formatFloat plan.priceDiscount
+
+        formatFloat : Float -> String
+        formatFloat value =
+            let
+                valueAsString =
+                    String.fromFloat value
+
+                parts =
+                    String.split "." valueAsString
+            in
+            case parts of
+                [ whole, decimal ] ->
+                    if String.length decimal == 1 then
+                        whole ++ "." ++ decimal ++ "0"
+
+                    else
+                        valueAsString
+
+                _ ->
+                    valueAsString
+
+        selectHeadClass =
+            "text-xs text-gray-600 mb-0.5"
+
+        softHeadClass =
+            "text-xs text-gray-400 mb-0.5"
+
+        selectBodyClass =
+            "text-sm font-bold"
+
+        softBodyClass =
+            "text-xs font-semibold text-gray-400"
     in
-    div [ class "flex-shrink-0 w-full px-2 sm:px-4 relative" ]
-        [ div [ class "bg-white rounded-2xl shadow-sm p-4 sm:p-8" ]
-            [ div [ class "mb-4 sm:mb-8 flex justify-center items-center h-12 sm:h-16" ]
-                [ img [ src plan.image, alt (plan.name ++ " logo"), class "h-full object-contain" ] [] ]
-            , div [ class "text-center mb-4 sm:mb-6" ]
-                [ p [ class "text-[#1A1A1A]" ]
-                    [ span [ class "text-3xl sm:text-[48px] font-bold leading-none" ]
-                        [ text ("$" ++ String.fromFloat displayPrice) ]
-                    , span [ class "text-base sm:text-lg text-[#666666] ml-1" ] [ text "/mo" ]
-                    ]
+    div
+        [ class ("bg-white border border-gray-200 rounded-md shadow-sm cursor-pointer w-full max-w-[200px] " ++ selectionClass)
+        , onClick (SelectPlanCard plan)
+        ]
+        [ div [ class "p-3" ]
+            [ div [ class "flex items-start mb-2" ]
+                [ div [ class ("text-dark font-medium text-xs px-3 py-1.5 rounded-full shadow-sm " ++ bgColor) ]
+                    [ text planType ]
                 ]
-            , div [ class "mb-4 sm:mb-6" ]
-                [ label [ class "flex items-center justify-center text-xs sm:text-sm text-[#666666] gap-2" ]
-                    [ input
-                        [ type_ "checkbox"
-                        , class "w-4 h-4 rounded border-gray-300 text-[#0066FF] focus:ring-[#0066FF]"
-                        , checked model.showDiscount
-                        , onClick ToggleDiscount
+            , div [ class "flex justify-center items-center py-3" ]
+                [ div [ class "text-center" ]
+                    [ img [ src plan.image, alt (plan.name ++ " logo"), class "h-8 mx-auto object-contain" ] [] ]
+                ]
+            ]
+        , div [ class "border-t border-gray-100 px-3 py-2 bg-gray-50 w-full" ]
+            [ div [ class "flex justify-between items-center" ]
+                [ div [ class "flex flex-col items-center" ]
+                    [ p
+                        [ class
+                            (if model.showDiscount then
+                                softHeadClass
+
+                             else
+                                selectHeadClass
+                            )
                         ]
-                        []
-                    , text ("Apply " ++ calculateDiscount plan ++ "% Household Discount")
+                        [ text "Standard" ]
+                    , p
+                        [ class
+                            (if model.showDiscount then
+                                softBodyClass
+
+                             else
+                                selectBodyClass
+                            )
+                        ]
+                        [ text totalPrice ]
+                    ]
+                , div [ class "flex flex-col items-center" ]
+                    [ p
+                        [ class
+                            (if model.showDiscount then
+                                selectHeadClass
+
+                             else
+                                softHeadClass
+                            )
+                        ]
+                        [ text "Discount" ]
+                    , p
+                        [ class
+                            (if model.showDiscount then
+                                selectBodyClass
+
+                             else
+                                softBodyClass
+                            )
+                        ]
+                        [ text discountPrice ]
                     ]
                 ]
-            , a
-                [ href
-                    (case model.quoteId of
-                        Just id ->
-                            let
-                                orgId =
-                                    model.orgId
-                                        |> Maybe.map (\id0 -> "&orgId=" ++ id0)
-                                        |> Maybe.withDefault ""
-                            in
-                            "/eligibility?id=" ++ id ++ orgId
-
-                        Nothing ->
-                            "/eligibility"
-                    )
-                , class "w-full bg-[#7C3AED] text-white py-3 sm:py-4 px-3 sm:px-4 rounded-lg hover:bg-[#6D28D9] transition-colors mb-4 sm:mb-8 font-medium text-sm sm:text-base inline-block text-center"
-                , onClick (SelectPlan plan)
-                ]
-                [ text "See If I Qualify" ]
-            , div [ class "border-t border-[#E5E5E5] pt-4 sm:pt-6" ]
-                [ h3 [ class "font-medium text-sm sm:text-base text-[#1A1A1A] text-left mb-2 sm:mb-4" ] [ text "GAPS Plan G Covers:" ]
-                , ul [ class "space-y-2 sm:space-y-3" ]
-                    (List.map viewCoverageItem plan.coverageSummary)
-                ]
             ]
-        ]
-
-
-calculateDiscount : Plan -> String
-calculateDiscount plan =
-    let
-        discount =
-            plan.priceDiscount / plan.price
-    in
-    (100 - (discount * 100 |> round)) |> String.fromInt
-
-
-viewCoverageItem : CoverageItem -> Html Msg
-viewCoverageItem item =
-    li [ class "flex flex-col sm:flex-row sm:items-center" ]
-        [ div [ class "flex justify-between items-center sm:w-full sm:flex-wrap gap-1" ]
-            [ span [ class "text-xs sm:text-sm text-left font-medium text-neutral-700" ] [ text item.name ]
-            , div [ class "flex items-center" ]
-                [ if item.percentageCovered == 0 then
-                    span [ class "bg-medicare-danger-light text-medicare-danger text-xs font-medium px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full whitespace-nowrap" ]
-                        [ text "NOT COVERED" ]
-
-                  else if item.percentageCovered == 100 then
-                    span [ class "bg-medicare-success-light text-medicare-success text-xs font-medium px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full" ]
-                        [ text "COVERED" ]
-
-                  else
-                    span [ class "bg-medicare-success-light text-medicare-success text-xs font-medium px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full whitespace-nowrap" ]
-                        [ text (String.fromInt item.percentageCovered ++ "% COVERED") ]
-                ]
-            ]
-        , case item.note of
-            Just noteText ->
-                p [ class "text-[10px] sm:text-xs text-neutral-500 mt-0.5 sm:mt-1 text-right w-full" ] [ text noteText ]
-
-            Nothing ->
-                text ""
-        ]
-
-
-viewPillButton : String -> Bool -> Msg -> Html Msg
-viewPillButton label isVideo msg =
-    button
-        [ class "mx-auto bg-white text-brand px-3 sm:px-4 py-1.5 sm:py-2 rounded-full border border-brand hover:bg-brand/5 transition-colors flex items-center justify-center gap-1 sm:gap-2 text-xs sm:text-sm"
-        , onClick msg
-        ]
-        [ if isVideo then
-            div [ class "flex items-center justify-center gap-0.5 sm:gap-1" ]
-                [ text "▶"
-                , span [ class "text-[10px] sm:text-xs" ] [ text "Video" ]
-                ]
-
-          else
-            text ""
-        , text label
         ]
 
 
@@ -1117,7 +1266,7 @@ viewGvsNModal model =
                         ]
                     ]
                 , button
-                    [ class "bg-med-green-500 text-white px-4 sm:px-6 py-2 rounded hover:bg-med-green-600 mt-4 w-full sm:w-auto"
+                    [ class "bg-purple-500 text-white px-4 sm:px-6 py-2 rounded hover:bg-purple-600 mt-4 w-full sm:w-auto"
                     , onClick CloseGvsNVideo
                     ]
                     [ text "Continue" ]
@@ -1154,7 +1303,7 @@ viewQualificationModal model =
                         ]
                     ]
                 , button
-                    [ class "bg-med-green-500 text-white px-4 sm:px-6 py-2 rounded hover:bg-med-green-600 mt-4 w-full sm:w-auto"
+                    [ class "bg-purple-500 text-white px-4 sm:px-6 py-2 rounded hover:bg-purple-600 mt-4 w-full sm:w-auto"
                     , onClick CloseQualificationVideo
                     ]
                     [ text "Continue" ]
@@ -1215,7 +1364,7 @@ viewRatesModal model =
                         ]
                     ]
                 , button
-                    [ class "bg-med-green-500 text-white px-4 sm:px-6 py-2 rounded hover:bg-med-green-600 mt-4 w-full sm:w-auto"
+                    [ class "bg-purple-500 text-white px-4 sm:px-6 py-2 rounded hover:bg-purple-600 mt-4 w-full sm:w-auto"
                     , onClick CloseRatesVideo
                     ]
                     [ text "Continue" ]
@@ -1261,18 +1410,161 @@ stateCarrierSettingDecoder =
         (D.field "targetGI" D.bool)
 
 
-viewPlanList : Model -> PlanType -> List Plan -> Html Msg
-viewPlanList model planType plans =
-    let
-        filteredPlans =
-            plans
-    in
-    div []
-        [ if List.isEmpty filteredPlans then
-            div [ class "text-center py-8" ]
-                [ p [ class "text-gray-500" ] [ text "No plans available to display." ] ]
+viewPlanTypeSection : Model -> String -> String -> List Plan -> Html Msg
+viewPlanTypeSection model title code plans =
+    div [ class "mb-8" ]
+        [ h2 [ class "text-xl font-bold mb-4 text-center sm:text-left" ] [ text title ]
+        , div [ class "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 justify-items-center" ]
+            (List.map (viewPlanCard model) (getTopPlans model plans 3))
+        ]
+
+
+
+-- Helper function to format phone number as (555) 123-4567
+
+
+formatPhoneNumber : String -> String
+formatPhoneNumber phone =
+    if String.length phone >= 10 then
+        let
+            areaCode =
+                String.slice 0 3 phone
+
+            firstPart =
+                String.slice 3 6 phone
+
+            secondPart =
+                String.slice 6 10 phone
+        in
+        "(" ++ areaCode ++ ") " ++ firstPart ++ "-" ++ secondPart
+
+    else
+        phone
+
+
+
+-- Helper function to format birth date
+
+
+formatBirthDate : String -> String
+formatBirthDate date =
+    if String.contains "-" date && String.length date >= 10 then
+        let
+            parts =
+                String.split "-" date
+
+            year =
+                List.head parts |> Maybe.withDefault ""
+
+            month =
+                List.drop 1 parts |> List.head |> Maybe.withDefault ""
+
+            day =
+                List.drop 2 parts |> List.head |> Maybe.withDefault "" |> String.left 2
+
+            monthName =
+                case month of
+                    "01" ->
+                        "Jan"
+
+                    "02" ->
+                        "Feb"
+
+                    "03" ->
+                        "Mar"
+
+                    "04" ->
+                        "Apr"
+
+                    "05" ->
+                        "May"
+
+                    "06" ->
+                        "Jun"
+
+                    "07" ->
+                        "Jul"
+
+                    "08" ->
+                        "Aug"
+
+                    "09" ->
+                        "Sep"
+
+                    "10" ->
+                        "Oct"
+
+                    "11" ->
+                        "Nov"
+
+                    "12" ->
+                        "Dec"
+
+                    _ ->
+                        month
+        in
+        monthName ++ " " ++ day ++ ", " ++ year
+
+    else
+        date
+
+
+
+-- Helper function to format address
+
+
+formatAddress : String -> String -> String
+formatAddress state zip =
+    state ++ " " ++ zip
+
+
+
+-- Add decoder for Contact data
+
+
+type alias ContactResponse =
+    { success : Bool
+    , orgSlug : String
+    , contact : Contact
+    }
+
+
+contactDecoder : Decoder Contact
+contactDecoder =
+    D.succeed Contact
+        |> Pipeline.required "firstName" D.string
+        |> Pipeline.required "lastName" D.string
+        |> Pipeline.required "email" D.string
+        |> Pipeline.required "phoneNumber" D.string
+        |> Pipeline.required "dateOfBirth" D.string
+        |> Pipeline.required "gender" D.string
+        |> Pipeline.required "tobacco" D.bool
+        |> Pipeline.required "state" D.string
+        |> Pipeline.required "zipCode" D.string
+        |> Pipeline.required "currentCarrier" (D.nullable D.string)
+
+
+contactResponseDecoder : Decoder ContactResponse
+contactResponseDecoder =
+    D.map3 ContactResponse
+        (D.field "success" D.bool)
+        (D.field "orgSlug" D.string)
+        (D.field "contact" contactDecoder)
+
+
+viewPillButton : String -> Bool -> Msg -> Html Msg
+viewPillButton label isVideo msg =
+    button
+        [ class "mx-auto bg-white text-purple-600 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full border border-purple-600 hover:bg-purple-50 transition-colors flex items-center justify-center gap-1 sm:gap-2 text-xs sm:text-sm"
+        , onClick msg
+        ]
+        [ if isVideo then
+            div [ class "flex items-center justify-center gap-0.5 sm:gap-1" ]
+                [ text "▶"
+                , span [ class "text-[10px] sm:text-xs" ] [ text "Video" ]
+                ]
 
           else
-            div [ class "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" ]
-                (List.map (viewPlanCard model) filteredPlans)
+            text ""
+        , text label
         ]

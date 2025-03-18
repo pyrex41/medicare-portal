@@ -109,6 +109,33 @@ try {
         }
       })
     }
+    
+    // Copy to clipboard
+    if (app.ports.copyToClipboard) {
+      app.ports.copyToClipboard.subscribe((text: string) => {
+        console.log('Copying to clipboard:', text.substring(0, 20) + '...')
+        try {
+          navigator.clipboard.writeText(text)
+            .then(() => {
+              console.log('Text copied to clipboard')
+              if (app.ports.onCopyResult) {
+                app.ports.onCopyResult.send(true)
+              }
+            })
+            .catch((error) => {
+              console.error('Failed to copy text to clipboard:', error)
+              if (app.ports.onCopyResult) {
+                app.ports.onCopyResult.send(false)
+              }
+            })
+        } catch (error) {
+          console.error('Clipboard API not available:', error)
+          if (app.ports.onCopyResult) {
+            app.ports.onCopyResult.send(false)
+          }
+        }
+      })
+    }
   }
 } catch (error) {
   console.error('Failed to initialize Elm application:', error)

@@ -7,6 +7,23 @@ import { generateQuoteId, decodeQuoteId } from '../utils/quoteId';
 import { getUserFromSession } from '../services/auth';
 import { readFile } from 'fs/promises';
 import { join } from 'path';
+import { readFileSync } from 'fs';
+
+
+interface ZipInfo {
+  state: string;
+  // Add other ZIP info properties as needed
+}
+
+
+// Update ZIP_DATA declaration
+let ZIP_DATA: Record<string, ZipInfo> = {}
+try {
+  ZIP_DATA = JSON.parse(readFileSync('../zipData.json', 'utf-8'))
+} catch (e) {
+  logger.error(`Error loading ZIP data: ${e}`)
+}
+
 
 interface Quote {
     age: number;
@@ -112,6 +129,12 @@ export const quotesRoutes = (app: Elysia) => {
 
             // Get org-specific database
             const orgDb = await Database.getOrInitOrgDb(decoded.orgId.toString());
+            const mainDb = new Database();
+
+            const orgSlug = await mainDb.fetchOne<{ slug: string }>(
+                'SELECT slug FROM organizations WHERE id = ?',
+                [decoded.orgId]
+            );
             
             // Fetch contact details
             const contact = await orgDb.fetchOne<ContactQuoteInfo>(
@@ -119,15 +142,21 @@ export const quotesRoutes = (app: Elysia) => {
                 [decoded.contactId]
             );
 
+
+
             if (!contact) {
                 throw new Error('Contact not found');
             }
-            logger.info(`Contact details: ${JSON.stringify(contact, null, 2)}`);
 
-            return {
+            const zipInfo = ZIP_DATA[contact.zip_code];
+            const contactState = zipInfo?.state;
+
+            const output = {
                 success: true,
+                orgSlug: orgSlug?.slug || null,
                 contact: {
                     zipCode: contact.zip_code,
+                    state: contactState,
                     dateOfBirth: contact.birth_date,
                     tobacco: Boolean(contact.tobacco_user),
                     gender: contact.gender,
@@ -138,6 +167,9 @@ export const quotesRoutes = (app: Elysia) => {
                     phoneNumber: contact.phone_number
                 }
             };
+
+            logger.info(`Output: ${JSON.stringify(output, null, 2)}`);
+            return output;
         } catch (e) {
             logger.error(`Error decoding quote ID: ${e}`);
             throw new Error(String(e));
@@ -177,6 +209,7 @@ export const quotesRoutes = (app: Elysia) => {
             const response = await axios(requestConfig);
             
             logger.info(`Quote engine response status: ${response.status}`);
+            logger.info(`Quote engine response data: ${JSON.stringify(response.data, null, 2)}`);
             
             // Return quotes from response data
             return response.data;

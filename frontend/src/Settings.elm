@@ -13,6 +13,7 @@ import Http exposing (expectJson, jsonBody)
 import Json.Decode as Decode exposing (Decoder)
 import Json.Decode.Pipeline as Pipeline
 import Json.Encode as Encode
+import Ports
 import StateRegions exposing (Region(..), getRegionStates, regionToString)
 import Svg exposing (path, svg)
 import Svg.Attributes exposing (clipRule, d, fill, fillRule, viewBox)
@@ -98,6 +99,8 @@ type alias Model =
     , error : Maybe String
     , selectedCarrier : Maybe String
     , loadedCarriers : List String
+    , linkCopied : Bool
+    , selfOnboardingUrl : Maybe String
     }
 
 
@@ -158,11 +161,19 @@ type Msg
     | OrgFinalized (Result Http.Error ())
     | SelectCarrier String
     | GotCarriers (Result Http.Error (List String))
+    | CopySelfOnboardingLink
+    | LinkCopied Bool
+    | GotSelfOnboardingUrl (Result Http.Error SelfOnboardingUrlResponse)
 
 
 type alias SettingsResponse =
     { orgSettings : Settings
     , canEditOrgSettings : Bool
+    }
+
+
+type alias SelfOnboardingUrlResponse =
+    { selfOnboardingUrl : String
     }
 
 
@@ -181,11 +192,14 @@ init flags =
       , error = Nothing
       , selectedCarrier = Nothing
       , loadedCarriers = []
+      , linkCopied = False
+      , selfOnboardingUrl = Nothing
       }
     , Cmd.batch
         [ fetchSettings
         , fetchRecommendedGICombos
         , fetchCarriers
+        , fetchSelfOnboardingUrl
         ]
     )
 
@@ -212,6 +226,25 @@ fetchCarriers =
         { url = "/api/settings/carriers"
         , expect = Http.expectJson GotCarriers (Decode.list (Decode.field "name" Decode.string))
         }
+
+
+fetchSelfOnboardingUrl : Cmd Msg
+fetchSelfOnboardingUrl =
+    let
+        slug =
+            -- This is a placeholder, we'll get the actual slug in the backend
+            "latest"
+    in
+    Http.get
+        { url = "/api/self-service/" ++ slug
+        , expect = Http.expectJson GotSelfOnboardingUrl selfOnboardingUrlDecoder
+        }
+
+
+selfOnboardingUrlDecoder : Decoder SelfOnboardingUrlResponse
+selfOnboardingUrlDecoder =
+    Decode.map SelfOnboardingUrlResponse
+        (Decode.field "selfOnboardingUrl" Decode.string)
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -546,6 +579,34 @@ update msg model =
 
                 Err _ ->
                     ( { model | status = Error "Failed to upload logo" }, Cmd.none )
+                    
+        CopySelfOnboardingLink ->
+            let
+                slug =
+                    model.currentUser
+                        |> Maybe.map .organizationSlug
+                        |> Maybe.withDefault ""
+                
+                url =
+                    model.selfOnboardingUrl
+                        |> Maybe.withDefault ("http://localhost:5173/self-onboarding/" ++ slug)
+                            
+                -- Command to copy link to clipboard using ports
+                copyCmd =
+                    Ports.copyToClipboard url
+            in
+            ( { model | linkCopied = False }, copyCmd )
+            
+        LinkCopied success ->
+            ( { model | linkCopied = success }, Cmd.none )
+            
+        GotSelfOnboardingUrl result ->
+            case result of
+                Ok response ->
+                    ( { model | selfOnboardingUrl = Just response.selfOnboardingUrl }, Cmd.none )
+                    
+                Err _ ->
+                    ( model, Cmd.none )
 
 
 updateSettings : Model -> (Settings -> Settings) -> ( Model, Cmd Msg )
@@ -678,6 +739,7 @@ viewSettingsContent maybeSettings canEdit expandedSections planType model =
             div [ class "space-y-6" ]
                 [ viewBrandSettings settings
                 , viewEmailSettings settings
+                , viewSelfOnboardingLink model
                 , viewExpandableSection "Carrier Contracts"
                     (viewCarriersGrid settings model)
                     expandedSections
@@ -787,6 +849,43 @@ viewEmailSettings settings =
         [ h2 [ class "text-lg font-medium mb-4" ] [ text "Email Settings" ]
         , div [ class "space-y-4" ]
             [ checkbox "Enable smart send" settings.smartSendEnabled ToggleSmartSend
+            ]
+        ]
+
+
+viewSelfOnboardingLink : Model -> Html Msg
+viewSelfOnboardingLink model =
+    div [ class "bg-white shadow rounded-lg p-6" ]
+        [ h2 [ class "text-lg font-medium mb-4" ] [ text "Self Onboarding" ]
+        , div [ class "space-y-4" ]
+            [ p [ class "mb-4 text-gray-600" ]
+                [ text "Share this link with companies that need to self-onboard into your platform." ]
+            , div [ class "flex items-center space-x-3" ]
+                [ let
+                    slug =
+                        model.currentUser
+                            |> Maybe.map .organizationSlug
+                            |> Maybe.withDefault ""
+                            
+                    selfOnboardingUrl =
+                        model.selfOnboardingUrl
+                            |> Maybe.withDefault ("/self-onboarding/" ++ slug)
+                  in
+                  div [ class "flex-1 flex items-center space-x-4" ]
+                    [ input
+                        [ type_ "text"
+                        , class "flex-1 px-4 py-2 border border-gray-300 rounded-md focus:ring-purple-500 focus:border-purple-500 bg-gray-50"
+                        , value selfOnboardingUrl
+                        , readonly True
+                        ]
+                        []
+                    , button
+                        [ class "px-4 py-2 text-sm bg-purple-600 text-white rounded hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+                        , onClick CopySelfOnboardingLink
+                        ]
+                        [ text (if model.linkCopied then "Copied!" else "Copy Link") ]
+                    ]
+                ]
             ]
         ]
 
@@ -1030,7 +1129,7 @@ recommendationsDecoder =
 
 subscriptions : Model -> Sub Msg
 subscriptions _ =
-    Sub.none
+    Ports.onCopyResult LinkCopied
 
 
 tab : String -> Bool -> Bool -> msg -> Html msg

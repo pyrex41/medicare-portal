@@ -1,5 +1,7 @@
 port module Ports exposing
-    ( getOrgSlug
+    ( copyToClipboard
+    , getOrgSlug
+    , onCopyResult
     , receiveOrgSlug
     )
 
@@ -9,8 +11,19 @@ port module Ports exposing
 port getOrgSlug : () -> Cmd msg
 
 
-
 -- Port for receiving the orgSlug from JavaScript
 
 
 port receiveOrgSlug : (String -> msg) -> Sub msg
+
+
+-- Port for copying text to clipboard
+
+
+port copyToClipboard : String -> Cmd msg
+
+
+-- Port for receiving copy result from JavaScript
+
+
+port onCopyResult : (Bool -> msg) -> Sub msg

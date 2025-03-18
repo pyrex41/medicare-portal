@@ -1,5 +1,6 @@
 import sgMail from '@sendgrid/mail';
 import { logger } from '../logger';
+import crypto from 'crypto';
 
 
 interface MagicLinkEmailParams {
@@ -145,5 +146,70 @@ export async function sendMagicLink({ email, magicLink, name }: {
   } catch (error) {
     logger.error(`Failed to send magic link email: ${error}`);
     throw error;
+  }
+}
+
+// Generate a hash for onboarding link validation
+function generateHash(orgId: string, email: string): string {
+  const SECRET = process.env.HASH_SECRET || 'default-hash-secret'; // Ensure this is set in your environment
+  return crypto.createHash('sha256').update(`${orgId}${email}${SECRET}`).digest('hex').slice(0, 16);
+}
+
+/**
+ * Sends an onboarding link that includes organizationId, and optionally email and hash
+ * @param orgId Organization ID to include in the link
+ * @param email Optional email to include in the link and use as recipient
+ */
+export async function sendOnboardingLink(orgId: string, email?: string) {
+  try {
+    // Base onboarding URL with orgId
+    const baseUrl = process.env.FRONTEND_URL || 'https://medicaremax.ai';
+    let onboardingUrl = `${baseUrl}/onboard?orgId=${orgId}`;
+    
+    // If email is provided, add email and hash to the URL
+    if (email) {
+      const hash = generateHash(orgId, email);
+      onboardingUrl += `&email=${encodeURIComponent(email)}&hash=${hash}`;
+    }
+    
+    // Create email message
+    const msg = {
+      to: email || process.env.FALLBACK_EMAIL || 'information@medicaremax.ai', // Fallback if no email provided
+      from: process.env.SENDGRID_FROM_EMAIL || 'information@medicaremax.ai',
+      subject: 'Join MedicareMax',
+      text: `Click this link to create or update your profile: ${onboardingUrl}`,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #333;">Welcome to MedicareMax</h2>
+          <p>Click the button below to create or update your profile:</p>
+          <div style="margin: 30px 0;">
+            <a href="${onboardingUrl}" 
+               style="background-color: #4F46E5; color: white; padding: 12px 24px; 
+                      text-decoration: none; border-radius: 4px; display: inline-block;">
+              Get Started
+            </a>
+          </div>
+          <p style="color: #666; font-size: 14px;">
+            If the button doesn't work, copy and paste this link into your browser:
+            <br>
+            <a href="${onboardingUrl}" style="color: #4F46E5;">${onboardingUrl}</a>
+          </p>
+          <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee;">
+            <p style="color: #888; font-size: 14px;">
+              If you have any questions, please don't hesitate to contact us.
+              <br>
+              The MedicareMax Team
+            </p>
+          </div>
+        </div>
+      `
+    };
+
+    await sgMail.send(msg);
+    logger.info(`Onboarding link email sent successfully${email ? ` to ${email}` : ''}`);
+    return { success: true };
+  } catch (error) {
+    logger.error(`Error sending onboarding link email: ${error}`);
+    throw new Error('Failed to send onboarding link email');
   }
 } 
