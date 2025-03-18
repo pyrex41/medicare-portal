@@ -13,7 +13,7 @@ module Compare exposing
 import BirthdayRules exposing (isInBirthdayRuleWindow)
 import Browser
 import Browser.Navigation as Nav
-import CarrierNaic exposing (carrierToNaics, carrierToString, naicToCarrier, stringToCarrier)
+import CarrierNaic exposing (Carrier(..), carrierDecoder, carrierToNaics, carrierToString, naicToCarrier, stringToCarrier)
 import Date exposing (Date)
 import Dict
 import Html exposing (..)
@@ -131,7 +131,7 @@ type alias Model =
     , currentCarrier : Maybe String
     , dateOfBirth : String
     , quoteId : Maybe String
-    , orgSettings : Maybe Settings
+    , carrierContracts : List Carrier
     , currentDate : Maybe Date
     , orgId : Maybe String
     , name : String
@@ -139,26 +139,6 @@ type alias Model =
     , orgSlug : Maybe String
     , loadingContact : Bool
     , showDiscountInfo : Bool
-    }
-
-
-type alias Settings =
-    { stateLicenses : List String
-    , carrierContracts : List String
-    , stateCarrierSettings : List StateCarrierSetting
-    , allowAgentSettings : Bool
-    , emailSendBirthday : Bool
-    , emailSendPolicyAnniversary : Bool
-    , emailSendAep : Bool
-    , smartSendEnabled : Bool
-    }
-
-
-type alias StateCarrierSetting =
-    { state : String
-    , carrier : String
-    , active : Bool
-    , targetGI : Bool
     }
 
 
@@ -180,7 +160,7 @@ type Msg
     | NavigateTo String
     | ToggleDiscount
     | ToggleDiscountInfo
-    | GotOrgSettings (Result Http.Error Settings)
+    | GotCarrierContracts (Result Http.Error (List Carrier))
     | GotCurrentDate Date
     | GotContactData (Result Http.Error ContactResponse)
     | NoOp
@@ -284,7 +264,7 @@ init key maybeParams =
             , currentCarrier = params.currentCarrier
             , dateOfBirth = params.dateOfBirth
             , quoteId = params.quoteId
-            , orgSettings = Nothing
+            , carrierContracts = []
             , currentDate = Nothing
             , orgId = extractedOrgId
             , name = "Loading..." -- Will be updated with real name
@@ -452,31 +432,26 @@ quoteDataDecoder =
         (D.field "tobacco" D.int)
 
 
+isCarrierSupported : String -> List Carrier -> Bool
+isCarrierSupported naic carrierContracts =
+    case naicToCarrier naic of
+        Just carrierName ->
+            List.member carrierName carrierContracts
+
+        Nothing ->
+            False
+
+
+filterPlansByCarrier : Plans -> List Carrier -> Plans
+filterPlansByCarrier plans carrierContracts =
+    { planG = List.filter (\plan -> isCarrierSupported plan.naic carrierContracts) plans.planG
+    , planN = List.filter (\plan -> isCarrierSupported plan.naic carrierContracts) plans.planN
+    }
+
+
 groupQuotesByPlan : List QuoteResponse -> Model -> Plans
 groupQuotesByPlan responses model =
     let
-        isCarrierSupported : String -> Bool
-        isCarrierSupported naic =
-            -- Always consider carriers supported until settings are loaded
-            case model.orgSettings of
-                Nothing ->
-                    True
-
-                Just settings ->
-                    case naicToCarrier naic of
-                        Just carrier ->
-                            let
-                                carrierStr =
-                                    carrier
-                                        |> carrierToString
-                                        |> String.filter (\c -> c /= ' ')
-                            in
-                            List.member carrierStr settings.carrierContracts
-
-                        Nothing ->
-                            -- If we can't map the NAIC to a carrier, consider it supported
-                            True
-
         convertToPlan : QuoteResponse -> QuoteData -> Plan
         convertToPlan response quote =
             let
@@ -584,16 +559,16 @@ planNCoverageList =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
-        GotOrgSettings (Ok settings) ->
+        GotCarrierContracts (Ok carrierContracts) ->
             let
                 updatedModel =
-                    { model | orgSettings = Just settings }
+                    { model | carrierContracts = carrierContracts }
             in
             ( updatedModel
             , fetchPlans updatedModel
             )
 
-        GotOrgSettings (Err _) ->
+        GotCarrierContracts (Err _) ->
             ( { model | error = Just "Failed to load organization settings" }
             , Cmd.none
             )
@@ -610,8 +585,11 @@ update msg model =
 
         GotPlans result ->
             case result of
-                Ok plans ->
+                Ok plansRaw ->
                     let
+                        plans =
+                            filterPlansByCarrier plansRaw model.carrierContracts
+
                         hasPlans =
                             not (List.isEmpty plans.planG && List.isEmpty plans.planN)
 
@@ -774,25 +752,20 @@ update msg model =
             case result of
                 Ok response ->
                     let
-                        contact =
-                            response.contact
-
-                        orgSlug =
-                            response.orgSlug
-
                         -- Update model with contact data
                         updatedModel =
                             { model
-                                | contact = Just contact
-                                , orgSlug = Just orgSlug
+                                | contact = Just response.contact
+                                , orgSlug = Just response.orgSlug
+                                , carrierContracts = response.carrierContracts
                                 , loadingContact = False
-                                , name = contact.firstName ++ " " ++ contact.lastName
-                                , gender = contact.gender
-                                , tobacco = contact.tobacco
-                                , state = contact.state
-                                , zip = contact.zipCode
-                                , dateOfBirth = contact.dateOfBirth
-                                , currentCarrier = contact.currentCarrier
+                                , name = response.contact.firstName ++ " " ++ response.contact.lastName
+                                , gender = response.contact.gender
+                                , tobacco = response.contact.tobacco
+                                , state = response.contact.state
+                                , zip = response.contact.zipCode
+                                , dateOfBirth = response.contact.dateOfBirth
+                                , currentCarrier = response.contact.currentCarrier
                             }
                     in
                     ( updatedModel, fetchPlans updatedModel )
@@ -889,11 +862,13 @@ getTopPlans model plans count =
     in
     List.sortBy
         (\plan ->
+            {--
             if model.showDiscount then
                 plan.priceDiscount
 
             else
-                plan.price
+            --}
+            plan.price
         )
         filteredPlans
         |> List.take count
@@ -1012,15 +987,19 @@ view model =
             , -- Household Discount Checkbox
               div [ class "flex justify-center mb-3" ]
                 [ div [ class "flex items-center" ]
-                    [ input
-                        [ type_ "checkbox"
-                        , class "form-checkbox h-4 w-4"
-                        , checked model.showDiscount
+                    [ span
+                        [ class "flex items-center cursor-pointer"
                         , onClick ToggleDiscount
                         ]
-                        []
-                    , span [ class "ml-3 text-sm text-gray-700" ]
-                        [ text "Apply Household Discount" ]
+                        [ input
+                            [ type_ "checkbox"
+                            , class "form-checkbox h-4 w-4"
+                            , checked model.showDiscount
+                            ]
+                            []
+                        , span [ class "ml-3 text-sm text-gray-700" ]
+                            [ text "Apply Household Discount" ]
+                        ]
                     , span
                         [ class "ml-2 text-xs text-purple-600 underline cursor-pointer"
                         , onClick ToggleDiscountInfo
@@ -1032,9 +1011,9 @@ view model =
                 div [ class "bg-purple-50 p-3 mt-2 rounded-md max-w-md mx-auto text-sm" ]
                     [ p [ class "mb-2 text-gray-700" ]
                         [ text "Some arriers offer premium discounts based on the number of people in the same household. Eligibility criteria and discount amounts vary by carrier." ]
-                    , div [ class "flex justify-center" ]
+                    , div [ class "flex justify-center max-w-md" ]
                         [ button
-                            [ class "text-xs text-purple-600 hover:text-purple-800 mt-1"
+                            [ class "text-xs text-purple-600 hover:text-purple-800 mt-1 cursor-pointer w-full py-2"
                             , onClick ToggleDiscountInfo
                             ]
                             [ text "Close" ]
@@ -1053,7 +1032,13 @@ view model =
               else
                 case model.error of
                     Just error ->
-                        viewError error
+                        if String.startsWith "No plans available" error then
+                            -- Still loading or searching for plans
+                            viewLoading
+
+                        else
+                            -- Real error
+                            viewError error
 
                     Nothing ->
                         div [ class "max-w-[700px] mx-auto px-2" ]
@@ -1091,7 +1076,7 @@ viewLoading =
     div [ class "flex flex-col items-center justify-center gap-4 text-center min-h-[400px]" ]
         [ div [ class "animate-spin rounded-full h-12 w-12 border-4 border-purple-600 border-t-transparent" ] []
         , p [ class "text-center text-lg font-medium text-gray-600" ]
-            [ text "Searching plans..." ]
+            [ text "Searching for available plans..." ]
         ]
 
 
@@ -1377,41 +1362,6 @@ viewRatesModal model =
         text ""
 
 
-settingsDecoder : Decoder Settings
-settingsDecoder =
-    D.field "success" D.bool
-        |> D.andThen
-            (\success ->
-                if success then
-                    D.field "orgSettings" settingsObjectDecoder
-
-                else
-                    D.fail "Settings request was not successful"
-            )
-
-
-settingsObjectDecoder : Decoder Settings
-settingsObjectDecoder =
-    D.map8 Settings
-        (D.field "stateLicenses" (D.list D.string))
-        (D.field "carrierContracts" (D.list D.string))
-        (D.field "stateCarrierSettings" (D.list stateCarrierSettingDecoder))
-        (D.field "allowAgentSettings" D.bool)
-        (D.field "emailSendBirthday" D.bool)
-        (D.field "emailSendPolicyAnniversary" D.bool)
-        (D.field "emailSendAep" D.bool)
-        (D.field "smartSendEnabled" D.bool)
-
-
-stateCarrierSettingDecoder : Decoder StateCarrierSetting
-stateCarrierSettingDecoder =
-    D.map4 StateCarrierSetting
-        (D.field "state" D.string)
-        (D.field "carrier" D.string)
-        (D.field "active" D.bool)
-        (D.field "targetGI" D.bool)
-
-
 viewPlanTypeSection : Model -> String -> String -> List Plan -> Html Msg
 viewPlanTypeSection model title code plans =
     div [ class "mb-8" ]
@@ -1527,6 +1477,7 @@ formatAddress state zip =
 type alias ContactResponse =
     { success : Bool
     , orgSlug : String
+    , carrierContracts : List Carrier
     , contact : Contact
     }
 
@@ -1546,11 +1497,17 @@ contactDecoder =
         |> Pipeline.required "currentCarrier" (D.nullable D.string)
 
 
+carrierContractsDecoder : Decoder (List Carrier)
+carrierContractsDecoder =
+    D.list carrierDecoder
+
+
 contactResponseDecoder : Decoder ContactResponse
 contactResponseDecoder =
-    D.map3 ContactResponse
+    D.map4 ContactResponse
         (D.field "success" D.bool)
         (D.field "orgSlug" D.string)
+        (D.field "carrierContracts" carrierContractsDecoder)
         (D.field "contact" contactDecoder)
 
 

@@ -130,12 +130,18 @@ export const quotesRoutes = (app: Elysia) => {
             // Get org-specific database
             const orgDb = await Database.getOrInitOrgDb(decoded.orgId.toString());
             const mainDb = new Database();
-
-            const orgSlug = await mainDb.fetchOne<{ slug: string }>(
-                'SELECT slug FROM organizations WHERE id = ?',
+            const result = await mainDb.fetchOne<{ slug: string, org_settings: string }>(
+                'SELECT slug, org_settings FROM organizations WHERE id = ?',
                 [decoded.orgId]
             );
-            
+
+            if (!result) {
+                throw new Error('Organization not found');
+            }
+
+            const orgSlug = result.slug;
+            const orgSettings = JSON.parse(result.org_settings);
+            const carrierContracts = orgSettings?.carrierContracts || [];
             // Fetch contact details
             const contact = await orgDb.fetchOne<ContactQuoteInfo>(
                 'SELECT zip_code, birth_date, tobacco_user, gender, email, first_name, last_name, current_carrier, phone_number FROM contacts WHERE id = ?',
@@ -153,7 +159,8 @@ export const quotesRoutes = (app: Elysia) => {
 
             const output = {
                 success: true,
-                orgSlug: orgSlug?.slug || null,
+                orgSlug: orgSlug || null,
+                carrierContracts: carrierContracts || null,
                 contact: {
                     zipCode: contact.zip_code,
                     state: contactState,

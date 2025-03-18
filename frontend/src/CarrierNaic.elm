@@ -1,11 +1,14 @@
 module CarrierNaic exposing
     ( Carrier(..)
     , allCarriers
+    , carrierDecoder
     , carrierToNaics
     , carrierToString
     , naicToCarrier
     , stringToCarrier
     )
+
+import Json.Decode as Decode exposing (Decoder)
 
 
 type Carrier
@@ -248,3 +251,17 @@ naicToCarrier naic =
 
         _ ->
             Nothing
+
+
+carrierDecoder : Decoder Carrier
+carrierDecoder =
+    Decode.string
+        |> Decode.andThen
+            (\str ->
+                case stringToCarrier str of
+                    Just carrier ->
+                        Decode.succeed carrier
+
+                    Nothing ->
+                        Decode.fail "Invalid carrier"
+            )
