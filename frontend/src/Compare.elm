@@ -467,7 +467,9 @@ groupQuotesByPlan responses model =
                         Just carrier ->
                             let
                                 carrierStr =
-                                    carrierToString carrier
+                                    carrier
+                                        |> carrierToString
+                                        |> String.filter (\c -> c /= ' ')
                             in
                             List.member carrierStr settings.carrierContracts
 
