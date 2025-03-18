@@ -483,7 +483,7 @@ groupQuotesByPlan responses model =
                 carrierImagePath =
                     case naicToCarrier response.naic of
                         Just carrier ->
-                            "/images/" ++ carrierToString carrier ++ ".svg"
+                            "/images/" ++ (carrier |> carrierToString |> String.filter (\c -> c /= ' ')) ++ ".svg"
 
                         Nothing ->
                             -- Fallback to png if we can't match the carrier
