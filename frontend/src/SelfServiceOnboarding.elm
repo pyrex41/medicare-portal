@@ -885,7 +885,7 @@ viewCombinedForm model =
             UpdateTobacco
             [ ( "true", "Yes" ), ( "false", "No" ) ]
         , h3 [ class "font-medium text-lg mb-2 mt-6" ] [ text "Current Coverage (Optional)" ]
-        , inputField "Current Premium" "number" model.currentPremium UpdateCurrentPremium False
+        , inputField "Current Premium ($)" "number" model.currentPremium UpdateCurrentPremium False
         , inputField "Current Carrier" "text" model.currentCarrier UpdateCurrentCarrier False
         , div [ class "mt-6 flex justify-center" ]
             [ checkboxField "I agree to receive Medicare Supplement plan updates" model.optInQuarterlyUpdates ToggleOptIn ]
