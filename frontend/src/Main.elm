@@ -1365,7 +1365,7 @@ viewNavHeader model =
     let
         -- Check if current page is one of the quote flow pages that should have simplified header
         isQuoteFlowPage =
-            case model.page |> Debug.log "model.page" of
+            case model.page of
                 QuotePage _ ->
                     True
 
