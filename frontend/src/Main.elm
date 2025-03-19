@@ -109,12 +109,6 @@ sessionDecoder =
         (Decode.field "id" (Decode.map String.fromInt Decode.int))
 
 
-type Role
-    = AdminOnly
-    | AdminAgent
-    | AgentOnly
-
-
 type alias User =
     { id : String
     , email : String
@@ -1344,7 +1338,7 @@ view model =
                             SelfServiceOnboarding.view pageModel
                     in
                     { title = selfOnboardingView.title
-                    , body = List.map (Html.map SelfOnboardingMsg) selfOnboardingView.body
+                    , body = [ viewWithNav model (Html.map SelfOnboardingMsg (div [] selfOnboardingView.body)) ]
                     }
     in
     viewPage
@@ -1371,7 +1365,7 @@ viewNavHeader model =
     let
         -- Check if current page is one of the quote flow pages that should have simplified header
         isQuoteFlowPage =
-            case model.page of
+            case model.page |> Debug.log "model.page" of
                 QuotePage _ ->
                     True
 
@@ -1384,6 +1378,9 @@ viewNavHeader model =
                 SchedulePage _ ->
                     True
 
+                SelfOnboardingPage _ ->
+                    True
+
                 _ ->
                     False
     in
@@ -1393,18 +1390,12 @@ viewNavHeader model =
             [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8" ]
                 [ div [ class "flex justify-center h-14 sm:h-16" ]
                     [ div [ class "shrink-0 flex items-center" ]
-                        [ a
-                            [ href "#"
-                            , onClick (InternalLinkClicked "/")
-                            , class "cursor-pointer"
+                        [ img
+                            [ src "/images/medicare-max-logo.png"
+                            , class "h-6 sm:h-6 w-auto"
+                            , alt "Medicare Max logo"
                             ]
-                            [ img
-                                [ src "/images/medicare-max-logo.png"
-                                , class "h-6 sm:h-6 w-auto"
-                                , alt "Medicare Max logo"
-                                ]
-                                []
-                            ]
+                            []
                         ]
                     ]
                 ]

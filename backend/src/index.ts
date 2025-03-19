@@ -431,7 +431,8 @@ const startServer = async () => {
           )
 
           if (!result) {
-            throw new Error(`Contact ${id} not found`)
+            logger.info(`GET /api/contacts/${id} - Contact not found`)
+            return new Response('Contact not found', { status: 404 })
           }
 
           // Return the contact with mapped fields

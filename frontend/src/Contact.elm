@@ -464,8 +464,17 @@ update msg model =
                 Err _ ->
                     ( { model | error = Just "Invalid effective date format" }, Cmd.none )
 
-        GotContact (Err _) ->
-            ( { model | error = Just "Failed to load contact" }, Cmd.none )
+        GotContact (Err error) ->
+            case error of
+                Http.BadStatus 404 ->
+                    ( { model | error = Just "Contact not found" }
+                    , Cmd.none
+                    )
+
+                _ ->
+                    ( { model | error = Just "Failed to load contact" }
+                    , Cmd.none
+                    )
 
         GotCurrentTime today ->
             let
@@ -717,23 +726,14 @@ update msg model =
                                         |> String.split "-"
                                         |> List.head
 
-                                outStr0 : String
-                                outStr0 =
-                                    "/quote?id=" ++ response.quoteId ++ "&planType=" ++ contact.planType
-
                                 outStr : String
                                 outStr =
-                                    case orgId of
-                                        Just s ->
-                                            outStr0 ++ "&orgId=" ++ s
-
-                                        Nothing ->
-                                            outStr0
+                                    "/compare?id=" ++ response.quoteId
                             in
                             Just outStr
 
                         Nothing ->
-                            Just ("/quote?id=" ++ response.quoteId)
+                            Just ("/compare?id=" ++ response.quoteId)
                 , isGeneratingQuote = False
               }
             , Cmd.none
@@ -894,7 +894,19 @@ view model =
                             ]
 
                     Nothing ->
-                        viewLoading
+                        case model.error of
+                            Just errorMsg ->
+                                div [ class "text-center py-12" ]
+                                    [ div [ class "text-red-600 text-lg mb-4" ] [ text errorMsg ]
+                                    , button
+                                        [ class "px-4 py-2 text-sm font-medium text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors duration-200"
+                                        , onClick BackToContacts
+                                        ]
+                                        [ text "Back to Contacts" ]
+                                    ]
+
+                            Nothing ->
+                                viewLoading
                 ]
             ]
         , viewModals model
