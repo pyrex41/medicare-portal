@@ -207,7 +207,7 @@ viewContent model =
                         , if user.isAdmin then
                             button
                                 [ class "flex items-center text-sm text-purple-600 hover:text-purple-800"
-                                , onClick (NavigateTo "/subscription")
+                                , onClick (NavigateTo "/change-plan")
                                 ]
                                 [ div [ class "mr-2" ]
                                     [ svg

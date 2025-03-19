@@ -972,6 +972,18 @@ view model =
                               else
                                 text ""
                             ]
+                        , case model.quoteId of
+                            Just quoteId ->
+                                div [ class "flex justify-center" ]
+                                    [ button
+                                        [ class "text-purple-600 hover:text-purple-800 underline text-xs cursor-pointer"
+                                        , onClick (NavigateTo ("/quote?id=" ++ quoteId))
+                                        ]
+                                        [ text "Change" ]
+                                    ]
+
+                            Nothing ->
+                                text ""
                         ]
                     ]
                 ]
@@ -1001,7 +1013,7 @@ view model =
             , if model.showDiscountInfo then
                 div [ class "bg-purple-50 p-3 mt-2 rounded-md max-w-md mx-auto text-sm" ]
                     [ p [ class "mb-2 text-gray-700" ]
-                        [ text "Some arriers offer premium discounts based on the number of people in the same household. Eligibility criteria and discount amounts vary by carrier." ]
+                        [ text "Some carriers offer premium discounts based on the number of people in the same household. Eligibility criteria and discount amounts vary by carrier." ]
                     , div [ class "flex justify-center max-w-md" ]
                         [ button
                             [ class "text-xs text-purple-600 hover:text-purple-800 mt-1 cursor-pointer w-full py-2"
