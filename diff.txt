@@ -1,1094 +1,1855 @@
-diff --git a/backend/src/index.ts b/backend/src/index.ts
-index ee4499e..2836434 100644
---- a/backend/src/index.ts
-+++ b/backend/src/index.ts
-@@ -23,6 +23,7 @@ import { EmailService } from './services/email'
- import * as cron from 'node-cron'
- import { eligibilityRoutes } from './routes/eligibility'
- import { generateQuoteId } from './utils/quoteId'
-+import { createSelfServiceRoutes } from './routes/self-service'
- 
- // At the top of the file, add interface for ZIP data
- interface ZipInfo {
-@@ -1170,6 +1171,8 @@ const startServer = async () => {
-       .use(createOnboardingRoutes())
-       // Add eligibility routes
-       .use(eligibilityRoutes)
-+      // Add self-service routes
-+      .use(createSelfServiceRoutes())
-       // In production, serve the frontend static files
-       .use(process.env.NODE_ENV === 'production' 
-         ? async (app) => {
-diff --git a/backend/src/services/email.ts b/backend/src/services/email.ts
-index 1815c8d..3e73e82 100644
---- a/backend/src/services/email.ts
-+++ b/backend/src/services/email.ts
-@@ -1,5 +1,6 @@
- import sgMail from '@sendgrid/mail';
- import { logger } from '../logger';
-+import crypto from 'crypto';
- 
- 
- interface MagicLinkEmailParams {
-@@ -146,4 +147,69 @@ export async function sendMagicLink({ email, magicLink, name }: {
-     logger.error(`Failed to send magic link email: ${error}`);
-     throw error;
-   }
-+}
-+
-+// Generate a hash for onboarding link validation
-+function generateHash(orgId: string, email: string): string {
-+  const SECRET = process.env.HASH_SECRET || 'default-hash-secret'; // Ensure this is set in your environment
-+  return crypto.createHash('sha256').update(`${orgId}${email}${SECRET}`).digest('hex').slice(0, 16);
-+}
-+
-+/**
-+ * Sends an onboarding link that includes organizationId, and optionally email and hash
-+ * @param orgId Organization ID to include in the link
-+ * @param email Optional email to include in the link and use as recipient
-+ */
-+export async function sendOnboardingLink(orgId: string, email?: string) {
-+  try {
-+    // Base onboarding URL with orgId
-+    const baseUrl = process.env.FRONTEND_URL || 'https://medicaremax.ai';
-+    let onboardingUrl = `${baseUrl}/onboard?orgId=${orgId}`;
-+    
-+    // If email is provided, add email and hash to the URL
-+    if (email) {
-+      const hash = generateHash(orgId, email);
-+      onboardingUrl += `&email=${encodeURIComponent(email)}&hash=${hash}`;
-+    }
-+    
-+    // Create email message
-+    const msg = {
-+      to: email || process.env.FALLBACK_EMAIL || 'information@medicaremax.ai', // Fallback if no email provided
-+      from: process.env.SENDGRID_FROM_EMAIL || 'information@medicaremax.ai',
-+      subject: 'Join MedicareMax',
-+      text: `Click this link to create or update your profile: ${onboardingUrl}`,
-+      html: `
-+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-+          <h2 style="color: #333;">Welcome to MedicareMax</h2>
-+          <p>Click the button below to create or update your profile:</p>
-+          <div style="margin: 30px 0;">
-+            <a href="${onboardingUrl}" 
-+               style="background-color: #4F46E5; color: white; padding: 12px 24px; 
-+                      text-decoration: none; border-radius: 4px; display: inline-block;">
-+              Get Started
-+            </a>
-+          </div>
-+          <p style="color: #666; font-size: 14px;">
-+            If the button doesn't work, copy and paste this link into your browser:
-+            <br>
-+            <a href="${onboardingUrl}" style="color: #4F46E5;">${onboardingUrl}</a>
-+          </p>
-+          <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee;">
-+            <p style="color: #888; font-size: 14px;">
-+              If you have any questions, please don't hesitate to contact us.
-+              <br>
-+              The MedicareMax Team
-+            </p>
-+          </div>
-+        </div>
-+      `
-+    };
-+
-+    await sgMail.send(msg);
-+    logger.info(`Onboarding link email sent successfully${email ? ` to ${email}` : ''}`);
-+    return { success: true };
-+  } catch (error) {
-+    logger.error(`Error sending onboarding link email: ${error}`);
-+    throw new Error('Failed to send onboarding link email');
-+  }
- } 
+diff --git a/diff.txt b/diff.txt
+index 0cd9664..e69de29 100644
+--- a/diff.txt
++++ b/diff.txt
+@@ -1,1094 +0,0 @@
+-diff --git a/backend/src/index.ts b/backend/src/index.ts
+-index ee4499e..2836434 100644
+---- a/backend/src/index.ts
+-+++ b/backend/src/index.ts
+-@@ -23,6 +23,7 @@ import { EmailService } from './services/email'
+- import * as cron from 'node-cron'
+- import { eligibilityRoutes } from './routes/eligibility'
+- import { generateQuoteId } from './utils/quoteId'
+-+import { createSelfServiceRoutes } from './routes/self-service'
+- 
+- // At the top of the file, add interface for ZIP data
+- interface ZipInfo {
+-@@ -1170,6 +1171,8 @@ const startServer = async () => {
+-       .use(createOnboardingRoutes())
+-       // Add eligibility routes
+-       .use(eligibilityRoutes)
+-+      // Add self-service routes
+-+      .use(createSelfServiceRoutes())
+-       // In production, serve the frontend static files
+-       .use(process.env.NODE_ENV === 'production' 
+-         ? async (app) => {
+-diff --git a/backend/src/services/email.ts b/backend/src/services/email.ts
+-index 1815c8d..3e73e82 100644
+---- a/backend/src/services/email.ts
+-+++ b/backend/src/services/email.ts
+-@@ -1,5 +1,6 @@
+- import sgMail from '@sendgrid/mail';
+- import { logger } from '../logger';
+-+import crypto from 'crypto';
+- 
+- 
+- interface MagicLinkEmailParams {
+-@@ -146,4 +147,69 @@ export async function sendMagicLink({ email, magicLink, name }: {
+-     logger.error(`Failed to send magic link email: ${error}`);
+-     throw error;
+-   }
+-+}
+-+
+-+// Generate a hash for onboarding link validation
+-+function generateHash(orgId: string, email: string): string {
+-+  const SECRET = process.env.HASH_SECRET || 'default-hash-secret'; // Ensure this is set in your environment
+-+  return crypto.createHash('sha256').update(`${orgId}${email}${SECRET}`).digest('hex').slice(0, 16);
+-+}
+-+
+-+/**
+-+ * Sends an onboarding link that includes organizationId, and optionally email and hash
+-+ * @param orgId Organization ID to include in the link
+-+ * @param email Optional email to include in the link and use as recipient
+-+ */
+-+export async function sendOnboardingLink(orgId: string, email?: string) {
+-+  try {
+-+    // Base onboarding URL with orgId
+-+    const baseUrl = process.env.FRONTEND_URL || 'https://medicaremax.ai';
+-+    let onboardingUrl = `${baseUrl}/onboard?orgId=${orgId}`;
+-+    
+-+    // If email is provided, add email and hash to the URL
+-+    if (email) {
+-+      const hash = generateHash(orgId, email);
+-+      onboardingUrl += `&email=${encodeURIComponent(email)}&hash=${hash}`;
+-+    }
+-+    
+-+    // Create email message
+-+    const msg = {
+-+      to: email || process.env.FALLBACK_EMAIL || 'information@medicaremax.ai', // Fallback if no email provided
+-+      from: process.env.SENDGRID_FROM_EMAIL || 'information@medicaremax.ai',
+-+      subject: 'Join MedicareMax',
+-+      text: `Click this link to create or update your profile: ${onboardingUrl}`,
+-+      html: `
+-+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+-+          <h2 style="color: #333;">Welcome to MedicareMax</h2>
+-+          <p>Click the button below to create or update your profile:</p>
+-+          <div style="margin: 30px 0;">
+-+            <a href="${onboardingUrl}" 
+-+               style="background-color: #4F46E5; color: white; padding: 12px 24px; 
+-+                      text-decoration: none; border-radius: 4px; display: inline-block;">
+-+              Get Started
+-+            </a>
+-+          </div>
+-+          <p style="color: #666; font-size: 14px;">
+-+            If the button doesn't work, copy and paste this link into your browser:
+-+            <br>
+-+            <a href="${onboardingUrl}" style="color: #4F46E5;">${onboardingUrl}</a>
+-+          </p>
+-+          <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee;">
+-+            <p style="color: #888; font-size: 14px;">
+-+              If you have any questions, please don't hesitate to contact us.
+-+              <br>
+-+              The MedicareMax Team
+-+            </p>
+-+          </div>
+-+        </div>
+-+      `
+-+    };
+-+
+-+    await sgMail.send(msg);
+-+    logger.info(`Onboarding link email sent successfully${email ? ` to ${email}` : ''}`);
+-+    return { success: true };
+-+  } catch (error) {
+-+    logger.error(`Error sending onboarding link email: ${error}`);
+-+    throw new Error('Failed to send onboarding link email');
+-+  }
+- } 
+-\ No newline at end of file
+-module SelfServiceOnboarding exposing (..)
+-
+-import Browser
+-import Browser.Navigation as Nav
+-import Html exposing (..)
+-import Html.Attributes exposing (..)
+-import Html.Events exposing (..)
+-import Http
+-import Json.Decode as Decode exposing (Decoder)
+-import Json.Encode as Encode
+-import Url exposing (Url)
+-import Url.Parser exposing (..)
+-import Url.Parser.Query as Query
+-
+-
+-
+--- MODEL
+-
+-
+-type alias Model =
+-    { orgId : Maybe String
+-    , email : String
+-    , firstName : String
+-    , lastName : String
+-    , optInQuarterlyUpdates : Bool
+-    , emailReadOnly : Bool
+-    , isSubmitting : Bool
+-    , error : Maybe String
+-    , success : Bool
+-    , key : Nav.Key
+-    }
+-
+-
+-
+--- INIT
+-
+-
+-type alias UrlParams =
+-    { orgId : Maybe String
+-    , email : Maybe String
+-    , hash : Maybe String
+-    }
+-
+-
+-parseUrlParams : Url -> UrlParams
+-parseUrlParams url =
+-    let
+-        parser =
+-            Query.map3 UrlParams
+-                (Query.string "orgId")
+-                (Query.string "email")
+-                (Query.string "hash")
+-    in
+-    Url.Parser.parse (Url.Parser.query parser) url |> Maybe.withDefault { orgId = Nothing, email = Nothing, hash = Nothing }
+-
+-
+-init : Nav.Key -> Url -> ( Model, Cmd Msg )
+-init key url =
+-    let
+-        params =
+-            parseUrlParams url
+-
+-        orgId =
+-            params.orgId
+-
+-        email =
+-            params.email
+-
+-        hash =
+-            params.hash
+-
+-        initCmd =
+-            case orgId of
+-                Just oid ->
+-                    let
+-                        queryParams =
+-                            List.filterMap identity
+-                                [ Just ( "orgId", oid )
+-                                , Maybe.map (\e -> ( "email", e )) email
+-                                , Maybe.map (\h -> ( "hash", h )) hash
+-                                ]
+-                                |> List.map (\( k, v ) -> k ++ "=" ++ Url.percentEncode v)
+-                                |> String.join "&"
+-                    in
+-                    Http.get
+-                        { url = "/api/self-service/init?" ++ queryParams
+-                        , expect = Http.expectJson GotInitResponse initResponseDecoder
+-                        }
+-
+-                Nothing ->
+-                    Cmd.none
+-    in
+-    ( { orgId = orgId
+-      , email = ""
+-      , firstName = ""
+-      , lastName = ""
+-      , optInQuarterlyUpdates = False
+-      , emailReadOnly = False
+-      , isSubmitting = False
+-      , error = Nothing
+-      , success = False
+-      , key = key
+-      }
+-    , initCmd
+-    )
+-
+-
+-
+--- UPDATE
+-
+-
+-type Msg
+-    = GotInitResponse (Result Http.Error InitResponse)
+-    | UpdateEmail String
+-    | UpdateFirstName String
+-    | UpdateLastName String
+-    | ToggleOptIn Bool
+-    | SubmitForm
+-    | GotSignupResponse (Result Http.Error ())
+-
+-
+-type alias InitResponse =
+-    { contact : Maybe Contact
+-    , email : Maybe String
+-    , emailReadOnly : Bool
+-    }
+-
+-
+-type alias Contact =
+-    { email : String
+-    , firstName : String
+-    , lastName : String
+-    , optInQuarterlyUpdates : Bool
+-    }
+-
+-
+-update : Msg -> Model -> ( Model, Cmd Msg )
+-update msg model =
+-    case msg of
+-        GotInitResponse result ->
+-            case result of
+-                Ok response ->
+-                    let
+-                        email =
+-                            response.email |> Maybe.withDefault ""
+-
+-                        contact =
+-                            response.contact
+-
+-                        firstName =
+-                            contact |> Maybe.map .firstName |> Maybe.withDefault ""
+-
+-                        lastName =
+-                            contact |> Maybe.map .lastName |> Maybe.withDefault ""
+-
+-                        optIn =
+-                            contact |> Maybe.map .optInQuarterlyUpdates |> Maybe.withDefault False
+-                    in
+-                    ( { model
+-                        | email = email
+-                        , firstName = firstName
+-                        , lastName = lastName
+-                        , optInQuarterlyUpdates = optIn
+-                        , emailReadOnly = response.emailReadOnly
+-                        , error = Nothing
+-                      }
+-                    , Cmd.none
+-                    )
+-
+-                Err _ ->
+-                    ( { model | error = Just "Failed to load existing contact details. Please try again." }
+-                    , Cmd.none
+-                    )
+-
+-        UpdateEmail newEmail ->
+-            ( { model
+-                | email =
+-                    if model.emailReadOnly then
+-                        model.email
+-
+-                    else
+-                        newEmail
+-              }
+-            , Cmd.none
+-            )
+-
+-        UpdateFirstName newFirstName ->
+-            ( { model | firstName = newFirstName }, Cmd.none )
+-
+-        UpdateLastName newLastName ->
+-            ( { model | lastName = newLastName }, Cmd.none )
+-
+-        ToggleOptIn newValue ->
+-            ( { model | optInQuarterlyUpdates = newValue }, Cmd.none )
+-
+-        SubmitForm ->
+-            if isFormValid model then
+-                ( { model | isSubmitting = True, error = Nothing }
+-                , submitForm model
+-                )
+-
+-            else
+-                ( { model | error = Just "Please fill out all required fields" }
+-                , Cmd.none
+-                )
+-
+-        GotSignupResponse result ->
+-            case result of
+-                Ok _ ->
+-                    ( { model | isSubmitting = False, success = True, error = Nothing }
+-                    , Cmd.none
+-                    )
+-
+-                Err _ ->
+-                    ( { model | isSubmitting = False, error = Just "Signup failed. Please try again." }
+-                    , Cmd.none
+-                    )
+-
+-
+-isFormValid : Model -> Bool
+-isFormValid model =
+-    not (String.isEmpty model.email)
+-        && not (String.isEmpty model.firstName)
+-        && not (String.isEmpty model.lastName)
+-
+-
+-
+--- FORM SUBMISSION
+-
+-
+-submitForm : Model -> Cmd Msg
+-submitForm model =
+-    Http.post
+-        { url = "/api/self-service/signup"
+-        , body = Http.jsonBody (encodeForm model)
+-        , expect = Http.expectWhatever GotSignupResponse
+-        }
+-
+-
+-encodeForm : Model -> Encode.Value
+-encodeForm model =
+-    Encode.object
+-        [ ( "orgId", Encode.string (Maybe.withDefault "" model.orgId) )
+-        , ( "email", Encode.string model.email )
+-        , ( "firstName", Encode.string model.firstName )
+-        , ( "lastName", Encode.string model.lastName )
+-        , ( "optInQuarterlyUpdates", Encode.bool model.optInQuarterlyUpdates )
+-        ]
+-
+-
+-
+--- DECODERS
+-
+-
+-initResponseDecoder : Decoder InitResponse
+-initResponseDecoder =
+-    Decode.map3 InitResponse
+-        (Decode.maybe (Decode.field "contact" contactDecoder))
+-        (Decode.maybe (Decode.field "email" Decode.string))
+-        (Decode.field "emailReadOnly" Decode.bool)
+-
+-
+-contactDecoder : Decoder Contact
+-contactDecoder =
+-    Decode.map4 Contact
+-        (Decode.field "email" Decode.string)
+-        (Decode.field "firstName" Decode.string)
+-        (Decode.field "lastName" Decode.string)
+-        (Decode.field "optInQuarterlyUpdates" Decode.bool)
+-
+-
+-
+--- VIEW
+-
+-
+-view : Model -> Browser.Document Msg
+-view model =
+-    { title = "Self-Service Onboarding"
+-    , body =
+-        [ div [ class "container mx-auto px-4 py-8" ]
+-            [ h1 [ class "text-2xl font-bold mb-6" ] [ text "Complete Your Profile" ]
+-            , viewForm model
+-            ]
+-        ]
+-    }
+-
+-
+-viewForm : Model -> Html Msg
+-viewForm model =
+-    div [ class "max-w-md mx-auto bg-white rounded-lg shadow-md p-6" ]
+-        [ if model.success then
+-            div [ class "p-4 mb-4 bg-green-100 border border-green-400 text-green-700 rounded" ]
+-                [ text "Profile updated successfully!" ]
+-
+-          else
+-            div []
+-                [ inputField "Email" model.email UpdateEmail model.emailReadOnly
+-                , inputField "First Name" model.firstName UpdateFirstName False
+-                , inputField "Last Name" model.lastName UpdateLastName False
+-                , checkboxField "Receive quarterly Medicare updates" model.optInQuarterlyUpdates ToggleOptIn
+-                , viewError model.error
+-                , button
+-                    [ type_ "button"
+-                    , class "w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+-                    , onClick SubmitForm
+-                    , disabled (model.isSubmitting || not (isFormValid model))
+-                    ]
+-                    [ text
+-                        (if model.isSubmitting then
+-                            "Submitting..."
+-
+-                         else
+-                            "Submit"
+-                        )
+-                    ]
+-                ]
+-        ]
+-
+-
+-inputField : String -> String -> (String -> Msg) -> Bool -> Html Msg
+-inputField labelText value toMsg isDisabled =
+-    div [ class "mb-4" ]
+-        [ label [ class "block text-sm font-medium text-gray-700 mb-1" ] [ text labelText ]
+-        , input
+-            [ type_ "text"
+-            , class "w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+-            , Html.Attributes.value value
+-            , onInput toMsg
+-            , disabled isDisabled
+-            ]
+-            []
+-        ]
+-
+-
+-checkboxField : String -> Bool -> (Bool -> Msg) -> Html Msg
+-checkboxField labelText isChecked toMsg =
+-    div [ class "mb-6" ]
+-        [ label [ class "flex items-center" ]
+-            [ input
+-                [ type_ "checkbox"
+-                , class "h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+-                , checked isChecked
+-                , onCheck toMsg
+-                ]
+-                []
+-            , span [ class "ml-2 text-sm text-gray-600" ] [ text labelText ]
+-            ]
+-        ]
+-
+-
+-viewError : Maybe String -> Html msg
+-viewError maybeError =
+-    case maybeError of
+-        Just error ->
+-            div [ class "mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded" ]
+-                [ text error ]
+-
+-        Nothing ->
+-            text ""
+-
+-
+-viewSuccess : Bool -> Html msg
+-viewSuccess success =
+-    if success then
+-        div [ class "mb-4 p-3 bg-green-100 border border-green-400 text-green-700 rounded" ]
+-            [ text "Profile updated successfully!" ]
+-
+-    else
+-        text ""
+-
+-
+-
+--- HELPERS
+-
+-
+-errorToString : Http.Error -> String
+-errorToString error =
+-    case error of
+-        Http.BadUrl url ->
+-            "Bad URL: " ++ url
+-
+-        Http.Timeout ->
+-            "Request timed out"
+-
+-        Http.NetworkError ->
+-            "Network error"
+-
+-        Http.BadStatus status ->
+-            "Bad status: " ++ String.fromInt status
+-
+-        Http.BadBody message ->
+-            "Bad body: " ++ message
+-
+-
+-
+--- MAIN
+-
+-
+-main : Program () Model Msg
+-main =
+-    Browser.application
+-        { init = \flags url key -> init key url
+-        , view = view
+-        , update = update
+-        , subscriptions = \_ -> Sub.none
+-        , onUrlChange = \_ -> GotInitResponse (Err (Http.BadUrl "URL changed"))
+-        , onUrlRequest = \_ -> GotInitResponse (Err (Http.BadUrl "URL requested"))
+-        }
+-import { Elysia, t } from 'elysia';
+-import { Database } from '../database';
+-import { logger } from '../logger';
+-import crypto from 'crypto';
+-
+-// Import generateHash function - reimplementing it since it's not exported from email.ts
+-function generateHash(orgId: string, email: string): string {
+-  const SECRET = process.env.HASH_SECRET || 'default-hash-secret';
+-  return crypto.createHash('sha256').update(`${orgId}${email}${SECRET}`).digest('hex').slice(0, 16);
+-}
+-
+-export function createSelfServiceRoutes() {
+-  return new Elysia()
+-    .get('/api/self-service/init', async ({ query, set }) => {
+-      // Extract query parameters
+-      const { orgId, email, hash } = query as { 
+-        orgId?: string; 
+-        email?: string; 
+-        hash?: string;
+-      };
+-
+-      // Validate required parameters
+-      if (!orgId) {
+-        set.status = 400;
+-        return { error: 'orgId is required' };
+-      }
+-
+-      // Validate hash if email is provided
+-      if (email && hash) {
+-        const expectedHash = generateHash(orgId, email);
+-        if (hash !== expectedHash) {
+-          logger.warn(`Invalid hash for email ${email} and orgId ${orgId}`);
+-          set.status = 403;
+-          return { error: 'Invalid email or hash' };
+-        }
+-      }
+-
+-      try {
+-        // Get organization database
+-        const orgDb = await Database.getOrgDb(orgId);
+-        
+-        // If email is provided, check for existing contact
+-        if (email) {
+-          const client = orgDb.getClient();
+-          const result = await client.execute({
+-            sql: `SELECT 
+-                  email, 
+-                  first_name AS firstName, 
+-                  last_name AS lastName, 
+-                  opt_in_quarterly_updates AS optInQuarterlyUpdates 
+-                FROM contacts 
+-                WHERE email = ?`,
+-            args: [email]
+-          });
+-
+-          // If contact exists, return contact details
+-          if (result.rows.length > 0) {
+-            const contact = result.rows[0];
+-            logger.info(`Contact found for email ${email} in organization ${orgId}`);
+-            return { 
+-              contact, 
+-              email, 
+-              emailReadOnly: true 
+-            };
+-          }
+-
+-          // If no contact exists but email is provided
+-          logger.info(`No contact found for email ${email} in organization ${orgId}`);
+-          return { 
+-            email, 
+-            emailReadOnly: true 
+-          };
+-        }
+-
+-        // If no email is provided
+-        return { emailReadOnly: false };
+-
+-      } catch (error) {
+-        logger.error(`Error in self-service init endpoint: ${error}`);
+-        set.status = 500;
+-        return { error: 'Internal server error' };
+-      }
+-    });
+-} 
+-
+-+++ New file: frontend/src/SelfServiceOnboarding.elm
+-
+-module SelfServiceOnboarding exposing (..)
+-
+-import Browser
+-import Browser.Navigation as Nav
+-import Html exposing (..)
+-import Html.Attributes exposing (..)
+-import Html.Events exposing (..)
+-import Http
+-import Json.Decode as Decode exposing (Decoder)
+-import Json.Encode as Encode
+-import Url exposing (Url)
+-import Url.Parser exposing (..)
+-import Url.Parser.Query as Query
+-
+-
+-
+--- MODEL
+-
+-
+-type alias Model =
+-    { orgId : Maybe String
+-    , email : String
+-    , firstName : String
+-    , lastName : String
+-    , optInQuarterlyUpdates : Bool
+-    , emailReadOnly : Bool
+-    , isSubmitting : Bool
+-    , error : Maybe String
+-    , success : Bool
+-    , key : Nav.Key
+-    }
+-
+-
+-
+--- INIT
+-
+-
+-type alias UrlParams =
+-    { orgId : Maybe String
+-    , email : Maybe String
+-    , hash : Maybe String
+-    }
+-
+-
+-parseUrlParams : Url -> UrlParams
+-parseUrlParams url =
+-    let
+-        parser =
+-            Query.map3 UrlParams
+-                (Query.string "orgId")
+-                (Query.string "email")
+-                (Query.string "hash")
+-    in
+-    Url.Parser.parse (Url.Parser.query parser) url |> Maybe.withDefault { orgId = Nothing, email = Nothing, hash = Nothing }
+-
+-
+-init : Nav.Key -> Url -> ( Model, Cmd Msg )
+-init key url =
+-    let
+-        params =
+-            parseUrlParams url
+-
+-        orgId =
+-            params.orgId
+-
+-        email =
+-            params.email
+-
+-        hash =
+-            params.hash
+-
+-        initCmd =
+-            case orgId of
+-                Just oid ->
+-                    let
+-                        queryParams =
+-                            List.filterMap identity
+-                                [ Just ( "orgId", oid )
+-                                , Maybe.map (\e -> ( "email", e )) email
+-                                , Maybe.map (\h -> ( "hash", h )) hash
+-                                ]
+-                                |> List.map (\( k, v ) -> k ++ "=" ++ Url.percentEncode v)
+-                                |> String.join "&"
+-                    in
+-                    Http.get
+-                        { url = "/api/self-service/init?" ++ queryParams
+-                        , expect = Http.expectJson GotInitResponse initResponseDecoder
+-                        }
+-
+-                Nothing ->
+-                    Cmd.none
+-    in
+-    ( { orgId = orgId
+-      , email = ""
+-      , firstName = ""
+-      , lastName = ""
+-      , optInQuarterlyUpdates = False
+-      , emailReadOnly = False
+-      , isSubmitting = False
+-      , error = Nothing
+-      , success = False
+-      , key = key
+-      }
+-    , initCmd
+-    )
+-
+-
+-
+--- UPDATE
+-
+-
+-type Msg
+-    = GotInitResponse (Result Http.Error InitResponse)
+-    | UpdateEmail String
+-    | UpdateFirstName String
+-    | UpdateLastName String
+-    | ToggleOptIn Bool
+-    | SubmitForm
+-    | GotSignupResponse (Result Http.Error ())
+-
+-
+-type alias InitResponse =
+-    { contact : Maybe Contact
+-    , email : Maybe String
+-    , emailReadOnly : Bool
+-    }
+-
+-
+-type alias Contact =
+-    { email : String
+-    , firstName : String
+-    , lastName : String
+-    , optInQuarterlyUpdates : Bool
+-    }
+-
+-
+-update : Msg -> Model -> ( Model, Cmd Msg )
+-update msg model =
+-    case msg of
+-        GotInitResponse result ->
+-            case result of
+-                Ok response ->
+-                    let
+-                        email =
+-                            response.email |> Maybe.withDefault ""
+-
+-                        contact =
+-                            response.contact
+-
+-                        firstName =
+-                            contact |> Maybe.map .firstName |> Maybe.withDefault ""
+-
+-                        lastName =
+-                            contact |> Maybe.map .lastName |> Maybe.withDefault ""
+-
+-                        optIn =
+-                            contact |> Maybe.map .optInQuarterlyUpdates |> Maybe.withDefault False
+-                    in
+-                    ( { model
+-                        | email = email
+-                        , firstName = firstName
+-                        , lastName = lastName
+-                        , optInQuarterlyUpdates = optIn
+-                        , emailReadOnly = response.emailReadOnly
+-                        , error = Nothing
+-                      }
+-                    , Cmd.none
+-                    )
+-
+-                Err _ ->
+-                    ( { model | error = Just "Failed to load existing contact details. Please try again." }
+-                    , Cmd.none
+-                    )
+-
+-        UpdateEmail newEmail ->
+-            ( { model
+-                | email =
+-                    if model.emailReadOnly then
+-                        model.email
+-
+-                    else
+-                        newEmail
+-              }
+-            , Cmd.none
+-            )
+-
+-        UpdateFirstName newFirstName ->
+-            ( { model | firstName = newFirstName }, Cmd.none )
+-
+-        UpdateLastName newLastName ->
+-            ( { model | lastName = newLastName }, Cmd.none )
+-
+-        ToggleOptIn newValue ->
+-            ( { model | optInQuarterlyUpdates = newValue }, Cmd.none )
+-
+-        SubmitForm ->
+-            if isFormValid model then
+-                ( { model | isSubmitting = True, error = Nothing }
+-                , submitForm model
+-                )
+-
+-            else
+-                ( { model | error = Just "Please fill out all required fields" }
+-                , Cmd.none
+-                )
+-
+-        GotSignupResponse result ->
+-            case result of
+-                Ok _ ->
+-                    ( { model | isSubmitting = False, success = True, error = Nothing }
+-                    , Cmd.none
+-                    )
+-
+-                Err _ ->
+-                    ( { model | isSubmitting = False, error = Just "Signup failed. Please try again." }
+-                    , Cmd.none
+-                    )
+-
+-
+-isFormValid : Model -> Bool
+-isFormValid model =
+-    not (String.isEmpty model.email)
+-        && not (String.isEmpty model.firstName)
+-        && not (String.isEmpty model.lastName)
+-
+-
+-
+--- FORM SUBMISSION
+-
+-
+-submitForm : Model -> Cmd Msg
+-submitForm model =
+-    Http.post
+-        { url = "/api/self-service/signup"
+-        , body = Http.jsonBody (encodeForm model)
+-        , expect = Http.expectWhatever GotSignupResponse
+-        }
+-
+-
+-encodeForm : Model -> Encode.Value
+-encodeForm model =
+-    Encode.object
+-        [ ( "orgId", Encode.string (Maybe.withDefault "" model.orgId) )
+-        , ( "email", Encode.string model.email )
+-        , ( "firstName", Encode.string model.firstName )
+-        , ( "lastName", Encode.string model.lastName )
+-        , ( "optInQuarterlyUpdates", Encode.bool model.optInQuarterlyUpdates )
+-        ]
+-
+-
+-
+--- DECODERS
+-
+-
+-initResponseDecoder : Decoder InitResponse
+-initResponseDecoder =
+-    Decode.map3 InitResponse
+-        (Decode.maybe (Decode.field "contact" contactDecoder))
+-        (Decode.maybe (Decode.field "email" Decode.string))
+-        (Decode.field "emailReadOnly" Decode.bool)
+-
+-
+-contactDecoder : Decoder Contact
+-contactDecoder =
+-    Decode.map4 Contact
+-        (Decode.field "email" Decode.string)
+-        (Decode.field "firstName" Decode.string)
+-        (Decode.field "lastName" Decode.string)
+-        (Decode.field "optInQuarterlyUpdates" Decode.bool)
+-
+-
+-
+--- VIEW
+-
+-
+-view : Model -> Browser.Document Msg
+-view model =
+-    { title = "Self-Service Onboarding"
+-    , body =
+-        [ div [ class "container mx-auto px-4 py-8" ]
+-            [ h1 [ class "text-2xl font-bold mb-6" ] [ text "Complete Your Profile" ]
+-            , viewForm model
+-            ]
+-        ]
+-    }
+-
+-
+-viewForm : Model -> Html Msg
+-viewForm model =
+-    div [ class "max-w-md mx-auto bg-white rounded-lg shadow-md p-6" ]
+-        [ if model.success then
+-            div [ class "p-4 mb-4 bg-green-100 border border-green-400 text-green-700 rounded" ]
+-                [ text "Profile updated successfully!" ]
+-
+-          else
+-            div []
+-                [ inputField "Email" model.email UpdateEmail model.emailReadOnly
+-                , inputField "First Name" model.firstName UpdateFirstName False
+-                , inputField "Last Name" model.lastName UpdateLastName False
+-                , checkboxField "Receive quarterly Medicare updates" model.optInQuarterlyUpdates ToggleOptIn
+-                , viewError model.error
+-                , button
+-                    [ type_ "button"
+-                    , class "w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+-                    , onClick SubmitForm
+-                    , disabled (model.isSubmitting || not (isFormValid model))
+-                    ]
+-                    [ text
+-                        (if model.isSubmitting then
+-                            "Submitting..."
+-
+-                         else
+-                            "Submit"
+-                        )
+-                    ]
+-                ]
+-        ]
+-
+-
+-inputField : String -> String -> (String -> Msg) -> Bool -> Html Msg
+-inputField labelText value toMsg isDisabled =
+-    div [ class "mb-4" ]
+-        [ label [ class "block text-sm font-medium text-gray-700 mb-1" ] [ text labelText ]
+-        , input
+-            [ type_ "text"
+-            , class "w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+-            , Html.Attributes.value value
+-            , onInput toMsg
+-            , disabled isDisabled
+-            ]
+-            []
+-        ]
+-
+-
+-checkboxField : String -> Bool -> (Bool -> Msg) -> Html Msg
+-checkboxField labelText isChecked toMsg =
+-    div [ class "mb-6" ]
+-        [ label [ class "flex items-center" ]
+-            [ input
+-                [ type_ "checkbox"
+-                , class "h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+-                , checked isChecked
+-                , onCheck toMsg
+-                ]
+-                []
+-            , span [ class "ml-2 text-sm text-gray-600" ] [ text labelText ]
+-            ]
+-        ]
+-
+-
+-viewError : Maybe String -> Html msg
+-viewError maybeError =
+-    case maybeError of
+-        Just error ->
+-            div [ class "mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded" ]
+-                [ text error ]
+-
+-        Nothing ->
+-            text ""
+-
+-
+-viewSuccess : Bool -> Html msg
+-viewSuccess success =
+-    if success then
+-        div [ class "mb-4 p-3 bg-green-100 border border-green-400 text-green-700 rounded" ]
+-            [ text "Profile updated successfully!" ]
+-
+-    else
+-        text ""
+-
+-
+-
+--- HELPERS
+-
+-
+-errorToString : Http.Error -> String
+-errorToString error =
+-    case error of
+-        Http.BadUrl url ->
+-            "Bad URL: " ++ url
+-
+-        Http.Timeout ->
+-            "Request timed out"
+-
+-        Http.NetworkError ->
+-            "Network error"
+-
+-        Http.BadStatus status ->
+-            "Bad status: " ++ String.fromInt status
+-
+-        Http.BadBody message ->
+-            "Bad body: " ++ message
+-
+-
+-
+--- MAIN
+-
+-
+-main : Program () Model Msg
+-main =
+-    Browser.application
+-        { init = \flags url key -> init key url
+-        , view = view
+-        , update = update
+-        , subscriptions = \_ -> Sub.none
+-        , onUrlChange = \_ -> GotInitResponse (Err (Http.BadUrl "URL changed"))
+-        , onUrlRequest = \_ -> GotInitResponse (Err (Http.BadUrl "URL requested"))
+-        }
+-
+-
+-+++ New file: backend/src/routes/self-service.ts
+-
+-import { Elysia, t } from 'elysia';
+-import { Database } from '../database';
+-import { logger } from '../logger';
+-import crypto from 'crypto';
+-
+-// Import generateHash function - reimplementing it since it's not exported from email.ts
+-function generateHash(orgId: string, email: string): string {
+-  const SECRET = process.env.HASH_SECRET || 'default-hash-secret';
+-  return crypto.createHash('sha256').update(`${orgId}${email}${SECRET}`).digest('hex').slice(0, 16);
+-}
+-
+-export function createSelfServiceRoutes() {
+-  return new Elysia()
+-    .get('/api/self-service/init', async ({ query, set }) => {
+-      // Extract query parameters
+-      const { orgId, email, hash } = query as { 
+-        orgId?: string; 
+-        email?: string; 
+-        hash?: string;
+-      };
+-
+-      // Validate required parameters
+-      if (!orgId) {
+-        set.status = 400;
+-        return { error: 'orgId is required' };
+-      }
+-
+-      // Validate hash if email is provided
+-      if (email && hash) {
+-        const expectedHash = generateHash(orgId, email);
+-        if (hash !== expectedHash) {
+-          logger.warn(`Invalid hash for email ${email} and orgId ${orgId}`);
+-          set.status = 403;
+-          return { error: 'Invalid email or hash' };
+-        }
+-      }
+-
+-      try {
+-        // Get organization database
+-        const orgDb = await Database.getOrgDb(orgId);
+-        
+-        // If email is provided, check for existing contact
+-        if (email) {
+-          const client = orgDb.getClient();
+-          const result = await client.execute({
+-            sql: `SELECT 
+-                  email, 
+-                  first_name AS firstName, 
+-                  last_name AS lastName, 
+-                  opt_in_quarterly_updates AS optInQuarterlyUpdates 
+-                FROM contacts 
+-                WHERE email = ?`,
+-            args: [email]
+-          });
+-
+-          // If contact exists, return contact details
+-          if (result.rows.length > 0) {
+-            const contact = result.rows[0];
+-            logger.info(`Contact found for email ${email} in organization ${orgId}`);
+-            return { 
+-              contact, 
+-              email, 
+-              emailReadOnly: true 
+-            };
+-          }
+-
+-          // If no contact exists but email is provided
+-          logger.info(`No contact found for email ${email} in organization ${orgId}`);
+-          return { 
+-            email, 
+-            emailReadOnly: true 
+-          };
+-        }
+-
+-        // If no email is provided
+-        return { emailReadOnly: false };
+-
+-      } catch (error) {
+-        logger.error(`Error in self-service init endpoint: ${error}`);
+-        set.status = 500;
+-        return { error: 'Internal server error' };
+-      }
+-    });
+-} 
 \ No newline at end of file
-module SelfServiceOnboarding exposing (..)
-
-import Browser
-import Browser.Navigation as Nav
-import Html exposing (..)
-import Html.Attributes exposing (..)
-import Html.Events exposing (..)
-import Http
-import Json.Decode as Decode exposing (Decoder)
-import Json.Encode as Encode
-import Url exposing (Url)
-import Url.Parser exposing (..)
-import Url.Parser.Query as Query
-
-
-
--- MODEL
-
-
-type alias Model =
-    { orgId : Maybe String
-    , email : String
-    , firstName : String
-    , lastName : String
-    , optInQuarterlyUpdates : Bool
-    , emailReadOnly : Bool
-    , isSubmitting : Bool
-    , error : Maybe String
-    , success : Bool
-    , key : Nav.Key
-    }
-
-
-
--- INIT
-
-
-type alias UrlParams =
-    { orgId : Maybe String
-    , email : Maybe String
-    , hash : Maybe String
-    }
-
-
-parseUrlParams : Url -> UrlParams
-parseUrlParams url =
-    let
-        parser =
-            Query.map3 UrlParams
-                (Query.string "orgId")
-                (Query.string "email")
-                (Query.string "hash")
-    in
-    Url.Parser.parse (Url.Parser.query parser) url |> Maybe.withDefault { orgId = Nothing, email = Nothing, hash = Nothing }
-
-
-init : Nav.Key -> Url -> ( Model, Cmd Msg )
-init key url =
-    let
-        params =
-            parseUrlParams url
-
-        orgId =
-            params.orgId
-
-        email =
-            params.email
-
-        hash =
-            params.hash
-
-        initCmd =
-            case orgId of
-                Just oid ->
-                    let
-                        queryParams =
-                            List.filterMap identity
-                                [ Just ( "orgId", oid )
-                                , Maybe.map (\e -> ( "email", e )) email
-                                , Maybe.map (\h -> ( "hash", h )) hash
-                                ]
-                                |> List.map (\( k, v ) -> k ++ "=" ++ Url.percentEncode v)
-                                |> String.join "&"
-                    in
-                    Http.get
-                        { url = "/api/self-service/init?" ++ queryParams
-                        , expect = Http.expectJson GotInitResponse initResponseDecoder
-                        }
-
-                Nothing ->
-                    Cmd.none
-    in
-    ( { orgId = orgId
-      , email = ""
-      , firstName = ""
-      , lastName = ""
-      , optInQuarterlyUpdates = False
-      , emailReadOnly = False
-      , isSubmitting = False
-      , error = Nothing
-      , success = False
-      , key = key
-      }
-    , initCmd
-    )
-
-
-
--- UPDATE
-
-
-type Msg
-    = GotInitResponse (Result Http.Error InitResponse)
-    | UpdateEmail String
-    | UpdateFirstName String
-    | UpdateLastName String
-    | ToggleOptIn Bool
-    | SubmitForm
-    | GotSignupResponse (Result Http.Error ())
-
-
-type alias InitResponse =
-    { contact : Maybe Contact
-    , email : Maybe String
-    , emailReadOnly : Bool
-    }
-
-
-type alias Contact =
-    { email : String
-    , firstName : String
-    , lastName : String
-    , optInQuarterlyUpdates : Bool
-    }
-
-
-update : Msg -> Model -> ( Model, Cmd Msg )
-update msg model =
-    case msg of
-        GotInitResponse result ->
-            case result of
-                Ok response ->
-                    let
-                        email =
-                            response.email |> Maybe.withDefault ""
-
-                        contact =
-                            response.contact
-
-                        firstName =
-                            contact |> Maybe.map .firstName |> Maybe.withDefault ""
-
-                        lastName =
-                            contact |> Maybe.map .lastName |> Maybe.withDefault ""
-
-                        optIn =
-                            contact |> Maybe.map .optInQuarterlyUpdates |> Maybe.withDefault False
-                    in
-                    ( { model
-                        | email = email
-                        , firstName = firstName
-                        , lastName = lastName
-                        , optInQuarterlyUpdates = optIn
-                        , emailReadOnly = response.emailReadOnly
-                        , error = Nothing
-                      }
-                    , Cmd.none
-                    )
-
-                Err _ ->
-                    ( { model | error = Just "Failed to load existing contact details. Please try again." }
-                    , Cmd.none
-                    )
-
-        UpdateEmail newEmail ->
-            ( { model
-                | email =
-                    if model.emailReadOnly then
-                        model.email
-
-                    else
-                        newEmail
-              }
-            , Cmd.none
-            )
-
-        UpdateFirstName newFirstName ->
-            ( { model | firstName = newFirstName }, Cmd.none )
-
-        UpdateLastName newLastName ->
-            ( { model | lastName = newLastName }, Cmd.none )
-
-        ToggleOptIn newValue ->
-            ( { model | optInQuarterlyUpdates = newValue }, Cmd.none )
-
-        SubmitForm ->
-            if isFormValid model then
-                ( { model | isSubmitting = True, error = Nothing }
-                , submitForm model
-                )
-
-            else
-                ( { model | error = Just "Please fill out all required fields" }
-                , Cmd.none
-                )
-
-        GotSignupResponse result ->
-            case result of
-                Ok _ ->
-                    ( { model | isSubmitting = False, success = True, error = Nothing }
-                    , Cmd.none
-                    )
-
-                Err _ ->
-                    ( { model | isSubmitting = False, error = Just "Signup failed. Please try again." }
-                    , Cmd.none
-                    )
-
-
-isFormValid : Model -> Bool
-isFormValid model =
-    not (String.isEmpty model.email)
-        && not (String.isEmpty model.firstName)
-        && not (String.isEmpty model.lastName)
-
-
-
--- FORM SUBMISSION
-
-
-submitForm : Model -> Cmd Msg
-submitForm model =
-    Http.post
-        { url = "/api/self-service/signup"
-        , body = Http.jsonBody (encodeForm model)
-        , expect = Http.expectWhatever GotSignupResponse
-        }
-
-
-encodeForm : Model -> Encode.Value
-encodeForm model =
-    Encode.object
-        [ ( "orgId", Encode.string (Maybe.withDefault "" model.orgId) )
-        , ( "email", Encode.string model.email )
-        , ( "firstName", Encode.string model.firstName )
-        , ( "lastName", Encode.string model.lastName )
-        , ( "optInQuarterlyUpdates", Encode.bool model.optInQuarterlyUpdates )
-        ]
-
-
-
--- DECODERS
-
-
-initResponseDecoder : Decoder InitResponse
-initResponseDecoder =
-    Decode.map3 InitResponse
-        (Decode.maybe (Decode.field "contact" contactDecoder))
-        (Decode.maybe (Decode.field "email" Decode.string))
-        (Decode.field "emailReadOnly" Decode.bool)
-
-
-contactDecoder : Decoder Contact
-contactDecoder =
-    Decode.map4 Contact
-        (Decode.field "email" Decode.string)
-        (Decode.field "firstName" Decode.string)
-        (Decode.field "lastName" Decode.string)
-        (Decode.field "optInQuarterlyUpdates" Decode.bool)
-
-
-
--- VIEW
-
-
-view : Model -> Browser.Document Msg
-view model =
-    { title = "Self-Service Onboarding"
-    , body =
-        [ div [ class "container mx-auto px-4 py-8" ]
-            [ h1 [ class "text-2xl font-bold mb-6" ] [ text "Complete Your Profile" ]
-            , viewForm model
-            ]
-        ]
-    }
-
-
-viewForm : Model -> Html Msg
-viewForm model =
-    div [ class "max-w-md mx-auto bg-white rounded-lg shadow-md p-6" ]
-        [ if model.success then
-            div [ class "p-4 mb-4 bg-green-100 border border-green-400 text-green-700 rounded" ]
-                [ text "Profile updated successfully!" ]
-
-          else
-            div []
-                [ inputField "Email" model.email UpdateEmail model.emailReadOnly
-                , inputField "First Name" model.firstName UpdateFirstName False
-                , inputField "Last Name" model.lastName UpdateLastName False
-                , checkboxField "Receive quarterly Medicare updates" model.optInQuarterlyUpdates ToggleOptIn
-                , viewError model.error
-                , button
-                    [ type_ "button"
-                    , class "w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                    , onClick SubmitForm
-                    , disabled (model.isSubmitting || not (isFormValid model))
-                    ]
-                    [ text
-                        (if model.isSubmitting then
-                            "Submitting..."
-
-                         else
-                            "Submit"
-                        )
-                    ]
-                ]
-        ]
-
-
-inputField : String -> String -> (String -> Msg) -> Bool -> Html Msg
-inputField labelText value toMsg isDisabled =
-    div [ class "mb-4" ]
-        [ label [ class "block text-sm font-medium text-gray-700 mb-1" ] [ text labelText ]
-        , input
-            [ type_ "text"
-            , class "w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
-            , Html.Attributes.value value
-            , onInput toMsg
-            , disabled isDisabled
-            ]
-            []
-        ]
-
-
-checkboxField : String -> Bool -> (Bool -> Msg) -> Html Msg
-checkboxField labelText isChecked toMsg =
-    div [ class "mb-6" ]
-        [ label [ class "flex items-center" ]
-            [ input
-                [ type_ "checkbox"
-                , class "h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
-                , checked isChecked
-                , onCheck toMsg
-                ]
-                []
-            , span [ class "ml-2 text-sm text-gray-600" ] [ text labelText ]
-            ]
-        ]
-
-
-viewError : Maybe String -> Html msg
-viewError maybeError =
-    case maybeError of
-        Just error ->
-            div [ class "mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded" ]
-                [ text error ]
-
-        Nothing ->
-            text ""
-
-
-viewSuccess : Bool -> Html msg
-viewSuccess success =
-    if success then
-        div [ class "mb-4 p-3 bg-green-100 border border-green-400 text-green-700 rounded" ]
-            [ text "Profile updated successfully!" ]
-
-    else
-        text ""
-
-
-
--- HELPERS
-
-
-errorToString : Http.Error -> String
-errorToString error =
-    case error of
-        Http.BadUrl url ->
-            "Bad URL: " ++ url
-
-        Http.Timeout ->
-            "Request timed out"
-
-        Http.NetworkError ->
-            "Network error"
-
-        Http.BadStatus status ->
-            "Bad status: " ++ String.fromInt status
-
-        Http.BadBody message ->
-            "Bad body: " ++ message
-
-
-
--- MAIN
-
-
-main : Program () Model Msg
-main =
-    Browser.application
-        { init = \flags url key -> init key url
-        , view = view
-        , update = update
-        , subscriptions = \_ -> Sub.none
-        , onUrlChange = \_ -> GotInitResponse (Err (Http.BadUrl "URL changed"))
-        , onUrlRequest = \_ -> GotInitResponse (Err (Http.BadUrl "URL requested"))
-        }
-import { Elysia, t } from 'elysia';
-import { Database } from '../database';
-import { logger } from '../logger';
-import crypto from 'crypto';
-
-// Import generateHash function - reimplementing it since it's not exported from email.ts
-function generateHash(orgId: string, email: string): string {
-  const SECRET = process.env.HASH_SECRET || 'default-hash-secret';
-  return crypto.createHash('sha256').update(`${orgId}${email}${SECRET}`).digest('hex').slice(0, 16);
-}
-
-export function createSelfServiceRoutes() {
-  return new Elysia()
-    .get('/api/self-service/init', async ({ query, set }) => {
-      // Extract query parameters
-      const { orgId, email, hash } = query as { 
-        orgId?: string; 
-        email?: string; 
-        hash?: string;
-      };
-
-      // Validate required parameters
-      if (!orgId) {
-        set.status = 400;
-        return { error: 'orgId is required' };
-      }
-
-      // Validate hash if email is provided
-      if (email && hash) {
-        const expectedHash = generateHash(orgId, email);
-        if (hash !== expectedHash) {
-          logger.warn(`Invalid hash for email ${email} and orgId ${orgId}`);
-          set.status = 403;
-          return { error: 'Invalid email or hash' };
-        }
-      }
-
-      try {
-        // Get organization database
-        const orgDb = await Database.getOrgDb(orgId);
-        
-        // If email is provided, check for existing contact
-        if (email) {
-          const client = orgDb.getClient();
-          const result = await client.execute({
-            sql: `SELECT 
-                  email, 
-                  first_name AS firstName, 
-                  last_name AS lastName, 
-                  opt_in_quarterly_updates AS optInQuarterlyUpdates 
-                FROM contacts 
-                WHERE email = ?`,
-            args: [email]
-          });
-
-          // If contact exists, return contact details
-          if (result.rows.length > 0) {
-            const contact = result.rows[0];
-            logger.info(`Contact found for email ${email} in organization ${orgId}`);
-            return { 
-              contact, 
-              email, 
-              emailReadOnly: true 
-            };
-          }
-
-          // If no contact exists but email is provided
-          logger.info(`No contact found for email ${email} in organization ${orgId}`);
-          return { 
-            email, 
-            emailReadOnly: true 
-          };
-        }
-
-        // If no email is provided
-        return { emailReadOnly: false };
-
-      } catch (error) {
-        logger.error(`Error in self-service init endpoint: ${error}`);
-        set.status = 500;
-        return { error: 'Internal server error' };
-      }
-    });
-} 
-
-+++ New file: frontend/src/SelfServiceOnboarding.elm
-
-module SelfServiceOnboarding exposing (..)
-
-import Browser
-import Browser.Navigation as Nav
-import Html exposing (..)
-import Html.Attributes exposing (..)
-import Html.Events exposing (..)
-import Http
-import Json.Decode as Decode exposing (Decoder)
-import Json.Encode as Encode
-import Url exposing (Url)
-import Url.Parser exposing (..)
-import Url.Parser.Query as Query
-
-
-
--- MODEL
-
-
-type alias Model =
-    { orgId : Maybe String
-    , email : String
-    , firstName : String
-    , lastName : String
-    , optInQuarterlyUpdates : Bool
-    , emailReadOnly : Bool
-    , isSubmitting : Bool
-    , error : Maybe String
-    , success : Bool
-    , key : Nav.Key
-    }
-
-
-
--- INIT
-
-
-type alias UrlParams =
-    { orgId : Maybe String
-    , email : Maybe String
-    , hash : Maybe String
-    }
-
-
-parseUrlParams : Url -> UrlParams
-parseUrlParams url =
-    let
-        parser =
-            Query.map3 UrlParams
-                (Query.string "orgId")
-                (Query.string "email")
-                (Query.string "hash")
-    in
-    Url.Parser.parse (Url.Parser.query parser) url |> Maybe.withDefault { orgId = Nothing, email = Nothing, hash = Nothing }
-
-
-init : Nav.Key -> Url -> ( Model, Cmd Msg )
-init key url =
-    let
-        params =
-            parseUrlParams url
-
-        orgId =
-            params.orgId
-
-        email =
-            params.email
-
-        hash =
-            params.hash
-
-        initCmd =
-            case orgId of
-                Just oid ->
-                    let
-                        queryParams =
-                            List.filterMap identity
-                                [ Just ( "orgId", oid )
-                                , Maybe.map (\e -> ( "email", e )) email
-                                , Maybe.map (\h -> ( "hash", h )) hash
-                                ]
-                                |> List.map (\( k, v ) -> k ++ "=" ++ Url.percentEncode v)
-                                |> String.join "&"
-                    in
-                    Http.get
-                        { url = "/api/self-service/init?" ++ queryParams
-                        , expect = Http.expectJson GotInitResponse initResponseDecoder
-                        }
-
-                Nothing ->
-                    Cmd.none
-    in
-    ( { orgId = orgId
-      , email = ""
-      , firstName = ""
-      , lastName = ""
-      , optInQuarterlyUpdates = False
-      , emailReadOnly = False
-      , isSubmitting = False
-      , error = Nothing
-      , success = False
-      , key = key
-      }
-    , initCmd
-    )
-
-
-
--- UPDATE
-
-
-type Msg
-    = GotInitResponse (Result Http.Error InitResponse)
-    | UpdateEmail String
-    | UpdateFirstName String
-    | UpdateLastName String
-    | ToggleOptIn Bool
-    | SubmitForm
-    | GotSignupResponse (Result Http.Error ())
-
-
-type alias InitResponse =
-    { contact : Maybe Contact
-    , email : Maybe String
-    , emailReadOnly : Bool
-    }
-
-
-type alias Contact =
-    { email : String
-    , firstName : String
-    , lastName : String
-    , optInQuarterlyUpdates : Bool
-    }
-
-
-update : Msg -> Model -> ( Model, Cmd Msg )
-update msg model =
-    case msg of
-        GotInitResponse result ->
-            case result of
-                Ok response ->
-                    let
-                        email =
-                            response.email |> Maybe.withDefault ""
-
-                        contact =
-                            response.contact
-
-                        firstName =
-                            contact |> Maybe.map .firstName |> Maybe.withDefault ""
-
-                        lastName =
-                            contact |> Maybe.map .lastName |> Maybe.withDefault ""
-
-                        optIn =
-                            contact |> Maybe.map .optInQuarterlyUpdates |> Maybe.withDefault False
-                    in
-                    ( { model
-                        | email = email
-                        , firstName = firstName
-                        , lastName = lastName
-                        , optInQuarterlyUpdates = optIn
-                        , emailReadOnly = response.emailReadOnly
-                        , error = Nothing
-                      }
-                    , Cmd.none
-                    )
-
-                Err _ ->
-                    ( { model | error = Just "Failed to load existing contact details. Please try again." }
-                    , Cmd.none
-                    )
-
-        UpdateEmail newEmail ->
-            ( { model
-                | email =
-                    if model.emailReadOnly then
-                        model.email
-
-                    else
-                        newEmail
-              }
-            , Cmd.none
-            )
-
-        UpdateFirstName newFirstName ->
-            ( { model | firstName = newFirstName }, Cmd.none )
-
-        UpdateLastName newLastName ->
-            ( { model | lastName = newLastName }, Cmd.none )
-
-        ToggleOptIn newValue ->
-            ( { model | optInQuarterlyUpdates = newValue }, Cmd.none )
-
-        SubmitForm ->
-            if isFormValid model then
-                ( { model | isSubmitting = True, error = Nothing }
-                , submitForm model
-                )
-
-            else
-                ( { model | error = Just "Please fill out all required fields" }
-                , Cmd.none
-                )
-
-        GotSignupResponse result ->
-            case result of
-                Ok _ ->
-                    ( { model | isSubmitting = False, success = True, error = Nothing }
-                    , Cmd.none
-                    )
-
-                Err _ ->
-                    ( { model | isSubmitting = False, error = Just "Signup failed. Please try again." }
-                    , Cmd.none
-                    )
-
-
-isFormValid : Model -> Bool
-isFormValid model =
-    not (String.isEmpty model.email)
-        && not (String.isEmpty model.firstName)
-        && not (String.isEmpty model.lastName)
-
-
-
--- FORM SUBMISSION
-
-
-submitForm : Model -> Cmd Msg
-submitForm model =
-    Http.post
-        { url = "/api/self-service/signup"
-        , body = Http.jsonBody (encodeForm model)
-        , expect = Http.expectWhatever GotSignupResponse
-        }
-
-
-encodeForm : Model -> Encode.Value
-encodeForm model =
-    Encode.object
-        [ ( "orgId", Encode.string (Maybe.withDefault "" model.orgId) )
-        , ( "email", Encode.string model.email )
-        , ( "firstName", Encode.string model.firstName )
-        , ( "lastName", Encode.string model.lastName )
-        , ( "optInQuarterlyUpdates", Encode.bool model.optInQuarterlyUpdates )
-        ]
-
-
-
--- DECODERS
-
-
-initResponseDecoder : Decoder InitResponse
-initResponseDecoder =
-    Decode.map3 InitResponse
-        (Decode.maybe (Decode.field "contact" contactDecoder))
-        (Decode.maybe (Decode.field "email" Decode.string))
-        (Decode.field "emailReadOnly" Decode.bool)
-
-
-contactDecoder : Decoder Contact
-contactDecoder =
-    Decode.map4 Contact
-        (Decode.field "email" Decode.string)
-        (Decode.field "firstName" Decode.string)
-        (Decode.field "lastName" Decode.string)
-        (Decode.field "optInQuarterlyUpdates" Decode.bool)
-
-
-
--- VIEW
-
-
-view : Model -> Browser.Document Msg
-view model =
-    { title = "Self-Service Onboarding"
-    , body =
-        [ div [ class "container mx-auto px-4 py-8" ]
-            [ h1 [ class "text-2xl font-bold mb-6" ] [ text "Complete Your Profile" ]
-            , viewForm model
-            ]
-        ]
-    }
-
-
-viewForm : Model -> Html Msg
-viewForm model =
-    div [ class "max-w-md mx-auto bg-white rounded-lg shadow-md p-6" ]
-        [ if model.success then
-            div [ class "p-4 mb-4 bg-green-100 border border-green-400 text-green-700 rounded" ]
-                [ text "Profile updated successfully!" ]
-
-          else
-            div []
-                [ inputField "Email" model.email UpdateEmail model.emailReadOnly
-                , inputField "First Name" model.firstName UpdateFirstName False
-                , inputField "Last Name" model.lastName UpdateLastName False
-                , checkboxField "Receive quarterly Medicare updates" model.optInQuarterlyUpdates ToggleOptIn
-                , viewError model.error
-                , button
-                    [ type_ "button"
-                    , class "w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                    , onClick SubmitForm
-                    , disabled (model.isSubmitting || not (isFormValid model))
-                    ]
-                    [ text
-                        (if model.isSubmitting then
-                            "Submitting..."
-
-                         else
-                            "Submit"
-                        )
-                    ]
-                ]
-        ]
-
-
-inputField : String -> String -> (String -> Msg) -> Bool -> Html Msg
-inputField labelText value toMsg isDisabled =
-    div [ class "mb-4" ]
-        [ label [ class "block text-sm font-medium text-gray-700 mb-1" ] [ text labelText ]
-        , input
-            [ type_ "text"
-            , class "w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
-            , Html.Attributes.value value
-            , onInput toMsg
-            , disabled isDisabled
-            ]
-            []
-        ]
-
-
-checkboxField : String -> Bool -> (Bool -> Msg) -> Html Msg
-checkboxField labelText isChecked toMsg =
-    div [ class "mb-6" ]
-        [ label [ class "flex items-center" ]
-            [ input
-                [ type_ "checkbox"
-                , class "h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
-                , checked isChecked
-                , onCheck toMsg
-                ]
-                []
-            , span [ class "ml-2 text-sm text-gray-600" ] [ text labelText ]
-            ]
-        ]
-
-
-viewError : Maybe String -> Html msg
-viewError maybeError =
-    case maybeError of
-        Just error ->
-            div [ class "mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded" ]
-                [ text error ]
-
-        Nothing ->
-            text ""
-
-
-viewSuccess : Bool -> Html msg
-viewSuccess success =
-    if success then
-        div [ class "mb-4 p-3 bg-green-100 border border-green-400 text-green-700 rounded" ]
-            [ text "Profile updated successfully!" ]
-
-    else
-        text ""
-
-
-
--- HELPERS
-
-
-errorToString : Http.Error -> String
-errorToString error =
-    case error of
-        Http.BadUrl url ->
-            "Bad URL: " ++ url
-
-        Http.Timeout ->
-            "Request timed out"
-
-        Http.NetworkError ->
-            "Network error"
-
-        Http.BadStatus status ->
-            "Bad status: " ++ String.fromInt status
-
-        Http.BadBody message ->
-            "Bad body: " ++ message
-
-
-
--- MAIN
-
-
-main : Program () Model Msg
-main =
-    Browser.application
-        { init = \flags url key -> init key url
-        , view = view
-        , update = update
-        , subscriptions = \_ -> Sub.none
-        , onUrlChange = \_ -> GotInitResponse (Err (Http.BadUrl "URL changed"))
-        , onUrlRequest = \_ -> GotInitResponse (Err (Http.BadUrl "URL requested"))
-        }
-
-
-+++ New file: backend/src/routes/self-service.ts
-
-import { Elysia, t } from 'elysia';
-import { Database } from '../database';
-import { logger } from '../logger';
-import crypto from 'crypto';
-
-// Import generateHash function - reimplementing it since it's not exported from email.ts
-function generateHash(orgId: string, email: string): string {
-  const SECRET = process.env.HASH_SECRET || 'default-hash-secret';
-  return crypto.createHash('sha256').update(`${orgId}${email}${SECRET}`).digest('hex').slice(0, 16);
-}
-
-export function createSelfServiceRoutes() {
-  return new Elysia()
-    .get('/api/self-service/init', async ({ query, set }) => {
-      // Extract query parameters
-      const { orgId, email, hash } = query as { 
-        orgId?: string; 
-        email?: string; 
-        hash?: string;
-      };
-
-      // Validate required parameters
-      if (!orgId) {
-        set.status = 400;
-        return { error: 'orgId is required' };
-      }
-
-      // Validate hash if email is provided
-      if (email && hash) {
-        const expectedHash = generateHash(orgId, email);
-        if (hash !== expectedHash) {
-          logger.warn(`Invalid hash for email ${email} and orgId ${orgId}`);
-          set.status = 403;
-          return { error: 'Invalid email or hash' };
-        }
-      }
-
-      try {
-        // Get organization database
-        const orgDb = await Database.getOrgDb(orgId);
-        
-        // If email is provided, check for existing contact
-        if (email) {
-          const client = orgDb.getClient();
-          const result = await client.execute({
-            sql: `SELECT 
-                  email, 
-                  first_name AS firstName, 
-                  last_name AS lastName, 
-                  opt_in_quarterly_updates AS optInQuarterlyUpdates 
-                FROM contacts 
-                WHERE email = ?`,
-            args: [email]
-          });
-
-          // If contact exists, return contact details
-          if (result.rows.length > 0) {
-            const contact = result.rows[0];
-            logger.info(`Contact found for email ${email} in organization ${orgId}`);
-            return { 
-              contact, 
-              email, 
-              emailReadOnly: true 
-            };
-          }
-
-          // If no contact exists but email is provided
-          logger.info(`No contact found for email ${email} in organization ${orgId}`);
-          return { 
-            email, 
-            emailReadOnly: true 
-          };
-        }
-
-        // If no email is provided
-        return { emailReadOnly: false };
-
-      } catch (error) {
-        logger.error(`Error in self-service init endpoint: ${error}`);
-        set.status = 500;
-        return { error: 'Internal server error' };
-      }
-    });
-} 
+diff --git a/frontend/src/Compare.elm b/frontend/src/Compare.elm
+index 6122581..7b72f2a 100644
+--- a/frontend/src/Compare.elm
++++ b/frontend/src/Compare.elm
+@@ -299,9 +299,8 @@ init key maybeParams =
+                     -- No quote ID, check if we have an org ID
+                     case extractedOrgId of
+                         Just orgId ->
+-                            -- We have an org ID but no quote ID - in a real implementation, we might
+-                            -- redirect to a self-service page, but for now we'll continue with default data
+-                            initialCommands
++                            -- Redirect to the self-service onboarding page for this organization
++                            [ Nav.pushUrl key ("/self-onboarding/" ++ orgId) ]
+ 
+                         Nothing ->
+                             -- No org ID either - this is an error case
+diff --git a/frontend/src/SelfServiceOnboarding.elm b/frontend/src/SelfServiceOnboarding.elm
+index 8886795..5f172db 100644
+--- a/frontend/src/SelfServiceOnboarding.elm
++++ b/frontend/src/SelfServiceOnboarding.elm
+@@ -2,6 +2,7 @@ module SelfServiceOnboarding exposing (..)
+ 
+ import Browser
+ import Browser.Navigation as Nav
++import Date exposing (Date)
+ import Dict
+ import Html exposing (..)
+ import Html.Attributes exposing (..)
+@@ -9,7 +10,10 @@ import Html.Events exposing (..)
+ import Http
+ import Json.Decode as Decode exposing (Decoder)
+ import Json.Encode as Encode
++import Task
++import Time
+ import Url exposing (Url)
++import Url.Builder as Builder
+ import Url.Parser as Parser exposing ((</>), Parser, oneOf, string)
+ 
+ 
+@@ -23,15 +27,34 @@ type alias Model =
+     , email : String
+     , firstName : String
+     , lastName : String
++    , zipCode : String
++    , dateOfBirth : String
++    , gender : String
++    , tobacco : Bool
++    , phoneNumber : String
++    , currentPremium : String
++    , currentCarrier : String
+     , optInQuarterlyUpdates : Bool
+     , emailReadOnly : Bool
+     , isSubmitting : Bool
+     , error : Maybe String
+     , success : Bool
+     , key : Nav.Key
++    , currentDate : Maybe Date
++    , state : Maybe String
++    , counties : List String
++    , selectedCounty : Maybe String
++    , isLoadingZipData : Bool
++    , zipError : Maybe String
++    , formStep : FormStep
+     }
+ 
+ 
++type FormStep
++    = BasicInfo
++    | QuoteInfo
++    | ConfirmSubmit
++
+ 
+ -- INIT
+ 
+@@ -73,18 +96,35 @@ init key url =
+             , email = ""
+             , firstName = ""
+             , lastName = ""
++            , zipCode = ""
++            , dateOfBirth = ""
++            , gender = "M"
++            , tobacco = False
++            , phoneNumber = ""
++            , currentPremium = ""
++            , currentCarrier = ""
+             , optInQuarterlyUpdates = False
+             , emailReadOnly = False
+             , isSubmitting = False
+             , error = Nothing
+             , success = False
+             , key = key
++            , currentDate = Nothing
++            , state = Nothing
++            , counties = []
++            , selectedCounty = Nothing
++            , isLoadingZipData = False
++            , zipError = Nothing
++            , formStep = BasicInfo
+             }
++
++        commands =
++            [ Task.perform GotCurrentDate Date.today ]
+     in
+     case route of
+         SlugRoute slug ->
+             ( { initialModel | orgSlug = Just slug }
+-            , fetchOrgDetails slug
++            , Cmd.batch (fetchOrgDetails slug :: commands)
+             )
+ 
+         QueryRoute ->
+@@ -124,7 +164,7 @@ init key url =
+                             Cmd.none
+             in
+             ( { initialModel | orgId = orgId }
+-            , initCmd
++            , Cmd.batch (initCmd :: commands)
+             )
+ 
+ 
+@@ -165,6 +205,14 @@ fetchOrgDetails slug =
+         }
+ 
+ 
++fetchZipInfo : String -> Cmd Msg
++fetchZipInfo zipCode =
++    Http.get
++        { url = "/api/zipinfo/" ++ zipCode
++        , expect = Http.expectJson GotZipInfo zipInfoDecoder
++        }
++
++
+ 
+ -- UPDATE
+ 
+@@ -175,9 +223,22 @@ type Msg
+     | UpdateEmail String
+     | UpdateFirstName String
+     | UpdateLastName String
++    | UpdateZipCode String
++    | UpdateDateOfBirth String
++    | UpdateGender String
++    | UpdateTobacco String
++    | UpdatePhoneNumber String
++    | UpdateCurrentPremium String
++    | UpdateCurrentCarrier String
++    | UpdateSelectedCounty String
+     | ToggleOptIn Bool
+     | SubmitForm
++    | GotCurrentDate Date
++    | GotZipInfo (Result Http.Error ZipInfo)
+     | GotSignupResponse (Result Http.Error ())
++    | NextStep
++    | PrevStep
++    | GoToQuote
+ 
+ 
+ type alias InitResponse =
+@@ -201,6 +262,30 @@ type alias Contact =
+     }
+ 
+ 
++type alias ZipInfo =
++    { state : String
++    , counties : List String
++    }
++
++
++zipInfoDecoder : Decoder ZipInfo
++zipInfoDecoder =
++    Decode.field "success" Decode.bool
++        |> Decode.andThen
++            (\success ->
++                if success then
++                    Decode.field "data"
++                        (Decode.map2 ZipInfo
++                            (Decode.field "state" Decode.string)
++                            (Decode.field "counties" (Decode.list Decode.string))
++                        )
++
++                else
++                    Decode.field "error" Decode.string
++                        |> Decode.andThen (\error -> Decode.fail error)
++            )
++
++
+ update : Msg -> Model -> ( Model, Cmd Msg )
+ update msg model =
+     case msg of
+@@ -269,9 +354,136 @@ update msg model =
+         UpdateLastName newLastName ->
+             ( { model | lastName = newLastName }, Cmd.none )
+ 
++        UpdateZipCode zip ->
++            let
++                filteredZip =
++                    String.filter Char.isDigit zip |> String.left 5
++
++                cmd =
++                    if String.length filteredZip == 5 && filteredZip /= model.zipCode then
++                        fetchZipInfo filteredZip
++
++                    else
++                        Cmd.none
++            in
++            ( { model
++                | zipCode = filteredZip
++                , isLoadingZipData = String.length filteredZip == 5 && filteredZip /= model.zipCode
++                , state =
++                    if String.length filteredZip /= 5 then
++                        Nothing
++
++                    else
++                        model.state
++                , counties =
++                    if String.length filteredZip /= 5 then
++                        []
++
++                    else
++                        model.counties
++                , selectedCounty =
++                    if String.length filteredZip /= 5 then
++                        Nothing
++
++                    else
++                        model.selectedCounty
++                , zipError = Nothing
++              }
++            , cmd
++            )
++
++        GotZipInfo result ->
++            case result of
++                Ok zipInfo ->
++                    let
++                        -- Always select the first county as default
++                        selectedCounty =
++                            List.head zipInfo.counties
++                    in
++                    ( { model
++                        | state = Just zipInfo.state
++                        , counties = zipInfo.counties
++                        , selectedCounty = selectedCounty
++                        , isLoadingZipData = False
++                        , zipError = Nothing
++                      }
++                    , Cmd.none
++                    )
++
++                Err error ->
++                    ( { model
++                        | state = Nothing
++                        , counties = []
++                        , selectedCounty = Nothing
++                        , isLoadingZipData = False
++                        , zipError = Just (httpErrorToString error)
++                      }
++                    , Cmd.none
++                    )
++
++        UpdateSelectedCounty county ->
++            ( { model | selectedCounty = Just county }, Cmd.none )
++
++        UpdateDateOfBirth dob ->
++            ( { model | dateOfBirth = dob }, Cmd.none )
++
++        UpdateGender value ->
++            ( { model | gender = value }, Cmd.none )
++
++        UpdateTobacco value ->
++            ( { model | tobacco = value == "true" }, Cmd.none )
++
++        UpdatePhoneNumber phone ->
++            ( { model | phoneNumber = phone }, Cmd.none )
++
++        UpdateCurrentPremium premium ->
++            ( { model | currentPremium = premium }, Cmd.none )
++
++        UpdateCurrentCarrier carrier ->
++            ( { model | currentCarrier = carrier }, Cmd.none )
++
+         ToggleOptIn newValue ->
+             ( { model | optInQuarterlyUpdates = newValue }, Cmd.none )
+ 
++        GotCurrentDate date ->
++            ( { model | currentDate = Just date }, Cmd.none )
++
++        NextStep ->
++            let
++                nextStep =
++                    case model.formStep of
++                        BasicInfo ->
++                            if isBasicInfoValid model then
++                                QuoteInfo
++                            else
++                                BasicInfo
++
++                        QuoteInfo ->
++                            if isQuoteInfoValid model then
++                                ConfirmSubmit
++                            else
++                                QuoteInfo
++
++                        ConfirmSubmit ->
++                            ConfirmSubmit
++            in
++            ( { model | formStep = nextStep, error = Nothing }, Cmd.none )
++
++        PrevStep ->
++            let
++                prevStep =
++                    case model.formStep of
++                        BasicInfo ->
++                            BasicInfo
++
++                        QuoteInfo ->
++                            BasicInfo
++
++                        ConfirmSubmit ->
++                            QuoteInfo
++            in
++            ( { model | formStep = prevStep, error = Nothing }, Cmd.none )
++
+         SubmitForm ->
+             if isFormValid model then
+                 ( { model | isSubmitting = True, error = Nothing }
+@@ -295,9 +507,54 @@ update msg model =
+                     , Cmd.none
+                     )
+ 
++        GoToQuote ->
++            if isQuoteInfoValid model then
++                let
++                    county =
++                        case model.selectedCounty of
++                            Just c ->
++                                c
++
++                            Nothing ->
++                                List.head model.counties
++                                    |> Maybe.withDefault ""
++
++                    state =
++                        model.state
++                            |> Maybe.withDefault ""
++
++                    orgId =
++                        model.orgId |> Maybe.withDefault ""
++
++                    compareUrl =
++                        Builder.absolute [ "compare" ]
++                            [ Builder.string "zip" model.zipCode
++                            , Builder.string "state" state
++                            , Builder.string "county" county
++                            , Builder.string "gender" model.gender
++                            , Builder.string "tobacco"
++                                (if model.tobacco then
++                                    "true"
++
++                                 else
++                                    "false"
++                                )
++                            , Builder.string "dateOfBirth" model.dateOfBirth
++                            , Builder.string "planType" "G"
++                            , Builder.string "orgId" orgId
++                            ]
++                in
++                ( model
++                , Nav.pushUrl model.key compareUrl
++                )
++            else
++                ( { model | error = Just "Please fill out all required fields for a quote" }
++                , Cmd.none
++                )
+ 
+-isFormValid : Model -> Bool
+-isFormValid model =
++
++isBasicInfoValid : Model -> Bool
++isBasicInfoValid model =
+     not (String.isEmpty model.email)
+         && not (String.isEmpty model.firstName)
+         && not (String.isEmpty model.lastName)
+@@ -305,6 +562,38 @@ isFormValid model =
+         /= Nothing
+ 
+ 
++isQuoteInfoValid : Model -> Bool
++isQuoteInfoValid model =
++    String.length model.zipCode == 5
++        && not (String.isEmpty model.dateOfBirth)
++        && not (String.isEmpty model.gender)
++        && model.state /= Nothing
++
++
++isFormValid : Model -> Bool
++isFormValid model =
++    isBasicInfoValid model && isQuoteInfoValid model
++
++
++httpErrorToString : Http.Error -> String
++httpErrorToString error =
++    case error of
++        Http.BadUrl url ->
++            "Bad URL: " ++ url
++
++        Http.Timeout ->
++            "Request timed out"
++
++        Http.NetworkError ->
++            "Network error"
++
++        Http.BadStatus statusCode ->
++            "Bad status: " ++ String.fromInt statusCode
++
++        Http.BadBody message ->
++            "Data error: " ++ message
++
++
+ 
+ -- FORM SUBMISSION
+ 
+@@ -325,6 +614,15 @@ encodeForm model =
+         , ( "email", Encode.string model.email )
+         , ( "firstName", Encode.string model.firstName )
+         , ( "lastName", Encode.string model.lastName )
++        , ( "zipCode", Encode.string model.zipCode )
++        , ( "dateOfBirth", Encode.string model.dateOfBirth )
++        , ( "gender", Encode.string model.gender )
++        , ( "tobacco", Encode.bool model.tobacco )
++        , ( "phoneNumber", Encode.string model.phoneNumber )
++        , ( "currentPremium", Encode.string model.currentPremium )
++        , ( "currentCarrier", Encode.string model.currentCarrier )
++        , ( "state", Encode.string (Maybe.withDefault "" model.state) )
++        , ( "county", Encode.string (Maybe.withDefault "" model.selectedCounty) )
+         , ( "optInQuarterlyUpdates", Encode.bool model.optInQuarterlyUpdates )
+         ]
+ 
+@@ -377,56 +675,289 @@ viewForm : Model -> Html Msg
+ viewForm model =
+     div [ class "max-w-md mx-auto bg-white rounded-lg shadow-md p-6" ]
+         [ if model.success then
+-            div [ class "p-4 mb-4 bg-green-100 border border-green-400 text-green-700 rounded" ]
+-                [ text "Profile updated successfully!" ]
++            div []
++                [ div [ class "p-4 mb-4 bg-green-100 border border-green-400 text-green-700 rounded" ]
++                    [ text "Profile updated successfully!" ]
++                , button
++                    [ type_ "button"
++                    , class "w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 mt-4"
++                    , onClick GoToQuote
++                    ]
++                    [ text "Get Your Quote" ]
++                ]
+ 
+           else if model.orgId == Nothing && model.error == Nothing then
+             div [ class "p-4 mb-4 bg-yellow-100 border border-yellow-400 text-yellow-700 rounded" ]
+                 [ text "Loading organization details..." ]
+ 
+           else
++            viewFormStep model
++        ]
++
++
++viewFormStep : Model -> Html Msg
++viewFormStep model =
++    case model.formStep of
++        BasicInfo ->
+             div []
+-                [ inputField "Email" model.email UpdateEmail model.emailReadOnly
+-                , inputField "First Name" model.firstName UpdateFirstName False
+-                , inputField "Last Name" model.lastName UpdateLastName False
+-                , checkboxField "Receive quarterly Medicare updates" model.optInQuarterlyUpdates ToggleOptIn
++                [ viewBasicInfoForm model
+                 , viewError model.error
+                 , button
+                     [ type_ "button"
+                     , class "w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+-                    , onClick SubmitForm
+-                    , disabled (model.isSubmitting || not (isFormValid model))
++                    , onClick NextStep
++                    , disabled (not (isBasicInfoValid model))
+                     ]
+-                    [ text
+-                        (if model.isSubmitting then
+-                            "Submitting..."
++                    [ text "Next" ]
++                ]
+ 
+-                         else
+-                            "Submit"
+-                        )
++        QuoteInfo ->
++            div []
++                [ viewQuoteInfoForm model
++                , viewError model.error
++                , div [ class "flex justify-between mt-4" ]
++                    [ button
++                        [ type_ "button"
++                        , class "flex justify-center py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
++                        , onClick PrevStep
++                        ]
++                        [ text "Back" ]
++                    , button
++                        [ type_ "button"
++                        , class "flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
++                        , onClick NextStep
++                        , disabled (not (isQuoteInfoValid model))
++                        ]
++                        [ text "Next" ]
++                    ]
++                ]
++
++        ConfirmSubmit ->
++            div []
++                [ viewFormSummary model
++                , viewError model.error
++                , div [ class "flex justify-between mt-4" ]
++                    [ button
++                        [ type_ "button"
++                        , class "flex justify-center py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
++                        , onClick PrevStep
++                        ]
++                        [ text "Back" ]
++                    , button
++                        [ type_ "button"
++                        , class "flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
++                        , onClick SubmitForm
++                        , disabled (model.isSubmitting || not (isFormValid model))
++                        ]
++                        [ text
++                            (if model.isSubmitting then
++                                "Submitting..."
++
++                             else
++                                "Submit"
++                            )
++                        ]
+                     ]
+                 ]
++
++
++viewBasicInfoForm : Model -> Html Msg
++viewBasicInfoForm model =
++    div []
++        [ inputField "Email" "email" model.email UpdateEmail model.emailReadOnly
++        , inputField "First Name" "text" model.firstName UpdateFirstName False
++        , inputField "Last Name" "text" model.lastName UpdateLastName False
++        , inputField "Phone Number" "tel" model.phoneNumber UpdatePhoneNumber False
++        , checkboxField "Receive quarterly Medicare updates" model.optInQuarterlyUpdates ToggleOptIn
++        ]
++
++
++viewQuoteInfoForm : Model -> Html Msg
++viewQuoteInfoForm model =
++    div []
++        [ zipCodeField model
++        , if List.length model.counties > 1 then
++            viewCountyDropdown model.counties model.selectedCounty
++          else
++            text ""
++        , inputField "Date of Birth" "date" model.dateOfBirth UpdateDateOfBirth False
++        , formRadioGroup "Gender"
++            model.gender
++            UpdateGender
++            [ ( "M", "Male" ), ( "F", "Female" ) ]
++        , formRadioGroup "Tobacco User"
++            (if model.tobacco then
++                "true"
++             else
++                "false"
++            )
++            UpdateTobacco
++            [ ( "true", "Yes" ), ( "false", "No" ) ]
++        , inputField "Current Premium (Optional)" "number" model.currentPremium UpdateCurrentPremium False
++        , inputField "Current Carrier (Optional)" "text" model.currentCarrier UpdateCurrentCarrier False
++        ]
++
++
++viewFormSummary : Model -> Html Msg
++viewFormSummary model =
++    div [ class "border rounded-md p-4 mb-4" ]
++        [ h3 [ class "font-medium text-lg mb-3" ] [ text "Review Your Information" ]
++        , summaryItem "Email" model.email
++        , summaryItem "Name" (model.firstName ++ " " ++ model.lastName)
++        , summaryItem "Phone" model.phoneNumber
++        , summaryItem "Zip Code" model.zipCode
++        , summaryItem "State"
++            (model.state
++                |> Maybe.withDefault "Unknown"
++            )
++        , summaryItem "County"
++            (model.selectedCounty
++                |> Maybe.withDefault "Unknown"
++            )
++        , summaryItem "Date of Birth" model.dateOfBirth
++        , summaryItem "Gender"
++            (if model.gender == "M" then
++                "Male"
++             else
++                "Female"
++            )
++        , summaryItem "Tobacco User"
++            (if model.tobacco then
++                "Yes"
++             else
++                "No"
++            )
++        , if not (String.isEmpty model.currentPremium) then
++            summaryItem "Current Premium" ("$" ++ model.currentPremium)
++          else
++            text ""
++        , if not (String.isEmpty model.currentCarrier) then
++            summaryItem "Current Carrier" model.currentCarrier
++          else
++            text ""
++        , summaryItem "Quarterly Updates"
++            (if model.optInQuarterlyUpdates then
++                "Yes"
++             else
++                "No"
++            )
++        ]
++
++
++summaryItem : String -> String -> Html Msg
++summaryItem label value =
++    div [ class "flex justify-between py-1 border-b last:border-b-0" ]
++        [ span [ class "text-gray-600" ] [ text label ]
++        , span [ class "font-medium" ] [ text value ]
+         ]
+ 
+ 
+-inputField : String -> String -> (String -> Msg) -> Bool -> Html Msg
+-inputField labelText value toMsg isDisabled =
++zipCodeField : Model -> Html Msg
++zipCodeField model =
+     div [ class "mb-4" ]
+-        [ label [ class "block text-sm font-medium text-gray-700 mb-1" ] [ text labelText ]
++        [ label [ class "block text-sm font-medium text-gray-700 mb-1" ]
++            [ text "Zip Code" ]
+         , input
+             [ type_ "text"
+             , class "w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+-            , Html.Attributes.value value
+-            , onInput toMsg
++            , Html.Attributes.value model.zipCode
++            , onInput UpdateZipCode
++            , Html.Attributes.maxlength 5
++            , Html.Attributes.pattern "[0-9]*"
++            , required True
++            ]
++            []
++        , if model.isLoadingZipData then
++            div [ class "text-xs text-blue-600 mt-1" ]
++                [ text "Looking up location..." ]
++          else if model.zipError /= Nothing then
++            div [ class "text-xs text-red-600 mt-1" ]
++                [ text (Maybe.withDefault "Invalid zip code" model.zipError) ]
++          else if model.state /= Nothing then
++            div [ class "text-xs text-green-600 mt-1" ]
++                [ text ("Found: " ++ Maybe.withDefault "" model.state) ]
++          else
++            text ""
++        ]
++
++
++viewCountyDropdown : List String -> Maybe String -> Html Msg
++viewCountyDropdown counties selectedCounty =
++    div [ class "mb-4" ]
++        [ label [ class "block text-sm font-medium text-gray-700 mb-1" ]
++            [ text "County" ]
++        , select
++            [ class "w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
++            , onInput UpdateSelectedCounty
++            , required True
++            ]
++            (option [ value "", disabled True, selected (selectedCounty == Nothing) ]
++                [ text "Select your county" ]
++                :: List.map
++                    (\county ->
++                        option
++                            [ value county
++                            , selected (selectedCounty == Just county)
++                            ]
++                            [ text county ]
++                    )
++                    counties
++            )
++        ]
++
++
++inputField : String -> String -> String -> (String -> Msg) -> Bool -> Html Msg
++inputField labelText inputType inputValue msg isDisabled =
++    div [ class "mb-4" ]
++        [ label [ class "block text-sm font-medium text-gray-700 mb-1" ] [ text labelText ]
++        , input
++            [ type_ inputType
++            , class "w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
++            , Html.Attributes.value inputValue
++            , onInput msg
+             , disabled isDisabled
+             ]
+             []
+         ]
+ 
+ 
++formRadioGroup : String -> String -> (String -> Msg) -> List ( String, String ) -> Html Msg
++formRadioGroup labelText selectedValue msg options =
++    div [ class "mb-4" ]
++        [ label [ class "block text-sm font-medium text-gray-700 mb-1" ]
++            [ text labelText ]
++        , div [ class "flex gap-4" ]
++            (List.map
++                (\( val, txt ) ->
++                    label
++                        [ class
++                            ("flex items-center justify-center px-4 py-2 rounded-lg border-2 cursor-pointer transition-all flex-1 "
++                                ++ (if selectedValue == val then
++                                        "border-indigo-500 bg-indigo-50 text-indigo-700"
++                                    else
++                                        "border-gray-200 hover:border-indigo-200"
++                                   )
++                            )
++                        ]
++                        [ input
++                            [ type_ "radio"
++                            , value val
++                            , checked (selectedValue == val)
++                            , onInput msg
++                            , class "sr-only"
++                            ]
++                            []
++                        , text txt
++                        ]
++                )
++                options
++            )
++        ]
++
++
+ checkboxField : String -> Bool -> (Bool -> Msg) -> Html Msg
+ checkboxField labelText isChecked toMsg =
+-    div [ class "mb-6" ]
++    div [ class "mb-4" ]
+         [ label [ class "flex items-center" ]
+             [ input
+                 [ type_ "checkbox"
+@@ -464,4 +995,4 @@ main =
+         , subscriptions = \_ -> Sub.none
+         , onUrlChange = \_ -> GotInitResponse (Err (Http.BadUrl "URL changed"))
+         , onUrlRequest = \_ -> GotInitResponse (Err (Http.BadUrl "URL requested"))
+-        }
++        }
+\ No newline at end of file

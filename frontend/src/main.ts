@@ -8,6 +8,66 @@ if (!root) {
   throw new Error('Could not find root element')
 }
 
+// Add a hook to capture redirects in case we're still having issues
+const originalPushState = history.pushState;
+history.pushState = function(data: any, unused: string, url?: string | URL | null) {
+  console.warn('NAVIGATION:', 'pushState', url);
+  // Also save to debug info storage
+  const redirectInfo = `Redirect: ${url}`;
+  localStorage.setItem('redirect_debug_info', redirectInfo);
+  sessionStorage.setItem('redirect_debug_info', redirectInfo);
+  return originalPushState.apply(this, [data, unused, url]);
+};
+
+const originalReplaceState = history.replaceState;
+history.replaceState = function(data: any, unused: string, url?: string | URL | null) {
+  console.warn('NAVIGATION:', 'replaceState', url);
+  // Also save to debug info storage
+  const redirectInfo = `Redirect (replace): ${url}`;
+  localStorage.setItem('redirect_debug_info', redirectInfo);
+  sessionStorage.setItem('redirect_debug_info', redirectInfo);
+  return originalReplaceState.apply(this, [data, unused, url]);
+};
+
+// Check if we're on an error page and display debug info if available
+const urlParams = new URLSearchParams(window.location.search);
+const errorMsg = urlParams.get('message');
+if (window.location.pathname === '/error' && errorMsg) {
+  console.error('Error page detected:', errorMsg);
+  
+  // Get debug info
+  const debugInfo = localStorage.getItem('selfservice_debug_info') || 
+                   sessionStorage.getItem('selfservice_debug_info') || 
+                   'No debug information available';
+                   
+  // Get redirect info
+  const redirectInfo = localStorage.getItem('redirect_debug_info') || 
+                      sessionStorage.getItem('redirect_debug_info') || 
+                      'No redirect information available';
+  
+  // Show debugging information on the page
+  root.innerHTML = `
+    <div style="max-width: 800px; margin: 50px auto; padding: 20px; font-family: sans-serif;">
+      <h1 style="color: #e53e3e;">Error</h1>
+      <p style="margin-bottom: 20px; font-size: 18px;">${errorMsg}</p>
+      
+      <h2 style="margin-top: 30px;">Debug Information</h2>
+      <pre style="background: #f7fafc; padding: 15px; border-radius: 5px; overflow: auto; max-height: 300px;">${debugInfo}</pre>
+      
+      <h2 style="margin-top: 30px;">Redirect Information</h2>
+      <pre style="background: #f7fafc; padding: 15px; border-radius: 5px; overflow: auto; max-height: 300px;">${redirectInfo}</pre>
+      
+      <div style="margin-top: 30px;">
+        <button onclick="window.history.back()" style="padding: 10px 20px; background: #4299e1; color: white; border: none; border-radius: 5px; cursor: pointer;">Go Back</button>
+        <button onclick="window.location.href='/'" style="margin-left: 10px; padding: 10px 20px; background: #718096; color: white; border: none; border-radius: 5px; cursor: pointer;">Go Home</button>
+      </div>
+    </div>
+  `;
+  
+  // Don't initialize Elm on error pages
+  throw new Error('Skipping Elm initialization on error page');
+}
+
 // Get session cookie if it exists
 const getCookie = (name: string) => {
   const value = `; ${document.cookie}`
@@ -135,6 +195,28 @@ try {
           }
         }
       })
+    }
+
+    // Debug info ports
+    if (app.ports.saveDebugInfo) {
+      app.ports.saveDebugInfo.subscribe((debugInfo: string) => {
+        console.log('Debug info:', debugInfo);
+        localStorage.setItem('selfservice_debug_info', debugInfo);
+        
+        // Write to console with more details for better visibility
+        console.warn('SELF-SERVICE DEBUG:', debugInfo);
+        
+        // Also log to session storage in case localStorage is cleared
+        sessionStorage.setItem('selfservice_debug_info', debugInfo);
+      });
+    }
+
+    if (app.ports.clearDebugInfo) {
+      app.ports.clearDebugInfo.subscribe(() => {
+        console.log('Clearing debug info');
+        localStorage.removeItem('selfservice_debug_info');
+        sessionStorage.removeItem('selfservice_debug_info');
+      });
     }
   }
 } catch (error) {

@@ -3,6 +3,8 @@ import { Database } from '../database';
 import { logger } from '../logger';
 import crypto from 'crypto';
 import { config } from '../config';
+import { generateQuoteId } from '../utils/quoteId';
+import { getUserFromSession } from '../services/auth';
 
 // Import generateHash function - reimplementing it since it's not exported from email.ts
 function generateHash(orgId: string, email: string): string {
@@ -47,8 +49,7 @@ export function createSelfServiceRoutes() {
             sql: `SELECT 
                   email, 
                   first_name AS firstName, 
-                  last_name AS lastName, 
-                  opt_in_quarterly_updates AS optInQuarterlyUpdates 
+                  last_name AS lastName
                 FROM contacts 
                 WHERE email = ?`,
             args: [email]
@@ -83,18 +84,33 @@ export function createSelfServiceRoutes() {
       }
     })
     .post('/api/self-service/signup', async ({ body, set }) => {
-      const { orgId, email, firstName, lastName, optInQuarterlyUpdates } = body as {
+      const { orgId, email, firstName, lastName, optInQuarterlyUpdates, zipCode, dateOfBirth, gender, tobacco, phoneNumber, currentPremium, currentCarrier, state, county } = body as {
         orgId: string;
         email: string;
         firstName: string;
         lastName: string;
         optInQuarterlyUpdates: boolean;
+        zipCode: string;
+        dateOfBirth: string;
+        gender: string;
+        tobacco: boolean;
+        phoneNumber: string;
+        currentPremium: string;
+        currentCarrier: string;
+        state: string;
+        county: string;
       };
 
       // Validate required parameters
-      if (!orgId || !email || !firstName || !lastName) {
+      if (!orgId || !email || !firstName || !lastName || !zipCode || !dateOfBirth || !gender || !state) {
         set.status = 400;
         return { error: 'Missing required fields' };
+      }
+      
+      // Only proceed if the user has agreed to receive updates
+      if (!optInQuarterlyUpdates) {
+        set.status = 400;
+        return { error: 'You must agree to receive updates to continue' };
       }
 
       try {
@@ -108,42 +124,167 @@ export function createSelfServiceRoutes() {
           args: [email]
         });
 
-        const timestamp = new Date().toISOString();
-
         if (existingContact.rows.length > 0) {
           // Update existing contact
           const contactId = existingContact.rows[0].id;
           await client.execute({
             sql: `UPDATE contacts SET 
                   first_name = ?, 
-                  last_name = ?, 
-                  opt_in_quarterly_updates = ?,
-                  updated_at = ?
+                  last_name = ?,
+                  phone_number = ?,
+                  zip_code = ?,
+                  state = ?,
+                  gender = ?,
+                  birth_date = ?,
+                  tobacco_user = ?,
+                  current_carrier = ?
                   WHERE id = ?`,
-            args: [firstName, lastName, optInQuarterlyUpdates ? 1 : 0, timestamp, contactId]
+            args: [
+              firstName, 
+              lastName, 
+              phoneNumber || '', 
+              zipCode, 
+              state,
+              gender,
+              dateOfBirth,
+              tobacco ? 1 : 0,
+              currentCarrier || '', 
+              contactId
+            ]
           });
           
           logger.info(`Updated contact ${contactId} for email ${email} in organization ${orgId}`);
+          
+          return { 
+            success: true,
+            contactId,
+            email
+          };
         } else {
-          // Create new contact
+          // Create new contact with required fields
           const result = await client.execute({
             sql: `INSERT INTO contacts (
                   email, 
                   first_name, 
-                  last_name, 
-                  opt_in_quarterly_updates,
-                  created_at,
-                  updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?)`,
-            args: [email, firstName, lastName, optInQuarterlyUpdates ? 1 : 0, timestamp, timestamp]
+                  last_name,
+                  phone_number,
+                  zip_code,
+                  state,
+                  gender,
+                  birth_date,
+                  tobacco_user,
+                  current_carrier,
+                  effective_date
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            args: [
+              email, 
+              firstName, 
+              lastName, 
+              phoneNumber || '', 
+              zipCode, 
+              state,
+              gender,
+              dateOfBirth,
+              tobacco ? 1 : 0,
+              currentCarrier || null, // Default plan type
+              new Date().toISOString().split('T')[0] // Today as effective date
+            ]
           });
           
-          logger.info(`Created new contact for email ${email} in organization ${orgId}`);
+          // Get the ID of the newly created contact
+          const newContactResult = await client.execute({
+            sql: 'SELECT id FROM contacts WHERE email = ?',
+            args: [email]
+          });
+          
+          const contactId = newContactResult.rows[0]?.id;
+          
+          logger.info(`Created new contact ${contactId} for email ${email} in organization ${orgId}`);
+          
+          return { 
+            success: true,
+            contactId,
+            email
+          };
         }
-
-        return { success: true };
       } catch (error) {
         logger.error(`Error in self-service signup endpoint: ${error}`);
+        set.status = 500;
+        return { error: 'Internal server error' };
+      }
+    })
+    // Add a new endpoint to generate a quote for a contact
+    .post('/api/self-service/generate-quote', async ({ body, set }) => {
+      const { orgId, contactEmail } = body as {
+        orgId: string;
+        contactEmail: string;
+      };
+
+      logger.info(`Generate quote request received: orgId=${orgId}, contactEmail=${contactEmail}`);
+
+      // Validate required parameters
+      if (!orgId || !contactEmail) {
+        logger.error(`Missing required fields: orgId=${orgId}, contactEmail=${contactEmail}`);
+        set.status = 400;
+        return { error: 'Missing required fields (orgId and contactEmail)' };
+      }
+
+      try {
+        // Get organization database
+        const orgDb = await Database.getOrgDb(orgId);
+        const client = orgDb.getClient();
+        
+        // Lookup contact by email
+        const contactResult = await client.execute({
+          sql: 'SELECT id FROM contacts WHERE email = ?',
+          args: [contactEmail]
+        });
+
+        if (contactResult.rows.length === 0) {
+          logger.error(`Contact not found for email ${contactEmail} in organization ${orgId}`);
+          set.status = 404;
+          return { error: 'Contact not found' };
+        }
+
+        const contactId = contactResult.rows[0].id;
+        logger.info(`Found contact ID ${contactId} for email ${contactEmail} in organization ${orgId}`);
+        
+        // Generate quote ID using the proper utility function (with base36 encoding)
+        const quoteId = generateQuoteId(parseInt(orgId), contactId);
+        
+        // Get plan type from contact
+        let planType = 'MedSupp';
+        try {
+          const planTypeResult = await client.execute({
+            sql: 'SELECT plan_type FROM contacts WHERE id = ?',
+            args: [contactId]
+          });
+          
+          if (planTypeResult.rows.length > 0 && planTypeResult.rows[0].plan_type) {
+            planType = planTypeResult.rows[0].plan_type;
+          }
+          logger.info(`Found plan type ${planType} for contact ${contactId}`);
+        } catch (error) {
+          logger.warn(`Could not get plan type for contact ${contactId}: ${error}`);
+          // Continue with default plan type
+        }
+        
+        // Build redirect URL with just the quote ID
+        const redirectUrl = `${config.PUBLIC_URL || 'http://localhost:5173'}/quote?id=${quoteId}`;
+        
+        // Log response details
+        logger.info(`Generated quote ID: ${quoteId}`);
+        logger.info(`Redirect URL: ${redirectUrl}`);
+
+        // Return successful response with quote information
+        return {
+          success: true,
+          contactId,
+          quoteId,
+          redirectUrl
+        };
+      } catch (error) {
+        logger.error(`Error generating quote ID: ${error}`);
         set.status = 500;
         return { error: 'Internal server error' };
       }
@@ -154,13 +295,19 @@ export function createSelfServiceRoutes() {
       try {
         // For the 'latest' slug, get the current user's organization
         if (orgSlug === 'latest') {
-          const userFromSession = await Database.getUserFromSession(request);
-          if (!userFromSession) {
+          const userFromSession = await getUserFromSession(request);
+          if (!userFromSession || !userFromSession.organization_id) {
             set.status = 401;
             return { success: false, error: 'Unauthorized' };
           }
           
-          const orgResult = await Database.getOrganizationById(userFromSession.organization_id);
+          // Get organization from central database
+          const db = new Database();
+          const orgResult = await db.fetchOne<{ id: number, slug: string }>(
+            'SELECT id, slug FROM organizations WHERE id = ?',
+            [userFromSession.organization_id]
+          );
+          
           if (!orgResult) {
             set.status = 404;
             return { success: false, message: 'Organization not found' };

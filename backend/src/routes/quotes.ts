@@ -120,45 +120,93 @@ export const quotesRoutes = (app: Elysia) => {
             throw new Error(String(e));
         }
     })
-    .get('/api/quotes/decode/:quoteId', async ({ params }) => {
+    .get('/api/quotes/decode/:quoteId', async ({ params, set }) => {
         try {
+            logger.info(`Decoding quote ID: ${params.quoteId}`);
+            
             const decoded = decodeQuoteId(params.quoteId);
             if (!decoded) {
-                throw new Error('Invalid quote ID');
+                logger.error(`Invalid quote ID format: ${params.quoteId}`);
+                set.status = 400;
+                return {
+                    success: false,
+                    error: 'Invalid quote ID format'
+                };
             }
+            
+            logger.info(`Decoded quote ID: orgId=${decoded.orgId}, contactId=${decoded.contactId}`);
 
             // Get org-specific database
+            logger.info(`Getting database for org: ${decoded.orgId}`);
             const orgDb = await Database.getOrInitOrgDb(decoded.orgId.toString());
+            
             const mainDb = new Database();
+            logger.info(`Fetching organization details for orgId: ${decoded.orgId}`);
             const result = await mainDb.fetchOne<{ slug: string, org_settings: string }>(
                 'SELECT slug, org_settings FROM organizations WHERE id = ?',
                 [decoded.orgId]
             );
 
             if (!result) {
-                throw new Error('Organization not found');
+                logger.error(`Organization not found: ${decoded.orgId}`);
+                set.status = 404;
+                return {
+                    success: false,
+                    error: 'Organization not found'
+                };
             }
 
             const orgSlug = result.slug;
-            const orgSettings = JSON.parse(result.org_settings);
+            logger.info(`Found organization: ${orgSlug} (ID: ${decoded.orgId})`);
+            
+            let orgSettings;
+            try {
+                orgSettings = JSON.parse(result.org_settings || '{}');
+            } catch (e) {
+                logger.warn(`Error parsing org settings for ${decoded.orgId}: ${e}`);
+                orgSettings = {};
+            }
+            
             const carrierContracts = orgSettings?.carrierContracts || [];
-            // Fetch contact details
-            const contact = await orgDb.fetchOne<ContactQuoteInfo>(
-                'SELECT zip_code, birth_date, tobacco_user, gender, email, first_name, last_name, current_carrier, phone_number FROM contacts WHERE id = ?',
-                [decoded.contactId]
-            );
-
-
+            
+            // Fetch contact details with detailed logging
+            const contactQuery = 'SELECT zip_code, birth_date, tobacco_user, gender, email, first_name, last_name, current_carrier, phone_number, plan_type FROM contacts WHERE id = ?';
+            const contactParams = [decoded.contactId];
+            
+            logger.info(`Executing contact query: ${contactQuery} with params: [${contactParams}]`);
+            
+            const contact = await orgDb.fetchOne<ContactQuoteInfo>(contactQuery, contactParams);
 
             if (!contact) {
-                throw new Error('Contact not found');
+                logger.error(`Contact not found: contactId=${decoded.contactId} in orgId=${decoded.orgId}`);
+                
+                // Additional debugging: List all contacts in this org
+                try {
+                    const allContacts = await orgDb.query('SELECT id, email, first_name, last_name FROM contacts LIMIT 5');
+                    logger.info(`First 5 contacts in org ${decoded.orgId}: ${JSON.stringify(allContacts)}`);
+                } catch (e) {
+                    logger.error(`Error listing contacts: ${e}`);
+                }
+                
+                set.status = 404;
+                return {
+                    success: false,
+                    error: `Contact not found: ID=${decoded.contactId}`
+                };
             }
 
+            logger.info(`Found contact: ${contact.first_name} ${contact.last_name} (ID: ${decoded.contactId})`);
+            
             const zipInfo = ZIP_DATA[contact.zip_code];
             const contactState = zipInfo?.state;
+            
+            if (!contactState) {
+                logger.warn(`No state found for zip code: ${contact.zip_code}`);
+            }
 
             const output = {
                 success: true,
+                orgId: decoded.orgId.toString(),
                 orgSlug: orgSlug || null,
                 carrierContracts: carrierContracts || null,
                 contact: {
@@ -171,15 +219,20 @@ export const quotesRoutes = (app: Elysia) => {
                     firstName: contact.first_name,
                     lastName: contact.last_name,
                     currentCarrier: contact.current_carrier,
+                    planType: contact.plan_type,
                     phoneNumber: contact.phone_number
                 }
             };
 
-            logger.info(`Output: ${JSON.stringify(output, null, 2)}`);
+            logger.info(`Returning success response for quote ID: ${params.quoteId}`);
             return output;
         } catch (e) {
             logger.error(`Error decoding quote ID: ${e}`);
-            throw new Error(String(e));
+            set.status = 500;
+            return {
+                success: false,
+                error: String(e)
+            };
         }
     })
     .post('/api/quotes', async ({ body }: { body: QuoteRequestBody }) => {
@@ -376,6 +429,59 @@ export const quotesRoutes = (app: Elysia) => {
             return {
                 success: false,
                 error: 'Failed to fetch zip code information'
+            };
+        }
+    })
+    .get('/api/quotes/debug-generate/:orgId/:contactId', async ({ params }) => {
+        try {
+            logger.info(`Debug endpoint - generating quote ID for org: ${params.orgId}, contact: ${params.contactId}`);
+            
+            const orgId = parseInt(params.orgId);
+            const contactId = parseInt(params.contactId);
+            
+            if (isNaN(orgId) || isNaN(contactId)) {
+                return {
+                    success: false,
+                    error: 'Invalid organization or contact ID'
+                };
+            }
+            
+            // Get org-specific database to verify the contact exists
+            const orgDb = await Database.getOrInitOrgDb(orgId.toString());
+            
+            // Verify contact exists
+            const contact = await orgDb.fetchOne(
+                'SELECT id FROM contacts WHERE id = ?',
+                [contactId]
+            );
+
+            if (!contact) {
+                // List first 5 contacts in this org for debugging
+                const contacts = await orgDb.query('SELECT id FROM contacts LIMIT 5');
+                logger.info(`Available contacts in org ${orgId}: ${JSON.stringify(contacts)}`);
+                
+                return {
+                    success: false,
+                    error: 'Contact not found',
+                    availableContacts: contacts
+                };
+            }
+            
+            // Generate quote ID
+            const quoteId = generateQuoteId(orgId, contactId);
+            
+            logger.info(`Generated debug quote ID: ${quoteId} for orgId: ${orgId}, contactId: ${contactId}`);
+
+            return {
+                success: true,
+                quoteId,
+                redirectUrl: `${process.env.PUBLIC_URL || 'http://localhost:5173'}/quote?id=${quoteId}`
+            };
+        } catch (e) {
+            logger.error(`Error in debug quote generation: ${e}`);
+            return {
+                success: false,
+                error: String(e)
             };
         }
     });

@@ -544,7 +544,7 @@ routeParser =
         , map (PublicRoute (OnboardingRoute PaymentStep)) (s "onboarding" </> s "payment")
         , map (PublicRoute (OnboardingRoute EnterpriseStep)) (s "onboarding" </> s "enterprise")
         , map (PublicRoute (OnboardingRoute PlanStep)) (s "onboarding") -- Default to plan step
-        , map (\orgSlug token -> PublicRoute (VerifyRoute (VerifyParams orgSlug token)))
+        , map (\params -> PublicRoute (VerifyRoute params))
             (s "auth" </> s "verify" </> string </> string)
         , map (PublicRoute << CompareRoute) (s "compare" <?> compareParamsParser)
         , map (PublicRoute << QuoteRoute)
@@ -2060,10 +2060,10 @@ updatePage url ( model, cmd ) =
                                                     VerifyParams orgSlug token ->
                                                         "/api/auth/verify/" ++ orgSlug ++ "/" ++ token
 
-                                            verifyCmd =
-                                                Http.get
-                                                    { url = verifyUrl
-                                                    , expect = Http.expectJson GotVerification verificationDecoder
+                                verifyCmd =
+                                    Http.get
+                                        { url = verifyUrl
+                                        , expect = Http.expectJson GotVerification verificationDecoder
                                                     }
                                         in
                                         ( model, verifyCmd )
@@ -2830,10 +2830,10 @@ updatePageForcePublic url ( model, cmd ) =
                                             "/api/auth/verify/" ++ orgSlug ++ "/" ++ token
 
                                 verifyCmd =
-                                    Http.get
-                                        { url = verifyUrl
-                                        , expect = Http.expectJson GotVerification verificationDecoder
-                                        }
+                                            Http.get
+                                                { url = verifyUrl
+                                                , expect = Http.expectJson GotVerification verificationDecoder
+                                                }
                             in
                             ( model, verifyCmd )
 

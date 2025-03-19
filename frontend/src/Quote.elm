@@ -65,6 +65,7 @@ type alias QuoteInfo =
     , tobacco : Bool
     , gender : String
     , currentCarrier : String
+    , orgId : String
     }
 
 
@@ -133,14 +134,22 @@ fetchZipInfo zipCode =
 
 quoteInfoDecoder : D.Decoder QuoteInfo
 quoteInfoDecoder =
-    D.field "contact"
-        (D.map5 QuoteInfo
-            (D.field "zipCode" D.string)
-            (D.field "dateOfBirth" D.string)
-            (D.field "tobacco" D.bool)
-            (D.field "gender" D.string)
-            (D.field "currentCarrier" D.string)
-        )
+    D.field "success" D.bool
+        |> D.andThen
+            (\success ->
+                if success then
+                    D.map6 QuoteInfo
+                        (D.at [ "contact", "zipCode" ] D.string)
+                        (D.at [ "contact", "dateOfBirth" ] D.string)
+                        (D.at [ "contact", "tobacco" ] D.bool)
+                        (D.at [ "contact", "gender" ] D.string)
+                        (D.at [ "contact", "currentCarrier" ] D.string)
+                        (D.field "orgId" D.string)
+
+                else
+                    D.field "error" D.string
+                        |> D.andThen (\error -> D.fail error)
+            )
 
 
 zipInfoDecoder : D.Decoder ZipInfo
@@ -230,6 +239,7 @@ update msg model =
 
                                     else
                                         Just quoteInfo.currentCarrier
+                                , orgId = Just quoteInfo.orgId
                             }
 
                         cmd =
@@ -241,8 +251,24 @@ update msg model =
                     in
                     ( updatedModel, cmd )
 
-                Err _ ->
-                    ( { model | error = Just "Failed to load quote information" }, Cmd.none )
+                Err err ->
+                    let
+                        errorMessage =
+                            case err of
+                                Http.BadBody errorBody ->
+                                    if String.contains "Contact not found" errorBody then
+                                        "Quote not found or expired. Please try again or contact support."
+
+                                    else
+                                        "Failed to load quote information: " ++ errorBody
+
+                                Http.BadStatus 404 ->
+                                    "Quote not found or expired. Please try again or contact support."
+
+                                _ ->
+                                    "Failed to load quote information. Please try again."
+                    in
+                    ( { model | error = Just errorMessage }, Cmd.none )
 
         GotZipInfo result ->
             case result of
@@ -308,53 +334,46 @@ update msg model =
                         model.state
                             |> Maybe.withDefault ""
 
-                    -- Build the URL with all parameters
+                    -- If we have a quoteId, use that for navigation first
                     compareUrl =
-                        Builder.absolute [ "compare" ]
-                            ([ Builder.string "zip" model.zipCode
-                             , Builder.string "state" state
-                             , Builder.string "county" county
-                             , Builder.string "gender" model.gender
-                             , Builder.string "tobacco"
-                                (if model.tobacco then
-                                    "true"
+                        case model.quoteId of
+                            Just id ->
+                                -- When we have a quoteId, we don't need other parameters
+                                Builder.absolute [ "compare" ] [ Builder.string "id" id ]
 
-                                 else
-                                    "false"
-                                )
-                             , Builder.string "age" age
-                             , Builder.string "dateOfBirth" model.dateOfBirth
-                             ]
-                                ++ (case model.quoteId of
-                                        Just id ->
-                                            [ Builder.string "id" id ]
+                            Nothing ->
+                                -- Otherwise build the URL with all parameters
+                                Builder.absolute [ "compare" ]
+                                    ([ Builder.string "zip" model.zipCode
+                                     , Builder.string "state" state
+                                     , Builder.string "county" county
+                                     , Builder.string "gender" model.gender
+                                     , Builder.string "tobacco"
+                                        (if model.tobacco then
+                                            "true"
 
-                                        Nothing ->
-                                            []
-                                   )
-                                ++ (case model.currentCarrier of
-                                        Just carrier ->
-                                            [ Builder.string "currentCarrier" carrier ]
+                                         else
+                                            "false"
+                                        )
+                                     , Builder.string "age" age
+                                     , Builder.string "dateOfBirth" model.dateOfBirth
+                                     ]
+                                        ++ (case model.currentCarrier of
+                                                Just carrier ->
+                                                    [ Builder.string "currentCarrier" carrier ]
 
-                                        Nothing ->
-                                            []
-                                   )
-                                ++ (case model.planType of
-                                        Just planType ->
-                                            [ Builder.string "planType" planType ]
+                                                Nothing ->
+                                                    []
+                                           )
+                                        ++ (case model.planType of
+                                                Just planType ->
+                                                    [ Builder.string "planType" planType ]
 
-                                        Nothing ->
-                                            [ Builder.string "planType" "G" ]
-                                    -- Default to G if no plan type provided
-                                   )
-                                ++ (case model.orgId of
-                                        Just id ->
-                                            [ Builder.string "orgId" id ]
-
-                                        Nothing ->
-                                            []
-                                   )
-                            )
+                                                Nothing ->
+                                                    [ Builder.string "planType" "G" ]
+                                            -- Default to G if no plan type provided
+                                           )
+                                    )
                 in
                 ( model
                 , Nav.pushUrl model.key compareUrl
@@ -376,54 +395,68 @@ view model =
                     , text "Rates and Plan Options"
                     ]
                 ]
-            , case model.error of
-                Just error ->
-                    div [ class "bg-red-100 border border-red-400 text-red-700 px-3 sm:px-4 py-2 sm:py-3 rounded mb-4 text-sm" ]
-                        [ text error ]
+            , if model.error /= Nothing || (model.quoteId /= Nothing && String.isEmpty model.zipCode) then
+                -- Show error or loading message when we have a quoteId but no data yet
+                let
+                    message =
+                        case model.error of
+                            Just error ->
+                                div [ class "bg-red-100 border border-red-400 text-red-700 px-3 sm:px-4 py-2 sm:py-3 rounded mb-4 text-sm" ]
+                                    [ text error ]
 
-                Nothing ->
-                    text ""
-            , Html.form [ onSubmit SubmitForm, class "space-y-4 sm:space-y-6" ]
-                [ viewFormInput "Zip Code" "text" model.zipCode UpdateZipCode True
+                            Nothing ->
+                                if model.quoteId /= Nothing && String.isEmpty model.zipCode then
+                                    div [ class "bg-blue-100 border border-blue-400 text-blue-700 px-3 sm:px-4 py-2 sm:py-3 rounded mb-4 text-sm" ]
+                                        [ text "Loading your quote information..." ]
 
-                -- Show zip code loading state or error if any
-                , if model.isLoadingZipData then
-                    div [ class "text-xs sm:text-sm text-blue-600" ]
-                        [ text "Looking up location..." ]
+                                else
+                                    text ""
+                in
+                div [] [ message, viewFormForManualEntry model ]
 
-                  else if model.zipError /= Nothing then
-                    div [ class "text-xs sm:text-sm text-red-600" ]
-                        [ text (Maybe.withDefault "Invalid zip code" model.zipError) ]
+              else
+                -- Standard form
+                Html.form [ onSubmit SubmitForm, class "space-y-4 sm:space-y-6" ]
+                    [ viewFormInput "Zip Code" "text" model.zipCode UpdateZipCode True
 
-                  else
-                    text ""
+                    -- Show zip code loading state or error if any
+                    , if model.isLoadingZipData then
+                        div [ class "text-xs sm:text-sm text-blue-600" ]
+                            [ text "Looking up location..." ]
 
-                -- Only show the county dropdown if there are multiple counties
-                , if List.length model.counties > 1 then
-                    viewCountyDropdown model.counties model.selectedCounty
+                      else if model.zipError /= Nothing then
+                        div [ class "text-xs sm:text-sm text-red-600" ]
+                            [ text (Maybe.withDefault "Invalid zip code" model.zipError) ]
 
-                  else
-                    text ""
-                , viewFormInput "Date of Birth" "date" model.dateOfBirth UpdateDateOfBirth True
-                , viewFormRadioGroup "Tobacco User"
-                    (if model.tobacco then
-                        "true"
+                      else
+                        text ""
 
-                     else
-                        "false"
-                    )
-                    UpdateTobacco
-                    [ ( "true", "Yes" ), ( "false", "No" ) ]
-                , viewFormRadioGroup "Gender"
-                    model.gender
-                    UpdateGender
-                    [ ( "M", "Male" ), ( "F", "Female" ) ]
-                , button
-                    [ class "w-full bg-purple-600 text-white py-3 sm:py-4 rounded-lg hover:bg-purple-700 transition-colors mt-6 sm:mt-8 text-base sm:text-lg"
-                    , type_ "submit"
+                    -- Only show the county dropdown if there are multiple counties
+                    , if List.length model.counties > 1 then
+                        viewCountyDropdown model.counties model.selectedCounty
+
+                      else
+                        text ""
+                    , viewFormInput "Date of Birth" "date" model.dateOfBirth UpdateDateOfBirth True
+                    , viewFormRadioGroup "Tobacco User"
+                        (if model.tobacco then
+                            "true"
+
+                         else
+                            "false"
+                        )
+                        UpdateTobacco
+                        [ ( "true", "Yes" ), ( "false", "No" ) ]
+                    , viewFormRadioGroup "Gender"
+                        model.gender
+                        UpdateGender
+                        [ ( "M", "Male" ), ( "F", "Female" ) ]
+                    , button
+                        [ class "w-full bg-purple-600 text-white py-3 sm:py-4 rounded-lg hover:bg-purple-700 transition-colors mt-6 sm:mt-8 text-base sm:text-lg"
+                        , type_ "submit"
+                        ]
+                        [ text "Next" ]
                     ]
-                    [ text "Next" ]
-                ]
             ]
         ]
     }
@@ -555,3 +588,37 @@ httpErrorToString error =
 subscriptions : Model -> Sub Msg
 subscriptions _ =
     Sub.none
+
+
+
+-- Function to display a form that allows manual entry when quote loading fails
+
+
+viewFormForManualEntry : Model -> Html Msg
+viewFormForManualEntry model =
+    div []
+        [ p [ class "text-center text-gray-600 mb-6" ]
+            [ text "You can manually enter your information below to get a quote." ]
+        , Html.form [ onSubmit SubmitForm, class "space-y-4 sm:space-y-6" ]
+            [ viewFormInput "Zip Code" "text" model.zipCode UpdateZipCode True
+            , viewFormInput "Date of Birth" "date" model.dateOfBirth UpdateDateOfBirth True
+            , viewFormRadioGroup "Tobacco User"
+                (if model.tobacco then
+                    "true"
+
+                 else
+                    "false"
+                )
+                UpdateTobacco
+                [ ( "true", "Yes" ), ( "false", "No" ) ]
+            , viewFormRadioGroup "Gender"
+                model.gender
+                UpdateGender
+                [ ( "M", "Male" ), ( "F", "Female" ) ]
+            , button
+                [ class "w-full bg-purple-600 text-white py-3 sm:py-4 rounded-lg hover:bg-purple-700 transition-colors mt-6 sm:mt-8 text-base sm:text-lg"
+                , type_ "submit"
+                ]
+                [ text "Next" ]
+            ]
+        ]

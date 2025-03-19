@@ -12,21 +12,21 @@ if (isNaN(orgId) || isNaN(contactId)) {
 // Call the API to generate a quote ID
 const generateQuoteUrl = async () => {
   try {
-    // First get a session token
-    const sessionResponse = await axios.get('http://localhost:8000/api/dev/session/login');
-    
-    // Then generate the quote ID
-    const response = await axios.get(`http://localhost:8000/api/quotes/generate/${contactId}`, {
-      headers: {
-        Cookie: sessionResponse.headers['set-cookie']?.[0]
-      }
-    });
+    // Use the debug endpoint to generate a quote ID without authentication
+    const response = await axios.get(`http://localhost:8000/api/quotes/debug-generate/${orgId}/${contactId}`);
 
     if (response.data.success) {
       console.log('Quote ID:', response.data.quoteId);
       console.log('Quote URL:', response.data.redirectUrl);
     } else {
       console.error('Failed to generate quote ID:', response.data.error);
+      
+      if (response.data.availableContacts) {
+        console.log('\nAvailable contacts for organization', orgId, ':');
+        response.data.availableContacts.forEach((contact: any) => {
+          console.log(`- ID: ${contact.id}, Name: ${contact.first_name} ${contact.last_name || ''}, Email: ${contact.email || 'N/A'}`);
+        });
+      }
     }
   } catch (error) {
     if (error instanceof AxiosError) {

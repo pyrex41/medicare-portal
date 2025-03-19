@@ -544,7 +544,7 @@ routeParser =
         , map (PublicRoute (OnboardingRoute PaymentStep)) (s "onboarding" </> s "payment")
         , map (PublicRoute (OnboardingRoute EnterpriseStep)) (s "onboarding" </> s "enterprise")
         , map (PublicRoute (OnboardingRoute PlanStep)) (s "onboarding") -- Default to plan step
-        , map (\orgSlug token -> PublicRoute (VerifyRoute (VerifyParams orgSlug token)))
+        , map (\orgSlug -> \token -> PublicRoute (VerifyRoute (VerifyParams orgSlug token)))
             (s "auth" </> s "verify" </> string </> string)
         , map (PublicRoute << CompareRoute) (s "compare" <?> compareParamsParser)
         , map (PublicRoute << QuoteRoute)
@@ -2467,6 +2467,22 @@ updatePage url ( model, cmd ) =
                                         ( { model | page = SelfOnboardingPage selfOnboardingModel }
                                         , Cmd.map SelfOnboardingMsg selfOnboardingCmd
                                         )
+
+                                    PublicRoute (VerifyRoute params) ->
+                                        -- For verification, we need to make an API call
+                                        let
+                                            verifyUrl =
+                                                case params of
+                                                    VerifyParams orgSlug token ->
+                                                        "/api/auth/verify/" ++ orgSlug ++ "/" ++ token
+
+                                            verifyCmd =
+                                                Http.get
+                                                    { url = verifyUrl
+                                                    , expect = Http.expectJson GotVerification verificationDecoder
+                                                    }
+                                        in
+                                        ( model, verifyCmd )
 
                 Nothing ->
                     ( { model | page = NotFoundPage }

@@ -27,18 +27,31 @@ export function generateQuoteId(orgId: number, contactId: number): string {
 export function decodeQuoteId(quoteId: string): { orgId: number; contactId: number } | null {
   try {
     // Split the quote ID into its components
-    const [encodedOrgId, encodedContactId] = quoteId.split('-');
+    const parts = quoteId.split('-');
+    
+    if (parts.length < 2) {
+      console.log(`[decodeQuoteId] Invalid format - not enough parts: ${quoteId}`);
+      return null;
+    }
+    
+    const [encodedOrgId, encodedContactId] = parts;
+    
+    console.log(`[decodeQuoteId] Parsed parts: orgId=${encodedOrgId}, contactId=${encodedContactId}, hash=${parts.slice(2).join('-')}`);
     
     // Decode the IDs from base36 back to numbers
     const orgId = parseInt(encodedOrgId, 36);
     const contactId = parseInt(encodedContactId, 36);
     
+    console.log(`[decodeQuoteId] Decoded values: orgId=${orgId}, contactId=${contactId}`);
+    
     if (isNaN(orgId) || isNaN(contactId)) {
+      console.log(`[decodeQuoteId] Invalid parsed values - NaN detected: orgId=${encodedOrgId}→${orgId}, contactId=${encodedContactId}→${contactId}`);
       return null;
     }
     
     return { orgId, contactId };
   } catch (e) {
+    console.log(`[decodeQuoteId] Error decoding quoteId ${quoteId}: ${e}`);
     return null;
   }
 } 

@@ -66,6 +66,7 @@ type alias Contact =
     , state : String
     , zipCode : String
     , currentCarrier : Maybe String
+    , planType : Maybe String
     }
 
 
@@ -129,6 +130,7 @@ type alias Model =
     , key : Nav.Key
     , showDiscount : Bool
     , currentCarrier : Maybe String
+    , planType : Maybe String
     , dateOfBirth : String
     , quoteId : Maybe String
     , carrierContracts : List Carrier
@@ -262,6 +264,7 @@ init key maybeParams =
             , key = key
             , showDiscount = False
             , currentCarrier = params.currentCarrier
+            , planType = Nothing
             , dateOfBirth = params.dateOfBirth
             , quoteId = params.quoteId
             , carrierContracts = []
@@ -299,9 +302,8 @@ init key maybeParams =
                     -- No quote ID, check if we have an org ID
                     case extractedOrgId of
                         Just orgId ->
-                            -- We have an org ID but no quote ID - in a real implementation, we might
-                            -- redirect to a self-service page, but for now we'll continue with default data
-                            initialCommands
+                            -- Redirect to the self-service onboarding page for this organization
+                            [ Nav.pushUrl key ("/self-onboarding/" ++ orgId) ]
 
                         Nothing ->
                             -- No org ID either - this is an error case
@@ -766,6 +768,7 @@ update msg model =
                                 , zip = response.contact.zipCode
                                 , dateOfBirth = response.contact.dateOfBirth
                                 , currentCarrier = response.contact.currentCarrier
+                                , planType = response.contact.planType
                             }
                     in
                     ( updatedModel, fetchPlans updatedModel )
@@ -939,39 +942,27 @@ view model =
                             ]
                         , -- Bottom row
                           div [ class "flex justify-between" ]
-                            [ div []
-                                [ p [ class "text-xs text-gray-500" ] [ text "Phone:" ]
-                                , p [ class "text-sm" ]
-                                    [ text (model.contact |> Maybe.map .phone |> Maybe.map formatPhoneNumber |> Maybe.withDefault "loading...") ]
-                                ]
-                            , div [ class "text-right" ]
+                            [ div [ class "text-left" ]
                                 [ p [ class "text-xs text-gray-500" ] [ text "Details:" ]
                                 , p [ class "text-sm" ]
                                     [ text
-                                        (String.join ", "
+                                        (String.join " | "
                                             [ if model.gender == "M" then
                                                 "Male"
 
                                               else
                                                 "Female"
-                                            , formatAddress model.state model.zip
+                                            , model.zip
                                             , if model.tobacco then
-                                                "Tobacco User"
+                                                "Tobacco"
 
                                               else
-                                                "Non-Tobacco User"
+                                                "Non-Tobacco"
                                             ]
                                         )
                                     ]
                                 ]
-                            ]
-                        , div [ class "flex justify-between" ]
-                            [ div []
-                                [ p [ class "text-xs text-gray-500" ] [ text "Zip Code:" ]
-                                , p [ class "text-sm" ] [ text model.zip ]
-                                ]
-                            , -- Current carrier (only if available)
-                              if model.currentCarrier /= Nothing then
+                            , if model.currentCarrier /= Nothing then
                                 div [ class "text-right" ]
                                     [ p [ class "text-xs text-gray-500" ] [ text "Current Carrier:" ]
                                     , p [ class "text-sm" ]
@@ -1495,6 +1486,7 @@ contactDecoder =
         |> Pipeline.required "state" D.string
         |> Pipeline.required "zipCode" D.string
         |> Pipeline.required "currentCarrier" (D.nullable D.string)
+        |> Pipeline.required "planType" (D.nullable D.string)
 
 
 carrierContractsDecoder : Decoder (List Carrier)
