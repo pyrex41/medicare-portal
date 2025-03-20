@@ -1071,7 +1071,7 @@ view model =
 
 viewForm : Model -> Html Msg
 viewForm model =
-    div [ class "max-w-4xl mx-auto bg-white rounded-xl shadow-md p-8" ]
+    div [ class "max-w-4xl mx-auto bg-white rounded-xl shadow-md p-4 sm:p-8" ]
         [ if model.success then
             div []
                 [ if model.isGeneratingQuote then
@@ -1099,15 +1099,15 @@ viewFormStep model =
             div []
                 [ case model.logo of
                     Just logo ->
-                        div [ class "flex justify-center mt-6 mb-20" ]
-                            [ img [ src logo, class "h-12", alt "Organization Logo" ] [] ]
+                        div [ class "flex justify-center mt-4 sm:mt-6 mb-12 sm:mb-20" ]
+                            [ img [ src logo, class "h-10 sm:h-12", alt "Organization Logo" ] [] ]
 
                     Nothing ->
-                        div [ class "flex justify-center mt-6 mb-20" ]
-                            [ img [ src "/images/medicare-max-logo.png", class "h-12", alt "Medicare Max Logo" ] [] ]
-                , div [ class "text-center mb-6" ]
-                    [ h1 [ class "text-3xl font-bold text-[#101828]" ] [ text "Let's Get Some Details" ]
-                    , p [ class "text-[#475467] mt-2" ] [ text "We use this information to get you the most accurate quote for your area." ]
+                        div [ class "flex justify-center mt-4 sm:mt-6 mb-12 sm:mb-20" ]
+                            [ img [ src "/images/medicare-max-logo.png", class "h-10 sm:h-12", alt "Medicare Max Logo" ] [] ]
+                , div [ class "text-center mb-6 px-2 sm:px-0" ]
+                    [ h1 [ class "text-2xl sm:text-3xl font-bold text-[#101828]" ] [ text "Let's Get Some Details" ]
+                    , p [ class "text-[#475467] mt-2 text-sm sm:text-base" ] [ text "We use this information to get you the most accurate quote for your area." ]
                     ]
                 , viewCombinedForm model
                 , viewError model.error
@@ -1124,16 +1124,16 @@ viewFormStep model =
             div []
                 [ viewFormSummary model
                 , viewError model.error
-                , div [ class "flex justify-between mt-4" ]
+                , div [ class "flex flex-col sm:flex-row justify-between gap-3 sm:gap-0 mt-4" ]
                     [ button
                         [ type_ "button"
-                        , class "flex justify-center py-2 px-4 border border-[#D0D5DD] rounded-md shadow-sm text-sm font-medium text-[#344054] bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#3DBDEC]"
+                        , class "w-full sm:w-auto flex justify-center py-2 px-4 border border-[#D0D5DD] rounded-md shadow-sm text-sm font-medium text-[#344054] bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#3DBDEC]"
                         , onClick PrevStep
                         ]
                         [ text "Back" ]
                     , button
                         [ type_ "button"
-                        , class "flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-[#03045E] hover:bg-[#02034e] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#3DBDEC]"
+                        , class "w-full sm:w-auto flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-[#03045E] hover:bg-[#02034e] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#3DBDEC]"
                         , onClick SubmitForm
                         , disabled (model.isSubmitting || not (isFormValid model))
                         ]
@@ -1151,15 +1151,15 @@ viewFormStep model =
 
 viewCombinedForm : Model -> Html Msg
 viewCombinedForm model =
-    div []
-        [ h3 [ class "font-medium text-lg mb-4 text-gray-700" ] [ text "Contact Information" ]
-        , div [ class "grid grid-cols-1 md:grid-cols-2 gap-4 mb-6" ]
+    div [ class "px-2 sm:px-0" ]
+        [ h3 [ class "font-medium text-base sm:text-lg mb-4 text-gray-700" ] [ text "Contact Information" ]
+        , div [ class "grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 mb-6" ]
             [ inputField "First Name" "text" model.firstName UpdateFirstName False
             , inputField "Last Name" "text" model.lastName UpdateLastName False
             , inputField "Phone Number" "tel" (formatPhoneNumber model.phoneNumber) UpdatePhoneNumber False
             , inputField "Email Address" "email" model.email UpdateEmail model.emailReadOnly
             ]
-        , div [ class "grid grid-cols-1 md:grid-cols-2 gap-4 mb-6" ]
+        , div [ class "grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 mb-6" ]
             [ div [ class "col-span-1" ]
                 [ label [ class "block text-sm font-medium text-gray-700 mb-1" ] [ text "Date of Birth" ]
                 , input
@@ -1207,13 +1207,13 @@ viewCombinedForm model =
 
           else
             text ""
-        , div [ class "grid grid-cols-1 md:grid-cols-2 gap-6 mb-6" ]
+        , div [ class "grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6 mb-6" ]
             [ div [ class "col-span-1" ]
                 [ label [ class "block text-sm font-medium text-gray-700 mb-2" ] [ text "Gender" ]
                 , div [ class "grid grid-cols-2 gap-2" ]
                     [ label
                         [ class
-                            ("flex items-center justify-center px-4 py-2 rounded-lg border-2 cursor-pointer transition-all "
+                            ("flex items-center justify-center px-3 sm:px-4 py-2 rounded-lg border-2 cursor-pointer transition-all text-sm sm:text-base "
                                 ++ (if model.gender == "M" then
                                         "border-[#03045E] bg-[#F9F5FF] text-[#03045E]"
 
@@ -1234,7 +1234,7 @@ viewCombinedForm model =
                         ]
                     , label
                         [ class
-                            ("flex items-center justify-center px-4 py-2 rounded-lg border-2 cursor-pointer transition-all "
+                            ("flex items-center justify-center px-3 sm:px-4 py-2 rounded-lg border-2 cursor-pointer transition-all text-sm sm:text-base "
                                 ++ (if model.gender == "F" then
                                         "border-[#03045E] bg-[#F9F5FF] text-[#03045E]"
 
@@ -1260,7 +1260,7 @@ viewCombinedForm model =
                 , div [ class "grid grid-cols-2 gap-2" ]
                     [ label
                         [ class
-                            ("flex items-center justify-center px-4 py-2 rounded-lg border-2 cursor-pointer transition-all "
+                            ("flex items-center justify-center px-3 sm:px-4 py-2 rounded-lg border-2 cursor-pointer transition-all text-sm sm:text-base "
                                 ++ (if model.tobacco then
                                         "border-[#03045E] bg-[#F9F5FF] text-[#03045E]"
 
@@ -1281,7 +1281,7 @@ viewCombinedForm model =
                         ]
                     , label
                         [ class
-                            ("flex items-center justify-center px-4 py-2 rounded-lg border-2 cursor-pointer transition-all "
+                            ("flex items-center justify-center px-3 sm:px-4 py-2 rounded-lg border-2 cursor-pointer transition-all text-sm sm:text-base "
                                 ++ (if not model.tobacco then
                                         "border-[#03045E] bg-[#F9F5FF] text-[#03045E]"
 
@@ -1303,8 +1303,8 @@ viewCombinedForm model =
                     ]
                 ]
             ]
-        , h3 [ class "font-medium text-lg mb-4 text-gray-700" ] [ text "Current Coverage (Optional)" ]
-        , div [ class "grid grid-cols-1 md:grid-cols-2 gap-4 mb-6" ]
+        , h3 [ class "font-medium text-base sm:text-lg mb-4 text-gray-700" ] [ text "Current Coverage (Optional)" ]
+        , div [ class "grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 mb-6" ]
             [ div [ class "col-span-1" ]
                 [ label [ class "block text-sm font-medium text-gray-700 mb-1" ] [ text "Current Carrier" ]
                 , div [ class "relative" ]
@@ -1423,8 +1423,8 @@ viewError maybeError =
 
 viewFormSummary : Model -> Html Msg
 viewFormSummary model =
-    div [ class "border rounded-md p-4 mb-4" ]
-        [ h3 [ class "font-medium text-lg mb-3" ] [ text "Review Your Information" ]
+    div [ class "border rounded-md p-3 sm:p-4 mb-4" ]
+        [ h3 [ class "font-medium text-base sm:text-lg mb-3" ] [ text "Review Your Information" ]
         , summaryItem "Email" model.email
         , summaryItem "Name" (model.firstName ++ " " ++ model.lastName)
         , summaryItem "Phone" (formatPhoneNumber model.phoneNumber)
@@ -1474,7 +1474,7 @@ viewFormSummary model =
 
 summaryItem : String -> String -> Html Msg
 summaryItem label value =
-    div [ class "flex justify-between py-1 border-b last:border-b-0" ]
+    div [ class "flex justify-between py-1 border-b last:border-b-0 text-sm sm:text-base" ]
         [ span [ class "text-gray-600" ] [ text label ]
         , span [ class "font-medium" ] [ text value ]
         ]
