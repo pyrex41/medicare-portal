@@ -1385,6 +1385,8 @@ viewNavHeader model =
                     False
     in
     if isQuoteFlowPage then
+        text ""
+        {--
         -- Simplified header with just the logo for quote flow pages
         nav [ class "bg-white border-b border-gray-200" ]
             [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8" ]
@@ -1400,6 +1402,7 @@ viewNavHeader model =
                     ]
                 ]
             ]
+        --}
 
     else
         -- Full header with navigation for other pages

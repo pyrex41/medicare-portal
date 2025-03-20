@@ -972,17 +972,17 @@ view model =
                               else
                                 text ""
                             ]
-                        , case model.quoteId of
-                            Just quoteId ->
+                        , case ( model.quoteId, model.orgSlug ) of
+                            ( Just quoteId, Just orgSlug ) ->
                                 div [ class "flex justify-center" ]
                                     [ button
                                         [ class "text-purple-600 hover:text-purple-800 underline text-xs cursor-pointer"
-                                        , onClick (NavigateTo ("/quote?id=" ++ quoteId))
+                                        , onClick (NavigateTo ("/self-onboarding/" ++ orgSlug ++ "?id=" ++ quoteId))
                                         ]
                                         [ text "Change" ]
                                     ]
 
-                            Nothing ->
+                            _ ->
                                 text ""
                         ]
                     ]

@@ -64,7 +64,7 @@ type alias QuoteInfo =
     , dateOfBirth : String
     , tobacco : Bool
     , gender : String
-    , currentCarrier : String
+    , currentCarrier : Maybe String
     , orgId : String
     }
 
@@ -143,7 +143,7 @@ quoteInfoDecoder =
                         (D.at [ "contact", "dateOfBirth" ] D.string)
                         (D.at [ "contact", "tobacco" ] D.bool)
                         (D.at [ "contact", "gender" ] D.string)
-                        (D.at [ "contact", "currentCarrier" ] D.string)
+                        (D.at [ "contact", "currentCarrier" ] (D.nullable D.string))
                         (D.field "orgId" D.string)
 
                 else
@@ -233,12 +233,7 @@ update msg model =
                                 , dateOfBirth = quoteInfo.dateOfBirth
                                 , tobacco = quoteInfo.tobacco
                                 , gender = quoteInfo.gender
-                                , currentCarrier =
-                                    if String.isEmpty quoteInfo.currentCarrier then
-                                        Nothing
-
-                                    else
-                                        Just quoteInfo.currentCarrier
+                                , currentCarrier = quoteInfo.currentCarrier
                                 , orgId = Just quoteInfo.orgId
                             }
 

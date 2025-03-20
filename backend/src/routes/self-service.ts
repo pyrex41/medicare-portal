@@ -289,8 +289,11 @@ export function createSelfServiceRoutes() {
         return { error: 'Internal server error' };
       }
     })
-    .get('/api/self-service/:orgSlug', async ({ params, set, request }) => {
+    .get('/api/self-service/:orgSlug', async ({ params, query, set, request }) => {
       const { orgSlug } = params;
+      const { email, id } = query as { email?: string; id?: string };
+      
+      logger.info(`Self-service request for orgSlug=${orgSlug}, email=${email || 'none'}, quoteId=${id || 'none'}`);
       
       try {
         // For the 'latest' slug, get the current user's organization
@@ -303,8 +306,8 @@ export function createSelfServiceRoutes() {
           
           // Get organization from central database
           const db = new Database();
-          const orgResult = await db.fetchOne<{ id: number, slug: string }>(
-            'SELECT id, slug FROM organizations WHERE id = ?',
+          const orgResult = await db.fetchOne<{ id: number, slug: string, logo_data: string | null }>(
+            'SELECT id, slug, logo_data FROM organizations WHERE id = ?',
             [userFromSession.organization_id]
           );
           
@@ -317,14 +320,15 @@ export function createSelfServiceRoutes() {
             success: true,
             orgId: userFromSession.organization_id.toString(),
             orgSlug: orgResult.slug,
-            selfOnboardingUrl: `${config.PUBLIC_URL}/self-onboarding/${orgResult.slug}`
+            selfOnboardingUrl: `${config.PUBLIC_URL}/self-onboarding/${orgResult.slug}`,
+            logo: orgResult.logo_data
           };
         }
         
         // Regular slug lookup
         const db = new Database();
         const result = await db.query(
-          'SELECT id FROM organizations WHERE slug = ?',
+          'SELECT id, logo_data FROM organizations WHERE slug = ?',
           [orgSlug]
         );
 
@@ -334,14 +338,104 @@ export function createSelfServiceRoutes() {
         }
 
         const orgId = result[0].id;
+        const orgIdStr = orgId.toString();
+        const logo = result[0].logo_data;
         
-        // Return basic organization info for the frontend
-        return {
+        // Create response object with organization info
+        const response = {
           success: true,
-          orgId: orgId.toString(),
+          orgId: orgIdStr,
           orgSlug,
-          selfOnboardingUrl: `${config.PUBLIC_URL}/self-onboarding/${orgSlug}`
+          selfOnboardingUrl: `${config.PUBLIC_URL}/self-onboarding/${orgSlug}`,
+          logo
         };
+        
+        // Try to find contact information if email or quoteId provided
+        if (email || id) {
+          try {
+            const orgDb = await Database.getOrgDb(orgIdStr);
+            const client = orgDb.getClient();
+            let contactResult;
+            
+            // First try by email if provided
+            if (email) {
+              logger.info(`Looking up contact by email: ${email}`);
+              contactResult = await client.execute({
+                sql: `SELECT 
+                  id,
+                  email, 
+                  first_name AS firstName, 
+                  last_name AS lastName,
+                  phone_number AS phone,
+                  zip_code AS zipCode,
+                  state,
+                  gender,
+                  birth_date AS dateOfBirth,
+                  tobacco_user AS tobacco,
+                  current_carrier AS currentCarrier,
+                  plan_type AS planType
+                FROM contacts 
+                WHERE email = ?`,
+                args: [email]
+              });
+            }
+            
+            // If no results and we have a quoteId, try that
+            if ((!contactResult || contactResult.rows.length === 0) && id) {
+              // Extract contactId from quoteId (base36 encoded)
+              try {
+                logger.info(`Looking up contact by quoteId: ${id}`);
+                // Decode the quoteId to get contactId
+                const decoded = id.split('-');
+                if (decoded.length >= 2) {
+                  const contactId = parseInt(decoded[1], 36);
+                  
+                  contactResult = await client.execute({
+                    sql: `SELECT 
+                      id,
+                      email, 
+                      first_name AS firstName, 
+                      last_name AS lastName,
+                      phone_number AS phone,
+                      zip_code AS zipCode,
+                      state,
+                      gender,
+                      birth_date AS dateOfBirth,
+                      tobacco_user AS tobacco,
+                      current_carrier AS currentCarrier,
+                      plan_type AS planType
+                    FROM contacts 
+                    WHERE id = ?`,
+                    args: [contactId]
+                  });
+                }
+              } catch (err) {
+                logger.warn(`Error decoding quoteId ${id}: ${err}`);
+              }
+            }
+            
+            // If we found a contact, add it to the response
+            if (contactResult && contactResult.rows.length > 0) {
+              const contact = contactResult.rows[0];
+              // Convert tobacco_user from number to boolean
+              contact.tobacco = contact.tobacco === 1;
+              
+              logger.info(`Found contact for ${email || id}`);
+              let output = {
+                ...response,
+                contact
+              };
+              logger.info(`Output: ${JSON.stringify(output)}`);
+              return output;
+            }
+          } catch (contactError) {
+            logger.error(`Error looking up contact: ${contactError}`);
+            // Continue without contact info
+          }
+        }
+        
+        // Return basic organization info for the frontend if no contact was found
+        return response;
       } catch (error) {
         logger.error(`Error in self-service org slug endpoint: ${error}`);
         set.status = 500;

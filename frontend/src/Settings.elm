@@ -101,6 +101,7 @@ type alias Model =
     , loadedCarriers : List String
     , linkCopied : Bool
     , selfOnboardingUrl : Maybe String
+    , logo : Maybe String
     }
 
 
@@ -168,6 +169,7 @@ type Msg
 
 type alias SettingsResponse =
     { orgSettings : Settings
+    , logo : Maybe String
     , canEditOrgSettings : Bool
     }
 
@@ -194,6 +196,7 @@ init flags =
       , loadedCarriers = []
       , linkCopied = False
       , selfOnboardingUrl = Nothing
+      , logo = Nothing
       }
     , Cmd.batch
         [ fetchSettings
@@ -256,7 +259,12 @@ update msg model =
         GotSettings result ->
             case result of
                 Ok response ->
-                    ( { model | orgSettings = Just response.orgSettings, status = Loaded, isLoading = False }
+                    ( { model
+                        | orgSettings = Just response.orgSettings
+                        , logo = response.logo
+                        , status = Loaded
+                        , isLoading = False
+                      }
                     , Cmd.none
                     )
 
@@ -426,7 +434,7 @@ update msg model =
                             }
                     in
                     ( { model | orgSettings = Just newSettings }
-                    , saveSettings newSettings
+                    , saveSettings { settings = Just newSettings, logo = model.logo }
                     )
 
                 Nothing ->
@@ -481,7 +489,7 @@ update msg model =
                                     }
                     in
                     ( { model | orgSettings = Just newSettings }
-                    , saveSettings newSettings
+                    , saveSettings { settings = Just newSettings, logo = model.logo }
                     )
 
                 Nothing ->
@@ -570,7 +578,14 @@ update msg model =
             )
 
         GotLogoUrl url ->
-            updateSettings model (\s -> { s | logo = Just url })
+            case model.orgSettings of
+                Just settings ->
+                    ( { model | logo = Just url, orgSettings = Just { settings | logo = Just url } }
+                    , saveSettings { settings = Just { settings | logo = Just url }, logo = Just url }
+                    )
+
+                Nothing ->
+                    ( model, Cmd.none )
 
         LogoUploaded result ->
             case result of
@@ -579,32 +594,32 @@ update msg model =
 
                 Err _ ->
                     ( { model | status = Error "Failed to upload logo" }, Cmd.none )
-                    
+
         CopySelfOnboardingLink ->
             let
                 slug =
                     model.currentUser
                         |> Maybe.map .organizationSlug
                         |> Maybe.withDefault ""
-                
+
                 url =
                     model.selfOnboardingUrl
                         |> Maybe.withDefault ("http://localhost:5173/self-onboarding/" ++ slug)
-                            
+
                 -- Command to copy link to clipboard using ports
                 copyCmd =
                     Ports.copyToClipboard url
             in
             ( { model | linkCopied = False }, copyCmd )
-            
+
         LinkCopied success ->
             ( { model | linkCopied = success }, Cmd.none )
-            
+
         GotSelfOnboardingUrl result ->
             case result of
                 Ok response ->
                     ( { model | selfOnboardingUrl = Just response.selfOnboardingUrl }, Cmd.none )
-                    
+
                 Err _ ->
                     ( model, Cmd.none )
 
@@ -618,20 +633,20 @@ updateSettings model updateFn =
                     updateFn settings
             in
             ( { model | orgSettings = Just newSettings }
-            , saveSettings newSettings
+            , saveSettings { settings = Just newSettings, logo = model.logo }
             )
 
         Nothing ->
             ( model, Cmd.none )
 
 
-saveSettings : Settings -> Cmd Msg
-saveSettings settings =
+saveSettings : { settings : Maybe Settings, logo : Maybe String } -> Cmd Msg
+saveSettings { settings, logo } =
     Http.request
         { method = "PUT"
         , headers = []
         , url = "/api/settings/org"
-        , body = jsonBody (encodeSettings settings)
+        , body = jsonBody (Encode.object [ ( "settings", Maybe.withDefault Encode.null (Maybe.map encodeSettings settings) ), ( "logo", Maybe.withDefault Encode.null (Maybe.map Encode.string logo) ) ])
         , expect = expectJson SettingsSaved settingsObjectDecoder
         , timeout = Nothing
         , tracker = Nothing
@@ -737,7 +752,7 @@ viewSettingsContent maybeSettings canEdit expandedSections planType model =
     case maybeSettings of
         Just settings ->
             div [ class "space-y-6" ]
-                [ viewBrandSettings settings
+                [ viewBrandSettings settings model
                 , viewEmailSettings settings
                 , viewSelfOnboardingLink model
                 , viewExpandableSection "Carrier Contracts"
@@ -753,8 +768,8 @@ viewSettingsContent maybeSettings canEdit expandedSections planType model =
                 [ text "Using organization settings" ]
 
 
-viewBrandSettings : Settings -> Html Msg
-viewBrandSettings settings =
+viewBrandSettings : Settings -> Model -> Html Msg
+viewBrandSettings settings model =
     div [ class "bg-white shadow rounded-lg p-6" ]
         [ h2 [ class "text-lg font-medium mb-4" ] [ text "Agency Settings" ]
         , div [ class "space-y-6" ]
@@ -806,7 +821,7 @@ viewBrandSettings settings =
                     )
                 , viewFormGroup "Logo"
                     (div [ class "flex items-center space-x-4" ]
-                        [ case settings.logo of
+                        [ case model.logo of
                             Just logoUrl ->
                                 div [ class "flex items-center space-x-4" ]
                                     [ img
@@ -866,7 +881,7 @@ viewSelfOnboardingLink model =
                         model.currentUser
                             |> Maybe.map .organizationSlug
                             |> Maybe.withDefault ""
-                            
+
                     selfOnboardingUrl =
                         model.selfOnboardingUrl
                             |> Maybe.withDefault ("/self-onboarding/" ++ slug)
@@ -883,7 +898,14 @@ viewSelfOnboardingLink model =
                         [ class "px-4 py-2 text-sm bg-purple-600 text-white rounded hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
                         , onClick CopySelfOnboardingLink
                         ]
-                        [ text (if model.linkCopied then "Copied!" else "Copy Link") ]
+                        [ text
+                            (if model.linkCopied then
+                                "Copied!"
+
+                             else
+                                "Copy Link"
+                            )
+                        ]
                     ]
                 ]
             ]
@@ -1076,8 +1098,9 @@ settingsDecoder =
         |> Decode.andThen
             (\success ->
                 if success then
-                    Decode.map2 SettingsResponse
+                    Decode.map3 SettingsResponse
                         (Decode.field "orgSettings" settingsObjectDecoder)
+                        (Decode.field "logo" (Decode.nullable Decode.string))
                         (Decode.field "canEditOrgSettings" boolDecoder)
 
                 else
@@ -1200,7 +1223,23 @@ viewHeader =
 viewSettings : Model -> Html Msg
 viewSettings model =
     div [ class "space-y-8" ]
-        [ viewSettingsContent model.orgSettings True model.expandedSections model.planType model
+        [ case model.orgSettings of
+            Just settings ->
+                div [ class "space-y-6" ]
+                    [ viewBrandSettings settings model
+                    , viewEmailSettings settings
+                    , viewSelfOnboardingLink model
+                    , viewExpandableSection "Carrier Contracts"
+                        (viewCarriersGrid settings model)
+                        model.expandedSections
+                    , viewExpandableSection "State & Carrier Settings"
+                        (viewStateCarrierGrid settings model)
+                        model.expandedSections
+                    ]
+
+            Nothing ->
+                div [ class "text-gray-500 italic" ]
+                    [ text "Loading settings..." ]
         , viewBottomBar model
         ]
 

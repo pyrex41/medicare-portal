@@ -59,13 +59,13 @@ type alias Contact =
     , state : String
     , contactOwnerId : Maybe Int
     , contactOwner : Maybe User
-    , currentCarrier : String
+    , currentCarrier : Maybe String
     , effectiveDate : String
     , birthDate : String
     , tobaccoUser : Bool
     , gender : String
     , zipCode : String
-    , planType : String
+    , planType : Maybe String
     , status : String
     , agentId : Maybe Int
     , lastEmailed : Maybe String
@@ -121,13 +121,13 @@ type alias ContactForm =
     , phoneNumber : String
     , state : String
     , contactOwnerId : Maybe Int
-    , currentCarrier : String
+    , currentCarrier : Maybe String
     , effectiveDate : String
     , birthDate : String
     , tobaccoUser : Bool
     , gender : String
     , zipCode : String
-    , planType : String
+    , planType : Maybe String
     }
 
 
@@ -320,13 +320,13 @@ emptyForm =
     , phoneNumber = ""
     , state = ""
     , contactOwnerId = Nothing
-    , currentCarrier = ""
+    , currentCarrier = Nothing
     , effectiveDate = ""
     , birthDate = ""
     , tobaccoUser = False
     , gender = "M"
     , zipCode = ""
-    , planType = ""
+    , planType = Nothing
     }
 
 
@@ -555,7 +555,7 @@ update msg model =
                             { form | contactOwnerId = String.toInt value }
 
                         CurrentCarrier ->
-                            { form | currentCarrier = value }
+                            { form | currentCarrier = Just value }
 
                         EffectiveDate ->
                             { form | effectiveDate = value }
@@ -573,7 +573,7 @@ update msg model =
                             { form | zipCode = value }
 
                         PlanType ->
-                            { form | planType = value }
+                            { form | planType = Just value }
 
                 cmd =
                     if field == ZipCode && String.length value == 5 then
@@ -640,7 +640,7 @@ update msg model =
                             { form | contactOwnerId = String.toInt value }
 
                         CurrentCarrier ->
-                            { form | currentCarrier = value }
+                            { form | currentCarrier = Just value }
 
                         EffectiveDate ->
                             { form | effectiveDate = value }
@@ -658,7 +658,7 @@ update msg model =
                             { form | zipCode = value }
 
                         PlanType ->
-                            { form | planType = value }
+                            { form | planType = Just value }
 
                 cmd =
                     if field == ZipCode && String.length value == 5 then
@@ -1613,6 +1613,9 @@ viewTableRow model contact =
 
                         Nothing ->
                             "Default"
+
+        currentCarrier =
+            Maybe.withDefault "" contact.currentCarrier
     in
     [ tr [ class "hover:bg-gray-50 transition-colors duration-200" ]
         [ td
@@ -1650,7 +1653,7 @@ viewTableRow model contact =
         , td [ class cellClass ]
             [ text agentName ]
         , td [ class cellClass ]
-            [ text contact.currentCarrier ]
+            [ text currentCarrier ]
         , td [ class cellClass ]
             [ text contact.effectiveDate ]
         , td [ class cellClass ]
@@ -1767,13 +1770,13 @@ contactDecoder =
         |> Pipeline.required "state" Decode.string
         |> Pipeline.optional "contact_owner_id" (Decode.nullable Decode.int) Nothing
         |> Pipeline.optional "contact_owner" (Decode.nullable userDecoder) Nothing
-        |> Pipeline.required "current_carrier" Decode.string
+        |> Pipeline.optional "current_carrier" (Decode.nullable Decode.string) Nothing
         |> Pipeline.required "effective_date" Decode.string
         |> Pipeline.required "birth_date" Decode.string
         |> Pipeline.required "tobacco_user" Decode.bool
         |> Pipeline.required "gender" Decode.string
         |> Pipeline.required "zip_code" Decode.string
-        |> Pipeline.required "plan_type" Decode.string
+        |> Pipeline.optional "plan_type" (Decode.nullable Decode.string) Nothing
         |> Pipeline.optional "status" Decode.string "New"
         |> Pipeline.required "agent_id" (Decode.nullable Decode.int)
         |> Pipeline.required "last_emailed" (Decode.nullable Decode.string)
@@ -1795,6 +1798,23 @@ filterOptionsDecoder =
 
 encodeContactForm : ContactForm -> Encode.Value
 encodeContactForm form =
+    let
+        planType =
+            case form.planType of
+                Just value ->
+                    Encode.string value
+
+                Nothing ->
+                    Encode.null
+
+        currentCarrier =
+            case form.currentCarrier of
+                Just value ->
+                    Encode.string value
+
+                Nothing ->
+                    Encode.null
+    in
     Encode.object
         [ ( "first_name", Encode.string form.firstName )
         , ( "last_name", Encode.string form.lastName )
@@ -1802,13 +1822,13 @@ encodeContactForm form =
         , ( "phone_number", Encode.string (String.filter Char.isDigit form.phoneNumber |> String.left 10) )
         , ( "state", Encode.string form.state )
         , ( "contact_owner_id", Maybe.map Encode.int form.contactOwnerId |> Maybe.withDefault Encode.null )
-        , ( "current_carrier", Encode.string form.currentCarrier )
+        , ( "current_carrier", currentCarrier )
         , ( "effective_date", Encode.string form.effectiveDate )
         , ( "birth_date", Encode.string form.birthDate )
         , ( "tobacco_user", Encode.bool form.tobaccoUser )
         , ( "gender", Encode.string form.gender )
         , ( "zip_code", Encode.string form.zipCode )
-        , ( "plan_type", Encode.string form.planType )
+        , ( "plan_type", planType )
         ]
 
 
@@ -2412,7 +2432,10 @@ sortContacts maybeColumn direction contacts =
                                     (Maybe.map .firstName b.contactOwner |> Maybe.withDefault "Default")
 
                         CurrentCarrierCol ->
-                            \a b -> compare a.currentCarrier b.currentCarrier
+                            \a b ->
+                                compare
+                                    (Maybe.withDefault "" a.currentCarrier)
+                                    (Maybe.withDefault "" b.currentCarrier)
 
                         EffectiveDateCol ->
                             \a b -> compare a.effectiveDate b.effectiveDate
@@ -2431,10 +2454,28 @@ filterContacts : Filters -> String -> Time.Posix -> List Contact -> List Contact
 filterContacts filters searchQuery currentTime contacts =
     contacts
         |> filterBySearch searchQuery
-        |> filterByList .currentCarrier filters.carriers
+        |> filterByCarriers filters.carriers
         |> filterByList .state filters.states
         |> filterByAge filters.ageRange
         |> filterByAgents filters.agents
+
+
+filterByCarriers : List String -> List Contact -> List Contact
+filterByCarriers carriers contacts =
+    if List.isEmpty carriers then
+        contacts
+
+    else
+        List.filter
+            (\contact ->
+                case contact.currentCarrier of
+                    Just carrier ->
+                        List.member carrier carriers
+
+                    Nothing ->
+                        False
+            )
+            contacts
 
 
 filterBySearch : String -> List Contact -> List Contact
@@ -2451,7 +2492,13 @@ filterBySearch query contacts =
             (\contact ->
                 String.contains loweredQuery (String.toLower contact.firstName)
                     || String.contains loweredQuery (String.toLower contact.lastName)
-                    || String.contains loweredQuery (String.toLower contact.currentCarrier)
+                    || (case contact.currentCarrier of
+                            Just carrier ->
+                                String.contains loweredQuery (String.toLower carrier)
+
+                            Nothing ->
+                                False
+                       )
             )
             contacts
 
@@ -2616,6 +2663,9 @@ viewContactForm model form updateMsg submitMsg buttonText isSubmitting =
                 Nothing ->
                     defaultAgentId
 
+        selectedCarrier =
+            Maybe.withDefault "" form.currentCarrier
+
         emailField =
             div [ class "form-group mb-3 relative" ]
                 [ Html.label [ class "block text-xs font-medium text-gray-700 mb-1" ]
@@ -2668,8 +2718,8 @@ viewContactForm model form updateMsg submitMsg buttonText isSubmitting =
             , viewFormInput "Last Name" "text" form.lastName LastName updateMsg True
             , emailField
             , viewFormInput "Phone Number" "text" form.phoneNumber PhoneNumber updateMsg True
-            , viewFormSelect "Current Carrier" form.currentCarrier CurrentCarrier updateMsg carrierOptions
-            , viewFormSelect "Plan Type" form.planType PlanType updateMsg planTypeOptions
+            , viewFormSelect "Current Carrier" selectedCarrier CurrentCarrier updateMsg carrierOptions
+            , viewFormSelect "Plan Type" (Maybe.withDefault "" form.planType) PlanType updateMsg planTypeOptions
             , viewFormSelectWithValue "Assigned Agent" selectedAgentId ContactOwnerId updateMsg agentOptions
             , viewFormInput "Effective Date" "date" form.effectiveDate EffectiveDate updateMsg True
             , viewFormInput "Birth Date" "date" form.birthDate BirthDate updateMsg True
@@ -2959,7 +3009,7 @@ viewExpandedContent contact =
             )
         , viewExpandedField "Gender" contact.gender
         , viewExpandedField "ZIP Code" contact.zipCode
-        , viewExpandedField "Plan Type" contact.planType
+        , viewExpandedField "Plan Type" (Maybe.withDefault "" contact.planType)
         ]
 
 
@@ -3180,16 +3230,23 @@ isContactFormValid form =
         > 0
         && String.length form.state
         > 0
-        && String.length form.currentCarrier
-        > 0
         && String.length form.effectiveDate
         > 0
         && String.length form.birthDate
         > 0
         && String.length form.zipCode
         > 0
-        && String.length form.planType
-        > 0
+        && isJust form.planType
+
+
+isJust : Maybe a -> Bool
+isJust maybeValue =
+    case maybeValue of
+        Just _ ->
+            True
+
+        Nothing ->
+            False
 
 
 fetchCarriers : Cmd Msg

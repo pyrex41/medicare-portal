@@ -62,9 +62,9 @@ export const settingsRoutes = new Elysia()
     const db = new Database();
 
     try {
-        // Get organization settings
-        const orgSettingsRow = await db.fetchOne<{ org_settings: string | null }>(
-            'SELECT org_settings FROM organizations WHERE id = ?',
+        // Get organization settings and logo
+        const orgRow = await db.fetchOne<{ org_settings: string | null, logo_data: string | null }>(
+            'SELECT org_settings, logo_data FROM organizations WHERE id = ?',
             [user.organization_id]
         );
         
@@ -73,8 +73,8 @@ export const settingsRoutes = new Elysia()
         // Parse the JSON string into an object
         let orgSettings: BaseSettings;
         try {
-            orgSettings = orgSettingsRow?.org_settings 
-                ? { ...defaultSettings, ...JSON.parse(orgSettingsRow.org_settings) }
+            orgSettings = orgRow?.org_settings 
+                ? { ...defaultSettings, ...JSON.parse(orgRow.org_settings) }
                 : { ...defaultSettings };
 
             // If we have states and carriers but no settings array, generate them
@@ -120,7 +120,8 @@ export const settingsRoutes = new Elysia()
 
         const response = {
             success: true,
-            orgSettings,  // Now it's already an object, not a string
+            orgSettings,
+            logo: orgRow?.logo_data || null,
             agentSettings,
             canEditOrgSettings
         };
@@ -161,10 +162,13 @@ export const settingsRoutes = new Elysia()
         if (scope === 'org') {
             logger.info('Updating organization settings');
             
-            // Update organization settings
+            // Extract logo from settings if it exists
+            const { logo, ...settingsWithoutLogo } = typedBody.settings || typedBody;
+            
+            // Update organization settings and logo separately
             await db.execute(
-                'UPDATE organizations SET org_settings = ? WHERE id = ?',
-                [JSON.stringify(typedBody), user.organization_id]
+                'UPDATE organizations SET org_settings = ?, logo_data = ? WHERE id = ?',
+                [JSON.stringify(settingsWithoutLogo), logo || null, user.organization_id]
             );
 
             // For basic tier, also update the admin agent's settings
@@ -184,9 +188,8 @@ export const settingsRoutes = new Elysia()
                          VALUES (?, true, ?)
                          ON CONFLICT (agent_id) DO UPDATE
                          SET inherit_org_settings = true, settings = ?`,
-                        [adminAgentRow.id, JSON.stringify(typedBody), JSON.stringify(typedBody)]
+                        [adminAgentRow.id, JSON.stringify(settingsWithoutLogo), JSON.stringify(settingsWithoutLogo)]
                     );
-                    logger.info('Successfully synced settings to admin agent');
                 }
             }
         } else if (scope === 'agent') {
@@ -267,6 +270,60 @@ export const settingsRoutes = new Elysia()
       return { success: false, error: 'Failed to fetch GI recommendations' };
     }
   })
+
+  // Fetch the logo for the organization
+  .get('/api/settings/logo', async ({ cookie }) => {
+    const user = await validateSession(cookie.session);
+    if (!user?.id) {
+      return { success: false, error: 'No authenticated user' };
+    }
+
+    const db = new Database();
+
+    try {
+      const logo = await db.fetchOne<{ logo_data: string | null }>(
+        'SELECT logo_data FROM organizations WHERE id = ?',
+        [user.organization_id]
+      );
+
+      if (!logo) {
+        return { success: false, error: 'Organization not found' };
+      }
+
+      return {
+        success: true,
+        logo: logo.logo_data
+      };
+
+    } catch (error) {
+      logger.error('Error fetching organization logo:', error);
+      return { success: false, error: 'Failed to fetch organization logo' };
+    }
+  })
+  .get('/api/settings/:orgId/logo', async ({ params }) => {
+    const { orgId } = params;
+    const db = new Database();
+
+    try {
+      const logo = await db.fetchOne<{ logo_data: string | null }>(
+        'SELECT logo_data FROM organizations WHERE id = ?',
+        [orgId]
+      );
+
+      if (!logo) {
+        return { success: false, error: 'Organization logo not found' }; 
+      }
+
+      return {
+        success: true,
+        logo: logo.logo_data
+      };
+    } catch (error) {
+      logger.error('Error fetching organization logo:', error);
+      return { success: false, error: 'Failed to fetch organization logo' };
+    }
+  })
+  
 
   // Update carriers endpoint to use Elysia style
   .get('/api/settings/carriers', async ({ cookie }) => {

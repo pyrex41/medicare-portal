@@ -2,6 +2,7 @@ port module SelfServiceOnboarding exposing (..)
 
 import Browser
 import Browser.Navigation as Nav
+import CarrierNaic exposing (Carrier, carrierDecoder)
 import Date exposing (Date)
 import Dict
 import Html exposing (..)
@@ -34,6 +35,7 @@ port clearDebugInfo : () -> Cmd msg
 type alias Model =
     { orgId : Maybe String
     , orgSlug : Maybe String
+    , logo : Maybe String
     , email : String
     , firstName : String
     , lastName : String
@@ -92,6 +94,7 @@ type alias UrlParams =
     { orgId : Maybe String
     , email : Maybe String
     , hash : Maybe String
+    , quoteId : Maybe String
     }
 
 
@@ -104,6 +107,7 @@ init key url =
         initialModel =
             { orgId = Nothing
             , orgSlug = Nothing
+            , logo = Nothing
             , email = ""
             , firstName = ""
             , lastName = ""
@@ -139,8 +143,61 @@ init key url =
     in
     case route of
         SlugRoute slug ->
+            let
+                params =
+                    parseUrlParams url
+
+                email =
+                    params.email
+
+                quoteId =
+                    params.quoteId
+
+                debugInfo =
+                    "Initializing with slug="
+                        ++ slug
+                        ++ ", email="
+                        ++ (email |> Maybe.withDefault "none")
+                        ++ ", quoteId="
+                        ++ (quoteId |> Maybe.withDefault "none")
+                        ++ ", url.query="
+                        ++ (url.query |> Maybe.withDefault "none")
+
+                fetchOrgDetailsCmd =
+                    let
+                        queryParams =
+                            List.filterMap identity
+                                [ Maybe.map (\e -> ( "email", e )) email
+                                , Maybe.map (\q -> ( "id", q )) quoteId
+                                ]
+                                |> List.map (\( k, v ) -> k ++ "=" ++ Url.percentEncode v)
+                                |> String.join "&"
+
+                        apiUrl =
+                            "/api/self-service/"
+                                ++ slug
+                                ++ (if String.isEmpty queryParams then
+                                        ""
+
+                                    else
+                                        "?" ++ queryParams
+                                   )
+                    in
+                    Cmd.batch
+                        [ saveDebugInfo <| "Fetching org details: " ++ apiUrl
+                        , Http.get
+                            { url = apiUrl
+                            , expect = Http.expectJson GotOrgDetails orgDetailsDecoder
+                            }
+                        ]
+            in
             ( { initialModel | orgSlug = Just slug }
-            , Cmd.batch (clearCmd :: fetchOrgDetails slug :: commands)
+            , Cmd.batch
+                (clearCmd
+                    :: saveDebugInfo debugInfo
+                    :: fetchOrgDetailsCmd
+                    :: commands
+                )
             )
 
         QueryRoute ->
@@ -158,29 +215,54 @@ init key url =
                 hash =
                     params.hash
 
+                quoteId =
+                    params.quoteId
+
+                debugInfo =
+                    "Initializing with orgId="
+                        ++ (orgId |> Maybe.withDefault "none")
+                        ++ ", email="
+                        ++ (email |> Maybe.withDefault "none")
+                        ++ ", quoteId="
+                        ++ (quoteId |> Maybe.withDefault "none")
+
                 initCmd =
                     case orgId of
                         Just oid ->
+                            -- If we have an org ID, fetch org details which will include contact if found
                             let
                                 queryParams =
                                     List.filterMap identity
-                                        [ Just ( "orgId", oid )
-                                        , Maybe.map (\e -> ( "email", e )) email
+                                        [ Maybe.map (\e -> ( "email", e )) email
+                                        , Maybe.map (\q -> ( "id", q )) quoteId
                                         , Maybe.map (\h -> ( "hash", h )) hash
                                         ]
                                         |> List.map (\( k, v ) -> k ++ "=" ++ Url.percentEncode v)
                                         |> String.join "&"
+
+                                apiUrl =
+                                    "/api/self-service/"
+                                        ++ oid
+                                        ++ (if String.isEmpty queryParams then
+                                                ""
+
+                                            else
+                                                "?" ++ queryParams
+                                           )
                             in
-                            Http.get
-                                { url = "/api/self-service/init?" ++ queryParams
-                                , expect = Http.expectJson GotInitResponse initResponseDecoder
-                                }
+                            Cmd.batch
+                                [ saveDebugInfo <| "Fetching org details: " ++ apiUrl
+                                , Http.get
+                                    { url = apiUrl
+                                    , expect = Http.expectJson GotOrgDetails orgDetailsDecoder
+                                    }
+                                ]
 
                         Nothing ->
                             Cmd.none
             in
             ( { initialModel | orgId = orgId }
-            , Cmd.batch (clearCmd :: initCmd :: commands)
+            , Cmd.batch (clearCmd :: saveDebugInfo debugInfo :: initCmd :: commands)
             )
 
 
@@ -210,15 +292,23 @@ parseUrlParams url =
     { orgId = getParam "orgId"
     , email = getParam "email"
     , hash = getParam "hash"
+    , quoteId = getParam "id"
     }
 
 
 fetchOrgDetails : String -> Cmd Msg
 fetchOrgDetails slug =
-    Http.get
-        { url = "/api/self-service/" ++ slug
-        , expect = Http.expectJson GotOrgDetails orgDetailsDecoder
-        }
+    let
+        url =
+            "/api/self-service/" ++ slug
+    in
+    Cmd.batch
+        [ saveDebugInfo <| "Fetching org details: " ++ url
+        , Http.get
+            { url = url
+            , expect = Http.expectJson GotOrgDetails orgDetailsDecoder
+            }
+        ]
 
 
 fetchZipInfo : String -> Cmd Msg
@@ -236,6 +326,7 @@ fetchZipInfo zipCode =
 type Msg
     = GotInitResponse (Result Http.Error InitResponse)
     | GotOrgDetails (Result Http.Error OrgDetails)
+    | GotContactData (Result Http.Error ContactResponse)
     | UpdateEmail String
     | UpdateFirstName String
     | UpdateLastName String
@@ -268,13 +359,23 @@ type alias InitResponse =
 type alias OrgDetails =
     { orgId : String
     , orgSlug : String
+    , contact : Maybe Contact
+    , logo : Maybe String
     }
 
 
 type alias Contact =
-    { email : String
-    , firstName : String
+    { firstName : String
     , lastName : String
+    , email : String
+    , phone : String
+    , dateOfBirth : String
+    , gender : String
+    , tobacco : Bool
+    , state : String
+    , zipCode : String
+    , currentCarrier : Maybe String
+    , planType : Maybe String
     , optInQuarterlyUpdates : Bool
     }
 
@@ -298,6 +399,14 @@ type alias QuoteResponse =
     , quoteId : String
     , redirectUrl : String
     , error : Maybe String
+    }
+
+
+type alias ContactResponse =
+    { success : Bool
+    , orgSlug : String
+    , carrierContracts : List Carrier
+    , contact : Contact
     }
 
 
@@ -325,13 +434,66 @@ update msg model =
         GotOrgDetails result ->
             case result of
                 Ok details ->
-                    ( { model | orgId = Just details.orgId, error = Nothing }
-                    , Cmd.none
+                    let
+                        -- Extract contact info if it exists
+                        contact =
+                            details.contact
+
+                        debugInfo =
+                            "OrgDetails: orgId="
+                                ++ details.orgId
+                                ++ ", orgSlug="
+                                ++ details.orgSlug
+                                ++ ", hasContact="
+                                ++ (if details.contact /= Nothing then
+                                        "true"
+
+                                    else
+                                        "false"
+                                   )
+                                ++ (if details.contact /= Nothing then
+                                        ", contactEmail=" ++ (Maybe.map .email contact |> Maybe.withDefault "none")
+
+                                    else
+                                        ""
+                                   )
+                    in
+                    ( { model
+                        | orgId = Just details.orgId
+                        , orgSlug = Just details.orgSlug
+                        , logo = details.logo
+                        , email = Maybe.map .email contact |> Maybe.withDefault model.email
+                        , firstName = Maybe.map .firstName contact |> Maybe.withDefault model.firstName
+                        , lastName = Maybe.map .lastName contact |> Maybe.withDefault model.lastName
+                        , phoneNumber = Maybe.map .phone contact |> Maybe.withDefault model.phoneNumber
+                        , dateOfBirth = Maybe.map .dateOfBirth contact |> Maybe.withDefault model.dateOfBirth
+                        , gender = Maybe.map .gender contact |> Maybe.withDefault model.gender
+                        , tobacco = Maybe.map .tobacco contact |> Maybe.withDefault model.tobacco
+                        , zipCode = Maybe.map .zipCode contact |> Maybe.withDefault model.zipCode
+                        , currentCarrier = Maybe.map .currentCarrier contact |> Maybe.withDefault Nothing |> Maybe.withDefault model.currentCarrier
+                        , optInQuarterlyUpdates = Maybe.map .optInQuarterlyUpdates contact |> Maybe.withDefault model.optInQuarterlyUpdates
+                        , error = Nothing
+                      }
+                    , Cmd.batch
+                        [ saveDebugInfo debugInfo
+
+                        -- If we have a zip code from contact, fetch the zip info
+                        , case Maybe.map .zipCode contact of
+                            Just zip ->
+                                if String.length zip == 5 then
+                                    fetchZipInfo zip
+
+                                else
+                                    Cmd.none
+
+                            Nothing ->
+                                Cmd.none
+                        ]
                     )
 
-                Err _ ->
+                Err error ->
                     ( { model | error = Just "Organization not found or invalid link." }
-                    , Cmd.none
+                    , saveDebugInfo <| "OrgDetails error: " ++ httpErrorToString error
                     )
 
         GotInitResponse result ->
@@ -352,6 +514,21 @@ update msg model =
 
                         optIn =
                             contact |> Maybe.map .optInQuarterlyUpdates |> Maybe.withDefault False
+
+                        debugInfo =
+                            "InitResponse: email="
+                                ++ email
+                                ++ ", firstName="
+                                ++ firstName
+                                ++ ", lastName="
+                                ++ lastName
+                                ++ ", optIn="
+                                ++ (if optIn then
+                                        "true"
+
+                                    else
+                                        "false"
+                                   )
                     in
                     ( { model
                         | email = email
@@ -361,12 +538,12 @@ update msg model =
                         , emailReadOnly = response.emailReadOnly
                         , error = Nothing
                       }
-                    , Cmd.none
+                    , saveDebugInfo debugInfo
                     )
 
-                Err _ ->
+                Err error ->
                     ( { model | error = Just "Failed to load existing contact details. Please try again." }
-                    , Cmd.none
+                    , saveDebugInfo <| "InitResponse error: " ++ httpErrorToString error
                     )
 
         UpdateEmail newEmail ->
@@ -403,19 +580,19 @@ update msg model =
                 | zipCode = filteredZip
                 , isLoadingZipData = String.length filteredZip == 5 && filteredZip /= model.zipCode
                 , state =
-                    if String.length filteredZip /= 5 then
+                    if String.length filteredZip /= 5 || (String.length filteredZip == 5 && filteredZip /= model.zipCode) then
                         Nothing
 
                     else
                         model.state
                 , counties =
-                    if String.length filteredZip /= 5 then
+                    if String.length filteredZip /= 5 || (String.length filteredZip == 5 && filteredZip /= model.zipCode) then
                         []
 
                     else
                         model.counties
                 , selectedCounty =
-                    if String.length filteredZip /= 5 then
+                    if String.length filteredZip /= 5 || (String.length filteredZip == 5 && filteredZip /= model.zipCode) then
                         Nothing
 
                     else
@@ -469,8 +646,8 @@ update msg model =
         UpdatePhoneNumber phone ->
             ( { model | phoneNumber = String.filter Char.isDigit phone |> String.left 10 }, Cmd.none )
 
-        UpdateCurrentPremium premium ->
-            ( { model | currentPremium = premium }, Cmd.none )
+        UpdateCurrentPremium value ->
+            ( { model | currentPremium = String.filter (\c -> Char.isDigit c || c == '.') value }, Cmd.none )
 
         UpdateCurrentCarrier carrier ->
             ( { model | currentCarrier = carrier }, Cmd.none )
@@ -533,7 +710,7 @@ update msg model =
 
                     else
                         ( { model | isSubmitting = False, error = Just "Signup failed. Please try again." }
-                        , saveDebugInfo "SignupResponse: failed (success=false)"
+                        , saveDebugInfo <| "SignupResponse: failed (success=false)"
                         )
 
                 Err error ->
@@ -548,7 +725,7 @@ update msg model =
                         ( { model | isGeneratingQuote = False }
                         , Cmd.batch
                             [ saveDebugInfo <| "QuoteResponse: quoteId=" ++ response.quoteId ++ ", redirectUrl=" ++ response.redirectUrl
-                            , Nav.pushUrl model.key (Builder.absolute [ "quote" ] [ Builder.string "id" response.quoteId ])
+                            , Nav.pushUrl model.key (Builder.absolute [ "compare" ] [ Builder.string "id" response.quoteId ])
                             ]
                         )
 
@@ -602,6 +779,46 @@ update msg model =
                 ( { model | error = Just "Please fill out all required fields for a quote" }
                 , Cmd.none
                 )
+
+        GotContactData result ->
+            case result of
+                Ok response ->
+                    let
+                        contact =
+                            response.contact
+                    in
+                    ( { model
+                        | orgId = Just response.orgSlug
+                        , email = contact.email
+                        , firstName = contact.firstName
+                        , lastName = contact.lastName
+                        , phoneNumber = contact.phone
+                        , dateOfBirth = contact.dateOfBirth
+                        , gender = contact.gender
+                        , tobacco = contact.tobacco
+                        , zipCode = contact.zipCode
+                        , currentCarrier = Maybe.withDefault "" contact.currentCarrier
+                        , optInQuarterlyUpdates = contact.optInQuarterlyUpdates
+                        , error = Nothing
+                      }
+                    , Cmd.batch
+                        [ saveDebugInfo <|
+                            "ContactData: success="
+                                ++ (if response.success then
+                                        "true"
+
+                                    else
+                                        "false"
+                                   )
+                                ++ ", orgSlug="
+                                ++ response.orgSlug
+                        ]
+                    )
+
+                Err error ->
+                    ( { model | error = Just "Failed to load contact data. Please try again." }
+                    , saveDebugInfo <| "ContactData error: " ++ httpErrorToString error
+                    )
 
 
 isFormValid : Model -> Bool
@@ -737,20 +954,71 @@ initResponseDecoder =
 
 contactDecoder : Decoder Contact
 contactDecoder =
-    Decode.map4 Contact
-        (Decode.field "email" Decode.string)
+    Decode.map4
+        (\fn ln em ph ->
+            { firstName = fn
+            , lastName = ln
+            , email = em
+            , phone = ph
+            , dateOfBirth = ""
+            , gender = "M"
+            , tobacco = False
+            , state = ""
+            , zipCode = ""
+            , currentCarrier = Nothing
+            , planType = Nothing
+            , optInQuarterlyUpdates = True
+            }
+        )
         (Decode.field "firstName" Decode.string)
         (Decode.field "lastName" Decode.string)
-        (Decode.maybe (Decode.field "optInQuarterlyUpdates" Decode.bool)
-            |> Decode.map (Maybe.withDefault True)
-        )
+        (Decode.field "email" Decode.string)
+        (Decode.field "phone" Decode.string)
+        |> Decode.andThen
+            (\c ->
+                Decode.map4
+                    (\dob gndr tbc st ->
+                        { c
+                            | dateOfBirth = dob
+                            , gender = gndr
+                            , tobacco = tbc
+                            , state = st
+                        }
+                    )
+                    (Decode.field "dateOfBirth" Decode.string)
+                    (Decode.field "gender" Decode.string)
+                    (Decode.field "tobacco" Decode.bool)
+                    (Decode.field "state" Decode.string)
+            )
+        |> Decode.andThen
+            (\c ->
+                Decode.map3
+                    (\zip cc pt ->
+                        { c
+                            | zipCode = zip
+                            , currentCarrier = cc
+                            , planType = pt
+                        }
+                    )
+                    (Decode.field "zipCode" Decode.string)
+                    (Decode.field "currentCarrier" (Decode.nullable Decode.string))
+                    (Decode.field "planType" (Decode.nullable Decode.string))
+            )
+        |> Decode.andThen
+            (\c ->
+                Decode.maybe (Decode.field "optInQuarterlyUpdates" Decode.bool)
+                    |> Decode.map (Maybe.withDefault True)
+                    |> Decode.map (\optIn -> { c | optInQuarterlyUpdates = optIn })
+            )
 
 
 orgDetailsDecoder : Decoder OrgDetails
 orgDetailsDecoder =
-    Decode.map2 OrgDetails
+    Decode.map4 OrgDetails
         (Decode.field "orgId" Decode.string)
         (Decode.field "orgSlug" Decode.string)
+        (Decode.maybe (Decode.field "contact" contactDecoder))
+        (Decode.maybe (Decode.field "logo" Decode.string))
 
 
 signupResponseDecoder : Decoder SignupResponse
@@ -771,6 +1039,23 @@ quoteResponseDecoder =
         (Decode.maybe (Decode.field "error" Decode.string))
 
 
+contactResponseDecoder : Decoder ContactResponse
+contactResponseDecoder =
+    Decode.map4 ContactResponse
+        (Decode.field "success" Decode.bool)
+        (Decode.field "orgSlug" Decode.string)
+        (Decode.field "carrierContracts" (Decode.list carrierDecoder))
+        (Decode.field "contact" contactDecoder)
+
+
+fetchContactData : String -> Cmd Msg
+fetchContactData quoteId =
+    Http.get
+        { url = "/api/quotes/decode/" ++ quoteId
+        , expect = Http.expectJson GotContactData contactResponseDecoder
+        }
+
+
 
 -- VIEW
 
@@ -779,17 +1064,14 @@ view : Model -> Browser.Document Msg
 view model =
     { title = "Get Your Medicare Supplement Quote"
     , body =
-        [ div [ class "container mx-auto px-4 py-8" ]
-            [ h1 [ class "text-center text-2xl font-bold mb-6" ] [ text "Get Your Medicare Supplement Quote" ]
-            , viewForm model
-            ]
+        [ viewForm model
         ]
     }
 
 
 viewForm : Model -> Html Msg
 viewForm model =
-    div [ class "max-w-2xl mx-auto bg-white rounded-lg shadow-md p-6" ]
+    div [ class "max-w-4xl mx-auto bg-white rounded-xl shadow-md p-8" ]
         [ if model.success then
             div []
                 [ if model.isGeneratingQuote then
@@ -815,15 +1097,27 @@ viewFormStep model =
     case model.formStep of
         SingleStep ->
             div []
-                [ viewCombinedForm model
+                [ case model.logo of
+                    Just logo ->
+                        div [ class "flex justify-center mt-6 mb-20" ]
+                            [ img [ src logo, class "h-12", alt "Organization Logo" ] [] ]
+
+                    Nothing ->
+                        div [ class "flex justify-center mt-6 mb-20" ]
+                            [ img [ src "/images/medicare-max-logo.png", class "h-12", alt "Medicare Max Logo" ] [] ]
+                , div [ class "text-center mb-6" ]
+                    [ h1 [ class "text-3xl font-bold text-[#101828]" ] [ text "Let's Get Some Details" ]
+                    , p [ class "text-[#475467] mt-2" ] [ text "We use this information to get you the most accurate quote for your area." ]
+                    ]
+                , viewCombinedForm model
                 , viewError model.error
                 , button
                     [ type_ "button"
-                    , class "w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                    , class "w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-[#03045E] hover:bg-[#02034e] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#3DBDEC] mt-6"
                     , onClick NextStep
                     , disabled (not (isFormValid model))
                     ]
-                    [ text "Review" ]
+                    [ text "Continue" ]
                 ]
 
         ConfirmSubmit ->
@@ -833,13 +1127,13 @@ viewFormStep model =
                 , div [ class "flex justify-between mt-4" ]
                     [ button
                         [ type_ "button"
-                        , class "flex justify-center py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                        , class "flex justify-center py-2 px-4 border border-[#D0D5DD] rounded-md shadow-sm text-sm font-medium text-[#344054] bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#3DBDEC]"
                         , onClick PrevStep
                         ]
                         [ text "Back" ]
                     , button
                         [ type_ "button"
-                        , class "flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                        , class "flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-[#03045E] hover:bg-[#02034e] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#3DBDEC]"
                         , onClick SubmitForm
                         , disabled (model.isSubmitting || not (isFormValid model))
                         ]
@@ -858,38 +1152,273 @@ viewFormStep model =
 viewCombinedForm : Model -> Html Msg
 viewCombinedForm model =
     div []
-        [ h3 [ class "font-medium text-lg mb-2" ] [ text "Contact Information" ]
-        , inputField "Email" "email" model.email UpdateEmail model.emailReadOnly
-        , inputField "First Name" "text" model.firstName UpdateFirstName False
-        , inputField "Last Name" "text" model.lastName UpdateLastName False
-        , inputField "Phone Number" "tel" (formatPhoneNumber model.phoneNumber) UpdatePhoneNumber False
-        , h3 [ class "font-medium text-lg mb-2 mt-6" ] [ text "Quote Information" ]
-        , zipCodeField model
+        [ h3 [ class "font-medium text-lg mb-4 text-gray-700" ] [ text "Contact Information" ]
+        , div [ class "grid grid-cols-1 md:grid-cols-2 gap-4 mb-6" ]
+            [ inputField "First Name" "text" model.firstName UpdateFirstName False
+            , inputField "Last Name" "text" model.lastName UpdateLastName False
+            , inputField "Phone Number" "tel" (formatPhoneNumber model.phoneNumber) UpdatePhoneNumber False
+            , inputField "Email Address" "email" model.email UpdateEmail model.emailReadOnly
+            ]
+        , div [ class "grid grid-cols-1 md:grid-cols-2 gap-4 mb-6" ]
+            [ div [ class "col-span-1" ]
+                [ label [ class "block text-sm font-medium text-gray-700 mb-1" ] [ text "Date of Birth" ]
+                , input
+                    [ type_ "text"
+                    , class "w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-sky-500 focus:border-sky-500"
+                    , placeholder "MM-DD-YYYY"
+                    , Html.Attributes.value model.dateOfBirth
+                    , onInput UpdateDateOfBirth
+                    , required True
+                    ]
+                    []
+                ]
+            , div [ class "col-span-1" ]
+                [ label [ class "block text-sm font-medium text-gray-700 mb-1" ] [ text "Zip Code" ]
+                , input
+                    [ type_ "text"
+                    , class "w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-sky-500 focus:border-sky-500"
+                    , placeholder "XXXXX"
+                    , Html.Attributes.value model.zipCode
+                    , onInput UpdateZipCode
+                    , Html.Attributes.maxlength 5
+                    , Html.Attributes.pattern "[0-9]*"
+                    , required True
+                    ]
+                    []
+                , if model.isLoadingZipData then
+                    div [ class "text-xs text-blue-600 mt-1" ]
+                        [ text "Looking up location..." ]
+
+                  else if model.zipError /= Nothing then
+                    div [ class "text-xs text-red-600 mt-1" ]
+                        [ text (Maybe.withDefault "Invalid zip code" model.zipError) ]
+
+                  else if model.state /= Nothing then
+                    div [ class "text-xs text-green-600 mt-1" ]
+                        [ text ("Found: " ++ Maybe.withDefault "" model.state) ]
+
+                  else
+                    text ""
+                ]
+            ]
         , if List.length model.counties > 1 then
-            viewCountyDropdown model.counties model.selectedCounty
+            div [ class "mb-6" ]
+                [ viewCountyDropdown model.counties model.selectedCounty ]
 
           else
             text ""
-        , inputField "Date of Birth" "date" model.dateOfBirth UpdateDateOfBirth False
-        , formRadioGroup "Gender"
-            model.gender
-            UpdateGender
-            [ ( "M", "Male" ), ( "F", "Female" ) ]
-        , formRadioGroup "Tobacco User"
-            (if model.tobacco then
-                "true"
+        , div [ class "grid grid-cols-1 md:grid-cols-2 gap-6 mb-6" ]
+            [ div [ class "col-span-1" ]
+                [ label [ class "block text-sm font-medium text-gray-700 mb-2" ] [ text "Gender" ]
+                , div [ class "grid grid-cols-2 gap-2" ]
+                    [ label
+                        [ class
+                            ("flex items-center justify-center px-4 py-2 rounded-lg border-2 cursor-pointer transition-all "
+                                ++ (if model.gender == "M" then
+                                        "border-[#03045E] bg-[#F9F5FF] text-[#03045E]"
 
-             else
-                "false"
-            )
-            UpdateTobacco
-            [ ( "true", "Yes" ), ( "false", "No" ) ]
-        , h3 [ class "font-medium text-lg mb-2 mt-6" ] [ text "Current Coverage (Optional)" ]
-        , inputField "Current Premium ($)" "number" model.currentPremium UpdateCurrentPremium False
-        , inputField "Current Carrier" "text" model.currentCarrier UpdateCurrentCarrier False
+                                    else
+                                        "border-[#D0D5DD] hover:border-[#3DBDEC] text-[#344054]"
+                                   )
+                            )
+                        ]
+                        [ input
+                            [ type_ "radio"
+                            , value "M"
+                            , checked (model.gender == "M")
+                            , onInput UpdateGender
+                            , class "sr-only"
+                            ]
+                            []
+                        , text "Male"
+                        ]
+                    , label
+                        [ class
+                            ("flex items-center justify-center px-4 py-2 rounded-lg border-2 cursor-pointer transition-all "
+                                ++ (if model.gender == "F" then
+                                        "border-[#03045E] bg-[#F9F5FF] text-[#03045E]"
+
+                                    else
+                                        "border-[#D0D5DD] hover:border-[#3DBDEC] text-[#344054]"
+                                   )
+                            )
+                        ]
+                        [ input
+                            [ type_ "radio"
+                            , value "F"
+                            , checked (model.gender == "F")
+                            , onInput UpdateGender
+                            , class "sr-only"
+                            ]
+                            []
+                        , text "Female"
+                        ]
+                    ]
+                ]
+            , div [ class "col-span-1" ]
+                [ label [ class "block text-sm font-medium text-gray-700 mb-2" ] [ text "Do you use tobacco products?" ]
+                , div [ class "grid grid-cols-2 gap-2" ]
+                    [ label
+                        [ class
+                            ("flex items-center justify-center px-4 py-2 rounded-lg border-2 cursor-pointer transition-all "
+                                ++ (if model.tobacco then
+                                        "border-[#03045E] bg-[#F9F5FF] text-[#03045E]"
+
+                                    else
+                                        "border-[#D0D5DD] hover:border-[#3DBDEC] text-[#344054]"
+                                   )
+                            )
+                        ]
+                        [ input
+                            [ type_ "radio"
+                            , value "true"
+                            , checked model.tobacco
+                            , onInput UpdateTobacco
+                            , class "sr-only"
+                            ]
+                            []
+                        , text "Yes"
+                        ]
+                    , label
+                        [ class
+                            ("flex items-center justify-center px-4 py-2 rounded-lg border-2 cursor-pointer transition-all "
+                                ++ (if not model.tobacco then
+                                        "border-[#03045E] bg-[#F9F5FF] text-[#03045E]"
+
+                                    else
+                                        "border-[#D0D5DD] hover:border-[#3DBDEC] text-[#344054]"
+                                   )
+                            )
+                        ]
+                        [ input
+                            [ type_ "radio"
+                            , value "false"
+                            , checked (not model.tobacco)
+                            , onInput UpdateTobacco
+                            , class "sr-only"
+                            ]
+                            []
+                        , text "No"
+                        ]
+                    ]
+                ]
+            ]
+        , h3 [ class "font-medium text-lg mb-4 text-gray-700" ] [ text "Current Coverage (Optional)" ]
+        , div [ class "grid grid-cols-1 md:grid-cols-2 gap-4 mb-6" ]
+            [ div [ class "col-span-1" ]
+                [ label [ class "block text-sm font-medium text-gray-700 mb-1" ] [ text "Current Carrier" ]
+                , div [ class "relative" ]
+                    [ input
+                        [ type_ "text"
+                        , class "w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-sky-500 focus:border-sky-500"
+                        , Html.Attributes.value model.currentCarrier
+                        , onInput UpdateCurrentCarrier
+                        ]
+                        []
+                    , div [ class "absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none" ]
+                        [ span [ class "text-gray-500" ] [ text "▼" ] ]
+                    ]
+                ]
+            , div [ class "col-span-1" ]
+                [ label [ class "block text-sm font-medium text-gray-700 mb-1" ] [ text "Current Monthly Premium" ]
+                , div [ class "relative" ]
+                    [ div [ class "absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none" ]
+                        [ span [ class "text-gray-500" ] [ text "$" ] ]
+                    , input
+                        [ type_ "text"
+                        , class "w-full pl-7 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-sky-500 focus:border-sky-500"
+                        , Html.Attributes.value model.currentPremium
+                        , onInput UpdateCurrentPremium
+                        , Html.Attributes.pattern "[0-9]*"
+                        , Html.Attributes.attribute "inputmode" "numeric"
+                        , placeholder "0.00"
+                        ]
+                        []
+                    ]
+                ]
+            ]
         , div [ class "mt-6 flex justify-center" ]
             [ checkboxField "I agree to receive Medicare Supplement plan updates" model.optInQuarterlyUpdates ToggleOptIn ]
         ]
+
+
+inputField : String -> String -> String -> (String -> Msg) -> Bool -> Html Msg
+inputField labelText inputType inputValue msg isDisabled =
+    div [ class "mb-0" ]
+        [ label [ class "block text-sm font-medium text-[#344054] mb-1" ] [ text labelText ]
+        , input
+            [ type_ inputType
+            , class "w-full px-3 py-2 border border-[#D0D5DD] rounded-md shadow-sm focus:outline-none focus:ring-[#3DBDEC] focus:border-[#3DBDEC]"
+            , placeholder
+                (case inputType of
+                    "tel" ->
+                        "XXX-XXX-XXXX"
+
+                    "email" ->
+                        "example@example.com"
+
+                    _ ->
+                        ""
+                )
+            , Html.Attributes.value inputValue
+            , onInput msg
+            , disabled isDisabled
+            ]
+            []
+        ]
+
+
+checkboxField : String -> Bool -> (Bool -> Msg) -> Html Msg
+checkboxField labelText isChecked toMsg =
+    div [ class "mb-4" ]
+        [ label [ class "flex items-center" ]
+            [ input
+                [ type_ "checkbox"
+                , class "h-4 w-4 text-[#3DBDEC] focus:ring-[#3DBDEC] border-[#D0D5DD] rounded"
+                , checked isChecked
+                , onCheck toMsg
+                , required True
+                ]
+                []
+            , span [ class "ml-2 text-sm text-[#475467]" ] [ text (labelText ++ " (Required)") ]
+            ]
+        ]
+
+
+viewCountyDropdown : List String -> Maybe String -> Html Msg
+viewCountyDropdown counties selectedCounty =
+    div [ class "mb-4" ]
+        [ label [ class "block text-sm font-medium text-[#344054] mb-1" ]
+            [ text "County" ]
+        , select
+            [ class "w-full px-3 py-2 border border-[#D0D5DD] rounded-md shadow-sm focus:outline-none focus:ring-[#3DBDEC] focus:border-[#3DBDEC]"
+            , onInput UpdateSelectedCounty
+            , required True
+            ]
+            (option [ value "", disabled True, selected (selectedCounty == Nothing) ]
+                [ text "Select your county" ]
+                :: List.map
+                    (\county ->
+                        option
+                            [ value county
+                            , selected (selectedCounty == Just county)
+                            ]
+                            [ text county ]
+                    )
+                    counties
+            )
+        ]
+
+
+viewError : Maybe String -> Html msg
+viewError maybeError =
+    case maybeError of
+        Just error ->
+            div [ class "mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded" ]
+                [ text error ]
+
+        Nothing ->
+            text ""
 
 
 viewFormSummary : Model -> Html Msg
@@ -949,141 +1478,6 @@ summaryItem label value =
         [ span [ class "text-gray-600" ] [ text label ]
         , span [ class "font-medium" ] [ text value ]
         ]
-
-
-zipCodeField : Model -> Html Msg
-zipCodeField model =
-    div [ class "mb-4" ]
-        [ label [ class "block text-sm font-medium text-gray-700 mb-1" ]
-            [ text "Zip Code" ]
-        , input
-            [ type_ "text"
-            , class "w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
-            , Html.Attributes.value model.zipCode
-            , onInput UpdateZipCode
-            , Html.Attributes.maxlength 5
-            , Html.Attributes.pattern "[0-9]*"
-            , required True
-            ]
-            []
-        , if model.isLoadingZipData then
-            div [ class "text-xs text-blue-600 mt-1" ]
-                [ text "Looking up location..." ]
-
-          else if model.zipError /= Nothing then
-            div [ class "text-xs text-red-600 mt-1" ]
-                [ text (Maybe.withDefault "Invalid zip code" model.zipError) ]
-
-          else if model.state /= Nothing then
-            div [ class "text-xs text-green-600 mt-1" ]
-                [ text ("Found: " ++ Maybe.withDefault "" model.state) ]
-
-          else
-            text ""
-        ]
-
-
-viewCountyDropdown : List String -> Maybe String -> Html Msg
-viewCountyDropdown counties selectedCounty =
-    div [ class "mb-4" ]
-        [ label [ class "block text-sm font-medium text-gray-700 mb-1" ]
-            [ text "County" ]
-        , select
-            [ class "w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
-            , onInput UpdateSelectedCounty
-            , required True
-            ]
-            (option [ value "", disabled True, selected (selectedCounty == Nothing) ]
-                [ text "Select your county" ]
-                :: List.map
-                    (\county ->
-                        option
-                            [ value county
-                            , selected (selectedCounty == Just county)
-                            ]
-                            [ text county ]
-                    )
-                    counties
-            )
-        ]
-
-
-inputField : String -> String -> String -> (String -> Msg) -> Bool -> Html Msg
-inputField labelText inputType inputValue msg isDisabled =
-    div [ class "mb-4" ]
-        [ label [ class "block text-sm font-medium text-gray-700 mb-1" ] [ text labelText ]
-        , input
-            [ type_ inputType
-            , class "w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
-            , Html.Attributes.value inputValue
-            , onInput msg
-            , disabled isDisabled
-            ]
-            []
-        ]
-
-
-formRadioGroup : String -> String -> (String -> Msg) -> List ( String, String ) -> Html Msg
-formRadioGroup labelText selectedValue msg options =
-    div [ class "mb-4" ]
-        [ label [ class "block text-sm font-medium text-gray-700 mb-1" ]
-            [ text labelText ]
-        , div [ class "flex gap-4" ]
-            (List.map
-                (\( val, txt ) ->
-                    label
-                        [ class
-                            ("flex items-center justify-center px-4 py-2 rounded-lg border-2 cursor-pointer transition-all flex-1 "
-                                ++ (if selectedValue == val then
-                                        "border-indigo-500 bg-indigo-50 text-indigo-700"
-
-                                    else
-                                        "border-gray-200 hover:border-indigo-200"
-                                   )
-                            )
-                        ]
-                        [ input
-                            [ type_ "radio"
-                            , value val
-                            , checked (selectedValue == val)
-                            , onInput msg
-                            , class "sr-only"
-                            ]
-                            []
-                        , text txt
-                        ]
-                )
-                options
-            )
-        ]
-
-
-checkboxField : String -> Bool -> (Bool -> Msg) -> Html Msg
-checkboxField labelText isChecked toMsg =
-    div [ class "mb-4" ]
-        [ label [ class "flex items-center" ]
-            [ input
-                [ type_ "checkbox"
-                , class "h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
-                , checked isChecked
-                , onCheck toMsg
-                , required True
-                ]
-                []
-            , span [ class "ml-2 text-sm text-gray-600" ] [ text (labelText ++ " (Required)") ]
-            ]
-        ]
-
-
-viewError : Maybe String -> Html msg
-viewError maybeError =
-    case maybeError of
-        Just error ->
-            div [ class "mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded" ]
-                [ text error ]
-
-        Nothing ->
-            text ""
 
 
 
