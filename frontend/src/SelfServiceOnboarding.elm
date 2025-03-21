@@ -1084,8 +1084,11 @@ viewForm model =
                 ]
 
           else if model.orgId == Nothing && model.error == Nothing then
-            div [ class "p-4 mb-4 bg-yellow-100 border border-yellow-400 text-yellow-700 rounded" ]
-                [ text "Loading organization details..." ]
+            div [ class "fixed inset-0 bg-white flex flex-col items-center justify-center gap-4 text-center" ]
+                [ div [ class "animate-spin rounded-full h-12 w-12 border-4 border-[#03045E] border-t-transparent" ] []
+                , p [ class "text-center text-lg font-medium text-gray-600" ]
+                    [ text "Loading organization details..." ]
+                ]
 
           else
             viewFormStep model

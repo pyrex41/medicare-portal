@@ -2,7 +2,6 @@ module Schedule exposing (Model, Msg(..), init, subscriptions, update, view)
 
 import Browser
 import Browser.Navigation as Nav
-import Debug
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (onClick, onInput, onSubmit)
@@ -260,10 +259,6 @@ update msg model =
         RequestFollowUp ->
             case model.quoteId of
                 Just quoteId ->
-                    let
-                        _ =
-                            Debug.log "RequestFollowUp" quoteId
-                    in
                     ( { model | isSubmittingFollowUp = True }
                     , Http.post
                         { url = "/api/schedule/request-follow-up/" ++ quoteId
@@ -276,10 +271,6 @@ update msg model =
                     ( { model | error = Just "Unable to process follow-up request" }, Cmd.none )
 
         GotFollowUpResponse result ->
-            let
-                _ =
-                    Debug.log "GotFollowUpResponse" result
-            in
             case result of
                 Ok response ->
                     if response.success then
@@ -289,10 +280,6 @@ update msg model =
                         ( { model | error = Just response.message, isSubmittingFollowUp = False }, Cmd.none )
 
                 Err error ->
-                    let
-                        _ =
-                            Debug.log "Follow-up request error" error
-                    in
                     ( { model | error = Just "Failed to submit follow-up request. Please try again.", isSubmittingFollowUp = False }
                     , Cmd.none
                     )
