@@ -1271,21 +1271,24 @@ viewPlanCard model planTypeCode plan =
                 ]
 
             -- Carrier Logo
-            , div [ class "flex-1 px-4 flex justify-center items-center min-h-[50px] sm:min-h-[60px] max-h-[80px]" ]
+            , div [ class "flex-1 px-4 flex justify-center items-center min-h-[50px] sm:min-h-[60px] max-h-[80px] mb-3 sm:mb-0" ]
                 [ img [ src plan.image, alt (plan.name ++ " logo"), class "h-8 sm:h-10 max-w-[140px] sm:max-w-[160px] object-contain" ] [] ]
 
             -- Rates
-            , div [ class "flex justify-between px-4 sm:px-6 py-3 sm:py-4 bg-[#F9FAFB]" ]
+            , div [ class "flex flex-row sm:flex-row justify-between px-4 sm:px-6 py-4 sm:py-4 bg-[#F9FAFB]" ]
                 [ -- Standard Rate
-                  div [ class "flex flex-row sm:flex-col items-center sm:items-start gap-2 sm:gap-0 flex-1" ]
-                    [ p [ class "text-[10px] font-medium leading-5 text-[#667085] order-2 sm:order-1 sm:mb-0.5" ] [ text "Standard Rate:" ]
-                    , p [ class "text-base sm:text-lg font-bold leading-6 text-[#667085] order-1 sm:order-2" ] [ text ("$" ++ String.fromInt (floor plan.price)) ]
+                  div [ class "flex-1 flex flex-col sm:flex-col justify-center sm:justify-start items-start sm:items-start" ]
+                    [ p [ class "text-[13px] sm:text-[10px] font-medium leading-5 text-[#667085] mb-1 sm:mb-0.5" ] [ text "Standard Rate:" ]
+                    , p [ class "text-[17px] sm:text-lg font-bold leading-6 text-[#667085]" ] [ text ("$" ++ String.fromInt (floor plan.price)) ]
                     ]
 
+                -- Vertical Divider (mobile and desktop)
+                , div [ class "w-[1px] h-[40px] self-center bg-[#DCE2E5] mx-2" ] []
+
                 -- Discount Rate
-                , div [ class "flex flex-row-reverse sm:flex-col items-center sm:items-end gap-2 sm:gap-0 flex-1" ]
-                    [ p [ class "text-[10px] font-medium leading-5 text-[#667085] order-2 sm:order-1 sm:mb-0.5" ] [ text "Discount Rate:" ]
-                    , p [ class "text-base sm:text-lg font-bold leading-6 text-[#667085] order-1 sm:order-2" ] [ text ("$" ++ String.fromInt (floor plan.priceDiscount)) ]
+                , div [ class "flex-1 flex flex-col sm:flex-col justify-center sm:justify-end items-end sm:items-end" ]
+                    [ p [ class "text-[13px] sm:text-[10px] font-medium leading-5 text-[#667085] mb-1 sm:mb-0.5" ] [ text "Discount Rate:" ]
+                    , p [ class "text-[17px] sm:text-lg font-bold leading-6 text-[#667085]" ] [ text ("$" ++ String.fromInt (floor plan.priceDiscount)) ]
                     ]
                 ]
             ]
