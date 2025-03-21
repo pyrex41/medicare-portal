@@ -3,7 +3,7 @@ import { Database } from '../database';
 import { logger } from '../logger';
 import crypto from 'crypto';
 import { config } from '../config';
-import { generateQuoteId } from '../utils/quoteId';
+import { generateQuoteId, decodeQuoteId } from '../utils/quoteId';
 import { getUserFromSession } from '../services/auth';
 import { readFileSync } from 'fs';
 
@@ -468,13 +468,12 @@ export function createSelfServiceRoutes() {
             
             // If no results and we have a quoteId, try that
             if ((!contactResult || contactResult.rows.length === 0) && id) {
-              // Extract contactId from quoteId (base36 encoded)
               try {
                 logger.info(`Looking up contact by quoteId: ${id}`);
-                // Decode the quoteId to get contactId
-                const decoded = id.split('-');
-                if (decoded.length >= 2) {
-                  const contactId = parseInt(decoded[1], 36);
+                // Decode the quoteId using our utility function
+                const decoded = decodeQuoteId(id);
+                if (decoded) {
+                  const contactId = decoded.contactId;
                   
                   contactResult = await client.execute({
                     sql: `SELECT 

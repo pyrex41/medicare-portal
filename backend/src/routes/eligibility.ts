@@ -100,8 +100,16 @@ export const eligibilityRoutes = (app: Elysia) => {
                 if (data.quote_id) {
                     try {
                         const decodedQuoteId = decodeQuoteId(data.quote_id);
-                        if (decodedQuoteId && decodedQuoteId.contactId) {
+                        if (decodedQuoteId) {
                             contactId = decodedQuoteId.contactId.toString();
+                            
+                            // Verify the org ID matches
+                            if (decodedQuoteId.orgId.toString() !== orgId) {
+                                return {
+                                    success: false,
+                                    error: 'Invalid quote ID - organization mismatch'
+                                };
+                            }
                         }
                     } catch (error) {
                         logger.error(`Error decoding quote ID: ${error}`);

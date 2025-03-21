@@ -48,6 +48,14 @@ type alias CompareParams =
     }
 
 
+type alias ContactResponse =
+    { contact : Contact
+    , agent : Agent
+    , orgSlug : String
+    , carrierContracts : List Carrier
+    }
+
+
 type alias Agent =
     { firstName : String
     , lastName : String
@@ -765,8 +773,9 @@ update msg model =
 
                 Err error ->
                     ( { model
-                        | error = Just "Failed to load contact data. Please try again later."
+                        | error = Just "This quote link appears to be invalid or has expired. Please get a new quote to continue."
                         , loadingContact = False
+                        , isLoading = False
                       }
                     , Cmd.none
                     )
@@ -1077,152 +1086,166 @@ subscriptions model =
 -- VIEW
 
 
-view : Model -> Browser.Document Msg
-view model =
-    { title = "Quote - Medicare Max"
-    , body =
-        [ div [ class "bg-white min-h-screen pb-12" ]
-            [ div [ class "max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-3 space-y-10" ]
-                [ -- Personal Quote Card
-                  div [ class "bg-white rounded-[10px] border-2 border-[#DCE2E5] shadow-[0_1px_2px_rgba(16,24,40,0.05)]" ]
-                    [ -- Personal Quote Header
-                      div [ class "border-b-2 border-[#DCE2E5] bg-[#F9F5FF] px-6 py-3 rounded-t-[10px]" ]
-                        [ h2 [ class "text-2xl font-extrabold tracking-tight leading-[2] -tracking-[0.04em]" ] [ text "Personal Quote" ]
+viewPersonalInfo : Model -> Html Msg
+viewPersonalInfo model =
+    div [ class "bg-white rounded-[10px] border-2 border-[#DCE2E5] shadow-[0_1px_2px_rgba(16,24,40,0.05)]" ]
+        [ -- Personal Quote Header
+          div [ class "border-b-2 border-[#DCE2E5] bg-[#F9F5FF] px-6 py-3 rounded-t-[10px]" ]
+            [ h2 [ class "text-2xl font-extrabold tracking-tight leading-[2] -tracking-[0.04em]" ] [ text "Personal Quote" ]
+            ]
+        , div [ class "p-6 flex justify-between items-start bg-white rounded-b-[10px]" ]
+            [ -- Left side - Quote For
+              div [ class "flex flex-col" ]
+                [ div [ class "mb-2" ]
+                    [ p [ class "text-sm text-[#667085] mb-1" ] [ text "Quote For" ]
+                    , p [ class "text-[16px] font-medium" ] [ text (Maybe.withDefault "Loading..." model.name) ]
+                    , p [ class "text-[12px] text-[#667085]" ]
+                        [ text
+                            (if Maybe.withDefault "" model.gender == "M" then
+                                "M"
+
+                             else
+                                "F"
+                            )
+                        , span [ class "text-[#475569] mx-2 font-medium" ] [ text "│" ]
+                        , text
+                            (if Maybe.withDefault False model.tobacco then
+                                "Tobacco"
+
+                             else
+                                "Non-Tobacco"
+                            )
+                        , span [ class "text-[#475569] mx-2 font-medium" ] [ text "│" ]
+                        , text (String.fromInt (Maybe.withDefault 0 model.age))
+                        , text " years"
+                        , span [ class "text-[#475569] mx-2 font-medium" ] [ text "│" ]
+                        , text (Maybe.withDefault "" model.state)
+                        , text " "
+                        , text (Maybe.withDefault "" model.zip)
                         ]
-                    , div [ class "p-6 flex justify-between items-start bg-white rounded-b-[10px]" ]
-                        [ -- Left side - Quote For
-                          div [ class "flex flex-col" ]
-                            [ div [ class "mb-2" ]
-                                [ p [ class "text-sm text-[#667085] mb-1" ] [ text "Quote For" ]
-                                , p [ class "text-[16px] font-medium" ] [ text (Maybe.withDefault "Loading..." model.name) ]
-                                , p [ class "text-[12px] text-[#667085]" ]
-                                    [ text
-                                        (if Maybe.withDefault "" model.gender == "M" then
-                                            "M"
+                    ]
+                , div []
+                    [ button [ class "text-xs text-[#2563EB] underline text-left", onClick ShowLocationModal ] [ text "Edit Location" ]
+                    , span [ class "text-[#667085] mx-2 font-medium" ] [ text "│" ]
+                    , a [ href ("/self-onboarding/" ++ Maybe.withDefault "" model.orgSlug), class "text-xs text-[#2563EB] underline text-left" ] [ text "Quote for a New Person" ]
+                    ]
+                ]
 
-                                         else
-                                            "F"
-                                        )
-                                    , span [ class "text-[#475569] mx-2 font-medium" ] [ text "│" ]
-                                    , text
-                                        (if Maybe.withDefault False model.tobacco then
-                                            "Tobacco"
+            -- Middle - Quote From
+            , div [ class "flex flex-col" ]
+                [ p [ class "text-sm text-[#667085] mb-1" ] [ text "Quote From" ]
+                , p [ class "text-sm font-medium mb-2" ]
+                    [ text
+                        (case model.agent of
+                            Just agent ->
+                                agent.firstName ++ " " ++ agent.lastName
 
-                                         else
-                                            "Non-Tobacco"
-                                        )
-                                    , span [ class "text-[#475569] mx-2 font-medium" ] [ text "│" ]
-                                    , text (String.fromInt (Maybe.withDefault 0 model.age))
-                                    , text " years"
-                                    , span [ class "text-[#475569] mx-2 font-medium" ] [ text "│" ]
-                                    , text (Maybe.withDefault "" model.state)
-                                    , text " "
-                                    , text (Maybe.withDefault "" model.zip)
-                                    ]
+                            Nothing ->
+                                "Loading..."
+                        )
+                    , div [ class "flex flex-col gap-2.5" ]
+                        [ div [ class "flex items-center gap-1.5 bg-[#F9F5FF] px-2.5 py-1 rounded" ]
+                            [ svg [ Svg.Attributes.width "12", Svg.Attributes.height "12", Svg.Attributes.viewBox "0 0 12 12", Svg.Attributes.fill "none" ]
+                                [ path [ Svg.Attributes.d "M1 6C1 4.1145 1 3.1715 1.586 2.586C2.1715 2 3.1145 2 5 2H7C8.8855 2 9.8285 2 10.414 2.586C11 3.1715 11 4.1145 11 6C11 7.8855 11 8.8285 10.414 9.414C9.8285 10 8.8855 10 7 10H5C3.1145 10 2.1715 10 1.586 9.414C1 8.8285 1 7.8855 1 6Z", Svg.Attributes.stroke "#03045E" ] []
+                                , path [ Svg.Attributes.d "M3 4L4.0795 4.9C4.998 5.665 5.457 6.0475 6 6.0475C6.543 6.0475 7.0025 5.665 7.9205 4.8995L9 4", Svg.Attributes.stroke "#03045E", Svg.Attributes.strokeLinecap "round", Svg.Attributes.strokeLinejoin "round" ] []
                                 ]
-                            , div []
-                                [ button [ class "text-xs text-[#2563EB] underline text-left", onClick ShowLocationModal ] [ text "Edit Location" ]
-                                , span [ class "text-[#667085] mx-2 font-medium" ] [ text "│" ]
-                                , a [ href ("/self-onboarding/" ++ Maybe.withDefault "" model.orgSlug), class "text-xs text-[#2563EB] underline text-left" ] [ text "Quote for a New Person" ]
-                                ]
-                            ]
-
-                        -- Middle - Quote From
-                        , div [ class "flex flex-col" ]
-                            [ p [ class "text-sm text-[#667085] mb-1" ] [ text "Quote From" ]
-                            , p [ class "text-sm font-medium mb-2" ]
+                            , span [ class "text-xs text-[#03045E]" ]
                                 [ text
                                     (case model.agent of
                                         Just agent ->
-                                            agent.firstName ++ " " ++ agent.lastName
+                                            agent.email
 
                                         Nothing ->
                                             "Loading..."
                                     )
                                 ]
-                            , div [ class "flex flex-col gap-2.5" ]
-                                [ div [ class "flex items-center gap-1.5 bg-[#F9F5FF] px-2.5 py-1 rounded" ]
-                                    [ svg [ Svg.Attributes.width "12", Svg.Attributes.height "12", Svg.Attributes.viewBox "0 0 12 12", Svg.Attributes.fill "none" ]
-                                        [ path [ Svg.Attributes.d "M1 6C1 4.1145 1 3.1715 1.586 2.586C2.1715 2 3.1145 2 5 2H7C8.8855 2 9.8285 2 10.414 2.586C11 3.1715 11 4.1145 11 6C11 7.8855 11 8.8285 10.414 9.414C9.8285 10 8.8855 10 7 10H5C3.1145 10 2.1715 10 1.586 9.414C1 8.8285 1 7.8855 1 6Z", Svg.Attributes.stroke "#03045E" ] []
-                                        , path [ Svg.Attributes.d "M3 4L4.0795 4.9C4.998 5.665 5.457 6.0475 6 6.0475C6.543 6.0475 7.0025 5.665 7.9205 4.8995L9 4", Svg.Attributes.stroke "#03045E", Svg.Attributes.strokeLinecap "round", Svg.Attributes.strokeLinejoin "round" ] []
-                                        ]
-                                    , span [ class "text-xs text-[#03045E]" ]
-                                        [ text
-                                            (case model.agent of
-                                                Just agent ->
-                                                    agent.email
-
-                                                Nothing ->
-                                                    "Loading..."
-                                            )
-                                        ]
-                                    ]
-                                , div [ class "flex items-center gap-1.5 bg-[#F9F5FF] px-2.5 py-1 rounded" ]
-                                    [ svg [ Svg.Attributes.width "12", Svg.Attributes.height "12", Svg.Attributes.viewBox "0 0 12 12", Svg.Attributes.fill "none" ]
-                                        [ path
-                                            [ Svg.Attributes.fillRule "evenodd"
-                                            , Svg.Attributes.clipRule "evenodd"
-                                            , Svg.Attributes.d "M1.75442 1.13022C2.80442 0.0802194 4.57692 0.160219 5.30817 1.47022L5.7138 2.19709C6.19067 3.05209 5.98755 4.13147 5.2888 4.83897C5.24752 4.90156 5.22497 4.97463 5.2238 5.04959C5.21567 5.20959 5.27255 5.58022 5.84692 6.15397C6.42067 6.72772 6.79067 6.78522 6.9513 6.77709C7.02626 6.77592 7.09934 6.75337 7.16192 6.71209C7.8688 6.01334 8.9488 5.81022 9.8038 6.28709L10.5307 6.69334C11.8407 7.42459 11.9207 9.19584 10.8707 10.2465C10.3088 10.8077 9.56255 11.3071 8.68442 11.3402C7.38442 11.3896 5.22442 11.0533 3.08567 8.91522C0.947548 6.77647 0.611298 4.61709 0.660673 3.31647C0.693798 2.43834 1.19317 1.69147 1.75442 1.13022ZM4.48942 1.92709C4.11442 1.25584 3.10817 1.10209 2.41755 1.79334C1.93317 2.27772 1.61755 2.81209 1.59755 3.35147C1.5563 4.43647 1.82442 6.32772 3.7488 8.25147C5.6738 10.1765 7.56442 10.4446 8.6488 10.4033C9.18817 10.3827 9.7238 10.0677 10.2075 9.58334C10.8988 8.89209 10.745 7.88584 10.0738 7.51147L9.34692 7.10584C8.89505 6.85397 8.25942 6.93959 7.8138 7.38584C7.77005 7.42959 7.4913 7.68959 6.99692 7.71334C6.49067 7.73834 5.87755 7.51084 5.18442 6.81709C4.49005 6.12334 4.26255 5.51022 4.28755 5.00334C4.3113 4.50897 4.57192 4.23022 4.61505 4.18647C5.0613 3.74084 5.14692 3.10584 4.89505 2.65397L4.48942 1.92709Z"
-                                            , Svg.Attributes.fill "#03045E"
-                                            ]
-                                            []
-                                        ]
-                                    , span [ class "text-xs text-[#03045E]" ]
-                                        [ text
-                                            (case model.agent of
-                                                Just agent ->
-                                                    formatPhoneNumber agent.phone
-
-                                                Nothing ->
-                                                    "Loading..."
-                                            )
-                                        ]
-                                    ]
+                            ]
+                        ]
+                    , div [ class "flex items-center gap-1.5 bg-[#F9F5FF] px-2.5 py-1 rounded" ]
+                        [ svg [ Svg.Attributes.width "12", Svg.Attributes.height "12", Svg.Attributes.viewBox "0 0 12 12", Svg.Attributes.fill "none" ]
+                            [ path
+                                [ Svg.Attributes.fillRule "evenodd"
+                                , Svg.Attributes.clipRule "evenodd"
+                                , Svg.Attributes.d "M1.75442 1.13022C2.80442 0.0802194 4.57692 0.160219 5.30817 1.47022L5.7138 2.19709C6.19067 3.05209 5.98755 4.13147 5.2888 4.83897C5.24752 4.90156 5.22497 4.97463 5.2238 5.04959C5.21567 5.20959 5.27255 5.58022 5.84692 6.15397C6.42067 6.72772 6.79067 6.78522 6.9513 6.77709C7.02626 6.77592 7.09934 6.75337 7.16192 6.71209C7.8688 6.01334 8.9488 5.81022 9.8038 6.28709L10.5307 6.69334C11.8407 7.42459 11.9207 9.19584 10.8707 10.2465C10.3088 10.8077 9.56255 11.3071 8.68442 11.3402C7.38442 11.3896 5.22442 11.0533 3.08567 8.91522C0.947548 6.77647 0.611298 4.61709 0.660673 3.31647C0.693798 2.43834 1.19317 1.69147 1.75442 1.13022ZM4.48942 1.92709C4.11442 1.25584 3.10817 1.10209 2.41755 1.79334C1.93317 2.27772 1.61755 2.81209 1.59755 3.35147C1.5563 4.43647 1.82442 6.32772 3.7488 8.25147C5.6738 10.1765 7.56442 10.4446 8.6488 10.4033C9.18817 10.3827 9.7238 10.0677 10.2075 9.58334C10.8988 8.89209 10.745 7.88584 10.0738 7.51147L9.34692 7.10584C8.89505 6.85397 8.25942 6.93959 7.8138 7.38584C7.77005 7.42959 7.4913 7.68959 6.99692 7.71334C6.49067 7.73834 5.87755 7.51084 5.18442 6.81709C4.49005 6.12334 4.26255 5.51022 4.28755 5.00334C4.3113 4.50897 4.57192 4.23022 4.61505 4.18647C5.0613 3.74084 5.14692 3.10584 4.89505 2.65397L4.48942 1.92709Z"
+                                , Svg.Attributes.fill "#03045E"
                                 ]
+                                []
                             ]
+                        , span [ class "text-xs text-[#03045E]" ]
+                            [ text
+                                (case model.agent of
+                                    Just agent ->
+                                        formatPhoneNumber agent.phone
 
-                        -- Right side - Video
-                        , div [ class "bg-[#F9F5FF] rounded-[10px] p-4 flex flex-col items-center cursor-pointer gap-2 border-2 border-[#DCE2E5] max-w-[180px]", onClick OpenGvsNVideo ]
-                            [ p [ class "text-[14px] font-bold text-[#03045E] -tracking-[0.03em] leading-[1.21] text-center" ] [ text "Learn About Plan G vs Plan N" ]
-                            , div [ class "w-[33px] h-[33px] rounded-full border-2 border-[#03045E] flex items-center justify-center" ]
-                                [ div [ class "w-0 h-0 border-t-[8px] border-t-transparent border-l-[12px] border-l-[#03045E] border-b-[8px] border-b-transparent ml-1" ] []
-                                ]
-                            , p [ class "text-[8px] text-[#667085] -tracking-[0.03em] leading-[1.21]" ] [ text "Watch the Video" ]
+                                    Nothing ->
+                                        "Loading..."
+                                )
                             ]
-                        ]
-                    ]
-
-                -- Plans Section
-                , div [ class "bg-white rounded-[10px] border-2 border-[#DCE2E5] shadow-[0_1px_2px_rgba(16,24,40,0.05)]" ]
-                    [ -- Header with Continue button
-                      div [ class "px-6 py-4 flex items-center justify-between border-b-2 border-[#DCE2E5] bg-[#F9F5FF] rounded-t-[10px]" ]
-                        [ div [ class "flex items-end gap-3" ]
-                            [ h2 [ class "text-2xl font-extrabold -tracking-[0.04em] text-[#101828] leading-[1.2]" ] [ text "Plans" ]
-                            , p [ class "text-[12px] font-medium text-[#667085] -tracking-[0.04em] leading-[1.2] pb-[2px]" ] [ text "Select one to continue" ]
-                            ]
-                        , button
-                            [ class "bg-[#03045E] text-white text-sm font-medium px-6 py-2 rounded disabled:opacity-50 disabled:cursor-not-allowed"
-                            , onClick (SelectPlan (Maybe.withDefault (Plan 0 0 Nothing 0 "" "" 0 "" "" "" "" "" "" 0 False "" False []) model.selectedPlan))
-                            , disabled (model.selectedPlan == Nothing)
-                            ]
-                            [ text "Continue" ]
-                        ]
-
-                    -- Plan G Section
-                    , div [ class "p-8 pb-2 bg-white" ]
-                        [ h3 [ class "text-base font-extrabold -tracking-[0.02em] mb-6 text-[#101828]" ] [ text "Plan G Monthly Premiums" ]
-                        , div [ class "grid grid-cols-3 gap-6" ]
-                            (List.map (viewPlanCard model "G") (getTopPlans model model.plans.planG 3))
-                        ]
-
-                    -- Plan N Section
-                    , div [ class "p-8 pt-6 bg-white rounded-b-[10px]" ]
-                        [ h3 [ class "text-base font-extrabold -tracking-[0.02em] mb-6 text-[#101828]" ] [ text "Plan N Monthly Premiums" ]
-                        , div [ class "grid grid-cols-3 gap-6" ]
-                            (List.map (viewPlanCard model "N") (getTopPlans model model.plans.planN 3))
                         ]
                     ]
                 ]
+
+            -- Right side - Video
+            , div [ class "bg-[#F9F5FF] rounded-[10px] p-4 flex flex-col items-center cursor-pointer gap-2 border-2 border-[#DCE2E5] max-w-[180px]", onClick OpenGvsNVideo ]
+                [ p [ class "text-[14px] font-bold text-[#03045E] -tracking-[0.03em] leading-[1.21] text-center" ] [ text "Learn About Plan G vs Plan N" ]
+                , div [ class "w-[33px] h-[33px] rounded-full border-2 border-[#03045E] flex items-center justify-center" ]
+                    [ div [ class "w-0 h-0 border-t-[8px] border-t-transparent border-l-[12px] border-l-[#03045E] border-b-[8px] border-b-transparent ml-1" ] []
+                    ]
+                , p [ class "text-[8px] text-[#667085] -tracking-[0.03em] leading-[1.21]" ] [ text "Watch the Video" ]
+                ]
+            ]
+        ]
+
+
+viewPlansSection : Model -> Html Msg
+viewPlansSection model =
+    div [ class "bg-white rounded-[10px] border-2 border-[#DCE2E5] shadow-[0_1px_2px_rgba(16,24,40,0.05)]" ]
+        [ -- Header with Continue button
+          div [ class "px-6 py-4 flex items-center justify-between border-b-2 border-[#DCE2E5] bg-[#F9F5FF] rounded-t-[10px]" ]
+            [ div [ class "flex items-end gap-3" ]
+                [ h2 [ class "text-2xl font-extrabold -tracking-[0.04em] text-[#101828] leading-[1.2]" ] [ text "Plans" ]
+                , p [ class "text-[12px] font-medium text-[#667085] -tracking-[0.04em] leading-[1.2] pb-[2px]" ] [ text "Select one to continue" ]
+                ]
+            , button
+                [ class "bg-[#03045E] text-white text-sm font-medium px-6 py-2 rounded disabled:opacity-50 disabled:cursor-not-allowed"
+                , onClick (SelectPlan (Maybe.withDefault (Plan 0 0 Nothing 0 "" "" 0 "" "" "" "" "" "" 0 False "" False []) model.selectedPlan))
+                , disabled (model.selectedPlan == Nothing)
+                ]
+                [ text "Continue" ]
+            ]
+
+        -- Plan G Section
+        , div [ class "p-8 pb-2 bg-white" ]
+            [ h3 [ class "text-base font-extrabold -tracking-[0.02em] mb-6 text-[#101828]" ] [ text "Plan G Monthly Premiums" ]
+            , div [ class "grid grid-cols-3 gap-6" ]
+                (List.map (viewPlanCard model "G") (getTopPlans model model.plans.planG 3))
+            ]
+
+        -- Plan N Section
+        , div [ class "p-8 pt-6 bg-white rounded-b-[10px]" ]
+            [ h3 [ class "text-base font-extrabold -tracking-[0.02em] mb-6 text-[#101828]" ] [ text "Plan N Monthly Premiums" ]
+            , div [ class "grid grid-cols-3 gap-6" ]
+                (List.map (viewPlanCard model "N") (getTopPlans model model.plans.planN 3))
+            ]
+        ]
+
+
+view : Model -> Browser.Document Msg
+view model =
+    { title = "Quote - Medicare Max"
+    , body =
+        [ div [ class "bg-white min-h-screen pb-12" ]
+            [ if model.loadingContact || model.isLoading then
+                viewLoading
+
+              else
+                div [ class "max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-3 space-y-10" ]
+                    [ -- Personal Quote Card
+                      viewPersonalInfo model
+
+                    -- Plans Section
+                    , viewPlansSection model
+                    ]
             ]
         , viewGvsNModal model
         , viewQualificationModal model
@@ -1234,26 +1257,31 @@ view model =
 
 viewLoading : Html Msg
 viewLoading =
-    div [ class "flex flex-col items-center justify-center gap-4 text-center min-h-[400px]" ]
+    div [ class "fixed inset-0 bg-white flex flex-col items-center justify-center gap-4 text-center" ]
         [ div [ class "animate-spin rounded-full h-12 w-12 border-4 border-purple-600 border-t-transparent" ] []
         , p [ class "text-center text-lg font-medium text-gray-600" ]
-            [ text "Searching for available plans..." ]
+            [ text "Loading your personalized quote..." ]
         ]
 
 
-viewError : String -> Html Msg
-viewError error =
-    div [ class "flex flex-col gap-6 text-center mx-auto max-w-3xl" ]
-        [ h1 [ class "text-2xl font-semibold text-[#1A1A1A] mb-2" ]
-            [ text "Unable to Load Plans" ]
-        , div [ class "text-center text-xl font-medium text-red-600 mt-8 p-4 bg-red-50 rounded-lg" ]
-            [ text error ]
-        , div [ class "mt-6 flex justify-center" ]
-            [ button
-                [ class "px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
-                , onClick (NavigateTo "/")
-                ]
-                [ text "Return to Home" ]
+viewError : String -> Maybe String -> Html Msg
+viewError error orgSlug =
+    div [ class "fixed inset-0 bg-white flex flex-col items-center justify-center gap-6 text-center px-4" ]
+        [ div [ class "max-w-lg" ]
+            [ h1 [ class "text-2xl font-semibold text-[#1A1A1A] mb-4" ]
+                [ text "Unable to Load Quote" ]
+            , p [ class "text-lg text-gray-600 mb-8" ]
+                [ text "This quote link appears to be invalid or has expired. Please get a new quote to continue." ]
+            , case orgSlug of
+                Just slug ->
+                    a
+                        [ href ("/self-onboarding/" ++ slug)
+                        , class "inline-block bg-[#03045E] text-white text-sm font-medium px-6 py-3 rounded hover:bg-[#02034D] transition-colors"
+                        ]
+                        [ text "Get a New Quote" ]
+
+                Nothing ->
+                    text ""
             ]
         ]
 
@@ -1461,196 +1489,6 @@ viewRatesModal model =
         text ""
 
 
-viewPlanTypeSection : Model -> String -> String -> List Plan -> Html Msg
-viewPlanTypeSection model title code plans =
-    div [ class "mb-8" ]
-        [ h2 [ class "text-xl font-bold mb-4 text-center sm:text-left" ] [ text title ]
-        , div [ class "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 justify-items-center" ]
-            (List.map (viewPlanCard model code) (getTopPlans model plans 3))
-        ]
-
-
-
--- Helper function to format phone number as (555) 123-4567
-
-
-formatPhoneNumber : String -> String
-formatPhoneNumber phone =
-    if String.length phone >= 10 then
-        let
-            areaCode =
-                String.slice 0 3 phone
-
-            firstPart =
-                String.slice 3 6 phone
-
-            secondPart =
-                String.slice 6 10 phone
-        in
-        "(" ++ areaCode ++ ") " ++ firstPart ++ "-" ++ secondPart
-
-    else
-        phone
-
-
-
--- Helper function to format birth date
-
-
-formatBirthDate : String -> String
-formatBirthDate date =
-    if String.contains "-" date && String.length date >= 10 then
-        let
-            parts =
-                String.split "-" date
-
-            year =
-                List.head parts |> Maybe.withDefault ""
-
-            month =
-                List.drop 1 parts |> List.head |> Maybe.withDefault ""
-
-            day =
-                List.drop 2 parts |> List.head |> Maybe.withDefault "" |> String.left 2
-
-            monthName =
-                case month of
-                    "01" ->
-                        "Jan"
-
-                    "02" ->
-                        "Feb"
-
-                    "03" ->
-                        "Mar"
-
-                    "04" ->
-                        "Apr"
-
-                    "05" ->
-                        "May"
-
-                    "06" ->
-                        "Jun"
-
-                    "07" ->
-                        "Jul"
-
-                    "08" ->
-                        "Aug"
-
-                    "09" ->
-                        "Sep"
-
-                    "10" ->
-                        "Oct"
-
-                    "11" ->
-                        "Nov"
-
-                    "12" ->
-                        "Dec"
-
-                    _ ->
-                        month
-        in
-        monthName ++ " " ++ day ++ ", " ++ year
-
-    else
-        date
-
-
-
--- Helper function to format address
-
-
-formatAddress : String -> String -> String
-formatAddress state zip =
-    state ++ " " ++ zip
-
-
-
--- Add decoder for Contact data
-
-
-type alias ContactResponse =
-    { success : Bool
-    , orgSlug : String
-    , carrierContracts : List Carrier
-    , agent : Agent
-    , contact : Contact
-    }
-
-
-agentDecoder : Decoder Agent
-agentDecoder =
-    D.succeed Agent
-        |> Pipeline.required "firstName" D.string
-        |> Pipeline.required "lastName" D.string
-        |> Pipeline.required "email" D.string
-        |> Pipeline.required "phone" D.string
-
-
-carrierContractsDecoder : Decoder (List Carrier)
-carrierContractsDecoder =
-    D.list carrierDecoder
-
-
-contactDecoder : Decoder Contact
-contactDecoder =
-    D.succeed Contact
-        |> Pipeline.required "id" D.int
-        |> Pipeline.required "firstName" D.string
-        |> Pipeline.required "lastName" D.string
-        |> Pipeline.required "email" D.string
-        |> Pipeline.required "phoneNumber" D.string
-        |> Pipeline.required "age" D.int
-        |> Pipeline.required "gender" D.string
-        |> Pipeline.required "tobacco" D.bool
-        |> Pipeline.required "state" D.string
-        |> Pipeline.required "zipCode" D.string
-        |> Pipeline.optional "county" (D.nullable D.string) Nothing
-        |> Pipeline.required "currentCarrier" (D.nullable D.string)
-        |> Pipeline.required "planType" (D.nullable D.string)
-
-
-contactResponseDecoder : Decoder ContactResponse
-contactResponseDecoder =
-    D.map5 ContactResponse
-        (D.field "success" D.bool)
-        (D.field "orgSlug" D.string)
-        (D.field "carrierContracts" carrierContractsDecoder)
-        (D.field "agent" agentDecoder)
-        (D.field "contact" contactDecoder)
-
-
-viewPillButton : String -> Bool -> Msg -> Html Msg
-viewPillButton label isVideo msg =
-    button
-        [ class "mx-auto bg-white text-purple-600 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full border border-purple-600 hover:bg-purple-50 transition-colors flex items-center justify-center gap-1 sm:gap-2 text-xs sm:text-sm"
-        , onClick msg
-        ]
-        [ if isVideo then
-            div [ class "flex items-center justify-center gap-0.5 sm:gap-1" ]
-                [ text "▶"
-                , span [ class "text-[10px] sm:text-xs" ] [ text "Video" ]
-                ]
-
-          else
-            text ""
-        , text label
-        ]
-
-
-locationUpdateResponseDecoder : Decoder LocationUpdateResponse
-locationUpdateResponseDecoder =
-    D.succeed LocationUpdateResponse
-        |> Pipeline.required "success" D.bool
-        |> Pipeline.required "zipCode" D.string
-        |> Pipeline.required "state" D.string
-        |> Pipeline.required "counties" (D.list D.string)
-
-
 viewLocationModal : Model -> Html Msg
 viewLocationModal model =
     if model.showLocationModal then
@@ -1742,3 +1580,57 @@ viewLocationModal model =
 
     else
         text ""
+
+
+formatPhoneNumber : String -> String
+formatPhoneNumber phone =
+    let
+        cleanPhone =
+            String.filter (\c -> c >= '0' && c <= '9') phone
+    in
+    String.slice 0 3 cleanPhone ++ "-" ++ String.slice 3 6 cleanPhone ++ "-" ++ String.slice 6 10 cleanPhone
+
+
+contactResponseDecoder : Decoder ContactResponse
+contactResponseDecoder =
+    D.map4 ContactResponse
+        (D.field "contact" contactDecoder)
+        (D.field "agent" agentDecoder)
+        (D.field "orgSlug" D.string)
+        (D.field "carrierContracts" (D.list carrierDecoder))
+
+
+contactDecoder : Decoder Contact
+contactDecoder =
+    D.succeed Contact
+        |> Pipeline.required "id" D.int
+        |> Pipeline.required "firstName" D.string
+        |> Pipeline.required "lastName" D.string
+        |> Pipeline.required "email" D.string
+        |> Pipeline.required "phoneNumber" D.string
+        |> Pipeline.required "age" D.int
+        |> Pipeline.required "gender" D.string
+        |> Pipeline.required "tobacco" D.bool
+        |> Pipeline.required "state" D.string
+        |> Pipeline.required "zipCode" D.string
+        |> Pipeline.optional "county" (D.nullable D.string) Nothing
+        |> Pipeline.optional "currentCarrier" (D.nullable D.string) Nothing
+        |> Pipeline.optional "planType" (D.nullable D.string) Nothing
+
+
+agentDecoder : Decoder Agent
+agentDecoder =
+    D.map4 Agent
+        (D.field "firstName" D.string)
+        (D.field "lastName" D.string)
+        (D.field "email" D.string)
+        (D.field "phone" D.string)
+
+
+locationUpdateResponseDecoder : Decoder LocationUpdateResponse
+locationUpdateResponseDecoder =
+    D.map4 LocationUpdateResponse
+        (D.field "success" D.bool)
+        (D.field "zipCode" D.string)
+        (D.field "state" D.string)
+        (D.field "counties" (D.list D.string))
