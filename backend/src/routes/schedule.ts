@@ -23,9 +23,9 @@ export const scheduleRoutes = (app: Elysia) => {
             // Get main database instance
             const mainDb = new Database();
             
-            // Get organization info
-            const orgResult = await mainDb.fetchOne<{ name: string, logo_data: string | null }>(
-                'SELECT name, logo_data FROM organizations WHERE id = ?',
+            // Get organization info including slug
+            const orgResult = await mainDb.fetchOne<{ name: string, logo_data: string | null, slug: string }>(
+                'SELECT name, logo_data, slug FROM organizations WHERE id = ?',
                 [orgId]
             );
 
@@ -90,7 +90,8 @@ export const scheduleRoutes = (app: Elysia) => {
                 },
                 organization: {
                     name: orgResult.name,
-                    logo: orgResult.logo_data
+                    logo: orgResult.logo_data,
+                    slug: orgResult.slug
                 },
                 agent: {
                     name: `${agent.first_name} ${agent.last_name}`,
@@ -221,6 +222,46 @@ export const scheduleRoutes = (app: Elysia) => {
 
         } catch (error) {
             logger.error(`Error recording AEP request: ${error}`);
+            set.status = 500;
+            return {
+                success: false,
+                error: 'Internal server error'
+            };
+        }
+    });
+
+    app.post('/api/schedule/request-follow-up/:quoteId', async ({ params, set }) => {
+        try {
+            const { quoteId } = params;
+            
+            // Decode quote ID to get org ID and contact ID
+            const decoded = decodeQuoteId(quoteId);
+            if (!decoded) {
+                set.status = 400;
+                return {
+                    success: false,
+                    error: 'Invalid quote ID'
+                };
+            }
+
+            const { orgId, contactId } = decoded;
+            
+            // Get org-specific database
+            const orgDb = await Database.getOrInitOrgDb(orgId.toString());
+
+            // Update the contact status to requested_follow_up
+            await orgDb.execute(
+                'UPDATE contacts SET status = ? WHERE id = ?',
+                ['requested_follow_up', contactId]
+            );
+
+            return {
+                success: true,
+                message: 'Follow-up request recorded successfully'
+            };
+
+        } catch (error) {
+            logger.error(`Error recording follow-up request: ${error}`);
             set.status = 500;
             return {
                 success: false,

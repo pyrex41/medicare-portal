@@ -2,6 +2,7 @@ module Schedule exposing (Model, Msg(..), init, subscriptions, update, view)
 
 import Browser
 import Browser.Navigation as Nav
+import Debug
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (onClick, onInput, onSubmit)
@@ -24,6 +25,7 @@ type EligibilityStatus
 type alias OrgInfo =
     { orgName : Maybe String
     , orgLogo : Maybe String
+    , orgSlug : String
     }
 
 
@@ -55,6 +57,7 @@ type alias Model =
     , phoneNumber : Maybe String
     , isSubmitting : Bool
     , isSubmittingAEP : Bool
+    , isSubmittingFollowUp : Bool
     , error : Maybe String
     , success : Bool
     , quoteId : Maybe String
@@ -75,6 +78,9 @@ type Msg
     | GotScheduleInfo (Result Http.Error ScheduleInfo)
     | RequestAEP
     | GotAEPResponse (Result Http.Error SubmitResponse)
+    | RequestFollowUp
+    | GotFollowUpResponse (Result Http.Error SubmitResponse)
+    | CalendlyOpened
 
 
 type alias SubmitResponse =
@@ -114,6 +120,7 @@ init key maybeQuoteId maybeStatus =
       , phoneNumber = Nothing
       , isSubmitting = False
       , isSubmittingAEP = False
+      , isSubmittingFollowUp = False
       , error = Nothing
       , success = False
       , quoteId = maybeQuoteId
@@ -146,9 +153,10 @@ agentInfoDecoder =
 
 orgInfoDecoder : D.Decoder OrgInfo
 orgInfoDecoder =
-    D.map2 OrgInfo
+    D.map3 OrgInfo
         (D.at [ "name" ] (D.nullable D.string))
         (D.at [ "logo" ] (D.nullable D.string))
+        (D.at [ "slug" ] D.string)
 
 
 scheduleInfoDecoder : D.Decoder ScheduleInfo
@@ -249,6 +257,49 @@ update msg model =
                     , Cmd.none
                     )
 
+        RequestFollowUp ->
+            case model.quoteId of
+                Just quoteId ->
+                    let
+                        _ =
+                            Debug.log "RequestFollowUp" quoteId
+                    in
+                    ( { model | isSubmittingFollowUp = True }
+                    , Http.post
+                        { url = "/api/schedule/request-follow-up/" ++ quoteId
+                        , body = Http.emptyBody
+                        , expect = Http.expectJson GotFollowUpResponse submitResponseDecoder
+                        }
+                    )
+
+                Nothing ->
+                    ( { model | error = Just "Unable to process follow-up request" }, Cmd.none )
+
+        GotFollowUpResponse result ->
+            let
+                _ =
+                    Debug.log "GotFollowUpResponse" result
+            in
+            case result of
+                Ok response ->
+                    if response.success then
+                        ( { model | success = True, isSubmittingFollowUp = False }, Cmd.none )
+
+                    else
+                        ( { model | error = Just response.message, isSubmittingFollowUp = False }, Cmd.none )
+
+                Err error ->
+                    let
+                        _ =
+                            Debug.log "Follow-up request error" error
+                    in
+                    ( { model | error = Just "Failed to submit follow-up request. Please try again.", isSubmittingFollowUp = False }
+                    , Cmd.none
+                    )
+
+        CalendlyOpened ->
+            ( { model | success = True }, Cmd.none )
+
 
 stripPhoneNumber : String -> String
 stripPhoneNumber phoneNumber =
@@ -342,6 +393,20 @@ view model =
                                 [ text "Thank You" ]
                             , p [ class "text-gray-600 text-base sm:text-lg" ]
                                 [ text "We'll be in touch soon to discuss your options." ]
+                            , div [ class "mt-8" ]
+                                [ case model.scheduleInfo of
+                                    Just info ->
+                                        a
+                                            [ href ("/self-onboarding/" ++ info.organization.orgSlug)
+                                            , class "inline-flex items-center gap-2 text-[#03045E] hover:text-[#0077B6] transition-colors"
+                                            ]
+                                            [ MyIcon.clipboardPaste 24 "currentColor"
+                                            , span [ class "font-medium" ] [ text "Help someone else get started" ]
+                                            ]
+
+                                    Nothing ->
+                                        text ""
+                                ]
                             ]
 
                       else
@@ -398,6 +463,7 @@ viewAcceptButtons model info =
             [ class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
             , href (makeCalendlyUrl model)
             , target "_blank"
+            , onClick CalendlyOpened
             ]
             [ div [ class "flex items-center space-x-3" ]
                 [ span [ class "w-6 h-6 flex items-center justify-center" ]
@@ -406,17 +472,26 @@ viewAcceptButtons model info =
                     [ text ("Schedule a Call with " ++ info.agent.firstName) ]
                 ]
             ]
-        , button
-            [ class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
-            , type_ "button"
-            ]
-            [ div [ class "flex items-center space-x-3" ]
-                [ span [ class "w-6 h-6 flex items-center justify-center" ]
-                    [ MyIcon.phoneOutgoing 24 "#03045E" ]
-                , span [ class "font-semibold text-base" ]
-                    [ text ("Request a Call from " ++ info.agent.firstName) ]
+        , if model.isSubmittingFollowUp then
+            button
+                [ class "flex items-center justify-center w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] transition cursor-wait"
+                , type_ "button"
                 ]
-            ]
+                [ div [ class "animate-spin rounded-full h-5 w-5 border-2 border-[#03045E] border-t-transparent" ] [] ]
+
+          else
+            button
+                [ class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
+                , type_ "button"
+                , onClick RequestFollowUp
+                ]
+                [ div [ class "flex items-center space-x-3" ]
+                    [ span [ class "w-6 h-6 flex items-center justify-center" ]
+                        [ MyIcon.phoneOutgoing 24 "#03045E" ]
+                    , span [ class "font-semibold text-base" ]
+                        [ text ("Request a Call from " ++ info.agent.firstName) ]
+                    ]
+                ]
         , if not (String.isEmpty info.agent.phone) then
             div [ class "text-center text-[#03045E] font-bold text-base mt-6 space-y-2" ]
                 [ div [] [ text ("or give " ++ info.agent.firstName ++ " a call at:") ]
@@ -438,6 +513,7 @@ viewDeclineButtons model info =
             [ class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
             , href (makeCalendlyUrl model)
             , target "_blank"
+            , onClick CalendlyOpened
             ]
             [ div [ class "flex items-center space-x-3" ]
                 [ span [ class "w-6 h-6 flex items-center justify-center" ]
@@ -494,6 +570,7 @@ viewGenericButtons model info =
             [ class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
             , href (makeCalendlyUrl model)
             , target "_blank"
+            , onClick CalendlyOpened
             ]
             [ div [ class "flex items-center space-x-3" ]
                 [ span [ class "w-6 h-6 flex items-center justify-center" ]
@@ -502,17 +579,26 @@ viewGenericButtons model info =
                     [ text ("Schedule a Call with " ++ info.agent.firstName) ]
                 ]
             ]
-        , button
-            [ class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
-            , type_ "button"
-            ]
-            [ div [ class "flex items-center space-x-3" ]
-                [ span [ class "w-6 h-6 flex items-center justify-center" ]
-                    [ MyIcon.phoneOutgoing 24 "#03045E" ]
-                , span [ class "font-semibold text-base" ]
-                    [ text ("Request a Call from " ++ info.agent.firstName) ]
+        , if model.isSubmittingFollowUp then
+            button
+                [ class "flex items-center justify-center w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] transition cursor-wait"
+                , type_ "button"
                 ]
-            ]
+                [ div [ class "animate-spin rounded-full h-5 w-5 border-2 border-[#03045E] border-t-transparent" ] [] ]
+
+          else
+            button
+                [ class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
+                , type_ "button"
+                , onClick RequestFollowUp
+                ]
+                [ div [ class "flex items-center space-x-3" ]
+                    [ span [ class "w-6 h-6 flex items-center justify-center" ]
+                        [ MyIcon.phoneOutgoing 24 "#03045E" ]
+                    , span [ class "font-semibold text-base" ]
+                        [ text ("Request a Call from " ++ info.agent.firstName) ]
+                    ]
+                ]
         , if not (String.isEmpty info.agent.phone) then
             div [ class "text-center text-[#03045E] font-bold text-base mt-6 space-y-2" ]
                 [ div [] [ text ("or give " ++ info.agent.firstName ++ " a call at:") ]
