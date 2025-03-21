@@ -4,7 +4,7 @@ import Browser
 import Browser.Navigation as Nav
 import Html exposing (..)
 import Html.Attributes exposing (..)
-import Html.Events exposing (onInput, onSubmit)
+import Html.Events exposing (onClick, onInput, onSubmit)
 import Http
 import Json.Decode as D
 import Json.Encode as E
@@ -54,6 +54,7 @@ type alias Model =
     , email : Maybe String
     , phoneNumber : Maybe String
     , isSubmitting : Bool
+    , isSubmittingAEP : Bool
     , error : Maybe String
     , success : Bool
     , quoteId : Maybe String
@@ -72,6 +73,8 @@ type Msg
     | SubmitForm
     | GotSubmitResponse (Result Http.Error SubmitResponse)
     | GotScheduleInfo (Result Http.Error ScheduleInfo)
+    | RequestAEP
+    | GotAEPResponse (Result Http.Error SubmitResponse)
 
 
 type alias SubmitResponse =
@@ -110,6 +113,7 @@ init key maybeQuoteId maybeStatus =
       , email = Nothing
       , phoneNumber = Nothing
       , isSubmitting = False
+      , isSubmittingAEP = False
       , error = Nothing
       , success = False
       , quoteId = maybeQuoteId
@@ -217,6 +221,34 @@ update msg model =
                 Err _ ->
                     ( { model | isLoading = False }, Cmd.none )
 
+        RequestAEP ->
+            case model.quoteId of
+                Just quoteId ->
+                    ( { model | isSubmittingAEP = True }
+                    , Http.post
+                        { url = "/api/schedule/aep-request/" ++ quoteId
+                        , body = Http.emptyBody
+                        , expect = Http.expectJson GotAEPResponse submitResponseDecoder
+                        }
+                    )
+
+                Nothing ->
+                    ( { model | error = Just "Unable to process AEP request" }, Cmd.none )
+
+        GotAEPResponse result ->
+            case result of
+                Ok response ->
+                    if response.success then
+                        ( { model | success = True, isSubmittingAEP = False }, Cmd.none )
+
+                    else
+                        ( { model | error = Just response.message, isSubmittingAEP = False }, Cmd.none )
+
+                Err _ ->
+                    ( { model | error = Just "Failed to submit AEP request. Please try again.", isSubmittingAEP = False }
+                    , Cmd.none
+                    )
+
 
 stripPhoneNumber : String -> String
 stripPhoneNumber phoneNumber =
@@ -282,9 +314,9 @@ view model =
 
           else
             div [ class "min-h-screen bg-[#F9FAFB]" ]
-                [ div [ class "max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-12" ]
+                [ div [ class "max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-12" ]
                     [ -- Organization Logo/Name
-                      div [ class "flex justify-center items-center mt-4 sm:mt-6 mb-6 sm:mb-8" ]
+                      div [ class "flex justify-center items-center mt-4 sm:mt-6 mb-8 sm:mb-10" ]
                         [ case model.scheduleInfo of
                             Just info ->
                                 case info.organization.orgLogo of
@@ -316,7 +348,7 @@ view model =
                         div [ class "grid grid-cols-1 md:grid-cols-2 gap-8" ]
                             [ -- Left Column - Text Content
                               div [ class "space-y-6" ]
-                                [ h1 [ class "text-3xl sm:text-4xl font-extrabold text-black mb-3 sm:mb-4 tracking-tight" ]
+                                [ h1 [ class "text-3xl sm:text-4xl font-extrabold text-black mb-3 sm:mb-4 tracking-tight text-center md:text-left" ]
                                     [ text (getHeading model.status) ]
                                 , div [ class "bg-[#F9F5FF] p-6 rounded-md mb-6" ]
                                     [ p [ class "text-black text-base sm:text-lg leading-relaxed" ]
@@ -380,16 +412,18 @@ viewAcceptButtons model info =
             ]
             [ div [ class "flex items-center space-x-3" ]
                 [ span [ class "w-6 h-6 flex items-center justify-center" ]
-                    [ MyIcon.heartPulse 24 "#03045E" ]
+                    [ MyIcon.phoneOutgoing 24 "#03045E" ]
                 , span [ class "font-semibold text-base" ]
                     [ text ("Request a Call from " ++ info.agent.firstName) ]
                 ]
             ]
         , if not (String.isEmpty info.agent.phone) then
-            p [ class "text-center text-[#03045E] font-bold text-base mt-6" ]
-                [ text ("or Give " ++ info.agent.firstName ++ " a call at: ")
-                , a [ href ("tel:" ++ info.agent.phone), class "text-[#03045E]" ]
-                    [ text (formatPhoneNumber info.agent.phone) ]
+            div [ class "text-center text-[#03045E] font-bold text-base mt-6 space-y-2" ]
+                [ div [] [ text ("or give " ++ info.agent.firstName ++ " a call at:") ]
+                , div []
+                    [ a [ href ("tel:" ++ info.agent.phone), class "text-[#03045E]" ]
+                        [ text (formatPhoneNumber info.agent.phone) ]
+                    ]
                 ]
 
           else
@@ -412,40 +446,40 @@ viewDeclineButtons model info =
                     [ text ("Schedule a Call with " ++ info.agent.firstName) ]
                 ]
             ]
-        , button
-            [ class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
-            , type_ "button"
-            ]
-            [ div [ class "flex items-center space-x-3" ]
-                [ span [ class "w-6 h-6 flex items-center justify-center" ]
-                    [ MyIcon.undo2 24 "#03045E" ]
-                , span [ class "font-semibold text-base" ]
-                    [ text "Try to Qualify for a Different Plan" ]
-                ]
-            ]
         , -- Advantage Plan Section
           div [ class "mt-8 mb-4" ]
             [ h3 [ class "text-[#03045E] font-bold text-base mb-3" ]
                 [ text "Interested in an Advantage Plan?" ]
             , p [ class "text-[#03045E] text-sm mb-6 leading-relaxed" ]
                 [ text "We can switch you to an Advantage Plan during the Annual Enrollment Period (Oct. 7 - Dec. 7) - Click below so we know to contact you during AEP." ]
-            , button
-                [ class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
-                , type_ "button"
-                ]
-                [ div [ class "flex items-center space-x-3" ]
-                    [ span [ class "w-6 h-6 flex items-center justify-center" ]
-                        [ MyIcon.clipboardPlus 24 "#03045E" ]
-                    , span [ class "font-semibold text-base" ]
-                        [ text "Get on the Advantage Plan List" ]
+            , if model.isSubmittingAEP then
+                button
+                    [ class "flex items-center justify-center w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] transition cursor-wait"
+                    , type_ "button"
                     ]
-                ]
+                    [ div [ class "animate-spin rounded-full h-5 w-5 border-2 border-[#03045E] border-t-transparent" ] [] ]
+
+              else
+                button
+                    [ class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
+                    , type_ "button"
+                    , onClick RequestAEP
+                    ]
+                    [ div [ class "flex items-center space-x-3" ]
+                        [ span [ class "w-6 h-6 flex items-center justify-center" ]
+                            [ MyIcon.clipboardPlus 24 "#03045E" ]
+                        , span [ class "font-semibold text-base" ]
+                            [ text "Get on the Advantage Plan List" ]
+                        ]
+                    ]
             ]
         , if not (String.isEmpty info.agent.phone) then
-            p [ class "text-center text-[#03045E] font-bold text-base mt-6" ]
-                [ text ("or Give " ++ info.agent.firstName ++ " a call at: ")
-                , a [ href ("tel:" ++ info.agent.phone), class "text-[#03045E]" ]
-                    [ text (formatPhoneNumber info.agent.phone) ]
+            div [ class "text-center text-[#03045E] font-bold text-base mt-6 space-y-2" ]
+                [ div [] [ text ("or give " ++ info.agent.firstName ++ " a call at:") ]
+                , div []
+                    [ a [ href ("tel:" ++ info.agent.phone), class "text-[#03045E]" ]
+                        [ text (formatPhoneNumber info.agent.phone) ]
+                    ]
                 ]
 
           else
@@ -474,16 +508,18 @@ viewGenericButtons model info =
             ]
             [ div [ class "flex items-center space-x-3" ]
                 [ span [ class "w-6 h-6 flex items-center justify-center" ]
-                    [ MyIcon.heartPulse 24 "#03045E" ]
+                    [ MyIcon.phoneOutgoing 24 "#03045E" ]
                 , span [ class "font-semibold text-base" ]
                     [ text ("Request a Call from " ++ info.agent.firstName) ]
                 ]
             ]
         , if not (String.isEmpty info.agent.phone) then
-            p [ class "text-center text-[#03045E] font-bold text-base mt-6" ]
-                [ text ("or Give " ++ info.agent.firstName ++ " a call at: ")
-                , a [ href ("tel:" ++ info.agent.phone), class "text-[#03045E]" ]
-                    [ text (formatPhoneNumber info.agent.phone) ]
+            div [ class "text-center text-[#03045E] font-bold text-base mt-6 space-y-2" ]
+                [ div [] [ text ("or give " ++ info.agent.firstName ++ " a call at:") ]
+                , div []
+                    [ a [ href ("tel:" ++ info.agent.phone), class "text-[#03045E]" ]
+                        [ text (formatPhoneNumber info.agent.phone) ]
+                    ]
                 ]
 
           else

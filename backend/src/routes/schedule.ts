@@ -189,5 +189,45 @@ export const scheduleRoutes = (app: Elysia) => {
         }
     });
 
+    app.post('/api/schedule/aep-request/:quoteId', async ({ params, set }) => {
+        try {
+            const { quoteId } = params;
+            
+            // Decode quote ID to get org ID and contact ID
+            const decoded = decodeQuoteId(quoteId);
+            if (!decoded) {
+                set.status = 400;
+                return {
+                    success: false,
+                    error: 'Invalid quote ID'
+                };
+            }
+
+            const { orgId, contactId } = decoded;
+            
+            // Get org-specific database
+            const orgDb = await Database.getOrInitOrgDb(orgId.toString());
+
+            // Update the contact with AEP request
+            await orgDb.execute(
+                'UPDATE contacts SET aep_request = TRUE, aep_request_date = CURRENT_TIMESTAMP WHERE id = ?',
+                [contactId]
+            );
+
+            return {
+                success: true,
+                message: 'AEP request recorded successfully'
+            };
+
+        } catch (error) {
+            logger.error(`Error recording AEP request: ${error}`);
+            set.status = 500;
+            return {
+                success: false,
+                error: 'Internal server error'
+            };
+        }
+    });
+
     return app;
 }; 
