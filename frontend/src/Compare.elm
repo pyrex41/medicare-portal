@@ -1091,10 +1091,12 @@ viewPersonalInfo model =
     div [ class "flex flex-col gap-4 sm:gap-10" ]
         [ div [ class "bg-white rounded-[10px] border-2 border-[#DCE2E5] shadow-[0_1px_2px_rgba(16,24,40,0.05)]" ]
             [ -- Personal Quote Header
-              div [ class "border-b-2 border-[#DCE2E5] bg-[#F9F5FF] px-4 sm:px-6 py-3 rounded-t-[10px]" ]
+              div
+                [ class "border-b-2 border-[#DCE2E5] bg-[#F9F5FF] px-4 sm:px-6 py-3 rounded-t-[10px]" ]
                 [ h2 [ class "text-xl sm:text-2xl font-extrabold tracking-tight leading-[2] -tracking-[0.04em]" ] [ text "Personal Quote" ]
                 ]
-            , div [ class "p-4 sm:p-6 flex flex-col sm:flex-row sm:justify-between sm:items-start gap-4 sm:gap-0 bg-white rounded-b-[10px]" ]
+            , div
+                [ class "p-4 sm:p-6 flex flex-col sm:flex-row sm:justify-between sm:items-start gap-4 sm:gap-0 bg-white rounded-b-[10px]" ]
                 [ -- Left side - Quote For
                   div [ class "flex flex-col" ]
                     [ div [ class "mb-2" ]
@@ -1132,23 +1134,33 @@ viewPersonalInfo model =
                         ]
                     ]
 
-                -- Divider for mobile only
-                , div [ class "block sm:hidden w-full h-[1px] bg-[#DCE2E5] my-4" ] []
+                -- Right side container - Quote From and Video (desktop)
+                , div [ class "flex flex-row justify-between items-start gap-16" ]
+                    [ -- Quote From
+                      div [ class "flex flex-col min-w-[200px]" ]
+                        [ p [ class "text-sm text-[#667085] mb-1" ] [ text "Quote From" ]
+                        , p [ class "text-sm font-medium mb-2" ]
+                            [ text
+                                (case model.agent of
+                                    Just agent ->
+                                        agent.firstName ++ " " ++ agent.lastName
 
-                -- Middle - Quote From
-                , div [ class "flex flex-col" ]
-                    [ p [ class "text-sm text-[#667085] mb-1" ] [ text "Quote From" ]
-                    , p [ class "text-sm font-medium mb-2" ]
-                        [ text
-                            (case model.agent of
-                                Just agent ->
-                                    agent.firstName ++ " " ++ agent.lastName
+                                    Nothing ->
+                                        "Loading..."
+                                )
+                            ]
+                        , div [ class "flex flex-col gap-3" ]
+                            [ a
+                                [ href
+                                    (case model.agent of
+                                        Just agent ->
+                                            "mailto:" ++ agent.email
 
-                                Nothing ->
-                                    "Loading..."
-                            )
-                        , div [ class "flex flex-col gap-2.5" ]
-                            [ div [ class "flex items-center gap-1.5 bg-[#F9F5FF] px-2.5 py-1 rounded" ]
+                                        Nothing ->
+                                            "#"
+                                    )
+                                , class "flex items-center gap-1.5 bg-[#F9F5FF] px-2.5 py-1 rounded hover:bg-[#F4EBFF] transition-colors"
+                                ]
                                 [ svg [ Svg.Attributes.width "12", Svg.Attributes.height "12", Svg.Attributes.viewBox "0 0 12 12", Svg.Attributes.fill "none" ]
                                     [ path [ Svg.Attributes.d "M1 6C1 4.1145 1 3.1715 1.586 2.586C2.1715 2 3.1145 2 5 2H7C8.8855 2 9.8285 2 10.414 2.586C11 3.1715 11 4.1145 11 6C11 7.8855 11 8.8285 10.414 9.414C9.8285 10 8.8855 10 7 10H5C3.1145 10 2.1715 10 1.586 9.414C1 8.8285 1 7.8855 1 6Z", Svg.Attributes.stroke "#03045E" ] []
                                     , path [ Svg.Attributes.d "M3 4L4.0795 4.9C4.998 5.665 5.457 6.0475 6 6.0475C6.543 6.0475 7.0025 5.665 7.9205 4.8995L9 4", Svg.Attributes.stroke "#03045E", Svg.Attributes.strokeLinecap "round", Svg.Attributes.strokeLinejoin "round" ] []
@@ -1164,50 +1176,49 @@ viewPersonalInfo model =
                                         )
                                     ]
                                 ]
-                            ]
-                        , div [ class "flex items-center gap-1.5 bg-[#F9F5FF] px-2.5 py-1 rounded" ]
-                            [ svg [ Svg.Attributes.width "12", Svg.Attributes.height "12", Svg.Attributes.viewBox "0 0 12 12", Svg.Attributes.fill "none" ]
-                                [ path
-                                    [ Svg.Attributes.fillRule "evenodd"
-                                    , Svg.Attributes.clipRule "evenodd"
-                                    , Svg.Attributes.d "M1.75442 1.13022C2.80442 0.0802194 4.57692 0.160219 5.30817 1.47022L5.7138 2.19709C6.19067 3.05209 5.98755 4.13147 5.2888 4.83897C5.24752 4.90156 5.22497 4.97463 5.2238 5.04959C5.21567 5.20959 5.27255 5.58022 5.84692 6.15397C6.42067 6.72772 6.79067 6.78522 6.9513 6.77709C7.02626 6.77592 7.09934 6.75337 7.16192 6.71209C7.8688 6.01334 8.9488 5.81022 9.8038 6.28709L10.5307 6.69334C11.8407 7.42459 11.9207 9.19584 10.8707 10.2465C10.3088 10.8077 9.56255 11.3071 8.68442 11.3402C7.38442 11.3896 5.22442 11.0533 3.08567 8.91522C0.947548 6.77647 0.611298 4.61709 0.660673 3.31647C0.693798 2.43834 1.19317 1.69147 1.75442 1.13022ZM4.48942 1.92709C4.11442 1.25584 3.10817 1.10209 2.41755 1.79334C1.93317 2.27772 1.61755 2.81209 1.59755 3.35147C1.5563 4.43647 1.82442 6.32772 3.7488 8.25147C5.6738 10.1765 7.56442 10.4446 8.6488 10.4033C9.18817 10.3827 9.7238 10.0677 10.2075 9.58334C10.8988 8.89209 10.745 7.88584 10.0738 7.51147L9.34692 7.10584C8.89505 6.85397 8.25942 6.93959 7.8138 7.38584C7.77005 7.42959 7.4913 7.68959 6.99692 7.71334C6.49067 7.73834 5.87755 7.51084 5.18442 6.81709C4.49005 6.12334 4.26255 5.51022 4.28755 5.00334C4.3113 4.50897 4.57192 4.23022 4.61505 4.18647C5.0613 3.74084 5.14692 3.10584 4.89505 2.65397L4.48942 1.92709Z"
-                                    , Svg.Attributes.fill "#03045E"
-                                    ]
-                                    []
-                                ]
-                            , span [ class "text-xs text-[#03045E]" ]
-                                [ text
+                            , a
+                                [ href
                                     (case model.agent of
                                         Just agent ->
-                                            formatPhoneNumber agent.phone
+                                            "tel:" ++ String.filter (\c -> c >= '0' && c <= '9') agent.phone
 
                                         Nothing ->
-                                            "Loading..."
+                                            "#"
                                     )
+                                , class "flex items-center gap-1.5 bg-[#F9F5FF] px-2.5 py-1 rounded hover:bg-[#F4EBFF] transition-colors"
+                                ]
+                                [ svg [ Svg.Attributes.width "12", Svg.Attributes.height "12", Svg.Attributes.viewBox "0 0 12 12", Svg.Attributes.fill "none" ]
+                                    [ path
+                                        [ Svg.Attributes.fillRule "evenodd"
+                                        , Svg.Attributes.clipRule "evenodd"
+                                        , Svg.Attributes.d "M1.75442 1.13022C2.80442 0.0802194 4.57692 0.160219 5.30817 1.47022L5.7138 2.19709C6.19067 3.05209 5.98755 4.13147 5.2888 4.83897C5.24752 4.90156 5.22497 4.97463 5.2238 5.04959C5.21567 5.20959 5.27255 5.58022 5.84692 6.15397C6.42067 6.72772 6.79067 6.78522 6.9513 6.77709C7.02626 6.77592 7.09934 6.75337 7.16192 6.71209C7.8688 6.01334 8.9488 5.81022 9.8038 6.28709L10.5307 6.69334C11.8407 7.42459 11.9207 9.19584 10.8707 10.2465C10.3088 10.8077 9.56255 11.3071 8.68442 11.3402C7.38442 11.3896 5.22442 11.0533 3.08567 8.91522C0.947548 6.77647 0.611298 4.61709 0.660673 3.31647C0.693798 2.43834 1.19317 1.69147 1.75442 1.13022ZM4.48942 1.92709C4.11442 1.25584 3.10817 1.10209 2.41755 1.79334C1.93317 2.27772 1.61755 2.81209 1.59755 3.35147C1.5563 4.43647 1.82442 6.32772 3.7488 8.25147C5.6738 10.1765 7.56442 10.4446 8.6488 10.4033C9.18817 10.3827 9.7238 10.0677 10.2075 9.58334C10.8988 8.89209 10.745 7.88584 10.0738 7.51147L9.34692 7.10584C8.89505 6.85397 8.25942 6.93959 7.8138 7.38584C7.77005 7.42959 7.4913 7.68959 6.99692 7.71334C6.49067 7.73834 5.87755 7.51084 5.18442 6.81709C4.49005 6.12334 4.26255 5.51022 4.28755 5.00334C4.3113 4.50897 4.57192 4.23022 4.61505 4.18647C5.0613 3.74084 5.14692 3.10584 4.89505 2.65397L4.48942 1.92709Z"
+                                        , Svg.Attributes.fill "#03045E"
+                                        ]
+                                        []
+                                    ]
+                                , span [ class "text-xs text-[#03045E]" ]
+                                    [ text
+                                        (case model.agent of
+                                            Just agent ->
+                                                formatPhoneNumber agent.phone
+
+                                            Nothing ->
+                                                "Loading..."
+                                        )
+                                    ]
                                 ]
                             ]
                         ]
-                    ]
 
-                -- Right side - Video (desktop only)
-                , div [ class "hidden sm:flex bg-[#F9F5FF] rounded-[10px] p-4 flex-col items-center cursor-pointer gap-2 border-2 border-[#DCE2E5] w-full sm:max-w-[180px]", onClick OpenGvsNVideo ]
-                    [ p [ class "text-[14px] font-bold text-[#03045E] -tracking-[0.03em] leading-[1.21] text-center" ] [ text "Learn About Plan G vs Plan N" ]
-                    , div [ class "w-[33px] h-[33px] rounded-full border-2 border-[#03045E] flex items-center justify-center" ]
-                        [ div [ class "w-0 h-0 border-t-[8px] border-t-transparent border-l-[12px] border-l-[#03045E] border-b-[8px] border-b-transparent ml-1" ] []
+                    -- Video button (desktop only)
+                    , div [ class "hidden sm:flex bg-[#F9F5FF] rounded-[10px] p-4 flex-col items-center cursor-pointer gap-2 border-2 border-[#DCE2E5] w-[180px]", onClick OpenGvsNVideo ]
+                        [ p [ class "text-[14px] font-bold text-[#03045E] -tracking-[0.03em] leading-[1.21] text-center" ] [ text "Learn About Plan G vs Plan N" ]
+                        , div [ class "w-[33px] h-[33px] rounded-full border-2 border-[#03045E] flex items-center justify-center" ]
+                            [ div [ class "w-0 h-0 border-t-[8px] border-t-transparent border-l-[12px] border-l-[#03045E] border-b-[8px] border-b-transparent ml-1" ] []
+                            ]
+                        , p [ class "text-[8px] text-[#667085] -tracking-[0.03em] leading-[1.21]" ] [ text "Watch the Video" ]
                         ]
-                    , p [ class "text-[8px] text-[#667085] -tracking-[0.03em] leading-[1.21]" ] [ text "Watch the Video" ]
                     ]
-                ]
-            ]
-
-        -- Video button (mobile only)
-        , div [ class "block sm:hidden mx-auto max-w-[280px] bg-[#F9F5FF] rounded-[10px] p-4 flex flex-row items-center cursor-pointer gap-4 border-2 border-[#DCE2E5]", onClick OpenGvsNVideo ]
-            [ div [ class "w-[33px] h-[33px] rounded-full border-2 border-[#03045E] flex items-center justify-center flex-shrink-0" ]
-                [ div [ class "w-0 h-0 border-t-[8px] border-t-transparent border-l-[12px] border-l-[#03045E] border-b-[8px] border-b-transparent ml-1" ] []
-                ]
-            , div [ class "flex flex-col items-start" ]
-                [ p [ class "text-[14px] font-bold text-[#03045E] -tracking-[0.03em] leading-[1.21] text-left" ] [ text "Learn About Plan G vs Plan N" ]
-                , p [ class "text-[8px] text-[#667085] -tracking-[0.03em] leading-[1.21]" ] [ text "Watch the Video" ]
                 ]
             ]
         ]
@@ -1342,6 +1353,19 @@ view model =
                 div [ class "max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-3 space-y-6 sm:space-y-10" ]
                     [ -- Personal Quote Card
                       viewPersonalInfo model
+
+                    -- Mobile video button
+                    , div [ class "block sm:hidden" ]
+                        [ div [ class "mx-auto max-w-[280px] bg-[#F9F5FF] rounded-[10px] p-4 flex flex-row items-center cursor-pointer gap-4 border-2 border-[#DCE2E5]", onClick OpenGvsNVideo ]
+                            [ div [ class "w-[33px] h-[33px] rounded-full border-2 border-[#03045E] flex items-center justify-center flex-shrink-0" ]
+                                [ div [ class "w-0 h-0 border-t-[8px] border-t-transparent border-l-[12px] border-l-[#03045E] border-b-[8px] border-b-transparent ml-1" ] []
+                                ]
+                            , div [ class "flex flex-col items-start" ]
+                                [ p [ class "text-[14px] font-bold text-[#03045E] -tracking-[0.03em] leading-[1.21] text-left" ] [ text "Learn About Plan G vs Plan N" ]
+                                , p [ class "text-[8px] text-[#667085] -tracking-[0.03em] leading-[1.21]" ] [ text "Watch the Video" ]
+                                ]
+                            ]
+                        ]
 
                     -- Plans Section
                     , viewPlansSection model
