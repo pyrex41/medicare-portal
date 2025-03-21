@@ -264,21 +264,21 @@ if (isNaN(orgId) || isNaN(contactId)) {
 // Call the API to generate a quote ID
 const generateQuoteUrl = async () => {
   try {
-    // First get a session token
-    const sessionResponse = await axios.get('http://localhost:8000/api/dev/session/login');
-    
-    // Then generate the quote ID
-    const response = await axios.get(`http://localhost:8000/api/quotes/generate/${contactId}`, {
-      headers: {
-        Cookie: sessionResponse.headers['set-cookie']?.[0]
-      }
-    });
+    // Use the debug endpoint to generate a quote ID without authentication
+    const response = await axios.get(`http://localhost:8000/api/quotes/debug-generate/${orgId}/${contactId}`);
 
     if (response.data.success) {
       console.log('Quote ID:', response.data.quoteId);
       console.log('Quote URL:', response.data.redirectUrl);
     } else {
       console.error('Failed to generate quote ID:', response.data.error);
+      
+      if (response.data.availableContacts) {
+        console.log('\nAvailable contacts for organization', orgId, ':');
+        response.data.availableContacts.forEach((contact: any) => {
+          console.log(`- ID: ${contact.id}, Name: ${contact.first_name} ${contact.last_name || ''}, Email: ${contact.email || 'N/A'}`);
+        });
+      }
     }
   } catch (error) {
     if (error instanceof AxiosError) {
@@ -1709,8 +1709,16 @@ export const eligibilityRoutes = (app: Elysia) => {
                 if (data.quote_id) {
                     try {
                         const decodedQuoteId = decodeQuoteId(data.quote_id);
-                        if (decodedQuoteId && decodedQuoteId.contactId) {
+                        if (decodedQuoteId) {
                             contactId = decodedQuoteId.contactId.toString();
+                            
+                            // Verify the org ID matches
+                            if (decodedQuoteId.orgId.toString() !== orgId) {
+                                return {
+                                    success: false,
+                                    error: 'Invalid quote ID - organization mismatch'
+                                };
+                            }
                         }
                     } catch (error) {
                         logger.error(`Error decoding quote ID: ${error}`);
@@ -4793,6 +4801,7 @@ import { readFileSync } from 'fs';
 
 interface ZipInfo {
   state: string;
+  counties: string[];
   // Add other ZIP info properties as needed
 }
 
@@ -4846,6 +4855,7 @@ interface QuoteRequest {
 interface ContactQuoteInfo {
     zip_code: string;
     birth_date: string;
+    age: number;
     tobacco_user: number;
     gender: string;
     email: string;
@@ -4853,6 +4863,7 @@ interface ContactQuoteInfo {
     last_name: string;
     current_carrier: string;
     phone_number: string;
+    plan_type: string;
 }
 
 // Add new interface for org info response
@@ -4860,6 +4871,28 @@ interface OrgRedirectInfo {
     redirect_url: string | null;
     agent_name: string;
 }
+
+function calculateAgeOnFirstOfNextMonth(birthDate: string, currentDate: string): number {
+    const birth = new Date(birthDate);
+    const current = new Date(currentDate);
+    
+    // Get first day of next month
+    const nextMonth = new Date(current.getFullYear(), current.getMonth() + 1, 1);
+    
+    // Calculate age based on year difference
+    let age = nextMonth.getFullYear() - birth.getFullYear();
+    
+    // Adjust age if birthday hasn't occurred yet in the target month
+    if (
+        nextMonth.getMonth() < birth.getMonth() || 
+        (nextMonth.getMonth() === birth.getMonth() && 1 < birth.getDate())
+    ) {
+        age--;
+    }
+    
+    return age;
+}
+
 
 export const quotesRoutes = (app: Elysia) => {
     app
@@ -4901,66 +4934,148 @@ export const quotesRoutes = (app: Elysia) => {
             throw new Error(String(e));
         }
     })
-    .get('/api/quotes/decode/:quoteId', async ({ params }) => {
+    .get('/api/quotes/decode/:quoteId', async ({ params, set }) => {
         try {
+            logger.info(`Decoding quote ID: ${params.quoteId}`);
+            
             const decoded = decodeQuoteId(params.quoteId);
             if (!decoded) {
-                throw new Error('Invalid quote ID');
+                logger.error(`Invalid quote ID format: ${params.quoteId}`);
+                set.status = 400;
+                return {
+                    success: false,
+                    error: 'Invalid quote ID format'
+                };
             }
+            
+            logger.info(`Decoded quote ID: orgId=${decoded.orgId}, contactId=${decoded.contactId}`);
 
             // Get org-specific database
+            logger.info(`Getting database for org: ${decoded.orgId}`);
             const orgDb = await Database.getOrInitOrgDb(decoded.orgId.toString());
+            
             const mainDb = new Database();
+            logger.info(`Fetching organization details for orgId: ${decoded.orgId}`);
             const result = await mainDb.fetchOne<{ slug: string, org_settings: string }>(
                 'SELECT slug, org_settings FROM organizations WHERE id = ?',
                 [decoded.orgId]
             );
 
             if (!result) {
-                throw new Error('Organization not found');
+                logger.error(`Organization not found: ${decoded.orgId}`);
+                set.status = 404;
+                return {
+                    success: false,
+                    error: 'Organization not found'
+                };
             }
 
             const orgSlug = result.slug;
-            const orgSettings = JSON.parse(result.org_settings);
+            logger.info(`Found organization: ${orgSlug} (ID: ${decoded.orgId})`);
+            
+            let orgSettings;
+            try {
+                orgSettings = JSON.parse(result.org_settings || '{}');
+            } catch (e) {
+                logger.warn(`Error parsing org settings for ${decoded.orgId}: ${e}`);
+                orgSettings = {};
+            }
+            
             const carrierContracts = orgSettings?.carrierContracts || [];
-            // Fetch contact details
-            const contact = await orgDb.fetchOne<ContactQuoteInfo>(
-                'SELECT zip_code, birth_date, tobacco_user, gender, email, first_name, last_name, current_carrier, phone_number FROM contacts WHERE id = ?',
-                [decoded.contactId]
-            );
 
-
+            // First try to get the assigned agent from the contact
+            const contactQuery = 'SELECT zip_code, birth_date, tobacco_user, gender, email, first_name, last_name, current_carrier, phone_number, plan_type, agent_id FROM contacts WHERE id = ?';
+            const contactParams = [decoded.contactId];
+            
+            logger.info(`Executing contact query: ${contactQuery} with params: [${contactParams}]`);
+            
+            const contact = await orgDb.fetchOne<ContactQuoteInfo & { agent_id: number | null }>(contactQuery, contactParams);
 
             if (!contact) {
-                throw new Error('Contact not found');
+                logger.error(`Contact not found: contactId=${decoded.contactId} in orgId=${decoded.orgId}`);
+                
+                // Additional debugging: List all contacts in this org
+                try {
+                    const allContacts = await orgDb.query('SELECT id, email, first_name, last_name FROM contacts LIMIT 5');
+                    logger.info(`First 5 contacts in org ${decoded.orgId}: ${JSON.stringify(allContacts)}`);
+                } catch (e) {
+                    logger.error(`Error listing contacts: ${e}`);
+                }
+                
+                set.status = 404;
+                return {
+                    success: false,
+                    error: `Contact not found: ID=${decoded.contactId}`
+                };
             }
 
+            // Get agent info - first try assigned agent, then fall back to first user
+            const agent = contact.agent_id 
+                ? await mainDb.fetchOne<{ first_name: string, last_name: string, email: string, phone: string }>(
+                    'SELECT first_name, last_name, email, phone FROM users WHERE id = ?',
+                    [contact.agent_id]
+                  )
+                : await mainDb.fetchOne<{ first_name: string, last_name: string, email: string, phone: string }>(
+                    'SELECT first_name, last_name, email, phone FROM users WHERE organization_id = ? ORDER BY id ASC LIMIT 1',
+                    [decoded.orgId]
+                  );
+
+            if (!agent) {
+                logger.error(`No users found for organization: ${decoded.orgId}`);
+                set.status = 404;
+                return {
+                    success: false,
+                    error: 'No users found for organization'
+                };
+            }
+
+            logger.info(`Found contact: ${contact.first_name} ${contact.last_name} (ID: ${decoded.contactId})`);
+            
             const zipInfo = ZIP_DATA[contact.zip_code];
             const contactState = zipInfo?.state;
+            
+            if (!contactState) {
+                logger.warn(`No state found for zip code: ${contact.zip_code}`);
+            }
 
             const output = {
                 success: true,
+                orgId: decoded.orgId.toString(),
                 orgSlug: orgSlug || null,
                 carrierContracts: carrierContracts || null,
+                agent: {
+                    firstName: agent.first_name,
+                    lastName: agent.last_name,
+                    email: agent.email,
+                    phone: agent.phone
+                },
                 contact: {
+                    id: decoded.contactId,
                     zipCode: contact.zip_code,
                     state: contactState,
                     dateOfBirth: contact.birth_date,
+                    age: calculateAgeOnFirstOfNextMonth(contact.birth_date, new Date().toISOString()),
                     tobacco: Boolean(contact.tobacco_user),
                     gender: contact.gender,
                     email: contact.email,
                     firstName: contact.first_name,
                     lastName: contact.last_name,
                     currentCarrier: contact.current_carrier,
+                    planType: contact.plan_type,
                     phoneNumber: contact.phone_number
                 }
             };
 
+            logger.info(`Returning success response for quote ID: ${params.quoteId}`);
             logger.info(`Output: ${JSON.stringify(output, null, 2)}`);
             return output;
         } catch (e) {
             logger.error(`Error decoding quote ID: ${e}`);
-            throw new Error(String(e));
+            set.status = 500;
+            return {
+                success: false,
+                error: String(e)
+            };
         }
     })
     .post('/api/quotes', async ({ body }: { body: QuoteRequestBody }) => {
@@ -4997,7 +5112,7 @@ export const quotesRoutes = (app: Elysia) => {
             const response = await axios(requestConfig);
             
             logger.info(`Quote engine response status: ${response.status}`);
-            logger.info(`Quote engine response data: ${JSON.stringify(response.data, null, 2)}`);
+            //logger.info(`Quote engine response data: ${JSON.stringify(response.data, null, 2)}`);
             
             // Return quotes from response data
             return response.data;
@@ -5159,6 +5274,59 @@ export const quotesRoutes = (app: Elysia) => {
                 error: 'Failed to fetch zip code information'
             };
         }
+    })
+    .get('/api/quotes/debug-generate/:orgId/:contactId', async ({ params }) => {
+        try {
+            logger.info(`Debug endpoint - generating quote ID for org: ${params.orgId}, contact: ${params.contactId}`);
+            
+            const orgId = parseInt(params.orgId);
+            const contactId = parseInt(params.contactId);
+            
+            if (isNaN(orgId) || isNaN(contactId)) {
+                return {
+                    success: false,
+                    error: 'Invalid organization or contact ID'
+                };
+            }
+            
+            // Get org-specific database to verify the contact exists
+            const orgDb = await Database.getOrInitOrgDb(orgId.toString());
+            
+            // Verify contact exists
+            const contact = await orgDb.fetchOne(
+                'SELECT id FROM contacts WHERE id = ?',
+                [contactId]
+            );
+
+            if (!contact) {
+                // List first 5 contacts in this org for debugging
+                const contacts = await orgDb.query('SELECT id FROM contacts LIMIT 5');
+                logger.info(`Available contacts in org ${orgId}: ${JSON.stringify(contacts)}`);
+                
+                return {
+                    success: false,
+                    error: 'Contact not found',
+                    availableContacts: contacts
+                };
+            }
+            
+            // Generate quote ID
+            const quoteId = generateQuoteId(orgId, contactId);
+            
+            logger.info(`Generated debug quote ID: ${quoteId} for orgId: ${orgId}, contactId: ${contactId}`);
+
+            return {
+                success: true,
+                quoteId,
+                redirectUrl: `${process.env.PUBLIC_URL || 'http://localhost:5173'}/quote?id=${quoteId}`
+            };
+        } catch (e) {
+            logger.error(`Error in debug quote generation: ${e}`);
+            return {
+                success: false,
+                error: String(e)
+            };
+        }
     });
 
     return app;
@@ -5172,6 +5340,23 @@ import { Database } from '../database';
 import { logger } from '../logger';
 import crypto from 'crypto';
 import { config } from '../config';
+import { generateQuoteId, decodeQuoteId } from '../utils/quoteId';
+import { getUserFromSession } from '../services/auth';
+import { readFileSync } from 'fs';
+
+// Import ZIP_DATA
+interface ZipInfo {
+  state: string;
+  counties: string[];
+}
+
+// Load ZIP data
+let ZIP_DATA: Record<string, ZipInfo> = {};
+try {
+  ZIP_DATA = JSON.parse(readFileSync('../zipData.json', 'utf-8'));
+} catch (e) {
+  logger.error(`Error loading ZIP data: ${e}`);
+}
 
 // Import generateHash function - reimplementing it since it's not exported from email.ts
 function generateHash(orgId: string, email: string): string {
@@ -5216,8 +5401,7 @@ export function createSelfServiceRoutes() {
             sql: `SELECT 
                   email, 
                   first_name AS firstName, 
-                  last_name AS lastName, 
-                  opt_in_quarterly_updates AS optInQuarterlyUpdates 
+                  last_name AS lastName
                 FROM contacts 
                 WHERE email = ?`,
             args: [email]
@@ -5252,18 +5436,33 @@ export function createSelfServiceRoutes() {
       }
     })
     .post('/api/self-service/signup', async ({ body, set }) => {
-      const { orgId, email, firstName, lastName, optInQuarterlyUpdates } = body as {
+      const { orgId, email, firstName, lastName, optInQuarterlyUpdates, zipCode, dateOfBirth, gender, tobacco, phoneNumber, currentPremium, currentCarrier, state, county } = body as {
         orgId: string;
         email: string;
         firstName: string;
         lastName: string;
         optInQuarterlyUpdates: boolean;
+        zipCode: string;
+        dateOfBirth: string;
+        gender: string;
+        tobacco: boolean;
+        phoneNumber: string;
+        currentPremium: string;
+        currentCarrier: string;
+        state: string;
+        county: string;
       };
 
       // Validate required parameters
-      if (!orgId || !email || !firstName || !lastName) {
+      if (!orgId || !email || !firstName || !lastName || !zipCode || !dateOfBirth || !gender || !state) {
         set.status = 400;
         return { error: 'Missing required fields' };
+      }
+      
+      // Only proceed if the user has agreed to receive updates
+      if (!optInQuarterlyUpdates) {
+        set.status = 400;
+        return { error: 'You must agree to receive updates to continue' };
       }
 
       try {
@@ -5277,59 +5476,264 @@ export function createSelfServiceRoutes() {
           args: [email]
         });
 
-        const timestamp = new Date().toISOString();
-
         if (existingContact.rows.length > 0) {
           // Update existing contact
           const contactId = existingContact.rows[0].id;
           await client.execute({
             sql: `UPDATE contacts SET 
                   first_name = ?, 
-                  last_name = ?, 
-                  opt_in_quarterly_updates = ?,
-                  updated_at = ?
+                  last_name = ?,
+                  phone_number = ?,
+                  zip_code = ?,
+                  state = ?,
+                  gender = ?,
+                  birth_date = ?,
+                  tobacco_user = ?,
+                  current_carrier = ?
                   WHERE id = ?`,
-            args: [firstName, lastName, optInQuarterlyUpdates ? 1 : 0, timestamp, contactId]
+            args: [
+              firstName, 
+              lastName, 
+              phoneNumber || '', 
+              zipCode, 
+              state,
+              gender,
+              dateOfBirth,
+              tobacco ? 1 : 0,
+              currentCarrier || '', 
+              contactId
+            ]
           });
           
           logger.info(`Updated contact ${contactId} for email ${email} in organization ${orgId}`);
+          
+          return { 
+            success: true,
+            contactId,
+            email
+          };
         } else {
-          // Create new contact
+          // Create new contact with required fields
           const result = await client.execute({
             sql: `INSERT INTO contacts (
                   email, 
                   first_name, 
-                  last_name, 
-                  opt_in_quarterly_updates,
-                  created_at,
-                  updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?)`,
-            args: [email, firstName, lastName, optInQuarterlyUpdates ? 1 : 0, timestamp, timestamp]
+                  last_name,
+                  phone_number,
+                  zip_code,
+                  state,
+                  gender,
+                  birth_date,
+                  tobacco_user,
+                  current_carrier,
+                  effective_date
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            args: [
+              email, 
+              firstName, 
+              lastName, 
+              phoneNumber || '', 
+              zipCode, 
+              state,
+              gender,
+              dateOfBirth,
+              tobacco ? 1 : 0,
+              currentCarrier || null, // Default plan type
+              new Date().toISOString().split('T')[0] // Today as effective date
+            ]
           });
           
-          logger.info(`Created new contact for email ${email} in organization ${orgId}`);
+          // Get the ID of the newly created contact
+          const newContactResult = await client.execute({
+            sql: 'SELECT id FROM contacts WHERE email = ?',
+            args: [email]
+          });
+          
+          const contactId = newContactResult.rows[0]?.id;
+          
+          logger.info(`Created new contact ${contactId} for email ${email} in organization ${orgId}`);
+          
+          return { 
+            success: true,
+            contactId,
+            email
+          };
         }
-
-        return { success: true };
       } catch (error) {
         logger.error(`Error in self-service signup endpoint: ${error}`);
         set.status = 500;
         return { error: 'Internal server error' };
       }
     })
-    .get('/api/self-service/:orgSlug', async ({ params, set, request }) => {
+    .post('/api/self-service/update-location', async ({ body, set }) => {
+      const { orgSlug, contactId, zipCode } = body as {
+        orgSlug: string;
+        contactId: string;
+        zipCode: string;
+      };
+
+      // Validate required parameters
+      if (!orgSlug || !contactId || !zipCode) {
+        set.status = 400;
+        return { error: 'Missing required fields' };
+      }
+
+      try {
+        // Get state and county from ZIP_DATA
+        const zipInfo = ZIP_DATA[zipCode];
+        if (!zipInfo) {
+          set.status = 400;
+          return { error: 'Invalid zip code' };
+        }
+        logger.info(`Zip info: ${JSON.stringify(zipInfo)}`);
+
+        // Get organization ID from slug
+        const db = new Database();
+        const orgResult = await db.fetchOne<{ id: number }>(
+          'SELECT id FROM organizations WHERE slug = ?',
+          [orgSlug]
+        );
+
+        if (!orgResult) {
+          set.status = 404;
+          return { error: 'Organization not found' };
+        }
+
+        // Get organization database
+        const orgDb = await Database.getOrgDb(orgResult.id.toString());
+        const client = orgDb.getClient();
+
+  
+
+        // Use provided county or first county if only one available
+
+        // Update contact's zip code, state and county
+        await client.execute({
+          sql: `UPDATE contacts SET 
+                zip_code = ?
+                WHERE id = ?`,
+          args: [
+            zipCode,
+            contactId
+          ]
+        });
+
+        logger.info(`Updated location for contact ${contactId} in organization ${orgSlug} to ${zipCode}, ${zipInfo.state}`);
+
+        let output = {
+          success: true,
+          zipCode,
+          state: zipInfo.state,
+          counties: zipInfo.counties
+        };
+
+        logger.info(`Output: ${JSON.stringify(output)}`);
+        return output;
+
+      } catch (error) {
+        logger.error(`Error updating location: ${error}`);
+        set.status = 500;
+        return { error: 'Internal server error' };
+      }
+    })
+    // Add a new endpoint to generate a quote for a contact
+    .post('/api/self-service/generate-quote', async ({ body, set }) => {
+      const { orgId, contactEmail } = body as {
+        orgId: string;
+        contactEmail: string;
+      };
+
+      logger.info(`Generate quote request received: orgId=${orgId}, contactEmail=${contactEmail}`);
+
+      // Validate required parameters
+      if (!orgId || !contactEmail) {
+        logger.error(`Missing required fields: orgId=${orgId}, contactEmail=${contactEmail}`);
+        set.status = 400;
+        return { error: 'Missing required fields (orgId and contactEmail)' };
+      }
+
+      try {
+        // Get organization database
+        const orgDb = await Database.getOrgDb(orgId);
+        const client = orgDb.getClient();
+        
+        // Lookup contact by email
+        const contactResult = await client.execute({
+          sql: 'SELECT id FROM contacts WHERE email = ?',
+          args: [contactEmail]
+        });
+
+        if (contactResult.rows.length === 0) {
+          logger.error(`Contact not found for email ${contactEmail} in organization ${orgId}`);
+          set.status = 404;
+          return { error: 'Contact not found' };
+        }
+
+        const contactId = contactResult.rows[0].id;
+        logger.info(`Found contact ID ${contactId} for email ${contactEmail} in organization ${orgId}`);
+        
+        // Generate quote ID using the proper utility function (with base36 encoding)
+        const quoteId = generateQuoteId(parseInt(orgId), contactId);
+        
+        // Get plan type from contact
+        let planType = 'MedSupp';
+        try {
+          const planTypeResult = await client.execute({
+            sql: 'SELECT plan_type FROM contacts WHERE id = ?',
+            args: [contactId]
+          });
+          
+          if (planTypeResult.rows.length > 0 && planTypeResult.rows[0].plan_type) {
+            planType = planTypeResult.rows[0].plan_type;
+          }
+          logger.info(`Found plan type ${planType} for contact ${contactId}`);
+        } catch (error) {
+          logger.warn(`Could not get plan type for contact ${contactId}: ${error}`);
+          // Continue with default plan type
+        }
+        
+        // Build redirect URL with just the quote ID
+        const redirectUrl = `${config.PUBLIC_URL || 'http://localhost:5173'}/quote?id=${quoteId}`;
+        
+        // Log response details
+        logger.info(`Generated quote ID: ${quoteId}`);
+        logger.info(`Redirect URL: ${redirectUrl}`);
+
+        // Return successful response with quote information
+        return {
+          success: true,
+          contactId,
+          quoteId,
+          redirectUrl
+        };
+      } catch (error) {
+        logger.error(`Error generating quote ID: ${error}`);
+        set.status = 500;
+        return { error: 'Internal server error' };
+      }
+    })
+    .get('/api/self-service/:orgSlug', async ({ params, query, set, request }) => {
       const { orgSlug } = params;
+      const { email, id } = query as { email?: string; id?: string };
+      
+      logger.info(`Self-service request for orgSlug=${orgSlug}, email=${email || 'none'}, quoteId=${id || 'none'}`);
       
       try {
         // For the 'latest' slug, get the current user's organization
         if (orgSlug === 'latest') {
-          const userFromSession = await Database.getUserFromSession(request);
-          if (!userFromSession) {
+          const userFromSession = await getUserFromSession(request);
+          if (!userFromSession || !userFromSession.organization_id) {
             set.status = 401;
             return { success: false, error: 'Unauthorized' };
           }
           
-          const orgResult = await Database.getOrganizationById(userFromSession.organization_id);
+          // Get organization from central database
+          const db = new Database();
+          const orgResult = await db.fetchOne<{ id: number, slug: string, logo_data: string | null }>(
+            'SELECT id, slug, logo_data FROM organizations WHERE id = ?',
+            [userFromSession.organization_id]
+          );
+          
           if (!orgResult) {
             set.status = 404;
             return { success: false, message: 'Organization not found' };
@@ -5339,14 +5743,15 @@ export function createSelfServiceRoutes() {
             success: true,
             orgId: userFromSession.organization_id.toString(),
             orgSlug: orgResult.slug,
-            selfOnboardingUrl: `${config.PUBLIC_URL}/self-onboarding/${orgResult.slug}`
+            selfOnboardingUrl: `${config.PUBLIC_URL}/self-onboarding/${orgResult.slug}`,
+            logo: orgResult.logo_data
           };
         }
         
         // Regular slug lookup
         const db = new Database();
         const result = await db.query(
-          'SELECT id FROM organizations WHERE slug = ?',
+          'SELECT id, logo_data FROM organizations WHERE slug = ?',
           [orgSlug]
         );
 
@@ -5356,14 +5761,106 @@ export function createSelfServiceRoutes() {
         }
 
         const orgId = result[0].id;
+        const orgIdStr = orgId.toString();
+        const logo = result[0].logo_data;
         
-        // Return basic organization info for the frontend
-        return {
+        // Create response object with organization info
+        const response = {
           success: true,
-          orgId: orgId.toString(),
+          orgId: orgIdStr,
           orgSlug,
-          selfOnboardingUrl: `${config.PUBLIC_URL}/self-onboarding/${orgSlug}`
+          selfOnboardingUrl: `${config.PUBLIC_URL}/self-onboarding/${orgSlug}`,
+          logo
         };
+        
+        // Try to find contact information if email or quoteId provided
+        if (email || id) {
+          try {
+            const orgDb = await Database.getOrgDb(orgIdStr);
+            const client = orgDb.getClient();
+            let contactResult;
+            
+            // First try by email if provided
+            if (email) {
+              logger.info(`Looking up contact by email: ${email}`);
+              contactResult = await client.execute({
+                sql: `SELECT 
+                  id,
+                  email, 
+                  first_name AS firstName, 
+                  last_name AS lastName,
+                  phone_number AS phone,
+                  zip_code AS zipCode,
+                  state,
+                  gender,
+                  birth_date AS dateOfBirth,
+                  tobacco_user AS tobacco,
+                  current_carrier AS currentCarrier,
+                  plan_type AS planType
+                FROM contacts 
+                WHERE email = ?`,
+                args: [email]
+              });
+            }
+            
+            // If no results and we have a quoteId, try that
+            if ((!contactResult || contactResult.rows.length === 0) && id) {
+              try {
+                logger.info(`Looking up contact by quoteId: ${id}`);
+                // Decode the quoteId using our utility function
+                const decoded = decodeQuoteId(id);
+                if (decoded) {
+                  const contactId = decoded.contactId;
+                  
+                  contactResult = await client.execute({
+                    sql: `SELECT 
+                      id,
+                      email, 
+                      first_name AS firstName, 
+                      last_name AS lastName,
+                      phone_number AS phone,
+                      zip_code AS zipCode,
+                      state,
+                      gender,
+                      birth_date AS dateOfBirth,
+                      tobacco_user AS tobacco,
+                      current_carrier AS currentCarrier,
+                      plan_type AS planType
+                    FROM contacts 
+                    WHERE id = ?`,
+                    args: [contactId]
+                  });
+                }
+              } catch (err) {
+                logger.warn(`Error decoding quoteId ${id}: ${err}`);
+              }
+            }
+            
+            // If we found a contact, add it to the response
+            if (contactResult && contactResult.rows.length > 0) {
+              const contact = contactResult.rows[0];
+              // Convert tobacco_user from number to boolean
+              contact.tobacco = contact.tobacco === 1;
+              
+              logger.info(`Found contact for ${email || id}`);
+              let output = {
+                ...response,
+                contact: {
+                  ...contact,
+                  id: contactResult.rows[0].id
+                }
+              };
+              logger.info(`Output: ${JSON.stringify(output)}`);
+              return output;
+            }
+          } catch (contactError) {
+            logger.error(`Error looking up contact: ${contactError}`);
+            // Continue without contact info
+          }
+        }
+        
+        // Return basic organization info for the frontend if no contact was found
+        return response;
       } catch (error) {
         logger.error(`Error in self-service org slug endpoint: ${error}`);
         set.status = 500;
@@ -5439,9 +5936,9 @@ export const settingsRoutes = new Elysia()
     const db = new Database();
 
     try {
-        // Get organization settings
-        const orgSettingsRow = await db.fetchOne<{ org_settings: string | null }>(
-            'SELECT org_settings FROM organizations WHERE id = ?',
+        // Get organization settings and logo
+        const orgRow = await db.fetchOne<{ org_settings: string | null, logo_data: string | null }>(
+            'SELECT org_settings, logo_data FROM organizations WHERE id = ?',
             [user.organization_id]
         );
         
@@ -5450,8 +5947,8 @@ export const settingsRoutes = new Elysia()
         // Parse the JSON string into an object
         let orgSettings: BaseSettings;
         try {
-            orgSettings = orgSettingsRow?.org_settings 
-                ? { ...defaultSettings, ...JSON.parse(orgSettingsRow.org_settings) }
+            orgSettings = orgRow?.org_settings 
+                ? { ...defaultSettings, ...JSON.parse(orgRow.org_settings) }
                 : { ...defaultSettings };
 
             // If we have states and carriers but no settings array, generate them
@@ -5497,7 +5994,8 @@ export const settingsRoutes = new Elysia()
 
         const response = {
             success: true,
-            orgSettings,  // Now it's already an object, not a string
+            orgSettings,
+            logo: orgRow?.logo_data || null,
             agentSettings,
             canEditOrgSettings
         };
@@ -5538,10 +6036,13 @@ export const settingsRoutes = new Elysia()
         if (scope === 'org') {
             logger.info('Updating organization settings');
             
-            // Update organization settings
+            // Extract logo from settings if it exists
+            const { logo, ...settingsWithoutLogo } = typedBody.settings || typedBody;
+            
+            // Update organization settings and logo separately
             await db.execute(
-                'UPDATE organizations SET org_settings = ? WHERE id = ?',
-                [JSON.stringify(typedBody), user.organization_id]
+                'UPDATE organizations SET org_settings = ?, logo_data = ? WHERE id = ?',
+                [JSON.stringify(settingsWithoutLogo), logo || null, user.organization_id]
             );
 
             // For basic tier, also update the admin agent's settings
@@ -5561,9 +6062,8 @@ export const settingsRoutes = new Elysia()
                          VALUES (?, true, ?)
                          ON CONFLICT (agent_id) DO UPDATE
                          SET inherit_org_settings = true, settings = ?`,
-                        [adminAgentRow.id, JSON.stringify(typedBody), JSON.stringify(typedBody)]
+                        [adminAgentRow.id, JSON.stringify(settingsWithoutLogo), JSON.stringify(settingsWithoutLogo)]
                     );
-                    logger.info('Successfully synced settings to admin agent');
                 }
             }
         } else if (scope === 'agent') {
@@ -5644,6 +6144,60 @@ export const settingsRoutes = new Elysia()
       return { success: false, error: 'Failed to fetch GI recommendations' };
     }
   })
+
+  // Fetch the logo for the organization
+  .get('/api/settings/logo', async ({ cookie }) => {
+    const user = await validateSession(cookie.session);
+    if (!user?.id) {
+      return { success: false, error: 'No authenticated user' };
+    }
+
+    const db = new Database();
+
+    try {
+      const logo = await db.fetchOne<{ logo_data: string | null }>(
+        'SELECT logo_data FROM organizations WHERE id = ?',
+        [user.organization_id]
+      );
+
+      if (!logo) {
+        return { success: false, error: 'Organization not found' };
+      }
+
+      return {
+        success: true,
+        logo: logo.logo_data
+      };
+
+    } catch (error) {
+      logger.error('Error fetching organization logo:', error);
+      return { success: false, error: 'Failed to fetch organization logo' };
+    }
+  })
+  .get('/api/settings/:orgId/logo', async ({ params }) => {
+    const { orgId } = params;
+    const db = new Database();
+
+    try {
+      const logo = await db.fetchOne<{ logo_data: string | null }>(
+        'SELECT logo_data FROM organizations WHERE id = ?',
+        [orgId]
+      );
+
+      if (!logo) {
+        return { success: false, error: 'Organization logo not found' }; 
+      }
+
+      return {
+        success: true,
+        logo: logo.logo_data
+      };
+    } catch (error) {
+      logger.error('Error fetching organization logo:', error);
+      return { success: false, error: 'Failed to fetch organization logo' };
+    }
+  })
+  
 
   // Update carriers endpoint to use Elysia style
   .get('/api/settings/carriers', async ({ cookie }) => {
@@ -7298,45 +7852,48 @@ import { createHash } from 'crypto';
 
 // Function to generate a unique quote ID from org ID and contact ID
 export function generateQuoteId(orgId: number, contactId: number): string {
-  // Create a string combining org ID and contact ID
-  const data = `${orgId}-${contactId}-${process.env.QUOTE_ID_SECRET || 'default-secret'}`;
-  
-  // Generate a hash of the data
-  const hash = createHash('sha256').update(data).digest('base64');
-  
-  // Take first 12 characters and make URL safe
-  const urlSafeHash = hash
-    .slice(0, 12)
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=/g, '');
-  
-  // Encode org ID and contact ID in base36 for shorter strings
-  const encodedOrgId = orgId.toString(36);
-  const encodedContactId = contactId.toString(36);
-  
-  // Combine everything with a separator
-  return `${encodedOrgId}-${encodedContactId}-${urlSafeHash}`;
+    // Create a string to hash that includes org, contact, and secret
+    const dataToHash = `${orgId}-${contactId}-${process.env.QUOTE_SECRET || 'your-default-secret-key'}`;
+    
+    // Generate hash using crypto
+    const hash = createHash('sha256')
+        .update(dataToHash)
+        .digest('hex')
+        .slice(0, 8); // Take first 8 characters for brevity
+    
+    // Combine components into quote ID
+    return `${orgId}-${contactId}-${hash}`;
 }
 
 // Function to decode a quote ID back to org ID and contact ID
 export function decodeQuoteId(quoteId: string): { orgId: number; contactId: number } | null {
-  try {
-    // Split the quote ID into its components
-    const [encodedOrgId, encodedContactId] = quoteId.split('-');
-    
-    // Decode the IDs from base36 back to numbers
-    const orgId = parseInt(encodedOrgId, 36);
-    const contactId = parseInt(encodedContactId, 36);
-    
-    if (isNaN(orgId) || isNaN(contactId)) {
-      return null;
+    try {
+        const parts = quoteId.split('-');
+        if (parts.length !== 3) {
+            return null;
+        }
+
+        const [orgId, contactId, providedHash] = parts;
+        
+        // Recreate hash to validate
+        const dataToHash = `${orgId}-${contactId}-${process.env.QUOTE_SECRET || 'your-default-secret-key'}`;
+        const expectedHash = createHash('sha256')
+            .update(dataToHash)
+            .digest('hex')
+            .slice(0, 8);
+
+        // Compare hashes
+        if (providedHash !== expectedHash) {
+            return null;
+        }
+
+        return {
+            orgId: parseInt(orgId),
+            contactId: parseInt(contactId)
+        };
+    } catch (e) {
+        return null;
     }
-    
-    return { orgId, contactId };
-  } catch (e) {
-    return null;
-  }
 }
 
 ================
@@ -8198,7 +8755,8 @@ const startServer = async () => {
           )
 
           if (!result) {
-            throw new Error(`Contact ${id} not found`)
+            logger.info(`GET /api/contacts/${id} - Contact not found`)
+            return new Response('Contact not found', { status: 404 })
           }
 
           // Return the contact with mapped fields

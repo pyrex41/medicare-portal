@@ -1088,72 +1088,98 @@ subscriptions model =
 
 viewPersonalInfo : Model -> Html Msg
 viewPersonalInfo model =
-    div [ class "bg-white rounded-[10px] border-2 border-[#DCE2E5] shadow-[0_1px_2px_rgba(16,24,40,0.05)]" ]
-        [ -- Personal Quote Header
-          div [ class "border-b-2 border-[#DCE2E5] bg-[#F9F5FF] px-6 py-3 rounded-t-[10px]" ]
-            [ h2 [ class "text-2xl font-extrabold tracking-tight leading-[2] -tracking-[0.04em]" ] [ text "Personal Quote" ]
-            ]
-        , div [ class "p-6 flex justify-between items-start bg-white rounded-b-[10px]" ]
-            [ -- Left side - Quote For
-              div [ class "flex flex-col" ]
-                [ div [ class "mb-2" ]
-                    [ p [ class "text-sm text-[#667085] mb-1" ] [ text "Quote For" ]
-                    , p [ class "text-[16px] font-medium" ] [ text (Maybe.withDefault "Loading..." model.name) ]
-                    , p [ class "text-[12px] text-[#667085]" ]
-                        [ text
-                            (if Maybe.withDefault "" model.gender == "M" then
-                                "M"
+    div [ class "flex flex-col gap-4 sm:gap-10" ]
+        [ div [ class "bg-white rounded-[10px] border-2 border-[#DCE2E5] shadow-[0_1px_2px_rgba(16,24,40,0.05)]" ]
+            [ -- Personal Quote Header
+              div [ class "border-b-2 border-[#DCE2E5] bg-[#F9F5FF] px-4 sm:px-6 py-3 rounded-t-[10px]" ]
+                [ h2 [ class "text-xl sm:text-2xl font-extrabold tracking-tight leading-[2] -tracking-[0.04em]" ] [ text "Personal Quote" ]
+                ]
+            , div [ class "p-4 sm:p-6 flex flex-col sm:flex-row sm:justify-between sm:items-start gap-4 sm:gap-0 bg-white rounded-b-[10px]" ]
+                [ -- Left side - Quote For
+                  div [ class "flex flex-col" ]
+                    [ div [ class "mb-2" ]
+                        [ p [ class "text-sm text-[#667085] mb-1" ] [ text "Quote For" ]
+                        , p [ class "text-[16px] font-medium" ] [ text (Maybe.withDefault "Loading..." model.name) ]
+                        , p [ class "text-[12px] text-[#667085]" ]
+                            [ text
+                                (if Maybe.withDefault "" model.gender == "M" then
+                                    "M"
 
-                             else
-                                "F"
-                            )
-                        , span [ class "text-[#475569] mx-2 font-medium" ] [ text "│" ]
-                        , text
-                            (if Maybe.withDefault False model.tobacco then
-                                "Tobacco"
+                                 else
+                                    "F"
+                                )
+                            , span [ class "text-[#475569] mx-2 font-medium" ] [ text "│" ]
+                            , text
+                                (if Maybe.withDefault False model.tobacco then
+                                    "Tobacco"
 
-                             else
-                                "Non-Tobacco"
-                            )
-                        , span [ class "text-[#475569] mx-2 font-medium" ] [ text "│" ]
-                        , text (String.fromInt (Maybe.withDefault 0 model.age))
-                        , text " years"
-                        , span [ class "text-[#475569] mx-2 font-medium" ] [ text "│" ]
-                        , text (Maybe.withDefault "" model.state)
-                        , text " "
-                        , text (Maybe.withDefault "" model.zip)
+                                 else
+                                    "Non-Tobacco"
+                                )
+                            , span [ class "text-[#475569] mx-2 font-medium" ] [ text "│" ]
+                            , text (String.fromInt (Maybe.withDefault 0 model.age))
+                            , text " years"
+                            , span [ class "text-[#475569] mx-2 font-medium" ] [ text "│" ]
+                            , text (Maybe.withDefault "" model.state)
+                            , text " "
+                            , text (Maybe.withDefault "" model.zip)
+                            ]
+                        ]
+                    , div [ class "flex items-center" ]
+                        [ button [ class "text-xs text-[#2563EB] underline text-left", onClick ShowLocationModal ] [ text "Edit Location" ]
+                        , span [ class "text-[#667085] mx-2 font-medium" ] [ text "│" ]
+                        , a [ href ("/self-onboarding/" ++ Maybe.withDefault "" model.orgSlug), class "text-xs text-[#2563EB] underline text-left" ] [ text "Quote for a New Person" ]
                         ]
                     ]
-                , div []
-                    [ button [ class "text-xs text-[#2563EB] underline text-left", onClick ShowLocationModal ] [ text "Edit Location" ]
-                    , span [ class "text-[#667085] mx-2 font-medium" ] [ text "│" ]
-                    , a [ href ("/self-onboarding/" ++ Maybe.withDefault "" model.orgSlug), class "text-xs text-[#2563EB] underline text-left" ] [ text "Quote for a New Person" ]
-                    ]
-                ]
 
-            -- Middle - Quote From
-            , div [ class "flex flex-col" ]
-                [ p [ class "text-sm text-[#667085] mb-1" ] [ text "Quote From" ]
-                , p [ class "text-sm font-medium mb-2" ]
-                    [ text
-                        (case model.agent of
-                            Just agent ->
-                                agent.firstName ++ " " ++ agent.lastName
+                -- Divider for mobile only
+                , div [ class "block sm:hidden w-full h-[1px] bg-[#DCE2E5] my-4" ] []
 
-                            Nothing ->
-                                "Loading..."
-                        )
-                    , div [ class "flex flex-col gap-2.5" ]
-                        [ div [ class "flex items-center gap-1.5 bg-[#F9F5FF] px-2.5 py-1 rounded" ]
+                -- Middle - Quote From
+                , div [ class "flex flex-col" ]
+                    [ p [ class "text-sm text-[#667085] mb-1" ] [ text "Quote From" ]
+                    , p [ class "text-sm font-medium mb-2" ]
+                        [ text
+                            (case model.agent of
+                                Just agent ->
+                                    agent.firstName ++ " " ++ agent.lastName
+
+                                Nothing ->
+                                    "Loading..."
+                            )
+                        , div [ class "flex flex-col gap-2.5" ]
+                            [ div [ class "flex items-center gap-1.5 bg-[#F9F5FF] px-2.5 py-1 rounded" ]
+                                [ svg [ Svg.Attributes.width "12", Svg.Attributes.height "12", Svg.Attributes.viewBox "0 0 12 12", Svg.Attributes.fill "none" ]
+                                    [ path [ Svg.Attributes.d "M1 6C1 4.1145 1 3.1715 1.586 2.586C2.1715 2 3.1145 2 5 2H7C8.8855 2 9.8285 2 10.414 2.586C11 3.1715 11 4.1145 11 6C11 7.8855 11 8.8285 10.414 9.414C9.8285 10 8.8855 10 7 10H5C3.1145 10 2.1715 10 1.586 9.414C1 8.8285 1 7.8855 1 6Z", Svg.Attributes.stroke "#03045E" ] []
+                                    , path [ Svg.Attributes.d "M3 4L4.0795 4.9C4.998 5.665 5.457 6.0475 6 6.0475C6.543 6.0475 7.0025 5.665 7.9205 4.8995L9 4", Svg.Attributes.stroke "#03045E", Svg.Attributes.strokeLinecap "round", Svg.Attributes.strokeLinejoin "round" ] []
+                                    ]
+                                , span [ class "text-xs text-[#03045E]" ]
+                                    [ text
+                                        (case model.agent of
+                                            Just agent ->
+                                                agent.email
+
+                                            Nothing ->
+                                                "Loading..."
+                                        )
+                                    ]
+                                ]
+                            ]
+                        , div [ class "flex items-center gap-1.5 bg-[#F9F5FF] px-2.5 py-1 rounded" ]
                             [ svg [ Svg.Attributes.width "12", Svg.Attributes.height "12", Svg.Attributes.viewBox "0 0 12 12", Svg.Attributes.fill "none" ]
-                                [ path [ Svg.Attributes.d "M1 6C1 4.1145 1 3.1715 1.586 2.586C2.1715 2 3.1145 2 5 2H7C8.8855 2 9.8285 2 10.414 2.586C11 3.1715 11 4.1145 11 6C11 7.8855 11 8.8285 10.414 9.414C9.8285 10 8.8855 10 7 10H5C3.1145 10 2.1715 10 1.586 9.414C1 8.8285 1 7.8855 1 6Z", Svg.Attributes.stroke "#03045E" ] []
-                                , path [ Svg.Attributes.d "M3 4L4.0795 4.9C4.998 5.665 5.457 6.0475 6 6.0475C6.543 6.0475 7.0025 5.665 7.9205 4.8995L9 4", Svg.Attributes.stroke "#03045E", Svg.Attributes.strokeLinecap "round", Svg.Attributes.strokeLinejoin "round" ] []
+                                [ path
+                                    [ Svg.Attributes.fillRule "evenodd"
+                                    , Svg.Attributes.clipRule "evenodd"
+                                    , Svg.Attributes.d "M1.75442 1.13022C2.80442 0.0802194 4.57692 0.160219 5.30817 1.47022L5.7138 2.19709C6.19067 3.05209 5.98755 4.13147 5.2888 4.83897C5.24752 4.90156 5.22497 4.97463 5.2238 5.04959C5.21567 5.20959 5.27255 5.58022 5.84692 6.15397C6.42067 6.72772 6.79067 6.78522 6.9513 6.77709C7.02626 6.77592 7.09934 6.75337 7.16192 6.71209C7.8688 6.01334 8.9488 5.81022 9.8038 6.28709L10.5307 6.69334C11.8407 7.42459 11.9207 9.19584 10.8707 10.2465C10.3088 10.8077 9.56255 11.3071 8.68442 11.3402C7.38442 11.3896 5.22442 11.0533 3.08567 8.91522C0.947548 6.77647 0.611298 4.61709 0.660673 3.31647C0.693798 2.43834 1.19317 1.69147 1.75442 1.13022ZM4.48942 1.92709C4.11442 1.25584 3.10817 1.10209 2.41755 1.79334C1.93317 2.27772 1.61755 2.81209 1.59755 3.35147C1.5563 4.43647 1.82442 6.32772 3.7488 8.25147C5.6738 10.1765 7.56442 10.4446 8.6488 10.4033C9.18817 10.3827 9.7238 10.0677 10.2075 9.58334C10.8988 8.89209 10.745 7.88584 10.0738 7.51147L9.34692 7.10584C8.89505 6.85397 8.25942 6.93959 7.8138 7.38584C7.77005 7.42959 7.4913 7.68959 6.99692 7.71334C6.49067 7.73834 5.87755 7.51084 5.18442 6.81709C4.49005 6.12334 4.26255 5.51022 4.28755 5.00334C4.3113 4.50897 4.57192 4.23022 4.61505 4.18647C5.0613 3.74084 5.14692 3.10584 4.89505 2.65397L4.48942 1.92709Z"
+                                    , Svg.Attributes.fill "#03045E"
+                                    ]
+                                    []
                                 ]
                             , span [ class "text-xs text-[#03045E]" ]
                                 [ text
                                     (case model.agent of
                                         Just agent ->
-                                            agent.email
+                                            formatPhoneNumber agent.phone
 
                                         Nothing ->
                                             "Loading..."
@@ -1161,37 +1187,95 @@ viewPersonalInfo model =
                                 ]
                             ]
                         ]
-                    , div [ class "flex items-center gap-1.5 bg-[#F9F5FF] px-2.5 py-1 rounded" ]
-                        [ svg [ Svg.Attributes.width "12", Svg.Attributes.height "12", Svg.Attributes.viewBox "0 0 12 12", Svg.Attributes.fill "none" ]
-                            [ path
-                                [ Svg.Attributes.fillRule "evenodd"
-                                , Svg.Attributes.clipRule "evenodd"
-                                , Svg.Attributes.d "M1.75442 1.13022C2.80442 0.0802194 4.57692 0.160219 5.30817 1.47022L5.7138 2.19709C6.19067 3.05209 5.98755 4.13147 5.2888 4.83897C5.24752 4.90156 5.22497 4.97463 5.2238 5.04959C5.21567 5.20959 5.27255 5.58022 5.84692 6.15397C6.42067 6.72772 6.79067 6.78522 6.9513 6.77709C7.02626 6.77592 7.09934 6.75337 7.16192 6.71209C7.8688 6.01334 8.9488 5.81022 9.8038 6.28709L10.5307 6.69334C11.8407 7.42459 11.9207 9.19584 10.8707 10.2465C10.3088 10.8077 9.56255 11.3071 8.68442 11.3402C7.38442 11.3896 5.22442 11.0533 3.08567 8.91522C0.947548 6.77647 0.611298 4.61709 0.660673 3.31647C0.693798 2.43834 1.19317 1.69147 1.75442 1.13022ZM4.48942 1.92709C4.11442 1.25584 3.10817 1.10209 2.41755 1.79334C1.93317 2.27772 1.61755 2.81209 1.59755 3.35147C1.5563 4.43647 1.82442 6.32772 3.7488 8.25147C5.6738 10.1765 7.56442 10.4446 8.6488 10.4033C9.18817 10.3827 9.7238 10.0677 10.2075 9.58334C10.8988 8.89209 10.745 7.88584 10.0738 7.51147L9.34692 7.10584C8.89505 6.85397 8.25942 6.93959 7.8138 7.38584C7.77005 7.42959 7.4913 7.68959 6.99692 7.71334C6.49067 7.73834 5.87755 7.51084 5.18442 6.81709C4.49005 6.12334 4.26255 5.51022 4.28755 5.00334C4.3113 4.50897 4.57192 4.23022 4.61505 4.18647C5.0613 3.74084 5.14692 3.10584 4.89505 2.65397L4.48942 1.92709Z"
-                                , Svg.Attributes.fill "#03045E"
-                                ]
-                                []
-                            ]
-                        , span [ class "text-xs text-[#03045E]" ]
-                            [ text
-                                (case model.agent of
-                                    Just agent ->
-                                        formatPhoneNumber agent.phone
+                    ]
 
-                                    Nothing ->
-                                        "Loading..."
-                                )
-                            ]
+                -- Right side - Video (desktop only)
+                , div [ class "hidden sm:flex bg-[#F9F5FF] rounded-[10px] p-4 flex-col items-center cursor-pointer gap-2 border-2 border-[#DCE2E5] w-full sm:max-w-[180px]", onClick OpenGvsNVideo ]
+                    [ p [ class "text-[14px] font-bold text-[#03045E] -tracking-[0.03em] leading-[1.21] text-center" ] [ text "Learn About Plan G vs Plan N" ]
+                    , div [ class "w-[33px] h-[33px] rounded-full border-2 border-[#03045E] flex items-center justify-center" ]
+                        [ div [ class "w-0 h-0 border-t-[8px] border-t-transparent border-l-[12px] border-l-[#03045E] border-b-[8px] border-b-transparent ml-1" ] []
                         ]
+                    , p [ class "text-[8px] text-[#667085] -tracking-[0.03em] leading-[1.21]" ] [ text "Watch the Video" ]
+                    ]
+                ]
+            ]
+
+        -- Video button (mobile only)
+        , div [ class "block sm:hidden mx-auto max-w-[280px] bg-[#F9F5FF] rounded-[10px] p-4 flex flex-row items-center cursor-pointer gap-4 border-2 border-[#DCE2E5]", onClick OpenGvsNVideo ]
+            [ div [ class "w-[33px] h-[33px] rounded-full border-2 border-[#03045E] flex items-center justify-center flex-shrink-0" ]
+                [ div [ class "w-0 h-0 border-t-[8px] border-t-transparent border-l-[12px] border-l-[#03045E] border-b-[8px] border-b-transparent ml-1" ] []
+                ]
+            , div [ class "flex flex-col items-start" ]
+                [ p [ class "text-[14px] font-bold text-[#03045E] -tracking-[0.03em] leading-[1.21] text-left" ] [ text "Learn About Plan G vs Plan N" ]
+                , p [ class "text-[8px] text-[#667085] -tracking-[0.03em] leading-[1.21]" ] [ text "Watch the Video" ]
+                ]
+            ]
+        ]
+
+
+viewPlanCard : Model -> String -> Plan -> Html Msg
+viewPlanCard model planTypeCode plan =
+    let
+        isSelected =
+            model.selectedPlan == Just plan
+
+        ( badgeTextColor, badgeBgColor ) =
+            if planTypeCode == "G" then
+                ( "text-[#363F72]", "bg-[#F8F9FC]" )
+
+            else
+                ( "text-[#C4320A]", "bg-[#FFF6ED]" )
+
+        borderClass =
+            if isSelected then
+                "border-2 border-[#2563EB]"
+
+            else
+                "border border-[#D4D4D4]"
+    in
+    div
+        [ class ("relative bg-white rounded-lg " ++ borderClass ++ " overflow-hidden cursor-pointer w-full sm:pb-[75%]") -- 4:3 aspect ratio on desktop only
+        , onClick (SelectPlanCard plan)
+        ]
+        [ div [ class "sm:absolute sm:inset-0 flex flex-col" ]
+            [ -- Top row with Plan type badge and radio
+              div [ class "flex items-center justify-between p-3 sm:p-4" ]
+                [ div [ class ("px-2.5 py-0.5 rounded-lg text-xs font-medium leading-5 " ++ badgeTextColor ++ " " ++ badgeBgColor) ]
+                    [ text ("PLAN " ++ planTypeCode) ]
+                , div [ class "flex items-center gap-1.5" ]
+                    [ span [ class "text-xs font-medium text-[#667085]" ] [ text "Select Plan" ]
+                    , if isSelected then
+                        svg [ Svg.Attributes.width "16", Svg.Attributes.height "17", Svg.Attributes.viewBox "0 0 12 13", Svg.Attributes.fill "none" ]
+                            [ Svg.rect [ Svg.Attributes.x "0.5", Svg.Attributes.y "1", Svg.Attributes.width "11", Svg.Attributes.height "11", Svg.Attributes.rx "5.5", Svg.Attributes.fill "#F9F5FF" ] []
+                            , Svg.rect [ Svg.Attributes.x "0.5", Svg.Attributes.y "1", Svg.Attributes.width "11", Svg.Attributes.height "11", Svg.Attributes.rx "5.5", Svg.Attributes.stroke "#7F56D9" ] []
+                            , Svg.path [ Svg.Attributes.d "M9 4.25L4.875 8.375L3 6.5", Svg.Attributes.stroke "#7F56D9", Svg.Attributes.strokeWidth "1.6666", Svg.Attributes.strokeLinecap "round", Svg.Attributes.strokeLinejoin "round" ] []
+                            ]
+
+                      else
+                        svg [ Svg.Attributes.width "16", Svg.Attributes.height "17", Svg.Attributes.viewBox "0 0 12 13", Svg.Attributes.fill "none" ]
+                            [ Svg.rect [ Svg.Attributes.x "0.5", Svg.Attributes.y "1", Svg.Attributes.width "11", Svg.Attributes.height "11", Svg.Attributes.rx "5.5", Svg.Attributes.fill "white" ] []
+                            , Svg.rect [ Svg.Attributes.x "0.5", Svg.Attributes.y "1", Svg.Attributes.width "11", Svg.Attributes.height "11", Svg.Attributes.rx "5.5", Svg.Attributes.stroke "#667085" ] []
+                            ]
                     ]
                 ]
 
-            -- Right side - Video
-            , div [ class "bg-[#F9F5FF] rounded-[10px] p-4 flex flex-col items-center cursor-pointer gap-2 border-2 border-[#DCE2E5] max-w-[180px]", onClick OpenGvsNVideo ]
-                [ p [ class "text-[14px] font-bold text-[#03045E] -tracking-[0.03em] leading-[1.21] text-center" ] [ text "Learn About Plan G vs Plan N" ]
-                , div [ class "w-[33px] h-[33px] rounded-full border-2 border-[#03045E] flex items-center justify-center" ]
-                    [ div [ class "w-0 h-0 border-t-[8px] border-t-transparent border-l-[12px] border-l-[#03045E] border-b-[8px] border-b-transparent ml-1" ] []
+            -- Carrier Logo
+            , div [ class "flex-1 px-4 flex justify-center items-center min-h-[50px] sm:min-h-[60px] max-h-[80px]" ]
+                [ img [ src plan.image, alt (plan.name ++ " logo"), class "h-8 sm:h-10 max-w-[140px] sm:max-w-[160px] object-contain" ] [] ]
+
+            -- Rates
+            , div [ class "flex justify-between px-4 sm:px-6 py-3 sm:py-4 bg-[#F9FAFB]" ]
+                [ -- Standard Rate
+                  div [ class "flex flex-row sm:flex-col items-center sm:items-start gap-2 sm:gap-0 flex-1" ]
+                    [ p [ class "text-[10px] font-medium leading-5 text-[#667085] order-2 sm:order-1 sm:mb-0.5" ] [ text "Standard Rate:" ]
+                    , p [ class "text-base sm:text-lg font-bold leading-6 text-[#667085] order-1 sm:order-2" ] [ text ("$" ++ String.fromInt (floor plan.price)) ]
                     ]
-                , p [ class "text-[8px] text-[#667085] -tracking-[0.03em] leading-[1.21]" ] [ text "Watch the Video" ]
+
+                -- Discount Rate
+                , div [ class "flex flex-row-reverse sm:flex-col items-center sm:items-end gap-2 sm:gap-0 flex-1" ]
+                    [ p [ class "text-[10px] font-medium leading-5 text-[#667085] order-2 sm:order-1 sm:mb-0.5" ] [ text "Discount Rate:" ]
+                    , p [ class "text-base sm:text-lg font-bold leading-6 text-[#667085] order-1 sm:order-2" ] [ text ("$" ++ String.fromInt (floor plan.priceDiscount)) ]
+                    ]
                 ]
             ]
         ]
@@ -1200,10 +1284,10 @@ viewPersonalInfo model =
 viewPlansSection : Model -> Html Msg
 viewPlansSection model =
     div [ class "bg-white rounded-[10px] border-2 border-[#DCE2E5] shadow-[0_1px_2px_rgba(16,24,40,0.05)]" ]
-        [ -- Header with Continue button
-          div [ class "px-6 py-4 flex items-center justify-between border-b-2 border-[#DCE2E5] bg-[#F9F5FF] rounded-t-[10px]" ]
+        [ -- Header (desktop only)
+          div [ class "hidden sm:flex px-4 sm:px-6 py-4 flex-row items-center justify-between border-b-2 border-[#DCE2E5] bg-[#F9F5FF] rounded-t-[10px]" ]
             [ div [ class "flex items-end gap-3" ]
-                [ h2 [ class "text-2xl font-extrabold -tracking-[0.04em] text-[#101828] leading-[1.2]" ] [ text "Plans" ]
+                [ h2 [ class "text-xl sm:text-2xl font-extrabold -tracking-[0.04em] text-[#101828] leading-[1.2]" ] [ text "Recommended Plans" ]
                 , p [ class "text-[12px] font-medium text-[#667085] -tracking-[0.04em] leading-[1.2] pb-[2px]" ] [ text "Select one to continue" ]
                 ]
             , button
@@ -1214,18 +1298,34 @@ viewPlansSection model =
                 [ text "Continue" ]
             ]
 
+        -- Mobile header
+        , div [ class "block sm:hidden px-4 py-4 border-b-2 border-[#DCE2E5] bg-[#F9F5FF] rounded-t-[10px]" ]
+            [ h2 [ class "text-xl font-extrabold -tracking-[0.04em] text-[#101828] leading-[1.2]" ] [ text "Recommended Plans" ]
+            , p [ class "text-[12px] font-medium text-[#667085] -tracking-[0.04em] leading-[1.2]" ] [ text "Select one to continue" ]
+            ]
+
         -- Plan G Section
-        , div [ class "p-8 pb-2 bg-white" ]
+        , div [ class "p-4 sm:p-8 pb-2 bg-white" ]
             [ h3 [ class "text-base font-extrabold -tracking-[0.02em] mb-6 text-[#101828]" ] [ text "Plan G Monthly Premiums" ]
-            , div [ class "grid grid-cols-3 gap-6" ]
+            , div [ class "grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6 px-2 sm:px-0" ]
                 (List.map (viewPlanCard model "G") (getTopPlans model model.plans.planG 3))
             ]
 
         -- Plan N Section
-        , div [ class "p-8 pt-6 bg-white rounded-b-[10px]" ]
+        , div [ class "p-4 sm:p-8 pt-6 bg-white" ]
             [ h3 [ class "text-base font-extrabold -tracking-[0.02em] mb-6 text-[#101828]" ] [ text "Plan N Monthly Premiums" ]
-            , div [ class "grid grid-cols-3 gap-6" ]
+            , div [ class "grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6 px-2 sm:px-0" ]
                 (List.map (viewPlanCard model "N") (getTopPlans model model.plans.planN 3))
+            ]
+
+        -- Mobile continue button
+        , div [ class "block sm:hidden p-4 bg-[#F9F5FF] rounded-b-[10px] border-t-2 border-[#DCE2E5]" ]
+            [ button
+                [ class "w-full bg-[#03045E] text-white text-sm font-medium px-6 py-2 rounded disabled:opacity-50 disabled:cursor-not-allowed"
+                , onClick (SelectPlan (Maybe.withDefault (Plan 0 0 Nothing 0 "" "" 0 "" "" "" "" "" "" 0 False "" False []) model.selectedPlan))
+                , disabled (model.selectedPlan == Nothing)
+                ]
+                [ text "Continue" ]
             ]
         ]
 
@@ -1239,7 +1339,7 @@ view model =
                 viewLoading
 
               else
-                div [ class "max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-3 space-y-10" ]
+                div [ class "max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-3 space-y-6 sm:space-y-10" ]
                     [ -- Personal Quote Card
                       viewPersonalInfo model
 
@@ -1286,74 +1386,6 @@ viewError error orgSlug =
         ]
 
 
-viewPlanCard : Model -> String -> Plan -> Html Msg
-viewPlanCard model planTypeCode plan =
-    let
-        isSelected =
-            model.selectedPlan == Just plan
-
-        ( badgeTextColor, badgeBgColor ) =
-            if planTypeCode == "G" then
-                ( "text-[#363F72]", "bg-[#F8F9FC]" )
-
-            else
-                ( "text-[#C4320A]", "bg-[#FFF6ED]" )
-
-        borderClass =
-            if isSelected then
-                "border-2 border-[#2563EB]"
-
-            else
-                "border border-[#D4D4D4]"
-    in
-    div
-        [ class ("relative bg-white rounded-lg " ++ borderClass ++ " overflow-hidden cursor-pointer w-full pb-[75%]") -- 4:3 aspect ratio
-        , onClick (SelectPlanCard plan)
-        ]
-        [ div [ class "absolute inset-0 flex flex-col" ]
-            [ -- Top row with Plan type badge and radio
-              div [ class "flex items-center justify-between p-4" ]
-                [ div [ class ("px-2.5 py-0.5 rounded-lg text-xs font-medium leading-5 " ++ badgeTextColor ++ " " ++ badgeBgColor) ]
-                    [ text ("PLAN " ++ planTypeCode) ]
-                , div [ class "flex items-center gap-1.5" ]
-                    [ span [ class "text-xs font-medium text-[#667085]" ] [ text "Select Plan" ]
-                    , if isSelected then
-                        svg [ Svg.Attributes.width "16", Svg.Attributes.height "17", Svg.Attributes.viewBox "0 0 12 13", Svg.Attributes.fill "none" ]
-                            [ Svg.rect [ Svg.Attributes.x "0.5", Svg.Attributes.y "1", Svg.Attributes.width "11", Svg.Attributes.height "11", Svg.Attributes.rx "5.5", Svg.Attributes.fill "#F9F5FF" ] []
-                            , Svg.rect [ Svg.Attributes.x "0.5", Svg.Attributes.y "1", Svg.Attributes.width "11", Svg.Attributes.height "11", Svg.Attributes.rx "5.5", Svg.Attributes.stroke "#7F56D9" ] []
-                            , Svg.path [ Svg.Attributes.d "M9 4.25L4.875 8.375L3 6.5", Svg.Attributes.stroke "#7F56D9", Svg.Attributes.strokeWidth "1.6666", Svg.Attributes.strokeLinecap "round", Svg.Attributes.strokeLinejoin "round" ] []
-                            ]
-
-                      else
-                        svg [ Svg.Attributes.width "16", Svg.Attributes.height "17", Svg.Attributes.viewBox "0 0 12 13", Svg.Attributes.fill "none" ]
-                            [ Svg.rect [ Svg.Attributes.x "0.5", Svg.Attributes.y "1", Svg.Attributes.width "11", Svg.Attributes.height "11", Svg.Attributes.rx "5.5", Svg.Attributes.fill "white" ] []
-                            , Svg.rect [ Svg.Attributes.x "0.5", Svg.Attributes.y "1", Svg.Attributes.width "11", Svg.Attributes.height "11", Svg.Attributes.rx "5.5", Svg.Attributes.stroke "#667085" ] []
-                            ]
-                    ]
-                ]
-
-            -- Carrier Logo
-            , div [ class "flex-1 px-4 flex justify-center items-center min-h-[60px] max-h-[80px]" ]
-                [ img [ src plan.image, alt (plan.name ++ " logo"), class "h-10 max-w-[160px] object-contain" ] [] ]
-
-            -- Rates
-            , div [ class "flex justify-between px-6 py-4 bg-[#F9FAFB]" ]
-                [ -- Standard Rate
-                  div [ class "flex-1" ]
-                    [ p [ class "text-[10px] font-medium leading-5 text-[#667085] mb-0.5" ] [ text "Standard Rate" ]
-                    , p [ class "text-lg font-bold leading-6 text-[#667085]" ] [ text ("$" ++ String.fromInt (floor plan.price)) ]
-                    ]
-
-                -- Discount Rate
-                , div [ class "flex-1 text-right" ]
-                    [ p [ class "text-[10px] font-medium leading-5 text-[#667085] mb-0.5" ] [ text "Discount Rate" ]
-                    , p [ class "text-lg font-bold leading-6 text-[#667085]" ] [ text ("$" ++ String.fromInt (floor plan.priceDiscount)) ]
-                    ]
-                ]
-            ]
-        ]
-
-
 viewGvsNModal : Model -> Html Msg
 viewGvsNModal model =
     if model.showGvsNVideo then
@@ -1379,11 +1411,13 @@ viewGvsNModal model =
                             []
                         ]
                     ]
-                , button
-                    [ class "bg-purple-500 text-white px-4 sm:px-6 py-2 rounded hover:bg-purple-600 mt-4 w-full sm:w-auto"
-                    , onClick CloseGvsNVideo
+                , div [ class "flex justify-center" ]
+                    [ button
+                        [ class "bg-purple-500 text-white px-4 sm:px-6 py-2 rounded hover:bg-purple-600 mt-4 w-full sm:w-auto"
+                        , onClick CloseGvsNVideo
+                        ]
+                        [ text "Continue" ]
                     ]
-                    [ text "Continue" ]
                 ]
             ]
 

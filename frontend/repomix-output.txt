@@ -11842,17 +11842,20 @@ module Compare exposing
 
 import BirthdayRules exposing (isInBirthdayRuleWindow)
 import Browser
+import Browser.Events
 import Browser.Navigation as Nav
 import CarrierNaic exposing (Carrier(..), carrierDecoder, carrierToNaics, carrierToString, naicToCarrier, stringToCarrier)
 import Date exposing (Date)
 import Dict
 import Html exposing (..)
 import Html.Attributes exposing (..)
-import Html.Events exposing (onClick)
+import Html.Events exposing (onClick, onInput)
 import Http
 import Json.Decode as D exposing (Decoder)
 import Json.Decode.Pipeline as Pipeline
 import Json.Encode as E
+import Svg exposing (path, svg)
+import Svg.Attributes exposing (clipRule, d, fill, fillRule, height, stroke, strokeLinecap, viewBox, width)
 import Task
 import Time
 import Url exposing (Url)
@@ -11870,32 +11873,41 @@ type PlanType
 
 
 type alias CompareParams =
-    { state : String
-    , zip : String
-    , county : String
-    , gender : String
-    , tobacco : Bool
-    , age : Int
-    , planType : String
-    , currentCarrier : Maybe String
-    , dateOfBirth : String
-    , quoteId : Maybe String
-    , trackingId : Maybe String
+    { quoteId : Maybe String
     , orgId : Maybe String
     }
 
 
-type alias Contact =
+type alias ContactResponse =
+    { contact : Contact
+    , agent : Agent
+    , orgSlug : String
+    , carrierContracts : List Carrier
+    }
+
+
+type alias Agent =
     { firstName : String
     , lastName : String
     , email : String
     , phone : String
-    , dateOfBirth : String
+    }
+
+
+type alias Contact =
+    { id : Int
+    , firstName : String
+    , lastName : String
+    , email : String
+    , phoneNumber : String
+    , age : Int
     , gender : String
     , tobacco : Bool
     , state : String
     , zipCode : String
+    , county : Maybe String
     , currentCarrier : Maybe String
+    , planType : Maybe String
     }
 
 
@@ -11938,16 +11950,24 @@ type alias Plans =
     }
 
 
+type alias LocationUpdateResponse =
+    { success : Bool
+    , zipCode : String
+    , state : String
+    , counties : List String
+    }
+
+
 type alias Model =
     { isLoading : Bool
     , error : Maybe String
     , plans : Plans
-    , state : String
-    , county : String
-    , zip : String
-    , age : Int
-    , gender : String
-    , tobacco : Bool
+    , state : Maybe String
+    , county : Maybe String
+    , zip : Maybe String
+    , age : Maybe Int
+    , gender : Maybe String
+    , tobacco : Maybe Bool
     , selectedPlanType : PlanType
     , selectedPlan : Maybe Plan
     , showReviewVideo : Bool
@@ -11959,16 +11979,24 @@ type alias Model =
     , key : Nav.Key
     , showDiscount : Bool
     , currentCarrier : Maybe String
-    , dateOfBirth : String
+    , planType : Maybe String
+    , dateOfBirth : Maybe String
     , quoteId : Maybe String
     , carrierContracts : List Carrier
     , currentDate : Maybe Date
     , orgId : Maybe String
-    , name : String
+    , name : Maybe String
     , contact : Maybe Contact
+    , agent : Maybe Agent
     , orgSlug : Maybe String
     , loadingContact : Bool
     , showDiscountInfo : Bool
+    , showLocationModal : Bool
+    , editingZipCode : Maybe String
+    , editingCounty : Maybe String
+    , availableCounties : List String
+    , locationUpdateError : Maybe String
+    , submittingLocation : Bool
     }
 
 
@@ -11993,6 +12021,12 @@ type Msg
     | GotCarrierContracts (Result Http.Error (List Carrier))
     | GotCurrentDate Date
     | GotContactData (Result Http.Error ContactResponse)
+    | ShowLocationModal
+    | CloseLocationModal
+    | UpdateZipCode String
+    | UpdateCounty String
+    | SubmitLocationUpdate
+    | GotLocationUpdate (Result Http.Error LocationUpdateResponse)
     | NoOp
 
 
@@ -12017,71 +12051,18 @@ type alias Flags =
 init : Nav.Key -> Maybe CompareParams -> ( Model, Cmd Msg )
 init key maybeParams =
     let
-        -- Get values from params or use defaults
-        defaultParams =
-            { state = "TX"
-            , county = "Dallas"
-            , zip = "75001"
-            , age = 65
-            , gender = "M"
-            , tobacco = False
-            , planType = "G"
-            , currentCarrier = Nothing
-            , dateOfBirth = ""
-            , quoteId = Nothing
-            , trackingId = Nothing
-            , orgId = Nothing
-            }
-
-        params =
-            maybeParams
-                |> Maybe.withDefault defaultParams
-
-        -- Extract org ID from quote ID if not provided explicitly
-        -- Quote IDs are formatted as "orgId-contactId-hash"
-        extractedOrgId =
-            case ( params.orgId, params.quoteId ) of
-                ( Nothing, Just quoteId ) ->
-                    -- Try to extract orgId from the quoteId (first part before the first dash)
-                    quoteId
-                        |> String.split "-"
-                        |> List.head
-
-                ( orgId, _ ) ->
-                    orgId
-
-        -- Extract plan type directly from params
-        initialPlanType =
-            if params.planType == "N" then
-                PlanN
-
-            else
-                PlanG
-
-        -- Ensure age is at least 65 for Medicare supplement plans
-        minimumAge =
-            if params.age < 65 then
-                65
-
-            else
-                params.age
-
-        model =
+        -- Empty model with loading state
+        emptyModel =
             { isLoading = True
             , error = Nothing
             , plans = { planG = [], planN = [] }
-            , state = params.state
-            , county = params.county
-            , zip = params.zip
-            , age = minimumAge
-            , gender =
-                if params.gender == "Male" || params.gender == "M" then
-                    "M"
-
-                else
-                    "F"
-            , tobacco = params.tobacco
-            , selectedPlanType = initialPlanType
+            , state = Nothing
+            , county = Nothing
+            , zip = Nothing
+            , age = Nothing
+            , gender = Nothing
+            , tobacco = Nothing
+            , selectedPlanType = PlanG
             , selectedPlan = Nothing
             , showReviewVideo = False
             , showQualificationVideo = False
@@ -12091,52 +12072,65 @@ init key maybeParams =
             , showRatesVideo = False
             , key = key
             , showDiscount = False
-            , currentCarrier = params.currentCarrier
-            , dateOfBirth = params.dateOfBirth
-            , quoteId = params.quoteId
+            , currentCarrier = Nothing
+            , planType = Nothing
+            , dateOfBirth = Nothing
+            , quoteId = Nothing
             , carrierContracts = []
             , currentDate = Nothing
-            , orgId = extractedOrgId
-            , name = "Loading..." -- Will be updated with real name
+            , orgId = Nothing
+            , name = Nothing
             , contact = Nothing
+            , agent = Nothing
             , orgSlug = Nothing
             , loadingContact = True
             , showDiscountInfo = False
+            , showLocationModal = False
+            , editingZipCode = Nothing
+            , editingCounty = Nothing
+            , availableCounties = []
+            , locationUpdateError = Nothing
+            , submittingLocation = False
             }
-
-        -- Commands to execute
-        quoteCommand =
+    in
+    case maybeParams of
+        Just params ->
             case params.quoteId of
                 Just quoteId ->
-                    fetchContactData quoteId
-
-                Nothing ->
-                    Cmd.none
-
-        initialCommands =
-            [ fetchPlans model
-            , quoteCommand
-            , Task.perform GotCurrentDate Date.today
-            ]
-
-        -- If we have a quote ID, fetch contact data
-        commands =
-            case params.quoteId of
-                Just quoteId ->
-                    fetchContactData quoteId :: initialCommands
+                    -- We have a quote ID, fetch contact data
+                    ( { emptyModel | quoteId = Just quoteId, orgId = params.orgId }
+                    , Cmd.batch
+                        [ fetchContactData quoteId
+                        , Task.perform GotCurrentDate Date.today
+                        ]
+                    )
 
                 Nothing ->
                     -- No quote ID, check if we have an org ID
-                    case extractedOrgId of
+                    case params.orgId of
                         Just orgId ->
-                            -- Redirect to the self-service onboarding page for this organization
-                            [ Nav.pushUrl key ("/self-onboarding/" ++ orgId) ]
+                            -- Redirect to self-service onboarding
+                            ( emptyModel
+                            , Nav.pushUrl key ("/self-onboarding/" ++ orgId)
+                            )
 
                         Nothing ->
-                            -- No org ID either - this is an error case
-                            [ Nav.pushUrl key "/404" ]
-    in
-    ( model, Cmd.batch commands )
+                            -- No valid parameters
+                            ( { emptyModel
+                                | isLoading = False
+                                , error = Just "Missing required parameters. Please provide either a quote ID or organization ID."
+                              }
+                            , Cmd.none
+                            )
+
+        Nothing ->
+            -- No parameters provided
+            ( { emptyModel
+                | isLoading = False
+                , error = Just "No parameters provided. Please provide either a quote ID or organization ID."
+              }
+            , Cmd.none
+            )
 
 
 defaultPlanType : Flags -> PlanType
@@ -12166,46 +12160,50 @@ fetchContactData quoteId =
 
 fetchPlans : Model -> Cmd Msg
 fetchPlans model =
-    Http.request
-        { method = "POST"
-        , headers = []
-        , url = "/api/quotes"
-        , body = Http.jsonBody (buildPlansBody model)
-        , expect = Http.expectJson GotPlans (plansDecoder model)
-        , timeout = Nothing
-        , tracker = Nothing
-        }
+    case model.contact of
+        Just contact ->
+            Http.request
+                { method = "POST"
+                , headers = []
+                , url = "/api/quotes"
+                , body = Http.jsonBody (buildPlansBody contact)
+                , expect = Http.expectJson GotPlans (plansDecoder model)
+                , timeout = Nothing
+                , tracker = Nothing
+                }
+
+        Nothing ->
+            -- Don't fetch plans until we have contact data
+            Cmd.none
 
 
-buildPlansBody : Model -> E.Value
-buildPlansBody model =
-    let
-        -- Ensure age is at least 65 for Medicare supplement plans
-        minimumAge =
-            if model.age < 65 then
-                65
-
-            else
-                model.age
-    in
+buildPlansBody : Contact -> E.Value
+buildPlansBody contact =
     E.object
-        [ ( "zip_code", E.string model.zip )
-        , ( "state", E.string model.state )
-        , ( "county", E.string model.county )
-        , ( "age", E.int minimumAge )
+        [ ( "zip_code", E.string contact.zipCode )
+        , ( "state", E.string contact.state )
+        , ( "county", E.string (Maybe.withDefault "" contact.county) )
+        , ( "age", E.int contact.age )
         , ( "gender"
           , E.string
-                (if model.gender == "Male" then
+                (if contact.gender == "Male" then
                     "M"
 
                  else
                     "F"
                 )
           )
-        , ( "tobacco", E.bool model.tobacco )
+        , ( "tobacco", E.bool contact.tobacco )
         , ( "plans", E.list E.string [ "G", "N" ] )
         , ( "carriers", E.string "supported" )
         ]
+
+
+calculateAge : String -> Int
+calculateAge dateOfBirth =
+    -- TODO: Implement proper age calculation from dateOfBirth string
+    -- For now, default to 65 which is the minimum age for Medicare
+    65
 
 
 
@@ -12308,7 +12306,7 @@ groupQuotesByPlan responses model =
             , ratingCategory = ""
             , score = 0
             , select = False
-            , state = model.state
+            , state = Maybe.withDefault "" model.state
             , tobacco = quote.tobacco == 1
             , coverageSummary =
                 if String.toUpper quote.plan == "G" then
@@ -12585,24 +12583,168 @@ update msg model =
                         updatedModel =
                             { model
                                 | contact = Just response.contact
+                                , agent = Just response.agent
                                 , orgSlug = Just response.orgSlug
                                 , carrierContracts = response.carrierContracts
                                 , loadingContact = False
-                                , name = response.contact.firstName ++ " " ++ response.contact.lastName
-                                , gender = response.contact.gender
-                                , tobacco = response.contact.tobacco
-                                , state = response.contact.state
-                                , zip = response.contact.zipCode
-                                , dateOfBirth = response.contact.dateOfBirth
+                                , name = Just (response.contact.firstName ++ " " ++ response.contact.lastName)
+                                , gender = Just response.contact.gender
+                                , tobacco = Just response.contact.tobacco
+                                , state = Just response.contact.state
+                                , zip = Just response.contact.zipCode
+                                , age = Just response.contact.age
                                 , currentCarrier = response.contact.currentCarrier
+                                , planType = response.contact.planType
                             }
                     in
-                    ( updatedModel, fetchPlans updatedModel )
+                    ( updatedModel
+                    , fetchPlans updatedModel
+                    )
 
                 Err error ->
                     ( { model
-                        | error = Just "Failed to load contact data. Please try again later."
+                        | error = Just "This quote link appears to be invalid or has expired. Please get a new quote to continue."
                         , loadingContact = False
+                        , isLoading = False
+                      }
+                    , Cmd.none
+                    )
+
+        ShowLocationModal ->
+            ( { model
+                | showLocationModal = True
+                , editingZipCode = model.zip
+                , editingCounty = Nothing
+                , availableCounties = []
+                , locationUpdateError = Nothing
+              }
+            , Cmd.none
+            )
+
+        CloseLocationModal ->
+            ( { model
+                | showLocationModal = False
+                , editingZipCode = Nothing
+                , editingCounty = Nothing
+                , availableCounties = []
+                , locationUpdateError = Nothing
+              }
+            , Cmd.none
+            )
+
+        UpdateZipCode newZip ->
+            ( { model | editingZipCode = Just newZip }
+            , Cmd.none
+            )
+
+        UpdateCounty county ->
+            ( { model | editingCounty = Just county }
+            , Cmd.none
+            )
+
+        SubmitLocationUpdate ->
+            case model.contact of
+                Just contact ->
+                    case model.orgSlug of
+                        Just orgSlug ->
+                            ( { model | submittingLocation = True, locationUpdateError = Nothing }
+                            , Http.post
+                                { url = "/api/self-service/update-location"
+                                , body =
+                                    Http.jsonBody
+                                        (E.object
+                                            [ ( "orgSlug", E.string orgSlug )
+                                            , ( "contactId", E.string (String.fromInt contact.id) )
+                                            , ( "zipCode", E.string (Maybe.withDefault "" model.editingZipCode) )
+                                            , ( "county", E.string (Maybe.withDefault "" model.editingCounty) )
+                                            ]
+                                        )
+                                , expect = Http.expectJson GotLocationUpdate locationUpdateResponseDecoder
+                                }
+                            )
+
+                        Nothing ->
+                            ( { model | locationUpdateError = Just "Organization ID not found" }
+                            , Cmd.none
+                            )
+
+                Nothing ->
+                    ( { model | locationUpdateError = Just "Contact information not found" }
+                    , Cmd.none
+                    )
+
+        GotLocationUpdate result ->
+            case result of
+                Ok response ->
+                    if response.success then
+                        case response.counties of
+                            [] ->
+                                -- No counties returned, show error
+                                ( { model
+                                    | locationUpdateError = Just "No counties found for this ZIP code"
+                                    , submittingLocation = False
+                                  }
+                                , Cmd.none
+                                )
+
+                            [ singleCounty ] ->
+                                -- Only one county, use it and close modal
+                                let
+                                    -- Update contact with new location info
+                                    updatedContact =
+                                        model.contact
+                                            |> Maybe.map
+                                                (\contact ->
+                                                    { contact
+                                                        | zipCode = response.zipCode
+                                                        , state = response.state
+                                                        , county = Just singleCounty
+                                                    }
+                                                )
+
+                                    updatedModel =
+                                        { model
+                                            | zip = Just response.zipCode
+                                            , state = Just response.state
+                                            , county = Just singleCounty
+                                            , contact = updatedContact
+                                            , showLocationModal = False
+                                            , editingZipCode = Nothing
+                                            , editingCounty = Nothing
+                                            , availableCounties = []
+                                            , locationUpdateError = Nothing
+                                            , submittingLocation = False
+                                        }
+                                in
+                                -- Reload the page to refresh everything
+                                ( updatedModel
+                                , Nav.reload
+                                )
+
+                            multipleCounties ->
+                                -- Multiple counties, show dropdown
+                                ( { model
+                                    | availableCounties = multipleCounties
+                                    , zip = Just response.zipCode
+                                    , state = Just response.state
+                                    , editingCounty = Nothing
+                                    , submittingLocation = False
+                                  }
+                                , Cmd.none
+                                )
+
+                    else
+                        ( { model
+                            | locationUpdateError = Just "Failed to update location"
+                            , submittingLocation = False
+                          }
+                        , Cmd.none
+                        )
+
+                Err error ->
+                    ( { model
+                        | locationUpdateError = Just (httpErrorToString error)
+                        , submittingLocation = False
                       }
                     , Cmd.none
                     )
@@ -12727,329 +12869,315 @@ httpErrorToString error =
 
 
 subscriptions : Model -> Sub Msg
-subscriptions _ =
-    Sub.none
+subscriptions model =
+    let
+        closeModalOnEscape : String -> Msg
+        closeModalOnEscape key =
+            if key == "Escape" then
+                case model of
+                    _ ->
+                        if model.showLocationModal then
+                            CloseLocationModal
+
+                        else if model.showGvsNVideo then
+                            CloseGvsNVideo
+
+                        else if model.showQualificationVideo then
+                            CloseQualificationVideo
+
+                        else if model.showRatesVideo then
+                            CloseRatesVideo
+
+                        else if model.showFAQ then
+                            CloseFAQ
+
+                        else
+                            NoOp
+
+            else
+                NoOp
+
+        shouldListenForEscape =
+            model.showLocationModal
+                || model.showGvsNVideo
+                || model.showQualificationVideo
+                || model.showRatesVideo
+                || model.showFAQ
+    in
+    if shouldListenForEscape then
+        Browser.Events.onKeyDown
+            (D.map closeModalOnEscape (D.field "key" D.string))
+
+    else
+        Sub.none
 
 
 
 -- VIEW
 
 
+viewPersonalInfo : Model -> Html Msg
+viewPersonalInfo model =
+    div [ class "bg-white rounded-[10px] border-2 border-[#DCE2E5] shadow-[0_1px_2px_rgba(16,24,40,0.05)]" ]
+        [ -- Personal Quote Header
+          div [ class "border-b-2 border-[#DCE2E5] bg-[#F9F5FF] px-4 sm:px-6 py-3 rounded-t-[10px]" ]
+            [ h2 [ class "text-xl sm:text-2xl font-extrabold tracking-tight leading-[2] -tracking-[0.04em]" ] [ text "Personal Quote" ]
+            ]
+        , div [ class "p-4 sm:p-6 flex flex-col sm:flex-row sm:justify-between sm:items-start gap-4 sm:gap-0 bg-white rounded-b-[10px]" ]
+            [ -- Left side - Quote For
+              div [ class "flex flex-col" ]
+                [ div [ class "mb-2" ]
+                    [ p [ class "text-sm text-[#667085] mb-1" ] [ text "Quote For" ]
+                    , p [ class "text-[16px] font-medium" ] [ text (Maybe.withDefault "Loading..." model.name) ]
+                    , p [ class "text-[12px] text-[#667085]" ]
+                        [ text
+                            (if Maybe.withDefault "" model.gender == "M" then
+                                "M"
+
+                             else
+                                "F"
+                            )
+                        , span [ class "text-[#475569] mx-2 font-medium" ] [ text "│" ]
+                        , text
+                            (if Maybe.withDefault False model.tobacco then
+                                "Tobacco"
+
+                             else
+                                "Non-Tobacco"
+                            )
+                        , span [ class "text-[#475569] mx-2 font-medium" ] [ text "│" ]
+                        , text (String.fromInt (Maybe.withDefault 0 model.age))
+                        , text " years"
+                        , span [ class "text-[#475569] mx-2 font-medium" ] [ text "│" ]
+                        , text (Maybe.withDefault "" model.state)
+                        , text " "
+                        , text (Maybe.withDefault "" model.zip)
+                        ]
+                    ]
+                , div [ class "flex items-center" ]
+                    [ button [ class "text-xs text-[#2563EB] underline text-left", onClick ShowLocationModal ] [ text "Edit Location" ]
+                    , span [ class "text-[#667085] mx-2 font-medium" ] [ text "│" ]
+                    , a [ href ("/self-onboarding/" ++ Maybe.withDefault "" model.orgSlug), class "text-xs text-[#2563EB] underline text-left" ] [ text "Quote for a New Person" ]
+                    ]
+                ]
+
+            -- Middle - Quote From
+            , div [ class "flex flex-col" ]
+                [ p [ class "text-sm text-[#667085] mb-1" ] [ text "Quote From" ]
+                , p [ class "text-sm font-medium mb-2" ]
+                    [ text
+                        (case model.agent of
+                            Just agent ->
+                                agent.firstName ++ " " ++ agent.lastName
+
+                            Nothing ->
+                                "Loading..."
+                        )
+                    , div [ class "flex flex-col gap-2.5" ]
+                        [ div [ class "flex items-center gap-1.5 bg-[#F9F5FF] px-2.5 py-1 rounded" ]
+                            [ svg [ Svg.Attributes.width "12", Svg.Attributes.height "12", Svg.Attributes.viewBox "0 0 12 12", Svg.Attributes.fill "none" ]
+                                [ path [ Svg.Attributes.d "M1 6C1 4.1145 1 3.1715 1.586 2.586C2.1715 2 3.1145 2 5 2H7C8.8855 2 9.8285 2 10.414 2.586C11 3.1715 11 4.1145 11 6C11 7.8855 11 8.8285 10.414 9.414C9.8285 10 8.8855 10 7 10H5C3.1145 10 2.1715 10 1.586 9.414C1 8.8285 1 7.8855 1 6Z", Svg.Attributes.stroke "#03045E" ] []
+                                , path [ Svg.Attributes.d "M3 4L4.0795 4.9C4.998 5.665 5.457 6.0475 6 6.0475C6.543 6.0475 7.0025 5.665 7.9205 4.8995L9 4", Svg.Attributes.stroke "#03045E", Svg.Attributes.strokeLinecap "round", Svg.Attributes.strokeLinejoin "round" ] []
+                                ]
+                            , span [ class "text-xs text-[#03045E]" ]
+                                [ text
+                                    (case model.agent of
+                                        Just agent ->
+                                            agent.email
+
+                                        Nothing ->
+                                            "Loading..."
+                                    )
+                                ]
+                            ]
+                        ]
+                    , div [ class "flex items-center gap-1.5 bg-[#F9F5FF] px-2.5 py-1 rounded" ]
+                        [ svg [ Svg.Attributes.width "12", Svg.Attributes.height "12", Svg.Attributes.viewBox "0 0 12 12", Svg.Attributes.fill "none" ]
+                            [ path
+                                [ Svg.Attributes.fillRule "evenodd"
+                                , Svg.Attributes.clipRule "evenodd"
+                                , Svg.Attributes.d "M1.75442 1.13022C2.80442 0.0802194 4.57692 0.160219 5.30817 1.47022L5.7138 2.19709C6.19067 3.05209 5.98755 4.13147 5.2888 4.83897C5.24752 4.90156 5.22497 4.97463 5.2238 5.04959C5.21567 5.20959 5.27255 5.58022 5.84692 6.15397C6.42067 6.72772 6.79067 6.78522 6.9513 6.77709C7.02626 6.77592 7.09934 6.75337 7.16192 6.71209C7.8688 6.01334 8.9488 5.81022 9.8038 6.28709L10.5307 6.69334C11.8407 7.42459 11.9207 9.19584 10.8707 10.2465C10.3088 10.8077 9.56255 11.3071 8.68442 11.3402C7.38442 11.3896 5.22442 11.0533 3.08567 8.91522C0.947548 6.77647 0.611298 4.61709 0.660673 3.31647C0.693798 2.43834 1.19317 1.69147 1.75442 1.13022ZM4.48942 1.92709C4.11442 1.25584 3.10817 1.10209 2.41755 1.79334C1.93317 2.27772 1.61755 2.81209 1.59755 3.35147C1.5563 4.43647 1.82442 6.32772 3.7488 8.25147C5.6738 10.1765 7.56442 10.4446 8.6488 10.4033C9.18817 10.3827 9.7238 10.0677 10.2075 9.58334C10.8988 8.89209 10.745 7.88584 10.0738 7.51147L9.34692 7.10584C8.89505 6.85397 8.25942 6.93959 7.8138 7.38584C7.77005 7.42959 7.4913 7.68959 6.99692 7.71334C6.49067 7.73834 5.87755 7.51084 5.18442 6.81709C4.49005 6.12334 4.26255 5.51022 4.28755 5.00334C4.3113 4.50897 4.57192 4.23022 4.61505 4.18647C5.0613 3.74084 5.14692 3.10584 4.89505 2.65397L4.48942 1.92709Z"
+                                , Svg.Attributes.fill "#03045E"
+                                ]
+                                []
+                            ]
+                        , span [ class "text-xs text-[#03045E]" ]
+                            [ text
+                                (case model.agent of
+                                    Just agent ->
+                                        formatPhoneNumber agent.phone
+
+                                    Nothing ->
+                                        "Loading..."
+                                )
+                            ]
+                        ]
+                    ]
+                ]
+
+            -- Right side - Video
+            , div [ class "bg-[#F9F5FF] rounded-[10px] p-4 flex flex-col items-center cursor-pointer gap-2 border-2 border-[#DCE2E5] w-full sm:max-w-[180px]", onClick OpenGvsNVideo ]
+                [ p [ class "text-[14px] font-bold text-[#03045E] -tracking-[0.03em] leading-[1.21] text-center" ] [ text "Learn About Plan G vs Plan N" ]
+                , div [ class "w-[33px] h-[33px] rounded-full border-2 border-[#03045E] flex items-center justify-center" ]
+                    [ div [ class "w-0 h-0 border-t-[8px] border-t-transparent border-l-[12px] border-l-[#03045E] border-b-[8px] border-b-transparent ml-1" ] []
+                    ]
+                , p [ class "text-[8px] text-[#667085] -tracking-[0.03em] leading-[1.21]" ] [ text "Watch the Video" ]
+                ]
+            ]
+        ]
+
+
+viewPlansSection : Model -> Html Msg
+viewPlansSection model =
+    div [ class "bg-white rounded-[10px] border-2 border-[#DCE2E5] shadow-[0_1px_2px_rgba(16,24,40,0.05)]" ]
+        [ -- Header with Continue button
+          div [ class "px-4 sm:px-6 py-4 flex flex-col sm:flex-row sm:items-center justify-between border-b-2 border-[#DCE2E5] bg-[#F9F5FF] rounded-t-[10px] gap-4 sm:gap-0" ]
+            [ div [ class "flex items-end gap-3" ]
+                [ h2 [ class "text-xl sm:text-2xl font-extrabold -tracking-[0.04em] text-[#101828] leading-[1.2]" ] [ text "Plans" ]
+                , p [ class "text-[12px] font-medium text-[#667085] -tracking-[0.04em] leading-[1.2] pb-[2px]" ] [ text "Select one to continue" ]
+                ]
+            , button
+                [ class "w-full sm:w-auto bg-[#03045E] text-white text-sm font-medium px-6 py-2 rounded disabled:opacity-50 disabled:cursor-not-allowed"
+                , onClick (SelectPlan (Maybe.withDefault (Plan 0 0 Nothing 0 "" "" 0 "" "" "" "" "" "" 0 False "" False []) model.selectedPlan))
+                , disabled (model.selectedPlan == Nothing)
+                ]
+                [ text "Continue" ]
+            ]
+
+        -- Plan G Section
+        , div [ class "p-4 sm:p-8 pb-2 bg-white" ]
+            [ h3 [ class "text-base font-extrabold -tracking-[0.02em] mb-6 text-[#101828]" ] [ text "Plan G Monthly Premiums" ]
+            , div [ class "grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6" ]
+                (List.map (viewPlanCard model "G") (getTopPlans model model.plans.planG 3))
+            ]
+
+        -- Plan N Section
+        , div [ class "p-4 sm:p-8 pt-6 bg-white rounded-b-[10px]" ]
+            [ h3 [ class "text-base font-extrabold -tracking-[0.02em] mb-6 text-[#101828]" ] [ text "Plan N Monthly Premiums" ]
+            , div [ class "grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6" ]
+                (List.map (viewPlanCard model "N") (getTopPlans model model.plans.planN 3))
+            ]
+        ]
+
+
 view : Model -> Browser.Document Msg
 view model =
     { title = "Quote - Medicare Max"
     , body =
-        [ div [ class "bg-gray-50 min-h-screen pb-12" ]
-            [ div [ class "max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-3" ]
-                [ div [ class "bg-white rounded-lg shadow-sm p-4 mb-3 max-w-2xl mx-auto" ]
-                    [ div [ class "flex flex-col space-y-3" ]
-                        [ -- Top row - Quote and date info
-                          div [ class "flex justify-between" ]
-                            [ div []
-                                [ p [ class "text-xs text-gray-500" ] [ text "Quote for:" ]
-                                , p [ class "text-sm font-medium" ] [ text model.name ]
-                                ]
-                            , div [ class "text-right" ]
-                                [ p [ class "text-xs text-gray-500" ] [ text "Policy Effective Date:" ]
-                                , p [ class "text-sm font-medium" ] [ text "April 2025" ]
-                                ]
-                            ]
-                        , -- Middle row
-                          div [ class "flex justify-between" ]
-                            [ div []
-                                [ p [ class "text-xs text-gray-500" ] [ text "Email:" ]
-                                , p [ class "text-sm" ]
-                                    [ text (model.contact |> Maybe.map .email |> Maybe.withDefault "loading...") ]
-                                ]
-                            , div [ class "text-right" ]
-                                [ p [ class "text-xs text-gray-500" ] [ text "Birth Date:" ]
-                                , p [ class "text-sm" ] [ text (formatBirthDate model.dateOfBirth) ]
-                                ]
-                            ]
-                        , -- Bottom row
-                          div [ class "flex justify-between" ]
-                            [ div []
-                                [ p [ class "text-xs text-gray-500" ] [ text "Phone:" ]
-                                , p [ class "text-sm" ]
-                                    [ text (model.contact |> Maybe.map .phone |> Maybe.map formatPhoneNumber |> Maybe.withDefault "loading...") ]
-                                ]
-                            , div [ class "text-right" ]
-                                [ p [ class "text-xs text-gray-500" ] [ text "Details:" ]
-                                , p [ class "text-sm" ]
-                                    [ text
-                                        (String.join ", "
-                                            [ if model.gender == "M" then
-                                                "Male"
-
-                                              else
-                                                "Female"
-                                            , formatAddress model.state model.zip
-                                            , if model.tobacco then
-                                                "Tobacco User"
-
-                                              else
-                                                "Non-Tobacco User"
-                                            ]
-                                        )
-                                    ]
-                                ]
-                            ]
-                        , div [ class "flex justify-between" ]
-                            [ div []
-                                [ p [ class "text-xs text-gray-500" ] [ text "Zip Code:" ]
-                                , p [ class "text-sm" ] [ text model.zip ]
-                                ]
-                            , -- Current carrier (only if available)
-                              if model.currentCarrier /= Nothing then
-                                div [ class "text-right" ]
-                                    [ p [ class "text-xs text-gray-500" ] [ text "Current Carrier:" ]
-                                    , p [ class "text-sm" ]
-                                        [ text (Maybe.withDefault "" model.currentCarrier) ]
-                                    ]
-
-                              else
-                                text ""
-                            ]
-                        ]
-                    ]
-                ]
-            , -- Household Discount Checkbox
-              div [ class "flex justify-center mb-3" ]
-                [ div [ class "flex items-center" ]
-                    [ span
-                        [ class "flex items-center cursor-pointer"
-                        , onClick ToggleDiscount
-                        ]
-                        [ input
-                            [ type_ "checkbox"
-                            , class "form-checkbox h-4 w-4"
-                            , checked model.showDiscount
-                            ]
-                            []
-                        , span [ class "ml-3 text-sm text-gray-700" ]
-                            [ text "Apply Household Discount" ]
-                        ]
-                    , span
-                        [ class "ml-2 text-xs text-purple-600 underline cursor-pointer"
-                        , onClick ToggleDiscountInfo
-                        ]
-                        [ text "(what's this?)" ]
-                    ]
-                ]
-            , if model.showDiscountInfo then
-                div [ class "bg-purple-50 p-3 mt-2 rounded-md max-w-md mx-auto text-sm" ]
-                    [ p [ class "mb-2 text-gray-700" ]
-                        [ text "Some arriers offer premium discounts based on the number of people in the same household. Eligibility criteria and discount amounts vary by carrier." ]
-                    , div [ class "flex justify-center max-w-md" ]
-                        [ button
-                            [ class "text-xs text-purple-600 hover:text-purple-800 mt-1 cursor-pointer w-full py-2"
-                            , onClick ToggleDiscountInfo
-                            ]
-                            [ text "Close" ]
-                        ]
-                    ]
-
-              else
-                text ""
-            , -- G vs N Video Pill
-              div [ class "flex justify-center mb-4" ]
-                [ viewPillButton "Learn About Plan G vs. Plan N" True OpenGvsNVideo ]
-            , -- Main Content
-              if model.isLoading then
+        [ div [ class "bg-white min-h-screen pb-12" ]
+            [ if model.loadingContact || model.isLoading then
                 viewLoading
 
               else
-                case model.error of
-                    Just error ->
-                        if String.startsWith "No plans available" error then
-                            -- Still loading or searching for plans
-                            viewLoading
+                div [ class "max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-3 space-y-6 sm:space-y-10" ]
+                    [ -- Personal Quote Card
+                      viewPersonalInfo model
 
-                        else
-                            -- Real error
-                            viewError error
-
-                    Nothing ->
-                        div [ class "max-w-[700px] mx-auto px-2" ]
-                            [ -- Plan G Section
-                              viewPlanTypeSection model "Plan G Monthly Premiums" "G" model.plans.planG
-                            , -- Plan N Section
-                              viewPlanTypeSection model "Plan N Monthly Premiums" "N" model.plans.planN
-                            , -- Continue button
-                              div [ class "flex justify-center mt-12" ]
-                                [ button
-                                    [ class "bg-purple-500 hover:bg-purple-600 text-white font-bold px-8 py-2 rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
-                                    , disabled (model.selectedPlan == Nothing)
-                                    , onClick
-                                        (case model.selectedPlan of
-                                            Just plan ->
-                                                SelectPlan plan
-
-                                            Nothing ->
-                                                NoOp
-                                        )
-                                    ]
-                                    [ text "Continue with Selected Plan" ]
-                                ]
-                            ]
+                    -- Plans Section
+                    , viewPlansSection model
+                    ]
             ]
         , viewGvsNModal model
         , viewQualificationModal model
         , viewRatesModal model
+        , viewLocationModal model
         ]
     }
 
 
 viewLoading : Html Msg
 viewLoading =
-    div [ class "flex flex-col items-center justify-center gap-4 text-center min-h-[400px]" ]
+    div [ class "fixed inset-0 bg-white flex flex-col items-center justify-center gap-4 text-center" ]
         [ div [ class "animate-spin rounded-full h-12 w-12 border-4 border-purple-600 border-t-transparent" ] []
         , p [ class "text-center text-lg font-medium text-gray-600" ]
-            [ text "Searching for available plans..." ]
+            [ text "Loading your personalized quote..." ]
         ]
 
 
-viewError : String -> Html Msg
-viewError error =
-    div [ class "flex flex-col gap-6 text-center mx-auto max-w-3xl" ]
-        [ h1 [ class "text-2xl font-semibold text-[#1A1A1A] mb-2" ]
-            [ text "Unable to Load Plans" ]
-        , div [ class "text-center text-xl font-medium text-red-600 mt-8 p-4 bg-red-50 rounded-lg" ]
-            [ text error ]
-        , div [ class "mt-6 flex justify-center" ]
-            [ button
-                [ class "px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
-                , onClick (NavigateTo "/")
-                ]
-                [ text "Return to Home" ]
+viewError : String -> Maybe String -> Html Msg
+viewError error orgSlug =
+    div [ class "fixed inset-0 bg-white flex flex-col items-center justify-center gap-6 text-center px-4" ]
+        [ div [ class "max-w-lg" ]
+            [ h1 [ class "text-2xl font-semibold text-[#1A1A1A] mb-4" ]
+                [ text "Unable to Load Quote" ]
+            , p [ class "text-lg text-gray-600 mb-8" ]
+                [ text "This quote link appears to be invalid or has expired. Please get a new quote to continue." ]
+            , case orgSlug of
+                Just slug ->
+                    a
+                        [ href ("/self-onboarding/" ++ slug)
+                        , class "inline-block bg-[#03045E] text-white text-sm font-medium px-6 py-3 rounded hover:bg-[#02034D] transition-colors"
+                        ]
+                        [ text "Get a New Quote" ]
+
+                Nothing ->
+                    text ""
             ]
         ]
 
 
-viewPlanCard : Model -> Plan -> Html Msg
-viewPlanCard model plan =
+viewPlanCard : Model -> String -> Plan -> Html Msg
+viewPlanCard model planTypeCode plan =
     let
-        planType =
-            if String.toUpper plan.planType == "G" then
-                "Plan G"
-
-            else
-                "Plan N"
-
-        bgColor =
-            if plan.planType == "G" then
-                "bg-slate-100"
-
-            else
-                "bg-stone-100"
-
         isSelected =
             model.selectedPlan == Just plan
 
-        selectionClass =
-            if isSelected then
-                "ring-2 ring-purple-400 shadow-sm"
+        ( badgeTextColor, badgeBgColor ) =
+            if planTypeCode == "G" then
+                ( "text-[#363F72]", "bg-[#F8F9FC]" )
 
             else
-                "hover:border-gray-300"
+                ( "text-[#C4320A]", "bg-[#FFF6ED]" )
 
-        totalPrice =
-            "$" ++ formatFloat plan.price
+        borderClass =
+            if isSelected then
+                "border-2 border-[#2563EB]"
 
-        discountPrice =
-            "$" ++ formatFloat plan.priceDiscount
-
-        formatFloat : Float -> String
-        formatFloat value =
-            let
-                valueAsString =
-                    String.fromFloat value
-
-                parts =
-                    String.split "." valueAsString
-            in
-            case parts of
-                [ whole, decimal ] ->
-                    if String.length decimal == 1 then
-                        whole ++ "." ++ decimal ++ "0"
-
-                    else
-                        valueAsString
-
-                _ ->
-                    valueAsString
-
-        selectHeadClass =
-            "text-xs text-gray-600 mb-0.5"
-
-        softHeadClass =
-            "text-xs text-gray-400 mb-0.5"
-
-        selectBodyClass =
-            "text-sm font-bold"
-
-        softBodyClass =
-            "text-xs font-semibold text-gray-400"
+            else
+                "border border-[#D4D4D4]"
     in
     div
-        [ class ("bg-white border border-gray-200 rounded-md shadow-sm cursor-pointer w-full max-w-[200px] " ++ selectionClass)
+        [ class ("relative bg-white rounded-lg " ++ borderClass ++ " overflow-hidden cursor-pointer w-full h-full min-h-[200px] sm:min-h-0 sm:pb-[75%]") -- 4:3 aspect ratio on desktop
         , onClick (SelectPlanCard plan)
         ]
-        [ div [ class "p-3" ]
-            [ div [ class "flex items-start mb-2" ]
-                [ div [ class ("text-dark font-medium text-xs px-3 py-1.5 rounded-full shadow-sm " ++ bgColor) ]
-                    [ text planType ]
-                ]
-            , div [ class "flex justify-center items-center py-3" ]
-                [ div [ class "text-center" ]
-                    [ img [ src plan.image, alt (plan.name ++ " logo"), class "h-8 mx-auto object-contain" ] [] ]
-                ]
-            ]
-        , div [ class "border-t border-gray-100 px-3 py-2 bg-gray-50 w-full" ]
-            [ div [ class "flex justify-between items-center" ]
-                [ div [ class "flex flex-col items-center" ]
-                    [ p
-                        [ class
-                            (if model.showDiscount then
-                                softHeadClass
+        [ div [ class "absolute inset-0 flex flex-col" ]
+            [ -- Top row with Plan type badge and radio
+              div [ class "flex items-center justify-between p-3 sm:p-4" ]
+                [ div [ class ("px-2.5 py-0.5 rounded-lg text-xs font-medium leading-5 " ++ badgeTextColor ++ " " ++ badgeBgColor) ]
+                    [ text ("PLAN " ++ planTypeCode) ]
+                , div [ class "flex items-center gap-1.5" ]
+                    [ span [ class "text-xs font-medium text-[#667085]" ] [ text "Select Plan" ]
+                    , if isSelected then
+                        svg [ Svg.Attributes.width "16", Svg.Attributes.height "17", Svg.Attributes.viewBox "0 0 12 13", Svg.Attributes.fill "none" ]
+                            [ Svg.rect [ Svg.Attributes.x "0.5", Svg.Attributes.y "1", Svg.Attributes.width "11", Svg.Attributes.height "11", Svg.Attributes.rx "5.5", Svg.Attributes.fill "#F9F5FF" ] []
+                            , Svg.rect [ Svg.Attributes.x "0.5", Svg.Attributes.y "1", Svg.Attributes.width "11", Svg.Attributes.height "11", Svg.Attributes.rx "5.5", Svg.Attributes.stroke "#7F56D9" ] []
+                            , Svg.path [ Svg.Attributes.d "M9 4.25L4.875 8.375L3 6.5", Svg.Attributes.stroke "#7F56D9", Svg.Attributes.strokeWidth "1.6666", Svg.Attributes.strokeLinecap "round", Svg.Attributes.strokeLinejoin "round" ] []
+                            ]
 
-                             else
-                                selectHeadClass
-                            )
-                        ]
-                        [ text "Standard" ]
-                    , p
-                        [ class
-                            (if model.showDiscount then
-                                softBodyClass
-
-                             else
-                                selectBodyClass
-                            )
-                        ]
-                        [ text totalPrice ]
+                      else
+                        svg [ Svg.Attributes.width "16", Svg.Attributes.height "17", Svg.Attributes.viewBox "0 0 12 13", Svg.Attributes.fill "none" ]
+                            [ Svg.rect [ Svg.Attributes.x "0.5", Svg.Attributes.y "1", Svg.Attributes.width "11", Svg.Attributes.height "11", Svg.Attributes.rx "5.5", Svg.Attributes.fill "white" ] []
+                            , Svg.rect [ Svg.Attributes.x "0.5", Svg.Attributes.y "1", Svg.Attributes.width "11", Svg.Attributes.height "11", Svg.Attributes.rx "5.5", Svg.Attributes.stroke "#667085" ] []
+                            ]
                     ]
-                , div [ class "flex flex-col items-center" ]
-                    [ p
-                        [ class
-                            (if model.showDiscount then
-                                selectHeadClass
+                ]
 
-                             else
-                                softHeadClass
-                            )
-                        ]
-                        [ text "Discount" ]
-                    , p
-                        [ class
-                            (if model.showDiscount then
-                                selectBodyClass
+            -- Carrier Logo
+            , div [ class "flex-1 px-4 flex justify-center items-center min-h-[50px] sm:min-h-[60px] max-h-[80px]" ]
+                [ img [ src plan.image, alt (plan.name ++ " logo"), class "h-8 sm:h-10 max-w-[140px] sm:max-w-[160px] object-contain" ] [] ]
 
-                             else
-                                softBodyClass
-                            )
-                        ]
-                        [ text discountPrice ]
+            -- Rates
+            , div [ class "flex justify-between px-4 sm:px-6 py-3 sm:py-4 bg-[#F9FAFB]" ]
+                [ -- Standard Rate
+                  div [ class "flex-1" ]
+                    [ p [ class "text-[10px] font-medium leading-5 text-[#667085] mb-0.5" ] [ text "Standard Rate" ]
+                    , p [ class "text-base sm:text-lg font-bold leading-6 text-[#667085]" ] [ text ("$" ++ String.fromInt (floor plan.price)) ]
+                    ]
+
+                -- Discount Rate
+                , div [ class "flex-1 text-right" ]
+                    [ p [ class "text-[10px] font-medium leading-5 text-[#667085] mb-0.5" ] [ text "Discount Rate" ]
+                    , p [ class "text-base sm:text-lg font-bold leading-6 text-[#667085]" ] [ text ("$" ++ String.fromInt (floor plan.priceDiscount)) ]
                     ]
                 ]
             ]
@@ -13059,8 +13187,8 @@ viewPlanCard model plan =
 viewGvsNModal : Model -> Html Msg
 viewGvsNModal model =
     if model.showGvsNVideo then
-        div [ class "fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" ]
-            [ div [ class "bg-white rounded-lg p-4 sm:p-8 w-[95%] max-w-5xl mx-auto flex flex-col items-center relative" ]
+        div [ class "fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4 backdrop-blur-sm" ]
+            [ div [ class "bg-white rounded-lg p-4 sm:p-8 w-[95%] max-w-5xl mx-auto shadow-lg" ]
                 [ button
                     [ class "absolute top-2 right-2 text-gray-500 hover:text-gray-700 text-xl p-1"
                     , onClick CloseGvsNVideo
@@ -13081,11 +13209,13 @@ viewGvsNModal model =
                             []
                         ]
                     ]
-                , button
-                    [ class "bg-purple-500 text-white px-4 sm:px-6 py-2 rounded hover:bg-purple-600 mt-4 w-full sm:w-auto"
-                    , onClick CloseGvsNVideo
+                , div [ class "flex justify-center" ]
+                    [ button
+                        [ class "bg-purple-500 text-white px-4 sm:px-6 py-2 rounded hover:bg-purple-600 mt-4 w-full sm:w-auto"
+                        , onClick CloseGvsNVideo
+                        ]
+                        [ text "Continue" ]
                     ]
-                    [ text "Continue" ]
                 ]
             ]
 
@@ -13096,8 +13226,8 @@ viewGvsNModal model =
 viewQualificationModal : Model -> Html Msg
 viewQualificationModal model =
     if model.showQualificationVideo then
-        div [ class "fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" ]
-            [ div [ class "bg-white rounded-lg p-4 sm:p-8 w-[95%] max-w-5xl mx-auto flex flex-col items-center relative" ]
+        div [ class "fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4 backdrop-blur-sm" ]
+            [ div [ class "bg-white rounded-lg p-4 sm:p-8 w-[95%] max-w-5xl mx-auto shadow-lg" ]
                 [ button
                     [ class "absolute top-2 right-2 text-gray-500 hover:text-gray-700 text-xl p-1"
                     , onClick CloseQualificationVideo
@@ -13143,10 +13273,10 @@ viewRatesModal model =
                         ""
 
             countyText =
-                model.county
+                Maybe.withDefault "" model.county
 
             stateText =
-                model.state
+                Maybe.withDefault "" model.state
 
             planTypeText =
                 case model.selectedPlanType of
@@ -13156,8 +13286,8 @@ viewRatesModal model =
                     PlanN ->
                         "Plan N"
         in
-        div [ class "fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" ]
-            [ div [ class "bg-white rounded-lg p-4 sm:p-8 w-[95%] max-w-5xl mx-auto flex flex-col items-center relative" ]
+        div [ class "fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4 backdrop-blur-sm" ]
+            [ div [ class "bg-white rounded-lg p-4 sm:p-8 w-[95%] max-w-5xl mx-auto shadow-lg" ]
                 [ button
                     [ class "absolute top-2 right-2 text-gray-500 hover:text-gray-700 text-xl p-1"
                     , onClick CloseRatesVideo
@@ -13191,171 +13321,151 @@ viewRatesModal model =
         text ""
 
 
-viewPlanTypeSection : Model -> String -> String -> List Plan -> Html Msg
-viewPlanTypeSection model title code plans =
-    div [ class "mb-8" ]
-        [ h2 [ class "text-xl font-bold mb-4 text-center sm:text-left" ] [ text title ]
-        , div [ class "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 justify-items-center" ]
-            (List.map (viewPlanCard model) (getTopPlans model plans 3))
-        ]
+viewLocationModal : Model -> Html Msg
+viewLocationModal model =
+    if model.showLocationModal then
+        div [ class "fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4 backdrop-blur-sm" ]
+            [ div [ class "bg-white rounded-lg p-6 w-[95%] max-w-md mx-auto shadow-lg" ]
+                [ div [ class "flex justify-between items-center mb-4" ]
+                    [ h2 [ class "text-xl font-extrabold -tracking-[0.04em] text-[#101828]" ] [ text "Update Location" ]
+                    , button
+                        [ class "text-[#667085] hover:text-[#101828] transition-colors"
+                        , onClick CloseLocationModal
+                        ]
+                        [ text "×" ]
+                    ]
+                , div [ class "mb-4" ]
+                    [ label [ class "block text-sm font-medium text-[#667085] mb-1" ]
+                        [ text "ZIP Code" ]
+                    , input
+                        [ type_ "text"
+                        , class "w-full px-3 py-2 border border-[#DCE2E5] rounded-md focus:outline-none focus:ring-1 focus:ring-[#03045E] focus:border-[#03045E]"
+                        , value (Maybe.withDefault "" model.editingZipCode)
+                        , onInput UpdateZipCode
+                        , maxlength 5
+                        , pattern "[0-9]*"
+                        ]
+                        []
+                    ]
+                , if not (List.isEmpty model.availableCounties) then
+                    div [ class "mb-4" ]
+                        [ label [ class "block text-sm font-medium text-[#667085] mb-1" ]
+                            [ text "County" ]
+                        , select
+                            [ class "w-full px-3 py-2 border border-[#DCE2E5] rounded-md focus:outline-none focus:ring-1 focus:ring-[#03045E] focus:border-[#03045E]"
+                            , onInput UpdateCounty
+                            , value (Maybe.withDefault "" model.editingCounty)
+                            ]
+                            (option [ value "" ] [ text "Select a county" ]
+                                :: List.map
+                                    (\county ->
+                                        option [ value county ]
+                                            [ text county ]
+                                    )
+                                    model.availableCounties
+                            )
+                        ]
 
+                  else
+                    text ""
+                , if model.locationUpdateError /= Nothing then
+                    div [ class "mb-4 text-red-600 text-sm" ]
+                        [ text (Maybe.withDefault "" model.locationUpdateError) ]
 
+                  else
+                    text ""
+                , div [ class "flex justify-end gap-3" ]
+                    [ button
+                        [ class "px-4 py-2 text-[#667085] hover:text-[#101828] transition-colors"
+                        , onClick CloseLocationModal
+                        ]
+                        [ text "Cancel" ]
+                    , button
+                        [ class "px-4 py-2 bg-[#03045E] text-white rounded hover:bg-[#02034D] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center min-w-[80px]"
+                        , onClick SubmitLocationUpdate
+                        , disabled
+                            (String.length (Maybe.withDefault "" model.editingZipCode)
+                                /= 5
+                                || (not (List.isEmpty model.availableCounties)
+                                        && Maybe.withDefault "" model.editingCounty
+                                        == ""
+                                   )
+                                || model.submittingLocation
+                            )
+                        ]
+                        [ if model.submittingLocation then
+                            div [ class "animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent mr-2" ] []
 
--- Helper function to format phone number as (555) 123-4567
+                          else
+                            text ""
+                        , text
+                            (if model.submittingLocation then
+                                "Updating..."
+
+                             else
+                                "Update"
+                            )
+                        ]
+                    ]
+                ]
+            ]
+
+    else
+        text ""
 
 
 formatPhoneNumber : String -> String
 formatPhoneNumber phone =
-    if String.length phone >= 10 then
-        let
-            areaCode =
-                String.slice 0 3 phone
-
-            firstPart =
-                String.slice 3 6 phone
-
-            secondPart =
-                String.slice 6 10 phone
-        in
-        "(" ++ areaCode ++ ") " ++ firstPart ++ "-" ++ secondPart
-
-    else
-        phone
-
-
-
--- Helper function to format birth date
-
-
-formatBirthDate : String -> String
-formatBirthDate date =
-    if String.contains "-" date && String.length date >= 10 then
-        let
-            parts =
-                String.split "-" date
-
-            year =
-                List.head parts |> Maybe.withDefault ""
-
-            month =
-                List.drop 1 parts |> List.head |> Maybe.withDefault ""
-
-            day =
-                List.drop 2 parts |> List.head |> Maybe.withDefault "" |> String.left 2
-
-            monthName =
-                case month of
-                    "01" ->
-                        "Jan"
-
-                    "02" ->
-                        "Feb"
-
-                    "03" ->
-                        "Mar"
-
-                    "04" ->
-                        "Apr"
-
-                    "05" ->
-                        "May"
-
-                    "06" ->
-                        "Jun"
-
-                    "07" ->
-                        "Jul"
-
-                    "08" ->
-                        "Aug"
-
-                    "09" ->
-                        "Sep"
-
-                    "10" ->
-                        "Oct"
-
-                    "11" ->
-                        "Nov"
-
-                    "12" ->
-                        "Dec"
-
-                    _ ->
-                        month
-        in
-        monthName ++ " " ++ day ++ ", " ++ year
-
-    else
-        date
-
-
-
--- Helper function to format address
-
-
-formatAddress : String -> String -> String
-formatAddress state zip =
-    state ++ " " ++ zip
-
-
-
--- Add decoder for Contact data
-
-
-type alias ContactResponse =
-    { success : Bool
-    , orgSlug : String
-    , carrierContracts : List Carrier
-    , contact : Contact
-    }
-
-
-contactDecoder : Decoder Contact
-contactDecoder =
-    D.succeed Contact
-        |> Pipeline.required "firstName" D.string
-        |> Pipeline.required "lastName" D.string
-        |> Pipeline.required "email" D.string
-        |> Pipeline.required "phoneNumber" D.string
-        |> Pipeline.required "dateOfBirth" D.string
-        |> Pipeline.required "gender" D.string
-        |> Pipeline.required "tobacco" D.bool
-        |> Pipeline.required "state" D.string
-        |> Pipeline.required "zipCode" D.string
-        |> Pipeline.required "currentCarrier" (D.nullable D.string)
-
-
-carrierContractsDecoder : Decoder (List Carrier)
-carrierContractsDecoder =
-    D.list carrierDecoder
+    let
+        cleanPhone =
+            String.filter (\c -> c >= '0' && c <= '9') phone
+    in
+    String.slice 0 3 cleanPhone ++ "-" ++ String.slice 3 6 cleanPhone ++ "-" ++ String.slice 6 10 cleanPhone
 
 
 contactResponseDecoder : Decoder ContactResponse
 contactResponseDecoder =
     D.map4 ContactResponse
-        (D.field "success" D.bool)
-        (D.field "orgSlug" D.string)
-        (D.field "carrierContracts" carrierContractsDecoder)
         (D.field "contact" contactDecoder)
+        (D.field "agent" agentDecoder)
+        (D.field "orgSlug" D.string)
+        (D.field "carrierContracts" (D.list carrierDecoder))
 
 
-viewPillButton : String -> Bool -> Msg -> Html Msg
-viewPillButton label isVideo msg =
-    button
-        [ class "mx-auto bg-white text-purple-600 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full border border-purple-600 hover:bg-purple-50 transition-colors flex items-center justify-center gap-1 sm:gap-2 text-xs sm:text-sm"
-        , onClick msg
-        ]
-        [ if isVideo then
-            div [ class "flex items-center justify-center gap-0.5 sm:gap-1" ]
-                [ text "▶"
-                , span [ class "text-[10px] sm:text-xs" ] [ text "Video" ]
-                ]
+contactDecoder : Decoder Contact
+contactDecoder =
+    D.succeed Contact
+        |> Pipeline.required "id" D.int
+        |> Pipeline.required "firstName" D.string
+        |> Pipeline.required "lastName" D.string
+        |> Pipeline.required "email" D.string
+        |> Pipeline.required "phoneNumber" D.string
+        |> Pipeline.required "age" D.int
+        |> Pipeline.required "gender" D.string
+        |> Pipeline.required "tobacco" D.bool
+        |> Pipeline.required "state" D.string
+        |> Pipeline.required "zipCode" D.string
+        |> Pipeline.optional "county" (D.nullable D.string) Nothing
+        |> Pipeline.optional "currentCarrier" (D.nullable D.string) Nothing
+        |> Pipeline.optional "planType" (D.nullable D.string) Nothing
 
-          else
-            text ""
-        , text label
-        ]
+
+agentDecoder : Decoder Agent
+agentDecoder =
+    D.map4 Agent
+        (D.field "firstName" D.string)
+        (D.field "lastName" D.string)
+        (D.field "email" D.string)
+        (D.field "phone" D.string)
+
+
+locationUpdateResponseDecoder : Decoder LocationUpdateResponse
+locationUpdateResponseDecoder =
+    D.map4 LocationUpdateResponse
+        (D.field "success" D.bool)
+        (D.field "zipCode" D.string)
+        (D.field "state" D.string)
+        (D.field "counties" (D.list D.string))
 
 ================
 File: src/Contact.elm
@@ -13826,8 +13936,17 @@ update msg model =
                 Err _ ->
                     ( { model | error = Just "Invalid effective date format" }, Cmd.none )
 
-        GotContact (Err _) ->
-            ( { model | error = Just "Failed to load contact" }, Cmd.none )
+        GotContact (Err error) ->
+            case error of
+                Http.BadStatus 404 ->
+                    ( { model | error = Just "Contact not found" }
+                    , Cmd.none
+                    )
+
+                _ ->
+                    ( { model | error = Just "Failed to load contact" }
+                    , Cmd.none
+                    )
 
         GotCurrentTime today ->
             let
@@ -14079,23 +14198,14 @@ update msg model =
                                         |> String.split "-"
                                         |> List.head
 
-                                outStr0 : String
-                                outStr0 =
-                                    "/quote?id=" ++ response.quoteId ++ "&planType=" ++ contact.planType
-
                                 outStr : String
                                 outStr =
-                                    case orgId of
-                                        Just s ->
-                                            outStr0 ++ "&orgId=" ++ s
-
-                                        Nothing ->
-                                            outStr0
+                                    "/compare?id=" ++ response.quoteId
                             in
                             Just outStr
 
                         Nothing ->
-                            Just ("/quote?id=" ++ response.quoteId)
+                            Just ("/compare?id=" ++ response.quoteId)
                 , isGeneratingQuote = False
               }
             , Cmd.none
@@ -14256,7 +14366,19 @@ view model =
                             ]
 
                     Nothing ->
-                        viewLoading
+                        case model.error of
+                            Just errorMsg ->
+                                div [ class "text-center py-12" ]
+                                    [ div [ class "text-red-600 text-lg mb-4" ] [ text errorMsg ]
+                                    , button
+                                        [ class "px-4 py-2 text-sm font-medium text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors duration-200"
+                                        , onClick BackToContacts
+                                        ]
+                                        [ text "Back to Contacts" ]
+                                    ]
+
+                            Nothing ->
+                                viewLoading
                 ]
             ]
         , viewModals model
@@ -15513,13 +15635,13 @@ type alias Contact =
     , state : String
     , contactOwnerId : Maybe Int
     , contactOwner : Maybe User
-    , currentCarrier : String
+    , currentCarrier : Maybe String
     , effectiveDate : String
     , birthDate : String
     , tobaccoUser : Bool
     , gender : String
     , zipCode : String
-    , planType : String
+    , planType : Maybe String
     , status : String
     , agentId : Maybe Int
     , lastEmailed : Maybe String
@@ -15575,13 +15697,13 @@ type alias ContactForm =
     , phoneNumber : String
     , state : String
     , contactOwnerId : Maybe Int
-    , currentCarrier : String
+    , currentCarrier : Maybe String
     , effectiveDate : String
     , birthDate : String
     , tobaccoUser : Bool
     , gender : String
     , zipCode : String
-    , planType : String
+    , planType : Maybe String
     }
 
 
@@ -15774,13 +15896,13 @@ emptyForm =
     , phoneNumber = ""
     , state = ""
     , contactOwnerId = Nothing
-    , currentCarrier = ""
+    , currentCarrier = Nothing
     , effectiveDate = ""
     , birthDate = ""
     , tobaccoUser = False
     , gender = "M"
     , zipCode = ""
-    , planType = ""
+    , planType = Nothing
     }
 
 
@@ -16009,7 +16131,7 @@ update msg model =
                             { form | contactOwnerId = String.toInt value }
 
                         CurrentCarrier ->
-                            { form | currentCarrier = value }
+                            { form | currentCarrier = Just value }
 
                         EffectiveDate ->
                             { form | effectiveDate = value }
@@ -16027,7 +16149,7 @@ update msg model =
                             { form | zipCode = value }
 
                         PlanType ->
-                            { form | planType = value }
+                            { form | planType = Just value }
 
                 cmd =
                     if field == ZipCode && String.length value == 5 then
@@ -16094,7 +16216,7 @@ update msg model =
                             { form | contactOwnerId = String.toInt value }
 
                         CurrentCarrier ->
-                            { form | currentCarrier = value }
+                            { form | currentCarrier = Just value }
 
                         EffectiveDate ->
                             { form | effectiveDate = value }
@@ -16112,7 +16234,7 @@ update msg model =
                             { form | zipCode = value }
 
                         PlanType ->
-                            { form | planType = value }
+                            { form | planType = Just value }
 
                 cmd =
                     if field == ZipCode && String.length value == 5 then
@@ -17067,6 +17189,9 @@ viewTableRow model contact =
 
                         Nothing ->
                             "Default"
+
+        currentCarrier =
+            Maybe.withDefault "" contact.currentCarrier
     in
     [ tr [ class "hover:bg-gray-50 transition-colors duration-200" ]
         [ td
@@ -17104,7 +17229,7 @@ viewTableRow model contact =
         , td [ class cellClass ]
             [ text agentName ]
         , td [ class cellClass ]
-            [ text contact.currentCarrier ]
+            [ text currentCarrier ]
         , td [ class cellClass ]
             [ text contact.effectiveDate ]
         , td [ class cellClass ]
@@ -17221,13 +17346,13 @@ contactDecoder =
         |> Pipeline.required "state" Decode.string
         |> Pipeline.optional "contact_owner_id" (Decode.nullable Decode.int) Nothing
         |> Pipeline.optional "contact_owner" (Decode.nullable userDecoder) Nothing
-        |> Pipeline.required "current_carrier" Decode.string
+        |> Pipeline.optional "current_carrier" (Decode.nullable Decode.string) Nothing
         |> Pipeline.required "effective_date" Decode.string
         |> Pipeline.required "birth_date" Decode.string
         |> Pipeline.required "tobacco_user" Decode.bool
         |> Pipeline.required "gender" Decode.string
         |> Pipeline.required "zip_code" Decode.string
-        |> Pipeline.required "plan_type" Decode.string
+        |> Pipeline.optional "plan_type" (Decode.nullable Decode.string) Nothing
         |> Pipeline.optional "status" Decode.string "New"
         |> Pipeline.required "agent_id" (Decode.nullable Decode.int)
         |> Pipeline.required "last_emailed" (Decode.nullable Decode.string)
@@ -17249,6 +17374,23 @@ filterOptionsDecoder =
 
 encodeContactForm : ContactForm -> Encode.Value
 encodeContactForm form =
+    let
+        planType =
+            case form.planType of
+                Just value ->
+                    Encode.string value
+
+                Nothing ->
+                    Encode.null
+
+        currentCarrier =
+            case form.currentCarrier of
+                Just value ->
+                    Encode.string value
+
+                Nothing ->
+                    Encode.null
+    in
     Encode.object
         [ ( "first_name", Encode.string form.firstName )
         , ( "last_name", Encode.string form.lastName )
@@ -17256,13 +17398,13 @@ encodeContactForm form =
         , ( "phone_number", Encode.string (String.filter Char.isDigit form.phoneNumber |> String.left 10) )
         , ( "state", Encode.string form.state )
         , ( "contact_owner_id", Maybe.map Encode.int form.contactOwnerId |> Maybe.withDefault Encode.null )
-        , ( "current_carrier", Encode.string form.currentCarrier )
+        , ( "current_carrier", currentCarrier )
         , ( "effective_date", Encode.string form.effectiveDate )
         , ( "birth_date", Encode.string form.birthDate )
         , ( "tobacco_user", Encode.bool form.tobaccoUser )
         , ( "gender", Encode.string form.gender )
         , ( "zip_code", Encode.string form.zipCode )
-        , ( "plan_type", Encode.string form.planType )
+        , ( "plan_type", planType )
         ]
 
 
@@ -17866,7 +18008,10 @@ sortContacts maybeColumn direction contacts =
                                     (Maybe.map .firstName b.contactOwner |> Maybe.withDefault "Default")
 
                         CurrentCarrierCol ->
-                            \a b -> compare a.currentCarrier b.currentCarrier
+                            \a b ->
+                                compare
+                                    (Maybe.withDefault "" a.currentCarrier)
+                                    (Maybe.withDefault "" b.currentCarrier)
 
                         EffectiveDateCol ->
                             \a b -> compare a.effectiveDate b.effectiveDate
@@ -17885,10 +18030,28 @@ filterContacts : Filters -> String -> Time.Posix -> List Contact -> List Contact
 filterContacts filters searchQuery currentTime contacts =
     contacts
         |> filterBySearch searchQuery
-        |> filterByList .currentCarrier filters.carriers
+        |> filterByCarriers filters.carriers
         |> filterByList .state filters.states
         |> filterByAge filters.ageRange
         |> filterByAgents filters.agents
+
+
+filterByCarriers : List String -> List Contact -> List Contact
+filterByCarriers carriers contacts =
+    if List.isEmpty carriers then
+        contacts
+
+    else
+        List.filter
+            (\contact ->
+                case contact.currentCarrier of
+                    Just carrier ->
+                        List.member carrier carriers
+
+                    Nothing ->
+                        False
+            )
+            contacts
 
 
 filterBySearch : String -> List Contact -> List Contact
@@ -17905,7 +18068,13 @@ filterBySearch query contacts =
             (\contact ->
                 String.contains loweredQuery (String.toLower contact.firstName)
                     || String.contains loweredQuery (String.toLower contact.lastName)
-                    || String.contains loweredQuery (String.toLower contact.currentCarrier)
+                    || (case contact.currentCarrier of
+                            Just carrier ->
+                                String.contains loweredQuery (String.toLower carrier)
+
+                            Nothing ->
+                                False
+                       )
             )
             contacts
 
@@ -18070,6 +18239,9 @@ viewContactForm model form updateMsg submitMsg buttonText isSubmitting =
                 Nothing ->
                     defaultAgentId
 
+        selectedCarrier =
+            Maybe.withDefault "" form.currentCarrier
+
         emailField =
             div [ class "form-group mb-3 relative" ]
                 [ Html.label [ class "block text-xs font-medium text-gray-700 mb-1" ]
@@ -18122,8 +18294,8 @@ viewContactForm model form updateMsg submitMsg buttonText isSubmitting =
             , viewFormInput "Last Name" "text" form.lastName LastName updateMsg True
             , emailField
             , viewFormInput "Phone Number" "text" form.phoneNumber PhoneNumber updateMsg True
-            , viewFormSelect "Current Carrier" form.currentCarrier CurrentCarrier updateMsg carrierOptions
-            , viewFormSelect "Plan Type" form.planType PlanType updateMsg planTypeOptions
+            , viewFormSelect "Current Carrier" selectedCarrier CurrentCarrier updateMsg carrierOptions
+            , viewFormSelect "Plan Type" (Maybe.withDefault "" form.planType) PlanType updateMsg planTypeOptions
             , viewFormSelectWithValue "Assigned Agent" selectedAgentId ContactOwnerId updateMsg agentOptions
             , viewFormInput "Effective Date" "date" form.effectiveDate EffectiveDate updateMsg True
             , viewFormInput "Birth Date" "date" form.birthDate BirthDate updateMsg True
@@ -18413,7 +18585,7 @@ viewExpandedContent contact =
             )
         , viewExpandedField "Gender" contact.gender
         , viewExpandedField "ZIP Code" contact.zipCode
-        , viewExpandedField "Plan Type" contact.planType
+        , viewExpandedField "Plan Type" (Maybe.withDefault "" contact.planType)
         ]
 
 
@@ -18634,16 +18806,23 @@ isContactFormValid form =
         > 0
         && String.length form.state
         > 0
-        && String.length form.currentCarrier
-        > 0
         && String.length form.effectiveDate
         > 0
         && String.length form.birthDate
         > 0
         && String.length form.zipCode
         > 0
-        && String.length form.planType
-        > 0
+        && isJust form.planType
+
+
+isJust : Maybe a -> Bool
+isJust maybeValue =
+    case maybeValue of
+        Just _ ->
+            True
+
+        Nothing ->
+            False
 
 
 fetchCarriers : Cmd Msg
@@ -21424,12 +21603,6 @@ sessionDecoder =
         (Decode.field "id" (Decode.map String.fromInt Decode.int))
 
 
-type Role
-    = AdminOnly
-    | AdminAgent
-    | AgentOnly
-
-
 type alias User =
     { id : String
     , email : String
@@ -21692,33 +21865,23 @@ init flags url key =
 
 
 type alias CompareParams =
-    { state : String
-    , zip : String
-    , county : String
-    , gender : String
-    , tobacco : Bool
-    , age : Int
-    , planType : String
-    , currentCarrier : Maybe String
-    , dateOfBirth : String
-    , quoteId : Maybe String
-    , trackingId : Maybe String
-    , orgId : Maybe String -- Add this field
+    { quoteId : Maybe String
+    , orgId : Maybe String
     }
 
 
 type alias CompareParamsPartial1 =
-    { state : String
-    , zip : String
-    , county : String
-    , gender : String
+    { state : Maybe String
+    , zip : Maybe String
+    , county : Maybe String
+    , gender : Maybe String
     }
 
 
 type alias CompareParamsPartial2 =
     { tobacco : Bool
-    , age : Int
-    , planType : String
+    , age : Maybe Int
+    , planType : Maybe String
     , currentCarrier : Maybe String
     }
 
@@ -21801,43 +21964,8 @@ setupProgressDecoder =
 
 compareParamsParser : Query.Parser CompareParams
 compareParamsParser =
-    let
-        part1 =
-            Query.map4 CompareParamsPartial1
-                (Query.string "state" |> Query.map (Maybe.withDefault "TX"))
-                (Query.string "zip" |> Query.map (Maybe.withDefault "75201"))
-                (Query.string "county" |> Query.map (Maybe.withDefault "Dallas"))
-                (Query.string "gender" |> Query.map (Maybe.withDefault "Male"))
-
-        part2 =
-            Query.map4 CompareParamsPartial2
-                (Query.string "tobacco" |> Query.map (Maybe.map (\t -> t == "yes") >> Maybe.withDefault False))
-                (Query.string "age" |> Query.map (Maybe.andThen String.toInt >> Maybe.withDefault 65))
-                (Query.string "planType" |> Query.map (Maybe.withDefault "G"))
-                (Query.string "currentCarrier")
-
-        combineParams p1 p2 dateOfBirth quoteId trackingId orgId =
-            { state = p1.state
-            , zip = p1.zip
-            , county = p1.county
-            , gender = p1.gender
-            , tobacco = p2.tobacco
-            , age = p2.age
-            , planType = p2.planType
-            , currentCarrier = p2.currentCarrier
-            , dateOfBirth = dateOfBirth
-            , quoteId = quoteId
-            , trackingId = trackingId
-            , orgId = orgId
-            }
-    in
-    Query.map6 combineParams
-        part1
-        part2
-        (Query.string "dateOfBirth" |> Query.map (Maybe.withDefault ""))
+    Query.map2 CompareParams
         (Query.string "id")
-        -- quoteId is the most important parameter now
-        (Query.string "tid")
         (Query.string "orgId")
 
 
@@ -21859,7 +21987,7 @@ routeParser =
         , map (PublicRoute (OnboardingRoute PaymentStep)) (s "onboarding" </> s "payment")
         , map (PublicRoute (OnboardingRoute EnterpriseStep)) (s "onboarding" </> s "enterprise")
         , map (PublicRoute (OnboardingRoute PlanStep)) (s "onboarding") -- Default to plan step
-        , map (\orgSlug -> \token -> PublicRoute (VerifyRoute (VerifyParams orgSlug token)))
+        , map (\orgSlug token -> PublicRoute (VerifyRoute (VerifyParams orgSlug token)))
             (s "auth" </> s "verify" </> string </> string)
         , map (PublicRoute << CompareRoute) (s "compare" <?> compareParamsParser)
         , map (PublicRoute << QuoteRoute)
@@ -22659,7 +22787,7 @@ view model =
                             SelfServiceOnboarding.view pageModel
                     in
                     { title = selfOnboardingView.title
-                    , body = List.map (Html.map SelfOnboardingMsg) selfOnboardingView.body
+                    , body = [ viewWithNav model (Html.map SelfOnboardingMsg (div [] selfOnboardingView.body)) ]
                     }
     in
     viewPage
@@ -22699,31 +22827,31 @@ viewNavHeader model =
                 SchedulePage _ ->
                     True
 
+                SelfOnboardingPage _ ->
+                    True
+
                 _ ->
                     False
     in
     if isQuoteFlowPage then
+        text ""
+        {--
         -- Simplified header with just the logo for quote flow pages
         nav [ class "bg-white border-b border-gray-200" ]
             [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8" ]
                 [ div [ class "flex justify-center h-14 sm:h-16" ]
                     [ div [ class "shrink-0 flex items-center" ]
-                        [ a
-                            [ href "#"
-                            , onClick (InternalLinkClicked "/")
-                            , class "cursor-pointer"
+                        [ img
+                            [ src "/images/medicare-max-logo.png"
+                            , class "h-6 sm:h-6 w-auto"
+                            , alt "Medicare Max logo"
                             ]
-                            [ img
-                                [ src "/images/medicare-max-logo.png"
-                                , class "h-6 sm:h-6 w-auto"
-                                , alt "Medicare Max logo"
-                                ]
-                                []
-                            ]
+                            []
                         ]
                     ]
                 ]
             ]
+        --}
 
     else
         -- Full header with navigation for other pages
@@ -23414,7 +23542,8 @@ updatePage url ( model, cmd ) =
                                                     )
 
                                     PublicRoute (QuoteRoute params) ->
-                                        if isValidOrgId params.orgId then
+                                        -- First check if there's a valid quoteId
+                                        if isValidQuoteId params.quoteId then
                                             let
                                                 initialValues =
                                                     { zipCode = Nothing
@@ -23423,7 +23552,7 @@ updatePage url ( model, cmd ) =
                                                     , gender = Nothing
                                                     , quoteId = params.quoteId
                                                     , planType = params.planType
-                                                    , orgId = params.orgId
+                                                    , orgId = params.orgId -- Pass orgId even if it's Nothing
                                                     }
 
                                                 ( quoteModel, quoteCmd ) =
@@ -23432,11 +23561,12 @@ updatePage url ( model, cmd ) =
                                             ( { model | page = QuotePage quoteModel }
                                             , Cmd.map QuoteMsg quoteCmd
                                             )
+                                            -- If there's no valid quoteId, show error
 
                                         else
                                             -- Redirect to an error page or show an error
                                             ( { model | page = NotFoundPage }
-                                            , Nav.pushUrl model.key "/error?message=Missing%20or%20invalid%20organization%20ID"
+                                            , Nav.pushUrl model.key "/error?message=Missing%20or%20invalid%20quote%20ID"
                                             )
 
                                     PublicRoute (EligibilityRoute params) ->
@@ -24067,7 +24197,8 @@ updatePageForcePublic url ( model, cmd ) =
                                         )
 
                         PublicRoute (QuoteRoute params) ->
-                            if isValidOrgId params.orgId then
+                            -- First check if there's a valid quoteId
+                            if isValidQuoteId params.quoteId then
                                 let
                                     initialValues =
                                         { zipCode = Nothing
@@ -24076,7 +24207,7 @@ updatePageForcePublic url ( model, cmd ) =
                                         , gender = Nothing
                                         , quoteId = params.quoteId
                                         , planType = params.planType
-                                        , orgId = params.orgId
+                                        , orgId = params.orgId -- Pass orgId even if it's Nothing
                                         }
 
                                     ( quoteModel, quoteCmd ) =
@@ -24085,11 +24216,12 @@ updatePageForcePublic url ( model, cmd ) =
                                 ( { model | page = QuotePage quoteModel }
                                 , Cmd.map QuoteMsg quoteCmd
                                 )
+                                -- If there's no valid quoteId, show error
 
                             else
                                 -- Redirect to an error page or show an error
                                 ( { model | page = NotFoundPage }
-                                , Nav.pushUrl model.key "/error?message=Missing%20or%20invalid%20organization%20ID"
+                                , Nav.pushUrl model.key "/error?message=Missing%20or%20invalid%20quote%20ID"
                                 )
 
                         PublicRoute (EligibilityRoute params) ->
@@ -24177,6 +24309,20 @@ isValidOrgId maybeOrgId =
         Nothing ->
             False
 
+
+
+-- Add a helper function to check if a quote ID is valid
+
+
+isValidQuoteId : Maybe String -> Bool
+isValidQuoteId maybeQuoteId =
+    case maybeQuoteId of
+        Just quoteId ->
+            not (String.isEmpty quoteId)
+
+        Nothing ->
+            False
+
 ================
 File: src/main.ts
 ================
@@ -24188,6 +24334,66 @@ const root = document.querySelector('#app')
 if (!root) {
   console.error('Could not find root element')
   throw new Error('Could not find root element')
+}
+
+// Add a hook to capture redirects in case we're still having issues
+const originalPushState = history.pushState;
+history.pushState = function(data: any, unused: string, url?: string | URL | null) {
+  console.warn('NAVIGATION:', 'pushState', url);
+  // Also save to debug info storage
+  const redirectInfo = `Redirect: ${url}`;
+  localStorage.setItem('redirect_debug_info', redirectInfo);
+  sessionStorage.setItem('redirect_debug_info', redirectInfo);
+  return originalPushState.apply(this, [data, unused, url]);
+};
+
+const originalReplaceState = history.replaceState;
+history.replaceState = function(data: any, unused: string, url?: string | URL | null) {
+  console.warn('NAVIGATION:', 'replaceState', url);
+  // Also save to debug info storage
+  const redirectInfo = `Redirect (replace): ${url}`;
+  localStorage.setItem('redirect_debug_info', redirectInfo);
+  sessionStorage.setItem('redirect_debug_info', redirectInfo);
+  return originalReplaceState.apply(this, [data, unused, url]);
+};
+
+// Check if we're on an error page and display debug info if available
+const urlParams = new URLSearchParams(window.location.search);
+const errorMsg = urlParams.get('message');
+if (window.location.pathname === '/error' && errorMsg) {
+  console.error('Error page detected:', errorMsg);
+  
+  // Get debug info
+  const debugInfo = localStorage.getItem('selfservice_debug_info') || 
+                   sessionStorage.getItem('selfservice_debug_info') || 
+                   'No debug information available';
+                   
+  // Get redirect info
+  const redirectInfo = localStorage.getItem('redirect_debug_info') || 
+                      sessionStorage.getItem('redirect_debug_info') || 
+                      'No redirect information available';
+  
+  // Show debugging information on the page
+  root.innerHTML = `
+    <div style="max-width: 800px; margin: 50px auto; padding: 20px; font-family: sans-serif;">
+      <h1 style="color: #e53e3e;">Error</h1>
+      <p style="margin-bottom: 20px; font-size: 18px;">${errorMsg}</p>
+      
+      <h2 style="margin-top: 30px;">Debug Information</h2>
+      <pre style="background: #f7fafc; padding: 15px; border-radius: 5px; overflow: auto; max-height: 300px;">${debugInfo}</pre>
+      
+      <h2 style="margin-top: 30px;">Redirect Information</h2>
+      <pre style="background: #f7fafc; padding: 15px; border-radius: 5px; overflow: auto; max-height: 300px;">${redirectInfo}</pre>
+      
+      <div style="margin-top: 30px;">
+        <button onclick="window.history.back()" style="padding: 10px 20px; background: #4299e1; color: white; border: none; border-radius: 5px; cursor: pointer;">Go Back</button>
+        <button onclick="window.location.href='/'" style="margin-left: 10px; padding: 10px 20px; background: #718096; color: white; border: none; border-radius: 5px; cursor: pointer;">Go Home</button>
+      </div>
+    </div>
+  `;
+  
+  // Don't initialize Elm on error pages
+  throw new Error('Skipping Elm initialization on error page');
 }
 
 // Get session cookie if it exists
@@ -24317,6 +24523,28 @@ try {
           }
         }
       })
+    }
+
+    // Debug info ports
+    if (app.ports.saveDebugInfo) {
+      app.ports.saveDebugInfo.subscribe((debugInfo: string) => {
+        console.log('Debug info:', debugInfo);
+        localStorage.setItem('selfservice_debug_info', debugInfo);
+        
+        // Write to console with more details for better visibility
+        console.warn('SELF-SERVICE DEBUG:', debugInfo);
+        
+        // Also log to session storage in case localStorage is cleared
+        sessionStorage.setItem('selfservice_debug_info', debugInfo);
+      });
+    }
+
+    if (app.ports.clearDebugInfo) {
+      app.ports.clearDebugInfo.subscribe(() => {
+        console.log('Clearing debug info');
+        localStorage.removeItem('selfservice_debug_info');
+        sessionStorage.removeItem('selfservice_debug_info');
+      });
     }
   }
 } catch (error) {
@@ -27685,7 +27913,7 @@ viewContent model =
                         , if user.isAdmin then
                             button
                                 [ class "flex items-center text-sm text-purple-600 hover:text-purple-800"
-                                , onClick (NavigateTo "/subscription")
+                                , onClick (NavigateTo "/change-plan")
                                 ]
                                 [ div [ class "mr-2" ]
                                     [ svg
@@ -28007,7 +28235,8 @@ type alias QuoteInfo =
     , dateOfBirth : String
     , tobacco : Bool
     , gender : String
-    , currentCarrier : String
+    , currentCarrier : Maybe String
+    , orgId : String
     }
 
 
@@ -28076,14 +28305,22 @@ fetchZipInfo zipCode =
 
 quoteInfoDecoder : D.Decoder QuoteInfo
 quoteInfoDecoder =
-    D.field "contact"
-        (D.map5 QuoteInfo
-            (D.field "zipCode" D.string)
-            (D.field "dateOfBirth" D.string)
-            (D.field "tobacco" D.bool)
-            (D.field "gender" D.string)
-            (D.field "currentCarrier" D.string)
-        )
+    D.field "success" D.bool
+        |> D.andThen
+            (\success ->
+                if success then
+                    D.map6 QuoteInfo
+                        (D.at [ "contact", "zipCode" ] D.string)
+                        (D.at [ "contact", "dateOfBirth" ] D.string)
+                        (D.at [ "contact", "tobacco" ] D.bool)
+                        (D.at [ "contact", "gender" ] D.string)
+                        (D.at [ "contact", "currentCarrier" ] (D.nullable D.string))
+                        (D.field "orgId" D.string)
+
+                else
+                    D.field "error" D.string
+                        |> D.andThen (\error -> D.fail error)
+            )
 
 
 zipInfoDecoder : D.Decoder ZipInfo
@@ -28167,12 +28404,8 @@ update msg model =
                                 , dateOfBirth = quoteInfo.dateOfBirth
                                 , tobacco = quoteInfo.tobacco
                                 , gender = quoteInfo.gender
-                                , currentCarrier =
-                                    if String.isEmpty quoteInfo.currentCarrier then
-                                        Nothing
-
-                                    else
-                                        Just quoteInfo.currentCarrier
+                                , currentCarrier = quoteInfo.currentCarrier
+                                , orgId = Just quoteInfo.orgId
                             }
 
                         cmd =
@@ -28184,8 +28417,24 @@ update msg model =
                     in
                     ( updatedModel, cmd )
 
-                Err _ ->
-                    ( { model | error = Just "Failed to load quote information" }, Cmd.none )
+                Err err ->
+                    let
+                        errorMessage =
+                            case err of
+                                Http.BadBody errorBody ->
+                                    if String.contains "Contact not found" errorBody then
+                                        "Quote not found or expired. Please try again or contact support."
+
+                                    else
+                                        "Failed to load quote information: " ++ errorBody
+
+                                Http.BadStatus 404 ->
+                                    "Quote not found or expired. Please try again or contact support."
+
+                                _ ->
+                                    "Failed to load quote information. Please try again."
+                    in
+                    ( { model | error = Just errorMessage }, Cmd.none )
 
         GotZipInfo result ->
             case result of
@@ -28251,53 +28500,46 @@ update msg model =
                         model.state
                             |> Maybe.withDefault ""
 
-                    -- Build the URL with all parameters
+                    -- If we have a quoteId, use that for navigation first
                     compareUrl =
-                        Builder.absolute [ "compare" ]
-                            ([ Builder.string "zip" model.zipCode
-                             , Builder.string "state" state
-                             , Builder.string "county" county
-                             , Builder.string "gender" model.gender
-                             , Builder.string "tobacco"
-                                (if model.tobacco then
-                                    "true"
+                        case model.quoteId of
+                            Just id ->
+                                -- When we have a quoteId, we don't need other parameters
+                                Builder.absolute [ "compare" ] [ Builder.string "id" id ]
 
-                                 else
-                                    "false"
-                                )
-                             , Builder.string "age" age
-                             , Builder.string "dateOfBirth" model.dateOfBirth
-                             ]
-                                ++ (case model.quoteId of
-                                        Just id ->
-                                            [ Builder.string "id" id ]
+                            Nothing ->
+                                -- Otherwise build the URL with all parameters
+                                Builder.absolute [ "compare" ]
+                                    ([ Builder.string "zip" model.zipCode
+                                     , Builder.string "state" state
+                                     , Builder.string "county" county
+                                     , Builder.string "gender" model.gender
+                                     , Builder.string "tobacco"
+                                        (if model.tobacco then
+                                            "true"
 
-                                        Nothing ->
-                                            []
-                                   )
-                                ++ (case model.currentCarrier of
-                                        Just carrier ->
-                                            [ Builder.string "currentCarrier" carrier ]
+                                         else
+                                            "false"
+                                        )
+                                     , Builder.string "age" age
+                                     , Builder.string "dateOfBirth" model.dateOfBirth
+                                     ]
+                                        ++ (case model.currentCarrier of
+                                                Just carrier ->
+                                                    [ Builder.string "currentCarrier" carrier ]
 
-                                        Nothing ->
-                                            []
-                                   )
-                                ++ (case model.planType of
-                                        Just planType ->
-                                            [ Builder.string "planType" planType ]
+                                                Nothing ->
+                                                    []
+                                           )
+                                        ++ (case model.planType of
+                                                Just planType ->
+                                                    [ Builder.string "planType" planType ]
 
-                                        Nothing ->
-                                            [ Builder.string "planType" "G" ]
-                                    -- Default to G if no plan type provided
-                                   )
-                                ++ (case model.orgId of
-                                        Just id ->
-                                            [ Builder.string "orgId" id ]
-
-                                        Nothing ->
-                                            []
-                                   )
-                            )
+                                                Nothing ->
+                                                    [ Builder.string "planType" "G" ]
+                                            -- Default to G if no plan type provided
+                                           )
+                                    )
                 in
                 ( model
                 , Nav.pushUrl model.key compareUrl
@@ -28319,54 +28561,68 @@ view model =
                     , text "Rates and Plan Options"
                     ]
                 ]
-            , case model.error of
-                Just error ->
-                    div [ class "bg-red-100 border border-red-400 text-red-700 px-3 sm:px-4 py-2 sm:py-3 rounded mb-4 text-sm" ]
-                        [ text error ]
+            , if model.error /= Nothing || (model.quoteId /= Nothing && String.isEmpty model.zipCode) then
+                -- Show error or loading message when we have a quoteId but no data yet
+                let
+                    message =
+                        case model.error of
+                            Just error ->
+                                div [ class "bg-red-100 border border-red-400 text-red-700 px-3 sm:px-4 py-2 sm:py-3 rounded mb-4 text-sm" ]
+                                    [ text error ]
 
-                Nothing ->
-                    text ""
-            , Html.form [ onSubmit SubmitForm, class "space-y-4 sm:space-y-6" ]
-                [ viewFormInput "Zip Code" "text" model.zipCode UpdateZipCode True
+                            Nothing ->
+                                if model.quoteId /= Nothing && String.isEmpty model.zipCode then
+                                    div [ class "bg-blue-100 border border-blue-400 text-blue-700 px-3 sm:px-4 py-2 sm:py-3 rounded mb-4 text-sm" ]
+                                        [ text "Loading your quote information..." ]
 
-                -- Show zip code loading state or error if any
-                , if model.isLoadingZipData then
-                    div [ class "text-xs sm:text-sm text-blue-600" ]
-                        [ text "Looking up location..." ]
+                                else
+                                    text ""
+                in
+                div [] [ message, viewFormForManualEntry model ]
 
-                  else if model.zipError /= Nothing then
-                    div [ class "text-xs sm:text-sm text-red-600" ]
-                        [ text (Maybe.withDefault "Invalid zip code" model.zipError) ]
+              else
+                -- Standard form
+                Html.form [ onSubmit SubmitForm, class "space-y-4 sm:space-y-6" ]
+                    [ viewFormInput "Zip Code" "text" model.zipCode UpdateZipCode True
 
-                  else
-                    text ""
+                    -- Show zip code loading state or error if any
+                    , if model.isLoadingZipData then
+                        div [ class "text-xs sm:text-sm text-blue-600" ]
+                            [ text "Looking up location..." ]
 
-                -- Only show the county dropdown if there are multiple counties
-                , if List.length model.counties > 1 then
-                    viewCountyDropdown model.counties model.selectedCounty
+                      else if model.zipError /= Nothing then
+                        div [ class "text-xs sm:text-sm text-red-600" ]
+                            [ text (Maybe.withDefault "Invalid zip code" model.zipError) ]
 
-                  else
-                    text ""
-                , viewFormInput "Date of Birth" "date" model.dateOfBirth UpdateDateOfBirth True
-                , viewFormRadioGroup "Tobacco User"
-                    (if model.tobacco then
-                        "true"
+                      else
+                        text ""
 
-                     else
-                        "false"
-                    )
-                    UpdateTobacco
-                    [ ( "true", "Yes" ), ( "false", "No" ) ]
-                , viewFormRadioGroup "Gender"
-                    model.gender
-                    UpdateGender
-                    [ ( "M", "Male" ), ( "F", "Female" ) ]
-                , button
-                    [ class "w-full bg-purple-600 text-white py-3 sm:py-4 rounded-lg hover:bg-purple-700 transition-colors mt-6 sm:mt-8 text-base sm:text-lg"
-                    , type_ "submit"
+                    -- Only show the county dropdown if there are multiple counties
+                    , if List.length model.counties > 1 then
+                        viewCountyDropdown model.counties model.selectedCounty
+
+                      else
+                        text ""
+                    , viewFormInput "Date of Birth" "date" model.dateOfBirth UpdateDateOfBirth True
+                    , viewFormRadioGroup "Tobacco User"
+                        (if model.tobacco then
+                            "true"
+
+                         else
+                            "false"
+                        )
+                        UpdateTobacco
+                        [ ( "true", "Yes" ), ( "false", "No" ) ]
+                    , viewFormRadioGroup "Gender"
+                        model.gender
+                        UpdateGender
+                        [ ( "M", "Male" ), ( "F", "Female" ) ]
+                    , button
+                        [ class "w-full bg-purple-600 text-white py-3 sm:py-4 rounded-lg hover:bg-purple-700 transition-colors mt-6 sm:mt-8 text-base sm:text-lg"
+                        , type_ "submit"
+                        ]
+                        [ text "Next" ]
                     ]
-                    [ text "Next" ]
-                ]
             ]
         ]
     }
@@ -28498,6 +28754,40 @@ httpErrorToString error =
 subscriptions : Model -> Sub Msg
 subscriptions _ =
     Sub.none
+
+
+
+-- Function to display a form that allows manual entry when quote loading fails
+
+
+viewFormForManualEntry : Model -> Html Msg
+viewFormForManualEntry model =
+    div []
+        [ p [ class "text-center text-gray-600 mb-6" ]
+            [ text "You can manually enter your information below to get a quote." ]
+        , Html.form [ onSubmit SubmitForm, class "space-y-4 sm:space-y-6" ]
+            [ viewFormInput "Zip Code" "text" model.zipCode UpdateZipCode True
+            , viewFormInput "Date of Birth" "date" model.dateOfBirth UpdateDateOfBirth True
+            , viewFormRadioGroup "Tobacco User"
+                (if model.tobacco then
+                    "true"
+
+                 else
+                    "false"
+                )
+                UpdateTobacco
+                [ ( "true", "Yes" ), ( "false", "No" ) ]
+            , viewFormRadioGroup "Gender"
+                model.gender
+                UpdateGender
+                [ ( "M", "Male" ), ( "F", "Female" ) ]
+            , button
+                [ class "w-full bg-purple-600 text-white py-3 sm:py-4 rounded-lg hover:bg-purple-700 transition-colors mt-6 sm:mt-8 text-base sm:text-lg"
+                , type_ "submit"
+                ]
+                [ text "Next" ]
+            ]
+        ]
 
 ================
 File: src/QuoteBirthdayRules.elm
@@ -28979,10 +29269,11 @@ subscriptions _ =
 ================
 File: src/SelfServiceOnboarding.elm
 ================
-module SelfServiceOnboarding exposing (..)
+port module SelfServiceOnboarding exposing (..)
 
 import Browser
 import Browser.Navigation as Nav
+import CarrierNaic exposing (Carrier, carrierDecoder)
 import Date exposing (Date)
 import Dict
 import Html exposing (..)
@@ -28999,12 +29290,23 @@ import Url.Parser as Parser exposing ((</>), Parser, oneOf, string)
 
 
 
+-- PORTS
+
+
+port saveDebugInfo : String -> Cmd msg
+
+
+port clearDebugInfo : () -> Cmd msg
+
+
+
 -- MODEL
 
 
 type alias Model =
     { orgId : Maybe String
     , orgSlug : Maybe String
+    , logo : Maybe String
     , email : String
     , firstName : String
     , lastName : String
@@ -29018,6 +29320,7 @@ type alias Model =
     , optInQuarterlyUpdates : Bool
     , emailReadOnly : Bool
     , isSubmitting : Bool
+    , isGeneratingQuote : Bool
     , error : Maybe String
     , success : Bool
     , key : Nav.Key
@@ -29032,9 +29335,9 @@ type alias Model =
 
 
 type FormStep
-    = BasicInfo
-    | QuoteInfo
+    = SingleStep
     | ConfirmSubmit
+
 
 
 -- INIT
@@ -29062,6 +29365,7 @@ type alias UrlParams =
     { orgId : Maybe String
     , email : Maybe String
     , hash : Maybe String
+    , quoteId : Maybe String
     }
 
 
@@ -29074,6 +29378,7 @@ init key url =
         initialModel =
             { orgId = Nothing
             , orgSlug = Nothing
+            , logo = Nothing
             , email = ""
             , firstName = ""
             , lastName = ""
@@ -29084,9 +29389,10 @@ init key url =
             , phoneNumber = ""
             , currentPremium = ""
             , currentCarrier = ""
-            , optInQuarterlyUpdates = False
+            , optInQuarterlyUpdates = True
             , emailReadOnly = False
             , isSubmitting = False
+            , isGeneratingQuote = False
             , error = Nothing
             , success = False
             , key = key
@@ -29096,16 +29402,73 @@ init key url =
             , selectedCounty = Nothing
             , isLoadingZipData = False
             , zipError = Nothing
-            , formStep = BasicInfo
+            , formStep = SingleStep
             }
 
         commands =
             [ Task.perform GotCurrentDate Date.today ]
+
+        -- Clear any previous debug info
+        clearCmd =
+            clearDebugInfo ()
     in
     case route of
         SlugRoute slug ->
+            let
+                params =
+                    parseUrlParams url
+
+                email =
+                    params.email
+
+                quoteId =
+                    params.quoteId
+
+                debugInfo =
+                    "Initializing with slug="
+                        ++ slug
+                        ++ ", email="
+                        ++ (email |> Maybe.withDefault "none")
+                        ++ ", quoteId="
+                        ++ (quoteId |> Maybe.withDefault "none")
+                        ++ ", url.query="
+                        ++ (url.query |> Maybe.withDefault "none")
+
+                fetchOrgDetailsCmd =
+                    let
+                        queryParams =
+                            List.filterMap identity
+                                [ Maybe.map (\e -> ( "email", e )) email
+                                , Maybe.map (\q -> ( "id", q )) quoteId
+                                ]
+                                |> List.map (\( k, v ) -> k ++ "=" ++ Url.percentEncode v)
+                                |> String.join "&"
+
+                        apiUrl =
+                            "/api/self-service/"
+                                ++ slug
+                                ++ (if String.isEmpty queryParams then
+                                        ""
+
+                                    else
+                                        "?" ++ queryParams
+                                   )
+                    in
+                    Cmd.batch
+                        [ saveDebugInfo <| "Fetching org details: " ++ apiUrl
+                        , Http.get
+                            { url = apiUrl
+                            , expect = Http.expectJson GotOrgDetails orgDetailsDecoder
+                            }
+                        ]
+            in
             ( { initialModel | orgSlug = Just slug }
-            , Cmd.batch (fetchOrgDetails slug :: commands)
+            , Cmd.batch
+                (clearCmd
+                    :: saveDebugInfo debugInfo
+                    :: fetchOrgDetailsCmd
+                    :: commands
+                )
             )
 
         QueryRoute ->
@@ -29123,29 +29486,54 @@ init key url =
                 hash =
                     params.hash
 
+                quoteId =
+                    params.quoteId
+
+                debugInfo =
+                    "Initializing with orgId="
+                        ++ (orgId |> Maybe.withDefault "none")
+                        ++ ", email="
+                        ++ (email |> Maybe.withDefault "none")
+                        ++ ", quoteId="
+                        ++ (quoteId |> Maybe.withDefault "none")
+
                 initCmd =
                     case orgId of
                         Just oid ->
+                            -- If we have an org ID, fetch org details which will include contact if found
                             let
                                 queryParams =
                                     List.filterMap identity
-                                        [ Just ( "orgId", oid )
-                                        , Maybe.map (\e -> ( "email", e )) email
+                                        [ Maybe.map (\e -> ( "email", e )) email
+                                        , Maybe.map (\q -> ( "id", q )) quoteId
                                         , Maybe.map (\h -> ( "hash", h )) hash
                                         ]
                                         |> List.map (\( k, v ) -> k ++ "=" ++ Url.percentEncode v)
                                         |> String.join "&"
+
+                                apiUrl =
+                                    "/api/self-service/"
+                                        ++ oid
+                                        ++ (if String.isEmpty queryParams then
+                                                ""
+
+                                            else
+                                                "?" ++ queryParams
+                                           )
                             in
-                            Http.get
-                                { url = "/api/self-service/init?" ++ queryParams
-                                , expect = Http.expectJson GotInitResponse initResponseDecoder
-                                }
+                            Cmd.batch
+                                [ saveDebugInfo <| "Fetching org details: " ++ apiUrl
+                                , Http.get
+                                    { url = apiUrl
+                                    , expect = Http.expectJson GotOrgDetails orgDetailsDecoder
+                                    }
+                                ]
 
                         Nothing ->
                             Cmd.none
             in
             ( { initialModel | orgId = orgId }
-            , Cmd.batch (initCmd :: commands)
+            , Cmd.batch (clearCmd :: saveDebugInfo debugInfo :: initCmd :: commands)
             )
 
 
@@ -29175,15 +29563,23 @@ parseUrlParams url =
     { orgId = getParam "orgId"
     , email = getParam "email"
     , hash = getParam "hash"
+    , quoteId = getParam "id"
     }
 
 
 fetchOrgDetails : String -> Cmd Msg
 fetchOrgDetails slug =
-    Http.get
-        { url = "/api/self-service/" ++ slug
-        , expect = Http.expectJson GotOrgDetails orgDetailsDecoder
-        }
+    let
+        url =
+            "/api/self-service/" ++ slug
+    in
+    Cmd.batch
+        [ saveDebugInfo <| "Fetching org details: " ++ url
+        , Http.get
+            { url = url
+            , expect = Http.expectJson GotOrgDetails orgDetailsDecoder
+            }
+        ]
 
 
 fetchZipInfo : String -> Cmd Msg
@@ -29201,6 +29597,7 @@ fetchZipInfo zipCode =
 type Msg
     = GotInitResponse (Result Http.Error InitResponse)
     | GotOrgDetails (Result Http.Error OrgDetails)
+    | GotContactData (Result Http.Error ContactResponse)
     | UpdateEmail String
     | UpdateFirstName String
     | UpdateLastName String
@@ -29216,7 +29613,8 @@ type Msg
     | SubmitForm
     | GotCurrentDate Date
     | GotZipInfo (Result Http.Error ZipInfo)
-    | GotSignupResponse (Result Http.Error ())
+    | GotSignupResponse (Result Http.Error SignupResponse)
+    | GotQuoteResponse (Result Http.Error QuoteResponse)
     | NextStep
     | PrevStep
     | GoToQuote
@@ -29232,13 +29630,23 @@ type alias InitResponse =
 type alias OrgDetails =
     { orgId : String
     , orgSlug : String
+    , contact : Maybe Contact
+    , logo : Maybe String
     }
 
 
 type alias Contact =
-    { email : String
-    , firstName : String
+    { firstName : String
     , lastName : String
+    , email : String
+    , phone : String
+    , dateOfBirth : String
+    , gender : String
+    , tobacco : Bool
+    , state : String
+    , zipCode : String
+    , currentCarrier : Maybe String
+    , planType : Maybe String
     , optInQuarterlyUpdates : Bool
     }
 
@@ -29246,6 +29654,30 @@ type alias Contact =
 type alias ZipInfo =
     { state : String
     , counties : List String
+    }
+
+
+type alias SignupResponse =
+    { success : Bool
+    , contactId : Int
+    , email : String
+    }
+
+
+type alias QuoteResponse =
+    { success : Bool
+    , contactId : Int
+    , quoteId : String
+    , redirectUrl : String
+    , error : Maybe String
+    }
+
+
+type alias ContactResponse =
+    { success : Bool
+    , orgSlug : String
+    , carrierContracts : List Carrier
+    , contact : Contact
     }
 
 
@@ -29273,13 +29705,66 @@ update msg model =
         GotOrgDetails result ->
             case result of
                 Ok details ->
-                    ( { model | orgId = Just details.orgId, error = Nothing }
-                    , Cmd.none
+                    let
+                        -- Extract contact info if it exists
+                        contact =
+                            details.contact
+
+                        debugInfo =
+                            "OrgDetails: orgId="
+                                ++ details.orgId
+                                ++ ", orgSlug="
+                                ++ details.orgSlug
+                                ++ ", hasContact="
+                                ++ (if details.contact /= Nothing then
+                                        "true"
+
+                                    else
+                                        "false"
+                                   )
+                                ++ (if details.contact /= Nothing then
+                                        ", contactEmail=" ++ (Maybe.map .email contact |> Maybe.withDefault "none")
+
+                                    else
+                                        ""
+                                   )
+                    in
+                    ( { model
+                        | orgId = Just details.orgId
+                        , orgSlug = Just details.orgSlug
+                        , logo = details.logo
+                        , email = Maybe.map .email contact |> Maybe.withDefault model.email
+                        , firstName = Maybe.map .firstName contact |> Maybe.withDefault model.firstName
+                        , lastName = Maybe.map .lastName contact |> Maybe.withDefault model.lastName
+                        , phoneNumber = Maybe.map .phone contact |> Maybe.withDefault model.phoneNumber
+                        , dateOfBirth = Maybe.map .dateOfBirth contact |> Maybe.withDefault model.dateOfBirth
+                        , gender = Maybe.map .gender contact |> Maybe.withDefault model.gender
+                        , tobacco = Maybe.map .tobacco contact |> Maybe.withDefault model.tobacco
+                        , zipCode = Maybe.map .zipCode contact |> Maybe.withDefault model.zipCode
+                        , currentCarrier = Maybe.map .currentCarrier contact |> Maybe.withDefault Nothing |> Maybe.withDefault model.currentCarrier
+                        , optInQuarterlyUpdates = Maybe.map .optInQuarterlyUpdates contact |> Maybe.withDefault model.optInQuarterlyUpdates
+                        , error = Nothing
+                      }
+                    , Cmd.batch
+                        [ saveDebugInfo debugInfo
+
+                        -- If we have a zip code from contact, fetch the zip info
+                        , case Maybe.map .zipCode contact of
+                            Just zip ->
+                                if String.length zip == 5 then
+                                    fetchZipInfo zip
+
+                                else
+                                    Cmd.none
+
+                            Nothing ->
+                                Cmd.none
+                        ]
                     )
 
-                Err _ ->
+                Err error ->
                     ( { model | error = Just "Organization not found or invalid link." }
-                    , Cmd.none
+                    , saveDebugInfo <| "OrgDetails error: " ++ httpErrorToString error
                     )
 
         GotInitResponse result ->
@@ -29300,6 +29785,21 @@ update msg model =
 
                         optIn =
                             contact |> Maybe.map .optInQuarterlyUpdates |> Maybe.withDefault False
+
+                        debugInfo =
+                            "InitResponse: email="
+                                ++ email
+                                ++ ", firstName="
+                                ++ firstName
+                                ++ ", lastName="
+                                ++ lastName
+                                ++ ", optIn="
+                                ++ (if optIn then
+                                        "true"
+
+                                    else
+                                        "false"
+                                   )
                     in
                     ( { model
                         | email = email
@@ -29309,12 +29809,12 @@ update msg model =
                         , emailReadOnly = response.emailReadOnly
                         , error = Nothing
                       }
-                    , Cmd.none
+                    , saveDebugInfo debugInfo
                     )
 
-                Err _ ->
+                Err error ->
                     ( { model | error = Just "Failed to load existing contact details. Please try again." }
-                    , Cmd.none
+                    , saveDebugInfo <| "InitResponse error: " ++ httpErrorToString error
                     )
 
         UpdateEmail newEmail ->
@@ -29351,19 +29851,19 @@ update msg model =
                 | zipCode = filteredZip
                 , isLoadingZipData = String.length filteredZip == 5 && filteredZip /= model.zipCode
                 , state =
-                    if String.length filteredZip /= 5 then
+                    if String.length filteredZip /= 5 || (String.length filteredZip == 5 && filteredZip /= model.zipCode) then
                         Nothing
 
                     else
                         model.state
                 , counties =
-                    if String.length filteredZip /= 5 then
+                    if String.length filteredZip /= 5 || (String.length filteredZip == 5 && filteredZip /= model.zipCode) then
                         []
 
                     else
                         model.counties
                 , selectedCounty =
-                    if String.length filteredZip /= 5 then
+                    if String.length filteredZip /= 5 || (String.length filteredZip == 5 && filteredZip /= model.zipCode) then
                         Nothing
 
                     else
@@ -29415,10 +29915,10 @@ update msg model =
             ( { model | tobacco = value == "true" }, Cmd.none )
 
         UpdatePhoneNumber phone ->
-            ( { model | phoneNumber = phone }, Cmd.none )
+            ( { model | phoneNumber = String.filter Char.isDigit phone |> String.left 10 }, Cmd.none )
 
-        UpdateCurrentPremium premium ->
-            ( { model | currentPremium = premium }, Cmd.none )
+        UpdateCurrentPremium value ->
+            ( { model | currentPremium = String.filter (\c -> Char.isDigit c || c == '.') value }, Cmd.none )
 
         UpdateCurrentCarrier carrier ->
             ( { model | currentCarrier = carrier }, Cmd.none )
@@ -29433,17 +29933,12 @@ update msg model =
             let
                 nextStep =
                     case model.formStep of
-                        BasicInfo ->
-                            if isBasicInfoValid model then
-                                QuoteInfo
-                            else
-                                BasicInfo
-
-                        QuoteInfo ->
-                            if isQuoteInfoValid model then
+                        SingleStep ->
+                            if isFormValid model then
                                 ConfirmSubmit
+
                             else
-                                QuoteInfo
+                                SingleStep
 
                         ConfirmSubmit ->
                             ConfirmSubmit
@@ -29454,14 +29949,11 @@ update msg model =
             let
                 prevStep =
                     case model.formStep of
-                        BasicInfo ->
-                            BasicInfo
-
-                        QuoteInfo ->
-                            BasicInfo
+                        SingleStep ->
+                            SingleStep
 
                         ConfirmSubmit ->
-                            QuoteInfo
+                            SingleStep
             in
             ( { model | formStep = prevStep, error = Nothing }, Cmd.none )
 
@@ -29478,18 +29970,48 @@ update msg model =
 
         GotSignupResponse result ->
             case result of
-                Ok _ ->
-                    ( { model | isSubmitting = False, success = True, error = Nothing }
-                    , Cmd.none
+                Ok response ->
+                    if response.success then
+                        ( { model | isSubmitting = False, success = True, error = Nothing, isGeneratingQuote = True }
+                        , Cmd.batch
+                            [ saveDebugInfo <| "SignupResponse: contactId=" ++ String.fromInt response.contactId ++ ", email=" ++ response.email
+                            , generateQuote model.orgId response.contactId response.email
+                            ]
+                        )
+
+                    else
+                        ( { model | isSubmitting = False, error = Just "Signup failed. Please try again." }
+                        , saveDebugInfo <| "SignupResponse: failed (success=false)"
+                        )
+
+                Err error ->
+                    ( { model | isSubmitting = False, error = Just "Signup failed. Please try again." }
+                    , saveDebugInfo <| "SignupResponse error: " ++ httpErrorToString error
                     )
 
-                Err _ ->
-                    ( { model | isSubmitting = False, error = Just "Signup failed. Please try again." }
-                    , Cmd.none
+        GotQuoteResponse result ->
+            case result of
+                Ok response ->
+                    if response.success then
+                        ( { model | isGeneratingQuote = False }
+                        , Cmd.batch
+                            [ saveDebugInfo <| "QuoteResponse: quoteId=" ++ response.quoteId ++ ", redirectUrl=" ++ response.redirectUrl
+                            , Nav.pushUrl model.key (Builder.absolute [ "compare" ] [ Builder.string "id" response.quoteId ])
+                            ]
+                        )
+
+                    else
+                        ( { model | isGeneratingQuote = False, error = Just "Failed to generate quote. Please try again." }
+                        , saveDebugInfo <| "QuoteResponse: failed (success=false), error=" ++ (response.error |> Maybe.withDefault "No error message")
+                        )
+
+                Err error ->
+                    ( { model | isGeneratingQuote = False, error = Just "Failed to generate quote. Please try again." }
+                    , saveDebugInfo <| "QuoteResponse error: " ++ httpErrorToString error
                     )
 
         GoToQuote ->
-            if isQuoteInfoValid model then
+            if isFormValid model then
                 let
                     county =
                         case model.selectedCounty of
@@ -29503,9 +30025,6 @@ update msg model =
                     state =
                         model.state
                             |> Maybe.withDefault ""
-
-                    orgId =
-                        model.orgId |> Maybe.withDefault ""
 
                     compareUrl =
                         Builder.absolute [ "compare" ]
@@ -29521,39 +30040,76 @@ update msg model =
                                     "false"
                                 )
                             , Builder.string "dateOfBirth" model.dateOfBirth
-                            , Builder.string "planType" "G"
-                            , Builder.string "orgId" orgId
                             ]
                 in
                 ( model
                 , Nav.pushUrl model.key compareUrl
                 )
+
             else
                 ( { model | error = Just "Please fill out all required fields for a quote" }
                 , Cmd.none
                 )
 
+        GotContactData result ->
+            case result of
+                Ok response ->
+                    let
+                        contact =
+                            response.contact
+                    in
+                    ( { model
+                        | orgId = Just response.orgSlug
+                        , email = contact.email
+                        , firstName = contact.firstName
+                        , lastName = contact.lastName
+                        , phoneNumber = contact.phone
+                        , dateOfBirth = contact.dateOfBirth
+                        , gender = contact.gender
+                        , tobacco = contact.tobacco
+                        , zipCode = contact.zipCode
+                        , currentCarrier = Maybe.withDefault "" contact.currentCarrier
+                        , optInQuarterlyUpdates = contact.optInQuarterlyUpdates
+                        , error = Nothing
+                      }
+                    , Cmd.batch
+                        [ saveDebugInfo <|
+                            "ContactData: success="
+                                ++ (if response.success then
+                                        "true"
 
-isBasicInfoValid : Model -> Bool
-isBasicInfoValid model =
+                                    else
+                                        "false"
+                                   )
+                                ++ ", orgSlug="
+                                ++ response.orgSlug
+                        ]
+                    )
+
+                Err error ->
+                    ( { model | error = Just "Failed to load contact data. Please try again." }
+                    , saveDebugInfo <| "ContactData error: " ++ httpErrorToString error
+                    )
+
+
+isFormValid : Model -> Bool
+isFormValid model =
+    -- Contact info (required)
     not (String.isEmpty model.email)
         && not (String.isEmpty model.firstName)
         && not (String.isEmpty model.lastName)
         && model.orgId
         /= Nothing
-
-
-isQuoteInfoValid : Model -> Bool
-isQuoteInfoValid model =
-    String.length model.zipCode == 5
+        -- Quote info (required)
+        && String.length model.zipCode
+        == 5
         && not (String.isEmpty model.dateOfBirth)
         && not (String.isEmpty model.gender)
-        && model.state /= Nothing
-
-
-isFormValid : Model -> Bool
-isFormValid model =
-    isBasicInfoValid model && isQuoteInfoValid model
+        -- Tobacco status is now explicitly required
+        && (model.tobacco == True || model.tobacco == False)
+        -- Must agree to receive updates
+        && model.optInQuarterlyUpdates
+        == True
 
 
 httpErrorToString : Http.Error -> String
@@ -29575,6 +30131,33 @@ httpErrorToString error =
             "Data error: " ++ message
 
 
+formatPhoneNumber : String -> String
+formatPhoneNumber phone =
+    if String.isEmpty phone then
+        ""
+
+    else
+        let
+            digits =
+                String.filter Char.isDigit phone
+                    |> String.left 10
+
+            len =
+                String.length digits
+        in
+        if len == 0 then
+            ""
+
+        else if len <= 3 then
+            "(" ++ digits
+
+        else if len <= 6 then
+            "(" ++ String.left 3 digits ++ ") " ++ String.dropLeft 3 digits
+
+        else
+            "(" ++ String.left 3 digits ++ ") " ++ String.slice 3 6 digits ++ "-" ++ String.dropLeft 6 digits
+
+
 
 -- FORM SUBMISSION
 
@@ -29584,8 +30167,28 @@ submitForm model =
     Http.post
         { url = "/api/self-service/signup"
         , body = Http.jsonBody (encodeForm model)
-        , expect = Http.expectWhatever GotSignupResponse
+        , expect = Http.expectJson GotSignupResponse signupResponseDecoder
         }
+
+
+generateQuote : Maybe String -> Int -> String -> Cmd Msg
+generateQuote maybeOrgId contactId email =
+    case maybeOrgId of
+        Just orgId ->
+            Http.post
+                { url = "/api/self-service/generate-quote"
+                , body =
+                    Http.jsonBody
+                        (Encode.object
+                            [ ( "orgId", Encode.string orgId )
+                            , ( "contactEmail", Encode.string email )
+                            ]
+                        )
+                , expect = Http.expectJson GotQuoteResponse quoteResponseDecoder
+                }
+
+        Nothing ->
+            Cmd.none
 
 
 encodeForm : Model -> Encode.Value
@@ -29622,18 +30225,106 @@ initResponseDecoder =
 
 contactDecoder : Decoder Contact
 contactDecoder =
-    Decode.map4 Contact
-        (Decode.field "email" Decode.string)
+    Decode.map4
+        (\fn ln em ph ->
+            { firstName = fn
+            , lastName = ln
+            , email = em
+            , phone = ph
+            , dateOfBirth = ""
+            , gender = "M"
+            , tobacco = False
+            , state = ""
+            , zipCode = ""
+            , currentCarrier = Nothing
+            , planType = Nothing
+            , optInQuarterlyUpdates = True
+            }
+        )
         (Decode.field "firstName" Decode.string)
         (Decode.field "lastName" Decode.string)
-        (Decode.field "optInQuarterlyUpdates" Decode.bool)
+        (Decode.field "email" Decode.string)
+        (Decode.field "phone" Decode.string)
+        |> Decode.andThen
+            (\c ->
+                Decode.map4
+                    (\dob gndr tbc st ->
+                        { c
+                            | dateOfBirth = dob
+                            , gender = gndr
+                            , tobacco = tbc
+                            , state = st
+                        }
+                    )
+                    (Decode.field "dateOfBirth" Decode.string)
+                    (Decode.field "gender" Decode.string)
+                    (Decode.field "tobacco" Decode.bool)
+                    (Decode.field "state" Decode.string)
+            )
+        |> Decode.andThen
+            (\c ->
+                Decode.map3
+                    (\zip cc pt ->
+                        { c
+                            | zipCode = zip
+                            , currentCarrier = cc
+                            , planType = pt
+                        }
+                    )
+                    (Decode.field "zipCode" Decode.string)
+                    (Decode.field "currentCarrier" (Decode.nullable Decode.string))
+                    (Decode.field "planType" (Decode.nullable Decode.string))
+            )
+        |> Decode.andThen
+            (\c ->
+                Decode.maybe (Decode.field "optInQuarterlyUpdates" Decode.bool)
+                    |> Decode.map (Maybe.withDefault True)
+                    |> Decode.map (\optIn -> { c | optInQuarterlyUpdates = optIn })
+            )
 
 
 orgDetailsDecoder : Decoder OrgDetails
 orgDetailsDecoder =
-    Decode.map2 OrgDetails
+    Decode.map4 OrgDetails
         (Decode.field "orgId" Decode.string)
         (Decode.field "orgSlug" Decode.string)
+        (Decode.maybe (Decode.field "contact" contactDecoder))
+        (Decode.maybe (Decode.field "logo" Decode.string))
+
+
+signupResponseDecoder : Decoder SignupResponse
+signupResponseDecoder =
+    Decode.map3 SignupResponse
+        (Decode.field "success" Decode.bool)
+        (Decode.field "contactId" Decode.int)
+        (Decode.field "email" Decode.string)
+
+
+quoteResponseDecoder : Decoder QuoteResponse
+quoteResponseDecoder =
+    Decode.map5 QuoteResponse
+        (Decode.field "success" Decode.bool)
+        (Decode.field "contactId" Decode.int)
+        (Decode.field "quoteId" Decode.string)
+        (Decode.field "redirectUrl" Decode.string)
+        (Decode.maybe (Decode.field "error" Decode.string))
+
+
+contactResponseDecoder : Decoder ContactResponse
+contactResponseDecoder =
+    Decode.map4 ContactResponse
+        (Decode.field "success" Decode.bool)
+        (Decode.field "orgSlug" Decode.string)
+        (Decode.field "carrierContracts" (Decode.list carrierDecoder))
+        (Decode.field "contact" contactDecoder)
+
+
+fetchContactData : String -> Cmd Msg
+fetchContactData quoteId =
+    Http.get
+        { url = "/api/quotes/decode/" ++ quoteId
+        , expect = Http.expectJson GotContactData contactResponseDecoder
+        }
 
 
 
@@ -29642,29 +30333,25 @@ orgDetailsDecoder =
 
 view : Model -> Browser.Document Msg
 view model =
-    { title = "Self-Service Onboarding"
+    { title = "Get Your Medicare Supplement Quote"
     , body =
-        [ div [ class "container mx-auto px-4 py-8" ]
-            [ h1 [ class "text-2xl font-bold mb-6" ] [ text "Complete Your Profile" ]
-            , viewForm model
-            ]
+        [ viewForm model
         ]
     }
 
 
 viewForm : Model -> Html Msg
 viewForm model =
-    div [ class "max-w-md mx-auto bg-white rounded-lg shadow-md p-6" ]
+    div [ class "max-w-4xl mx-auto bg-white rounded-xl shadow-md p-4 sm:p-8" ]
         [ if model.success then
             div []
-                [ div [ class "p-4 mb-4 bg-green-100 border border-green-400 text-green-700 rounded" ]
-                    [ text "Profile updated successfully!" ]
-                , button
-                    [ type_ "button"
-                    , class "w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 mt-4"
-                    , onClick GoToQuote
-                    ]
-                    [ text "Get Your Quote" ]
+                [ if model.isGeneratingQuote then
+                    div [ class "p-4 mb-4 bg-blue-100 border border-blue-400 text-blue-700 rounded" ]
+                        [ text "Your profile has been updated! Generating your quote..." ]
+
+                  else
+                    div [ class "p-4 mb-4 bg-green-100 border border-green-400 text-green-700 rounded" ]
+                        [ text "Profile updated successfully! Redirecting to your quote..." ]
                 ]
 
           else if model.orgId == Nothing && model.error == Nothing then
@@ -29679,54 +30366,45 @@ viewForm model =
 viewFormStep : Model -> Html Msg
 viewFormStep model =
     case model.formStep of
-        BasicInfo ->
+        SingleStep ->
             div []
-                [ viewBasicInfoForm model
+                [ case model.logo of
+                    Just logo ->
+                        div [ class "flex justify-center mt-4 sm:mt-6 mb-12 sm:mb-20" ]
+                            [ img [ src logo, class "h-10 sm:h-12", alt "Organization Logo" ] [] ]
+
+                    Nothing ->
+                        div [ class "flex justify-center mt-4 sm:mt-6 mb-12 sm:mb-20" ]
+                            [ img [ src "/images/medicare-max-logo.png", class "h-10 sm:h-12", alt "Medicare Max Logo" ] [] ]
+                , div [ class "text-center mb-6 px-2 sm:px-0" ]
+                    [ h1 [ class "text-2xl sm:text-3xl font-bold text-[#101828]" ] [ text "Let's Get Some Details" ]
+                    , p [ class "text-[#475467] mt-2 text-sm sm:text-base" ] [ text "We use this information to get you the most accurate quote for your area." ]
+                    ]
+                , viewCombinedForm model
                 , viewError model.error
                 , button
                     [ type_ "button"
-                    , class "w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                    , class "w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-[#03045E] hover:bg-[#02034e] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#3DBDEC] mt-6"
                     , onClick NextStep
-                    , disabled (not (isBasicInfoValid model))
+                    , disabled (not (isFormValid model))
                     ]
-                    [ text "Next" ]
-                ]
-
-        QuoteInfo ->
-            div []
-                [ viewQuoteInfoForm model
-                , viewError model.error
-                , div [ class "flex justify-between mt-4" ]
-                    [ button
-                        [ type_ "button"
-                        , class "flex justify-center py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                        , onClick PrevStep
-                        ]
-                        [ text "Back" ]
-                    , button
-                        [ type_ "button"
-                        , class "flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                        , onClick NextStep
-                        , disabled (not (isQuoteInfoValid model))
-                        ]
-                        [ text "Next" ]
-                    ]
+                    [ text "Continue" ]
                 ]
 
         ConfirmSubmit ->
             div []
                 [ viewFormSummary model
                 , viewError model.error
-                , div [ class "flex justify-between mt-4" ]
+                , div [ class "flex flex-col sm:flex-row justify-between gap-3 sm:gap-0 mt-4" ]
                     [ button
                         [ type_ "button"
-                        , class "flex justify-center py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                        , class "w-full sm:w-auto flex justify-center py-2 px-4 border border-[#D0D5DD] rounded-md shadow-sm text-sm font-medium text-[#344054] bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#3DBDEC]"
                         , onClick PrevStep
                         ]
                         [ text "Back" ]
                     , button
                         [ type_ "button"
-                        , class "flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                        , class "w-full sm:w-auto flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-[#03045E] hover:bg-[#02034e] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#3DBDEC]"
                         , onClick SubmitForm
                         , disabled (model.isSubmitting || not (isFormValid model))
                         ]
@@ -29742,133 +30420,248 @@ viewFormStep model =
                 ]
 
 
-viewBasicInfoForm : Model -> Html Msg
-viewBasicInfoForm model =
-    div []
-        [ inputField "Email" "email" model.email UpdateEmail model.emailReadOnly
-        , inputField "First Name" "text" model.firstName UpdateFirstName False
-        , inputField "Last Name" "text" model.lastName UpdateLastName False
-        , inputField "Phone Number" "tel" model.phoneNumber UpdatePhoneNumber False
-        , checkboxField "Receive quarterly Medicare updates" model.optInQuarterlyUpdates ToggleOptIn
-        ]
+viewCombinedForm : Model -> Html Msg
+viewCombinedForm model =
+    div [ class "px-2 sm:px-0 space-y-6 sm:space-y-6" ]
+        [ div [ class "grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-4" ]
+            [ inputField "First Name" "text" model.firstName UpdateFirstName False
+            , inputField "Last Name" "text" model.lastName UpdateLastName False
+            , inputField "Phone Number" "tel" (formatPhoneNumber model.phoneNumber) UpdatePhoneNumber False
+            , inputField "Email Address" "email" model.email UpdateEmail model.emailReadOnly
+            ]
+        , div [ class "grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-4" ]
+            [ div [ class "col-span-1" ]
+                [ label [ class "block text-sm font-medium text-gray-700 mb-1" ] [ text "Date of Birth" ]
+                , input
+                    [ type_ "text"
+                    , class "w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-sky-500 focus:border-sky-500"
+                    , placeholder "MM-DD-YYYY"
+                    , Html.Attributes.value model.dateOfBirth
+                    , onInput UpdateDateOfBirth
+                    , required True
+                    ]
+                    []
+                ]
+            , div [ class "col-span-1" ]
+                [ label [ class "block text-sm font-medium text-gray-700 mb-1" ] [ text "Zip Code" ]
+                , input
+                    [ type_ "text"
+                    , class "w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-sky-500 focus:border-sky-500"
+                    , placeholder "XXXXX"
+                    , Html.Attributes.value model.zipCode
+                    , onInput UpdateZipCode
+                    , Html.Attributes.maxlength 5
+                    , Html.Attributes.pattern "[0-9]*"
+                    , required True
+                    ]
+                    []
+                , if model.isLoadingZipData then
+                    div [ class "text-xs text-blue-600 mt-1" ]
+                        [ text "Looking up location..." ]
 
+                  else if model.zipError /= Nothing then
+                    div [ class "text-xs text-red-600 mt-1" ]
+                        [ text (Maybe.withDefault "Invalid zip code" model.zipError) ]
 
-viewQuoteInfoForm : Model -> Html Msg
-viewQuoteInfoForm model =
-    div []
-        [ zipCodeField model
+                  else if model.state /= Nothing then
+                    div [ class "text-xs text-green-600 mt-1" ]
+                        [ text ("Found: " ++ Maybe.withDefault "" model.state) ]
+
+                  else
+                    text ""
+                ]
+            ]
         , if List.length model.counties > 1 then
-            viewCountyDropdown model.counties model.selectedCounty
+            div [ class "mb-4" ]
+                [ viewCountyDropdown model.counties model.selectedCounty ]
+
           else
             text ""
-        , inputField "Date of Birth" "date" model.dateOfBirth UpdateDateOfBirth False
-        , formRadioGroup "Gender"
-            model.gender
-            UpdateGender
-            [ ( "M", "Male" ), ( "F", "Female" ) ]
-        , formRadioGroup "Tobacco User"
-            (if model.tobacco then
-                "true"
-             else
-                "false"
-            )
-            UpdateTobacco
-            [ ( "true", "Yes" ), ( "false", "No" ) ]
-        , inputField "Current Premium (Optional)" "number" model.currentPremium UpdateCurrentPremium False
-        , inputField "Current Carrier (Optional)" "text" model.currentCarrier UpdateCurrentCarrier False
+        , div [ class "grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-4" ]
+            [ div [ class "col-span-1" ]
+                [ label [ class "block text-sm font-medium text-gray-700 mb-2" ] [ text "Gender" ]
+                , div [ class "grid grid-cols-2 gap-2" ]
+                    [ label
+                        [ class
+                            ("flex items-center justify-center px-3 sm:px-4 py-2 rounded-lg border-2 cursor-pointer transition-all text-sm sm:text-base "
+                                ++ (if model.gender == "M" then
+                                        "border-[#03045E] bg-[#F9F5FF] text-[#03045E]"
+
+                                    else
+                                        "border-[#D0D5DD] hover:border-[#3DBDEC] text-[#344054]"
+                                   )
+                            )
+                        ]
+                        [ input
+                            [ type_ "radio"
+                            , value "M"
+                            , checked (model.gender == "M")
+                            , onInput UpdateGender
+                            , class "sr-only"
+                            ]
+                            []
+                        , text "Male"
+                        ]
+                    , label
+                        [ class
+                            ("flex items-center justify-center px-3 sm:px-4 py-2 rounded-lg border-2 cursor-pointer transition-all text-sm sm:text-base "
+                                ++ (if model.gender == "F" then
+                                        "border-[#03045E] bg-[#F9F5FF] text-[#03045E]"
+
+                                    else
+                                        "border-[#D0D5DD] hover:border-[#3DBDEC] text-[#344054]"
+                                   )
+                            )
+                        ]
+                        [ input
+                            [ type_ "radio"
+                            , value "F"
+                            , checked (model.gender == "F")
+                            , onInput UpdateGender
+                            , class "sr-only"
+                            ]
+                            []
+                        , text "Female"
+                        ]
+                    ]
+                ]
+            , div [ class "col-span-1" ]
+                [ label [ class "block text-sm font-medium text-gray-700 mb-2" ] [ text "Do you use tobacco products?" ]
+                , div [ class "grid grid-cols-2 gap-2" ]
+                    [ label
+                        [ class
+                            ("flex items-center justify-center px-3 sm:px-4 py-2 rounded-lg border-2 cursor-pointer transition-all text-sm sm:text-base "
+                                ++ (if model.tobacco then
+                                        "border-[#03045E] bg-[#F9F5FF] text-[#03045E]"
+
+                                    else
+                                        "border-[#D0D5DD] hover:border-[#3DBDEC] text-[#344054]"
+                                   )
+                            )
+                        ]
+                        [ input
+                            [ type_ "radio"
+                            , value "true"
+                            , checked model.tobacco
+                            , onInput UpdateTobacco
+                            , class "sr-only"
+                            ]
+                            []
+                        , text "Yes"
+                        ]
+                    , label
+                        [ class
+                            ("flex items-center justify-center px-3 sm:px-4 py-2 rounded-lg border-2 cursor-pointer transition-all text-sm sm:text-base "
+                                ++ (if not model.tobacco then
+                                        "border-[#03045E] bg-[#F9F5FF] text-[#03045E]"
+
+                                    else
+                                        "border-[#D0D5DD] hover:border-[#3DBDEC] text-[#344054]"
+                                   )
+                            )
+                        ]
+                        [ input
+                            [ type_ "radio"
+                            , value "false"
+                            , checked (not model.tobacco)
+                            , onInput UpdateTobacco
+                            , class "sr-only"
+                            ]
+                            []
+                        , text "No"
+                        ]
+                    ]
+                ]
+            ]
+        , h3 [ class "font-medium text-base sm:text-lg mb-4 text-gray-700" ] [ text "Current Coverage (Optional)" ]
+        , div [ class "grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-4" ]
+            [ div [ class "col-span-1" ]
+                [ label [ class "block text-sm font-medium text-gray-700 mb-1" ] [ text "Current Carrier" ]
+                , div [ class "relative" ]
+                    [ input
+                        [ type_ "text"
+                        , class "w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-sky-500 focus:border-sky-500"
+                        , Html.Attributes.value model.currentCarrier
+                        , onInput UpdateCurrentCarrier
+                        ]
+                        []
+                    , div [ class "absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none" ]
+                        [ span [ class "text-gray-500" ] [ text "▼" ] ]
+                    ]
+                ]
+            , div [ class "col-span-1" ]
+                [ label [ class "block text-sm font-medium text-gray-700 mb-1" ] [ text "Current Monthly Premium" ]
+                , div [ class "relative" ]
+                    [ div [ class "absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none" ]
+                        [ span [ class "text-gray-500" ] [ text "$" ] ]
+                    , input
+                        [ type_ "text"
+                        , class "w-full pl-7 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-sky-500 focus:border-sky-500"
+                        , Html.Attributes.value model.currentPremium
+                        , onInput UpdateCurrentPremium
+                        , Html.Attributes.pattern "[0-9]*"
+                        , Html.Attributes.attribute "inputmode" "numeric"
+                        , placeholder "0.00"
+                        ]
+                        []
+                    ]
+                ]
+            ]
+        , div [ class "mt-6 flex justify-center" ]
+            [ checkboxField "I agree to receive Medicare Supplement plan updates" model.optInQuarterlyUpdates ToggleOptIn ]
         ]
 
 
-viewFormSummary : Model -> Html Msg
-viewFormSummary model =
-    div [ class "border rounded-md p-4 mb-4" ]
-        [ h3 [ class "font-medium text-lg mb-3" ] [ text "Review Your Information" ]
-        , summaryItem "Email" model.email
-        , summaryItem "Name" (model.firstName ++ " " ++ model.lastName)
-        , summaryItem "Phone" model.phoneNumber
-        , summaryItem "Zip Code" model.zipCode
-        , summaryItem "State"
-            (model.state
-                |> Maybe.withDefault "Unknown"
-            )
-        , summaryItem "County"
-            (model.selectedCounty
-                |> Maybe.withDefault "Unknown"
-            )
-        , summaryItem "Date of Birth" model.dateOfBirth
-        , summaryItem "Gender"
-            (if model.gender == "M" then
-                "Male"
-             else
-                "Female"
-            )
-        , summaryItem "Tobacco User"
-            (if model.tobacco then
-                "Yes"
-             else
-                "No"
-            )
-        , if not (String.isEmpty model.currentPremium) then
-            summaryItem "Current Premium" ("$" ++ model.currentPremium)
-          else
-            text ""
-        , if not (String.isEmpty model.currentCarrier) then
-            summaryItem "Current Carrier" model.currentCarrier
-          else
-            text ""
-        , summaryItem "Quarterly Updates"
-            (if model.optInQuarterlyUpdates then
-                "Yes"
-             else
-                "No"
-            )
-        ]
-
-
-summaryItem : String -> String -> Html Msg
-summaryItem label value =
-    div [ class "flex justify-between py-1 border-b last:border-b-0" ]
-        [ span [ class "text-gray-600" ] [ text label ]
-        , span [ class "font-medium" ] [ text value ]
-        ]
-
-
-zipCodeField : Model -> Html Msg
-zipCodeField model =
-    div [ class "mb-4" ]
-        [ label [ class "block text-sm font-medium text-gray-700 mb-1" ]
-            [ text "Zip Code" ]
+inputField : String -> String -> String -> (String -> Msg) -> Bool -> Html Msg
+inputField labelText inputType inputValue msg isDisabled =
+    div [ class "mb-0" ]
+        [ label [ class "block text-sm font-medium text-[#344054] mb-1" ] [ text labelText ]
         , input
-            [ type_ "text"
-            , class "w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
-            , Html.Attributes.value model.zipCode
-            , onInput UpdateZipCode
-            , Html.Attributes.maxlength 5
-            , Html.Attributes.pattern "[0-9]*"
-            , required True
+            [ type_ inputType
+            , class "w-full px-3 py-2 border border-[#D0D5DD] rounded-md shadow-sm focus:outline-none focus:ring-[#3DBDEC] focus:border-[#3DBDEC]"
+            , placeholder
+                (case inputType of
+                    "tel" ->
+                        "XXX-XXX-XXXX"
+
+                    "email" ->
+                        "example@example.com"
+
+                    _ ->
+                        ""
+                )
+            , Html.Attributes.value inputValue
+            , onInput msg
+            , disabled isDisabled
             ]
             []
-        , if model.isLoadingZipData then
-            div [ class "text-xs text-blue-600 mt-1" ]
-                [ text "Looking up location..." ]
-          else if model.zipError /= Nothing then
-            div [ class "text-xs text-red-600 mt-1" ]
-                [ text (Maybe.withDefault "Invalid zip code" model.zipError) ]
-          else if model.state /= Nothing then
-            div [ class "text-xs text-green-600 mt-1" ]
-                [ text ("Found: " ++ Maybe.withDefault "" model.state) ]
-          else
-            text ""
+        ]
+
+
+checkboxField : String -> Bool -> (Bool -> Msg) -> Html Msg
+checkboxField labelText isChecked toMsg =
+    div [ class "mb-4" ]
+        [ label [ class "flex items-center" ]
+            [ input
+                [ type_ "checkbox"
+                , class "h-4 w-4 text-[#3DBDEC] focus:ring-[#3DBDEC] border-[#D0D5DD] rounded"
+                , checked isChecked
+                , onCheck toMsg
+                , required True
+                ]
+                []
+            , span [ class "ml-2 text-sm text-[#475467]" ] [ text (labelText ++ " (Required)") ]
+            ]
         ]
 
 
 viewCountyDropdown : List String -> Maybe String -> Html Msg
 viewCountyDropdown counties selectedCounty =
     div [ class "mb-4" ]
-        [ label [ class "block text-sm font-medium text-gray-700 mb-1" ]
+        [ label [ class "block text-sm font-medium text-[#344054] mb-1" ]
             [ text "County" ]
         , select
-            [ class "w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+            [ class "w-full px-3 py-2 border border-[#D0D5DD] rounded-md shadow-sm focus:outline-none focus:ring-[#3DBDEC] focus:border-[#3DBDEC]"
             , onInput UpdateSelectedCounty
             , required True
             ]
@@ -29887,71 +30680,6 @@ viewCountyDropdown counties selectedCounty =
         ]
 
 
-inputField : String -> String -> String -> (String -> Msg) -> Bool -> Html Msg
-inputField labelText inputType inputValue msg isDisabled =
-    div [ class "mb-4" ]
-        [ label [ class "block text-sm font-medium text-gray-700 mb-1" ] [ text labelText ]
-        , input
-            [ type_ inputType
-            , class "w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
-            , Html.Attributes.value inputValue
-            , onInput msg
-            , disabled isDisabled
-            ]
-            []
-        ]
-
-
-formRadioGroup : String -> String -> (String -> Msg) -> List ( String, String ) -> Html Msg
-formRadioGroup labelText selectedValue msg options =
-    div [ class "mb-4" ]
-        [ label [ class "block text-sm font-medium text-gray-700 mb-1" ]
-            [ text labelText ]
-        , div [ class "flex gap-4" ]
-            (List.map
-                (\( val, txt ) ->
-                    label
-                        [ class
-                            ("flex items-center justify-center px-4 py-2 rounded-lg border-2 cursor-pointer transition-all flex-1 "
-                                ++ (if selectedValue == val then
-                                        "border-indigo-500 bg-indigo-50 text-indigo-700"
-                                    else
-                                        "border-gray-200 hover:border-indigo-200"
-                                   )
-                            )
-                        ]
-                        [ input
-                            [ type_ "radio"
-                            , value val
-                            , checked (selectedValue == val)
-                            , onInput msg
-                            , class "sr-only"
-                            ]
-                            []
-                        , text txt
-                        ]
-                )
-                options
-            )
-        ]
-
-
-checkboxField : String -> Bool -> (Bool -> Msg) -> Html Msg
-checkboxField labelText isChecked toMsg =
-    div [ class "mb-4" ]
-        [ label [ class "flex items-center" ]
-            [ input
-                [ type_ "checkbox"
-                , class "h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
-                , checked isChecked
-                , onCheck toMsg
-                ]
-                []
-            , span [ class "ml-2 text-sm text-gray-600" ] [ text labelText ]
-            ]
-        ]
-
-
 viewError : Maybe String -> Html msg
 viewError maybeError =
     case maybeError of
@@ -29961,6 +30689,65 @@ viewError maybeError =
 
         Nothing ->
             text ""
+
+
+viewFormSummary : Model -> Html Msg
+viewFormSummary model =
+    div [ class "border rounded-md p-3 sm:p-4 mb-4" ]
+        [ h3 [ class "font-medium text-base sm:text-lg mb-3" ] [ text "Review Your Information" ]
+        , summaryItem "Email" model.email
+        , summaryItem "Name" (model.firstName ++ " " ++ model.lastName)
+        , summaryItem "Phone" (formatPhoneNumber model.phoneNumber)
+        , summaryItem "Zip Code" model.zipCode
+        , summaryItem "State"
+            (model.state
+                |> Maybe.withDefault "Unknown"
+            )
+        , summaryItem "County"
+            (model.selectedCounty
+                |> Maybe.withDefault "Unknown"
+            )
+        , summaryItem "Date of Birth" model.dateOfBirth
+        , summaryItem "Gender"
+            (if model.gender == "M" then
+                "Male"
+
+             else
+                "Female"
+            )
+        , summaryItem "Tobacco User"
+            (if model.tobacco then
+                "Yes"
+
+             else
+                "No"
+            )
+        , if not (String.isEmpty model.currentPremium) then
+            summaryItem "Current Premium" ("$" ++ model.currentPremium)
+
+          else
+            text ""
+        , if not (String.isEmpty model.currentCarrier) then
+            summaryItem "Current Carrier" model.currentCarrier
+
+          else
+            text ""
+        , summaryItem "Agree to Receive Updates"
+            (if model.optInQuarterlyUpdates then
+                "Yes"
+
+             else
+                "No"
+            )
+        ]
+
+
+summaryItem : String -> String -> Html Msg
+summaryItem label value =
+    div [ class "flex justify-between py-1 border-b last:border-b-0 text-sm sm:text-base" ]
+        [ span [ class "text-gray-600" ] [ text label ]
+        , span [ class "font-medium" ] [ text value ]
+        ]
 
 
 
@@ -30084,6 +30871,7 @@ type alias Model =
     , loadedCarriers : List String
     , linkCopied : Bool
     , selfOnboardingUrl : Maybe String
+    , logo : Maybe String
     }
 
 
@@ -30151,6 +30939,7 @@ type Msg
 
 type alias SettingsResponse =
     { orgSettings : Settings
+    , logo : Maybe String
     , canEditOrgSettings : Bool
     }
 
@@ -30177,6 +30966,7 @@ init flags =
       , loadedCarriers = []
       , linkCopied = False
       , selfOnboardingUrl = Nothing
+      , logo = Nothing
       }
     , Cmd.batch
         [ fetchSettings
@@ -30239,7 +31029,12 @@ update msg model =
         GotSettings result ->
             case result of
                 Ok response ->
-                    ( { model | orgSettings = Just response.orgSettings, status = Loaded, isLoading = False }
+                    ( { model
+                        | orgSettings = Just response.orgSettings
+                        , logo = response.logo
+                        , status = Loaded
+                        , isLoading = False
+                      }
                     , Cmd.none
                     )
 
@@ -30409,7 +31204,7 @@ update msg model =
                             }
                     in
                     ( { model | orgSettings = Just newSettings }
-                    , saveSettings newSettings
+                    , saveSettings { settings = Just newSettings, logo = model.logo }
                     )
 
                 Nothing ->
@@ -30464,7 +31259,7 @@ update msg model =
                                     }
                     in
                     ( { model | orgSettings = Just newSettings }
-                    , saveSettings newSettings
+                    , saveSettings { settings = Just newSettings, logo = model.logo }
                     )
 
                 Nothing ->
@@ -30553,7 +31348,14 @@ update msg model =
             )
 
         GotLogoUrl url ->
-            updateSettings model (\s -> { s | logo = Just url })
+            case model.orgSettings of
+                Just settings ->
+                    ( { model | logo = Just url, orgSettings = Just { settings | logo = Just url } }
+                    , saveSettings { settings = Just { settings | logo = Just url }, logo = Just url }
+                    )
+
+                Nothing ->
+                    ( model, Cmd.none )
 
         LogoUploaded result ->
             case result of
@@ -30562,32 +31364,32 @@ update msg model =
 
                 Err _ ->
                     ( { model | status = Error "Failed to upload logo" }, Cmd.none )
-                    
+
         CopySelfOnboardingLink ->
             let
                 slug =
                     model.currentUser
                         |> Maybe.map .organizationSlug
                         |> Maybe.withDefault ""
-                
+
                 url =
                     model.selfOnboardingUrl
                         |> Maybe.withDefault ("http://localhost:5173/self-onboarding/" ++ slug)
-                            
+
                 -- Command to copy link to clipboard using ports
                 copyCmd =
                     Ports.copyToClipboard url
             in
             ( { model | linkCopied = False }, copyCmd )
-            
+
         LinkCopied success ->
             ( { model | linkCopied = success }, Cmd.none )
-            
+
         GotSelfOnboardingUrl result ->
             case result of
                 Ok response ->
                     ( { model | selfOnboardingUrl = Just response.selfOnboardingUrl }, Cmd.none )
-                    
+
                 Err _ ->
                     ( model, Cmd.none )
 
@@ -30601,20 +31403,20 @@ updateSettings model updateFn =
                     updateFn settings
             in
             ( { model | orgSettings = Just newSettings }
-            , saveSettings newSettings
+            , saveSettings { settings = Just newSettings, logo = model.logo }
             )
 
         Nothing ->
             ( model, Cmd.none )
 
 
-saveSettings : Settings -> Cmd Msg
-saveSettings settings =
+saveSettings : { settings : Maybe Settings, logo : Maybe String } -> Cmd Msg
+saveSettings { settings, logo } =
     Http.request
         { method = "PUT"
         , headers = []
         , url = "/api/settings/org"
-        , body = jsonBody (encodeSettings settings)
+        , body = jsonBody (Encode.object [ ( "settings", Maybe.withDefault Encode.null (Maybe.map encodeSettings settings) ), ( "logo", Maybe.withDefault Encode.null (Maybe.map Encode.string logo) ) ])
         , expect = expectJson SettingsSaved settingsObjectDecoder
         , timeout = Nothing
         , tracker = Nothing
@@ -30720,7 +31522,7 @@ viewSettingsContent maybeSettings canEdit expandedSections planType model =
     case maybeSettings of
         Just settings ->
             div [ class "space-y-6" ]
-                [ viewBrandSettings settings
+                [ viewBrandSettings settings model
                 , viewEmailSettings settings
                 , viewSelfOnboardingLink model
                 , viewExpandableSection "Carrier Contracts"
@@ -30736,8 +31538,8 @@ viewSettingsContent maybeSettings canEdit expandedSections planType model =
                 [ text "Using organization settings" ]
 
 
-viewBrandSettings : Settings -> Html Msg
-viewBrandSettings settings =
+viewBrandSettings : Settings -> Model -> Html Msg
+viewBrandSettings settings model =
     div [ class "bg-white shadow rounded-lg p-6" ]
         [ h2 [ class "text-lg font-medium mb-4" ] [ text "Agency Settings" ]
         , div [ class "space-y-6" ]
@@ -30789,7 +31591,7 @@ viewBrandSettings settings =
                     )
                 , viewFormGroup "Logo"
                     (div [ class "flex items-center space-x-4" ]
-                        [ case settings.logo of
+                        [ case model.logo of
                             Just logoUrl ->
                                 div [ class "flex items-center space-x-4" ]
                                     [ img
@@ -30849,7 +31651,7 @@ viewSelfOnboardingLink model =
                         model.currentUser
                             |> Maybe.map .organizationSlug
                             |> Maybe.withDefault ""
-                            
+
                     selfOnboardingUrl =
                         model.selfOnboardingUrl
                             |> Maybe.withDefault ("/self-onboarding/" ++ slug)
@@ -30866,7 +31668,14 @@ viewSelfOnboardingLink model =
                         [ class "px-4 py-2 text-sm bg-purple-600 text-white rounded hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
                         , onClick CopySelfOnboardingLink
                         ]
-                        [ text (if model.linkCopied then "Copied!" else "Copy Link") ]
+                        [ text
+                            (if model.linkCopied then
+                                "Copied!"
+
+                             else
+                                "Copy Link"
+                            )
+                        ]
                     ]
                 ]
             ]
@@ -31059,8 +31868,9 @@ settingsDecoder =
         |> Decode.andThen
             (\success ->
                 if success then
-                    Decode.map2 SettingsResponse
+                    Decode.map3 SettingsResponse
                         (Decode.field "orgSettings" settingsObjectDecoder)
+                        (Decode.field "logo" (Decode.nullable Decode.string))
                         (Decode.field "canEditOrgSettings" boolDecoder)
 
                 else
@@ -31183,7 +31993,23 @@ viewHeader =
 viewSettings : Model -> Html Msg
 viewSettings model =
     div [ class "space-y-8" ]
-        [ viewSettingsContent model.orgSettings True model.expandedSections model.planType model
+        [ case model.orgSettings of
+            Just settings ->
+                div [ class "space-y-6" ]
+                    [ viewBrandSettings settings model
+                    , viewEmailSettings settings
+                    , viewSelfOnboardingLink model
+                    , viewExpandableSection "Carrier Contracts"
+                        (viewCarriersGrid settings model)
+                        model.expandedSections
+                    , viewExpandableSection "State & Carrier Settings"
+                        (viewStateCarrierGrid settings model)
+                        model.expandedSections
+                    ]
+
+            Nothing ->
+                div [ class "text-gray-500 italic" ]
+                    [ text "Loading settings..." ]
         , viewBottomBar model
         ]
 
