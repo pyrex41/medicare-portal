@@ -16,6 +16,86 @@ interface EligibilityAnswers {
 
 export const eligibilityRoutes = (app: Elysia) => {
     app
+        // Get organization details
+        .get('/api/org/:orgId/details', async ({ params }) => {
+            try {
+                const orgId = params.orgId;
+                if (!orgId) {
+                    return {
+                        success: false,
+                        error: 'Missing organization ID'
+                    };
+                }
+
+                // Get organization details from main database
+                const mainDb = new Database();
+                const orgDetails = await mainDb.fetchOne<{ name: string, logo_data: string | null }>(
+                    'SELECT name, logo_data FROM organizations WHERE id = ?',
+                    [orgId]
+                );
+
+                if (!orgDetails) {
+                    return {
+                        success: false,
+                        error: 'Organization not found'
+                    };
+                }
+
+                return {
+                    name: orgDetails.name,
+                    logo_data: orgDetails.logo_data
+                };
+            } catch (error) {
+                logger.error(`Error getting organization details: ${error}`);
+                throw new Error('Failed to get organization details');
+            }
+        })
+
+        // Get existing eligibility answers for a contact
+        .get('/api/org/:orgId/eligibility-answers/:contactId', async ({ params }) => {
+            try {
+                const { orgId, contactId } = params;
+                if (!orgId || !contactId) {
+                    return {
+                        success: false,
+                        error: 'Missing required parameters'
+                    };
+                }
+
+                // Get org-specific database
+                const orgDb = await Database.getOrInitOrgDb(orgId);
+
+                // Get the most recent answers for this contact
+                const result = await orgDb.fetchOne<{ answers: string }>(
+                    'SELECT answers FROM eligibility_answers WHERE contact_id = ? ORDER BY created_at DESC LIMIT 1',
+                    [contactId]
+                );
+
+                if (!result) {
+                    return {
+                        success: false,
+                        error: 'No answers found'
+                    };
+                }
+
+                // Get organization details from main database
+                const mainDb = new Database();
+                const orgDetails = await mainDb.fetchOne<{ name: string, logo_data: string | null }>(
+                    'SELECT name, logo_data FROM organizations WHERE id = ?',
+                    [orgId]
+                );
+
+                return {
+                    answers: JSON.parse(result.answers),
+                    orgName: orgDetails?.name || 'Medicare Max',
+                    orgLogo: orgDetails?.logo_data || null
+                };
+            } catch (error) {
+                logger.error(`Error getting eligibility answers: ${error}`);
+                throw new Error('Failed to get eligibility answers');
+            }
+        })
+
         // Create a temporary contact for collecting eligibility answers
         .post('/api/org/:orgId/temp-contact', async ({ params }) => {
             try {
@@ -142,6 +222,13 @@ export const eligibilityRoutes = (app: Elysia) => {
                         error: 'Contact not found'
                     };
                 }
+
+                // Get organization details from main database
+                const mainDb = new Database();
+                const orgDetails = await mainDb.fetchOne<{ name: string, logo_data: string | null }>(
+                    'SELECT name, logo_data FROM organizations WHERE id = ?',
+                    [orgId]
+                );
                 
                 // Store the eligibility answers
                 const answersJson = JSON.stringify(data.answers);
@@ -190,7 +277,11 @@ export const eligibilityRoutes = (app: Elysia) => {
                     ]
                 );
                 
-                return contactId;
+                return {
+                    contactId,
+                    orgName: orgDetails?.name || 'Medicare Max',
+                    orgLogo: orgDetails?.logo_data || null
+                };
             } catch (error) {
                 logger.error(`Error saving eligibility answers: ${error}`);
                 throw new Error('Failed to save eligibility answers');

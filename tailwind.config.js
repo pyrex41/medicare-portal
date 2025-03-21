@@ -53,12 +53,35 @@ module.exports = {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
-        // Add Medicare-specific colors
+        // Medicare-specific colors
         medicare: {
           success: "#047857",
           "success-light": "#eafcf1",
           danger: "#ef4444",
           "danger-light": "#fecaca",
+        },
+        // New theme colors for questions
+        theme: {
+          blue: {
+            DEFAULT: "#0075F2",
+            light: "rgba(0, 117, 242, 0.1)",
+            medium: "rgba(0, 117, 242, 0.2)",
+          },
+          purple: {
+            DEFAULT: "#7F56D9",
+            light: "rgba(127, 86, 217, 0.1)",
+            medium: "rgba(127, 86, 217, 0.2)",
+          },
+          amber: {
+            DEFAULT: "#F59E0B",
+            light: "rgb(254, 243, 199)",
+            medium: "rgb(253, 230, 138)",
+          },
+          brand: {
+            DEFAULT: "#03045E",
+            light: "#ADE8F4",
+            medium: "rgba(173, 232, 244, 0.5)",
+          }
         }
       },
       borderRadius: {

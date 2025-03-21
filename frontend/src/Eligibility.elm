@@ -423,12 +423,6 @@ update msg model =
             case result of
                 Ok response ->
                     let
-                        _ =
-                            Debug.log "response" response
-
-                        _ =
-                            Debug.log "model.questions" model.questions
-
                         anyYes =
                             List.any (\q -> q.answer == Just True) model.questions
 

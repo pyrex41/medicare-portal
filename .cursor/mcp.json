@@ -24,6 +24,12 @@
                 "TURSO_DATABASE_URL": "libsql://org-1-pyrex41.aws-us-east-1.turso.io",
                 "TURSO_AUTH_TOKEN": "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3NDA1NzU5MzksImlkIjoiOWQ4MThlNWUtOWE3Yy00ZWYwLThkZjMtYjNkNDVkMDZjMzFlIiwicmlkIjoiNjFhNDRmNjUtYjVlMy00NDhmLWE0ZmUtYTYxOWI3Y2ExZjMxIn0.q-aM3rGkpp1lbVIFjdItiZoQiEcOZzW2w1rGPJvYknvfc7unDx33GuS6xjkCuwyYPAt4eFMdHY5tdUbeSP9zCw"
             }
+        },
+        "browser-tools": {
+            "command": "bunx",
+            "args": [
+                "@agentdeskai/browser-tools-mcp@1.2.0"
+            ]
         }
     }
 }
