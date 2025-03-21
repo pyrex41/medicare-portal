@@ -1147,7 +1147,7 @@ viewPersonalInfo model =
                     [ -- Quote From
                       div [ class "flex flex-col min-w-[200px]" ]
                         [ p [ class "text-sm text-[#667085] mb-1" ] [ text "Quote From" ]
-                        , p [ class "text-sm font-medium mb-2" ]
+                        , p [ class "text-[16px] font-medium mb-2" ]
                             [ text
                                 (case model.agent of
                                     Just agent ->
