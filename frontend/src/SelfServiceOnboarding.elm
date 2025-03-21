@@ -1151,15 +1151,14 @@ viewFormStep model =
 
 viewCombinedForm : Model -> Html Msg
 viewCombinedForm model =
-    div [ class "px-2 sm:px-0" ]
-        [ h3 [ class "font-medium text-base sm:text-lg mb-4 text-gray-700" ] [ text "Contact Information" ]
-        , div [ class "grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 mb-6" ]
+    div [ class "px-2 sm:px-0 space-y-6 sm:space-y-6" ]
+        [ div [ class "grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-4" ]
             [ inputField "First Name" "text" model.firstName UpdateFirstName False
             , inputField "Last Name" "text" model.lastName UpdateLastName False
             , inputField "Phone Number" "tel" (formatPhoneNumber model.phoneNumber) UpdatePhoneNumber False
             , inputField "Email Address" "email" model.email UpdateEmail model.emailReadOnly
             ]
-        , div [ class "grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 mb-6" ]
+        , div [ class "grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-4" ]
             [ div [ class "col-span-1" ]
                 [ label [ class "block text-sm font-medium text-gray-700 mb-1" ] [ text "Date of Birth" ]
                 , input
@@ -1202,12 +1201,12 @@ viewCombinedForm model =
                 ]
             ]
         , if List.length model.counties > 1 then
-            div [ class "mb-6" ]
+            div [ class "mb-4" ]
                 [ viewCountyDropdown model.counties model.selectedCounty ]
 
           else
             text ""
-        , div [ class "grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6 mb-6" ]
+        , div [ class "grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-4" ]
             [ div [ class "col-span-1" ]
                 [ label [ class "block text-sm font-medium text-gray-700 mb-2" ] [ text "Gender" ]
                 , div [ class "grid grid-cols-2 gap-2" ]
@@ -1304,7 +1303,7 @@ viewCombinedForm model =
                 ]
             ]
         , h3 [ class "font-medium text-base sm:text-lg mb-4 text-gray-700" ] [ text "Current Coverage (Optional)" ]
-        , div [ class "grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 mb-6" ]
+        , div [ class "grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-4" ]
             [ div [ class "col-span-1" ]
                 [ label [ class "block text-sm font-medium text-gray-700 mb-1" ] [ text "Current Carrier" ]
                 , div [ class "relative" ]

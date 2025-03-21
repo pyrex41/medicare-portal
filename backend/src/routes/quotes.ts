@@ -12,6 +12,7 @@ import { readFileSync } from 'fs';
 
 interface ZipInfo {
   state: string;
+  counties: string[];
   // Add other ZIP info properties as needed
 }
 
@@ -65,6 +66,7 @@ interface QuoteRequest {
 interface ContactQuoteInfo {
     zip_code: string;
     birth_date: string;
+    age: number;
     tobacco_user: number;
     gender: string;
     email: string;
@@ -72,6 +74,7 @@ interface ContactQuoteInfo {
     last_name: string;
     current_carrier: string;
     phone_number: string;
+    plan_type: string;
 }
 
 // Add new interface for org info response
@@ -79,6 +82,28 @@ interface OrgRedirectInfo {
     redirect_url: string | null;
     agent_name: string;
 }
+
+function calculateAgeOnFirstOfNextMonth(birthDate: string, currentDate: string): number {
+    const birth = new Date(birthDate);
+    const current = new Date(currentDate);
+    
+    // Get first day of next month
+    const nextMonth = new Date(current.getFullYear(), current.getMonth() + 1, 1);
+    
+    // Calculate age based on year difference
+    let age = nextMonth.getFullYear() - birth.getFullYear();
+    
+    // Adjust age if birthday hasn't occurred yet in the target month
+    if (
+        nextMonth.getMonth() < birth.getMonth() || 
+        (nextMonth.getMonth() === birth.getMonth() && 1 < birth.getDate())
+    ) {
+        age--;
+    }
+    
+    return age;
+}
+
 
 export const quotesRoutes = (app: Elysia) => {
     app
@@ -168,14 +193,14 @@ export const quotesRoutes = (app: Elysia) => {
             }
             
             const carrierContracts = orgSettings?.carrierContracts || [];
-            
-            // Fetch contact details with detailed logging
-            const contactQuery = 'SELECT zip_code, birth_date, tobacco_user, gender, email, first_name, last_name, current_carrier, phone_number, plan_type FROM contacts WHERE id = ?';
+
+            // First try to get the assigned agent from the contact
+            const contactQuery = 'SELECT zip_code, birth_date, tobacco_user, gender, email, first_name, last_name, current_carrier, phone_number, plan_type, agent_id FROM contacts WHERE id = ?';
             const contactParams = [decoded.contactId];
             
             logger.info(`Executing contact query: ${contactQuery} with params: [${contactParams}]`);
             
-            const contact = await orgDb.fetchOne<ContactQuoteInfo>(contactQuery, contactParams);
+            const contact = await orgDb.fetchOne<ContactQuoteInfo & { agent_id: number | null }>(contactQuery, contactParams);
 
             if (!contact) {
                 logger.error(`Contact not found: contactId=${decoded.contactId} in orgId=${decoded.orgId}`);
@@ -195,6 +220,26 @@ export const quotesRoutes = (app: Elysia) => {
                 };
             }
 
+            // Get agent info - first try assigned agent, then fall back to first user
+            const agent = contact.agent_id 
+                ? await mainDb.fetchOne<{ first_name: string, last_name: string, email: string, phone: string }>(
+                    'SELECT first_name, last_name, email, phone FROM users WHERE id = ?',
+                    [contact.agent_id]
+                  )
+                : await mainDb.fetchOne<{ first_name: string, last_name: string, email: string, phone: string }>(
+                    'SELECT first_name, last_name, email, phone FROM users WHERE organization_id = ? ORDER BY id ASC LIMIT 1',
+                    [decoded.orgId]
+                  );
+
+            if (!agent) {
+                logger.error(`No users found for organization: ${decoded.orgId}`);
+                set.status = 404;
+                return {
+                    success: false,
+                    error: 'No users found for organization'
+                };
+            }
+
             logger.info(`Found contact: ${contact.first_name} ${contact.last_name} (ID: ${decoded.contactId})`);
             
             const zipInfo = ZIP_DATA[contact.zip_code];
@@ -209,10 +254,18 @@ export const quotesRoutes = (app: Elysia) => {
                 orgId: decoded.orgId.toString(),
                 orgSlug: orgSlug || null,
                 carrierContracts: carrierContracts || null,
+                agent: {
+                    firstName: agent.first_name,
+                    lastName: agent.last_name,
+                    email: agent.email,
+                    phone: agent.phone
+                },
                 contact: {
+                    id: decoded.contactId,
                     zipCode: contact.zip_code,
                     state: contactState,
                     dateOfBirth: contact.birth_date,
+                    age: calculateAgeOnFirstOfNextMonth(contact.birth_date, new Date().toISOString()),
                     tobacco: Boolean(contact.tobacco_user),
                     gender: contact.gender,
                     email: contact.email,
@@ -225,6 +278,7 @@ export const quotesRoutes = (app: Elysia) => {
             };
 
             logger.info(`Returning success response for quote ID: ${params.quoteId}`);
+            logger.info(`Output: ${JSON.stringify(output, null, 2)}`);
             return output;
         } catch (e) {
             logger.error(`Error decoding quote ID: ${e}`);
@@ -269,7 +323,7 @@ export const quotesRoutes = (app: Elysia) => {
             const response = await axios(requestConfig);
             
             logger.info(`Quote engine response status: ${response.status}`);
-            logger.info(`Quote engine response data: ${JSON.stringify(response.data, null, 2)}`);
+            //logger.info(`Quote engine response data: ${JSON.stringify(response.data, null, 2)}`);
             
             // Return quotes from response data
             return response.data;

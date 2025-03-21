@@ -5,6 +5,21 @@ import crypto from 'crypto';
 import { config } from '../config';
 import { generateQuoteId } from '../utils/quoteId';
 import { getUserFromSession } from '../services/auth';
+import { readFileSync } from 'fs';
+
+// Import ZIP_DATA
+interface ZipInfo {
+  state: string;
+  counties: string[];
+}
+
+// Load ZIP data
+let ZIP_DATA: Record<string, ZipInfo> = {};
+try {
+  ZIP_DATA = JSON.parse(readFileSync('../zipData.json', 'utf-8'));
+} catch (e) {
+  logger.error(`Error loading ZIP data: ${e}`);
+}
 
 // Import generateHash function - reimplementing it since it's not exported from email.ts
 function generateHash(orgId: string, email: string): string {
@@ -209,6 +224,77 @@ export function createSelfServiceRoutes() {
         }
       } catch (error) {
         logger.error(`Error in self-service signup endpoint: ${error}`);
+        set.status = 500;
+        return { error: 'Internal server error' };
+      }
+    })
+    .post('/api/self-service/update-location', async ({ body, set }) => {
+      const { orgSlug, contactId, zipCode } = body as {
+        orgSlug: string;
+        contactId: string;
+        zipCode: string;
+      };
+
+      // Validate required parameters
+      if (!orgSlug || !contactId || !zipCode) {
+        set.status = 400;
+        return { error: 'Missing required fields' };
+      }
+
+      try {
+        // Get state and county from ZIP_DATA
+        const zipInfo = ZIP_DATA[zipCode];
+        if (!zipInfo) {
+          set.status = 400;
+          return { error: 'Invalid zip code' };
+        }
+        logger.info(`Zip info: ${JSON.stringify(zipInfo)}`);
+
+        // Get organization ID from slug
+        const db = new Database();
+        const orgResult = await db.fetchOne<{ id: number }>(
+          'SELECT id FROM organizations WHERE slug = ?',
+          [orgSlug]
+        );
+
+        if (!orgResult) {
+          set.status = 404;
+          return { error: 'Organization not found' };
+        }
+
+        // Get organization database
+        const orgDb = await Database.getOrgDb(orgResult.id.toString());
+        const client = orgDb.getClient();
+
+  
+
+        // Use provided county or first county if only one available
+
+        // Update contact's zip code, state and county
+        await client.execute({
+          sql: `UPDATE contacts SET 
+                zip_code = ?
+                WHERE id = ?`,
+          args: [
+            zipCode,
+            contactId
+          ]
+        });
+
+        logger.info(`Updated location for contact ${contactId} in organization ${orgSlug} to ${zipCode}, ${zipInfo.state}`);
+
+        let output = {
+          success: true,
+          zipCode,
+          state: zipInfo.state,
+          counties: zipInfo.counties
+        };
+
+        logger.info(`Output: ${JSON.stringify(output)}`);
+        return output;
+
+      } catch (error) {
+        logger.error(`Error updating location: ${error}`);
         set.status = 500;
         return { error: 'Internal server error' };
       }
@@ -423,7 +509,10 @@ export function createSelfServiceRoutes() {
               logger.info(`Found contact for ${email || id}`);
               let output = {
                 ...response,
-                contact
+                contact: {
+                  ...contact,
+                  id: contactResult.rows[0].id
+                }
               };
               logger.info(`Output: ${JSON.stringify(output)}`);
               return output;

@@ -12,17 +12,20 @@ module Compare exposing
 
 import BirthdayRules exposing (isInBirthdayRuleWindow)
 import Browser
+import Browser.Events
 import Browser.Navigation as Nav
 import CarrierNaic exposing (Carrier(..), carrierDecoder, carrierToNaics, carrierToString, naicToCarrier, stringToCarrier)
 import Date exposing (Date)
 import Dict
 import Html exposing (..)
 import Html.Attributes exposing (..)
-import Html.Events exposing (onClick)
+import Html.Events exposing (onClick, onInput)
 import Http
 import Json.Decode as D exposing (Decoder)
 import Json.Decode.Pipeline as Pipeline
 import Json.Encode as E
+import Svg exposing (path, svg)
+import Svg.Attributes exposing (clipRule, d, fill, fillRule, height, stroke, strokeLinecap, viewBox, width)
 import Task
 import Time
 import Url exposing (Url)
@@ -40,31 +43,31 @@ type PlanType
 
 
 type alias CompareParams =
-    { state : String
-    , zip : String
-    , county : String
-    , gender : String
-    , tobacco : Bool
-    , age : Int
-    , planType : String
-    , currentCarrier : Maybe String
-    , dateOfBirth : String
-    , quoteId : Maybe String
-    , trackingId : Maybe String
+    { quoteId : Maybe String
     , orgId : Maybe String
     }
 
 
-type alias Contact =
+type alias Agent =
     { firstName : String
     , lastName : String
     , email : String
     , phone : String
-    , dateOfBirth : String
+    }
+
+
+type alias Contact =
+    { id : Int
+    , firstName : String
+    , lastName : String
+    , email : String
+    , phoneNumber : String
+    , age : Int
     , gender : String
     , tobacco : Bool
     , state : String
     , zipCode : String
+    , county : Maybe String
     , currentCarrier : Maybe String
     , planType : Maybe String
     }
@@ -109,16 +112,24 @@ type alias Plans =
     }
 
 
+type alias LocationUpdateResponse =
+    { success : Bool
+    , zipCode : String
+    , state : String
+    , counties : List String
+    }
+
+
 type alias Model =
     { isLoading : Bool
     , error : Maybe String
     , plans : Plans
-    , state : String
-    , county : String
-    , zip : String
-    , age : Int
-    , gender : String
-    , tobacco : Bool
+    , state : Maybe String
+    , county : Maybe String
+    , zip : Maybe String
+    , age : Maybe Int
+    , gender : Maybe String
+    , tobacco : Maybe Bool
     , selectedPlanType : PlanType
     , selectedPlan : Maybe Plan
     , showReviewVideo : Bool
@@ -131,16 +142,23 @@ type alias Model =
     , showDiscount : Bool
     , currentCarrier : Maybe String
     , planType : Maybe String
-    , dateOfBirth : String
+    , dateOfBirth : Maybe String
     , quoteId : Maybe String
     , carrierContracts : List Carrier
     , currentDate : Maybe Date
     , orgId : Maybe String
-    , name : String
+    , name : Maybe String
     , contact : Maybe Contact
+    , agent : Maybe Agent
     , orgSlug : Maybe String
     , loadingContact : Bool
     , showDiscountInfo : Bool
+    , showLocationModal : Bool
+    , editingZipCode : Maybe String
+    , editingCounty : Maybe String
+    , availableCounties : List String
+    , locationUpdateError : Maybe String
+    , submittingLocation : Bool
     }
 
 
@@ -165,6 +183,12 @@ type Msg
     | GotCarrierContracts (Result Http.Error (List Carrier))
     | GotCurrentDate Date
     | GotContactData (Result Http.Error ContactResponse)
+    | ShowLocationModal
+    | CloseLocationModal
+    | UpdateZipCode String
+    | UpdateCounty String
+    | SubmitLocationUpdate
+    | GotLocationUpdate (Result Http.Error LocationUpdateResponse)
     | NoOp
 
 
@@ -189,71 +213,18 @@ type alias Flags =
 init : Nav.Key -> Maybe CompareParams -> ( Model, Cmd Msg )
 init key maybeParams =
     let
-        -- Get values from params or use defaults
-        defaultParams =
-            { state = "TX"
-            , county = "Dallas"
-            , zip = "75001"
-            , age = 65
-            , gender = "M"
-            , tobacco = False
-            , planType = "G"
-            , currentCarrier = Nothing
-            , dateOfBirth = ""
-            , quoteId = Nothing
-            , trackingId = Nothing
-            , orgId = Nothing
-            }
-
-        params =
-            maybeParams
-                |> Maybe.withDefault defaultParams
-
-        -- Extract org ID from quote ID if not provided explicitly
-        -- Quote IDs are formatted as "orgId-contactId-hash"
-        extractedOrgId =
-            case ( params.orgId, params.quoteId ) of
-                ( Nothing, Just quoteId ) ->
-                    -- Try to extract orgId from the quoteId (first part before the first dash)
-                    quoteId
-                        |> String.split "-"
-                        |> List.head
-
-                ( orgId, _ ) ->
-                    orgId
-
-        -- Extract plan type directly from params
-        initialPlanType =
-            if params.planType == "N" then
-                PlanN
-
-            else
-                PlanG
-
-        -- Ensure age is at least 65 for Medicare supplement plans
-        minimumAge =
-            if params.age < 65 then
-                65
-
-            else
-                params.age
-
-        model =
+        -- Empty model with loading state
+        emptyModel =
             { isLoading = True
             , error = Nothing
             , plans = { planG = [], planN = [] }
-            , state = params.state
-            , county = params.county
-            , zip = params.zip
-            , age = minimumAge
-            , gender =
-                if params.gender == "Male" || params.gender == "M" then
-                    "M"
-
-                else
-                    "F"
-            , tobacco = params.tobacco
-            , selectedPlanType = initialPlanType
+            , state = Nothing
+            , county = Nothing
+            , zip = Nothing
+            , age = Nothing
+            , gender = Nothing
+            , tobacco = Nothing
+            , selectedPlanType = PlanG
             , selectedPlan = Nothing
             , showReviewVideo = False
             , showQualificationVideo = False
@@ -263,53 +234,65 @@ init key maybeParams =
             , showRatesVideo = False
             , key = key
             , showDiscount = False
-            , currentCarrier = params.currentCarrier
+            , currentCarrier = Nothing
             , planType = Nothing
-            , dateOfBirth = params.dateOfBirth
-            , quoteId = params.quoteId
+            , dateOfBirth = Nothing
+            , quoteId = Nothing
             , carrierContracts = []
             , currentDate = Nothing
-            , orgId = extractedOrgId
-            , name = "Loading..." -- Will be updated with real name
+            , orgId = Nothing
+            , name = Nothing
             , contact = Nothing
+            , agent = Nothing
             , orgSlug = Nothing
             , loadingContact = True
             , showDiscountInfo = False
+            , showLocationModal = False
+            , editingZipCode = Nothing
+            , editingCounty = Nothing
+            , availableCounties = []
+            , locationUpdateError = Nothing
+            , submittingLocation = False
             }
-
-        -- Commands to execute
-        quoteCommand =
+    in
+    case maybeParams of
+        Just params ->
             case params.quoteId of
                 Just quoteId ->
-                    fetchContactData quoteId
-
-                Nothing ->
-                    Cmd.none
-
-        initialCommands =
-            [ fetchPlans model
-            , quoteCommand
-            , Task.perform GotCurrentDate Date.today
-            ]
-
-        -- If we have a quote ID, fetch contact data
-        commands =
-            case params.quoteId of
-                Just quoteId ->
-                    fetchContactData quoteId :: initialCommands
+                    -- We have a quote ID, fetch contact data
+                    ( { emptyModel | quoteId = Just quoteId, orgId = params.orgId }
+                    , Cmd.batch
+                        [ fetchContactData quoteId
+                        , Task.perform GotCurrentDate Date.today
+                        ]
+                    )
 
                 Nothing ->
                     -- No quote ID, check if we have an org ID
-                    case extractedOrgId of
+                    case params.orgId of
                         Just orgId ->
-                            -- Redirect to the self-service onboarding page for this organization
-                            [ Nav.pushUrl key ("/self-onboarding/" ++ orgId) ]
+                            -- Redirect to self-service onboarding
+                            ( emptyModel
+                            , Nav.pushUrl key ("/self-onboarding/" ++ orgId)
+                            )
 
                         Nothing ->
-                            -- No org ID either - this is an error case
-                            [ Nav.pushUrl key "/404" ]
-    in
-    ( model, Cmd.batch commands )
+                            -- No valid parameters
+                            ( { emptyModel
+                                | isLoading = False
+                                , error = Just "Missing required parameters. Please provide either a quote ID or organization ID."
+                              }
+                            , Cmd.none
+                            )
+
+        Nothing ->
+            -- No parameters provided
+            ( { emptyModel
+                | isLoading = False
+                , error = Just "No parameters provided. Please provide either a quote ID or organization ID."
+              }
+            , Cmd.none
+            )
 
 
 defaultPlanType : Flags -> PlanType
@@ -339,46 +322,50 @@ fetchContactData quoteId =
 
 fetchPlans : Model -> Cmd Msg
 fetchPlans model =
-    Http.request
-        { method = "POST"
-        , headers = []
-        , url = "/api/quotes"
-        , body = Http.jsonBody (buildPlansBody model)
-        , expect = Http.expectJson GotPlans (plansDecoder model)
-        , timeout = Nothing
-        , tracker = Nothing
-        }
+    case model.contact of
+        Just contact ->
+            Http.request
+                { method = "POST"
+                , headers = []
+                , url = "/api/quotes"
+                , body = Http.jsonBody (buildPlansBody contact)
+                , expect = Http.expectJson GotPlans (plansDecoder model)
+                , timeout = Nothing
+                , tracker = Nothing
+                }
+
+        Nothing ->
+            -- Don't fetch plans until we have contact data
+            Cmd.none
 
 
-buildPlansBody : Model -> E.Value
-buildPlansBody model =
-    let
-        -- Ensure age is at least 65 for Medicare supplement plans
-        minimumAge =
-            if model.age < 65 then
-                65
-
-            else
-                model.age
-    in
+buildPlansBody : Contact -> E.Value
+buildPlansBody contact =
     E.object
-        [ ( "zip_code", E.string model.zip )
-        , ( "state", E.string model.state )
-        , ( "county", E.string model.county )
-        , ( "age", E.int minimumAge )
+        [ ( "zip_code", E.string contact.zipCode )
+        , ( "state", E.string contact.state )
+        , ( "county", E.string (Maybe.withDefault "" contact.county) )
+        , ( "age", E.int contact.age )
         , ( "gender"
           , E.string
-                (if model.gender == "Male" then
+                (if contact.gender == "Male" then
                     "M"
 
                  else
                     "F"
                 )
           )
-        , ( "tobacco", E.bool model.tobacco )
+        , ( "tobacco", E.bool contact.tobacco )
         , ( "plans", E.list E.string [ "G", "N" ] )
         , ( "carriers", E.string "supported" )
         ]
+
+
+calculateAge : String -> Int
+calculateAge dateOfBirth =
+    -- TODO: Implement proper age calculation from dateOfBirth string
+    -- For now, default to 65 which is the minimum age for Medicare
+    65
 
 
 
@@ -481,7 +468,7 @@ groupQuotesByPlan responses model =
             , ratingCategory = ""
             , score = 0
             , select = False
-            , state = model.state
+            , state = Maybe.withDefault "" model.state
             , tobacco = quote.tobacco == 1
             , coverageSummary =
                 if String.toUpper quote.plan == "G" then
@@ -758,25 +745,167 @@ update msg model =
                         updatedModel =
                             { model
                                 | contact = Just response.contact
+                                , agent = Just response.agent
                                 , orgSlug = Just response.orgSlug
                                 , carrierContracts = response.carrierContracts
                                 , loadingContact = False
-                                , name = response.contact.firstName ++ " " ++ response.contact.lastName
-                                , gender = response.contact.gender
-                                , tobacco = response.contact.tobacco
-                                , state = response.contact.state
-                                , zip = response.contact.zipCode
-                                , dateOfBirth = response.contact.dateOfBirth
+                                , name = Just (response.contact.firstName ++ " " ++ response.contact.lastName)
+                                , gender = Just response.contact.gender
+                                , tobacco = Just response.contact.tobacco
+                                , state = Just response.contact.state
+                                , zip = Just response.contact.zipCode
+                                , age = Just response.contact.age
                                 , currentCarrier = response.contact.currentCarrier
                                 , planType = response.contact.planType
                             }
                     in
-                    ( updatedModel, fetchPlans updatedModel )
+                    ( updatedModel
+                    , fetchPlans updatedModel
+                    )
 
                 Err error ->
                     ( { model
                         | error = Just "Failed to load contact data. Please try again later."
                         , loadingContact = False
+                      }
+                    , Cmd.none
+                    )
+
+        ShowLocationModal ->
+            ( { model
+                | showLocationModal = True
+                , editingZipCode = model.zip
+                , editingCounty = Nothing
+                , availableCounties = []
+                , locationUpdateError = Nothing
+              }
+            , Cmd.none
+            )
+
+        CloseLocationModal ->
+            ( { model
+                | showLocationModal = False
+                , editingZipCode = Nothing
+                , editingCounty = Nothing
+                , availableCounties = []
+                , locationUpdateError = Nothing
+              }
+            , Cmd.none
+            )
+
+        UpdateZipCode newZip ->
+            ( { model | editingZipCode = Just newZip }
+            , Cmd.none
+            )
+
+        UpdateCounty county ->
+            ( { model | editingCounty = Just county }
+            , Cmd.none
+            )
+
+        SubmitLocationUpdate ->
+            case model.contact of
+                Just contact ->
+                    case model.orgSlug of
+                        Just orgSlug ->
+                            ( { model | submittingLocation = True, locationUpdateError = Nothing }
+                            , Http.post
+                                { url = "/api/self-service/update-location"
+                                , body =
+                                    Http.jsonBody
+                                        (E.object
+                                            [ ( "orgSlug", E.string orgSlug )
+                                            , ( "contactId", E.string (String.fromInt contact.id) )
+                                            , ( "zipCode", E.string (Maybe.withDefault "" model.editingZipCode) )
+                                            , ( "county", E.string (Maybe.withDefault "" model.editingCounty) )
+                                            ]
+                                        )
+                                , expect = Http.expectJson GotLocationUpdate locationUpdateResponseDecoder
+                                }
+                            )
+
+                        Nothing ->
+                            ( { model | locationUpdateError = Just "Organization ID not found" }
+                            , Cmd.none
+                            )
+
+                Nothing ->
+                    ( { model | locationUpdateError = Just "Contact information not found" }
+                    , Cmd.none
+                    )
+
+        GotLocationUpdate result ->
+            case result of
+                Ok response ->
+                    if response.success then
+                        case response.counties of
+                            [] ->
+                                -- No counties returned, show error
+                                ( { model
+                                    | locationUpdateError = Just "No counties found for this ZIP code"
+                                    , submittingLocation = False
+                                  }
+                                , Cmd.none
+                                )
+
+                            [ singleCounty ] ->
+                                -- Only one county, use it and close modal
+                                let
+                                    -- Update contact with new location info
+                                    updatedContact =
+                                        model.contact
+                                            |> Maybe.map
+                                                (\contact ->
+                                                    { contact
+                                                        | zipCode = response.zipCode
+                                                        , state = response.state
+                                                        , county = Just singleCounty
+                                                    }
+                                                )
+
+                                    updatedModel =
+                                        { model
+                                            | zip = Just response.zipCode
+                                            , state = Just response.state
+                                            , county = Just singleCounty
+                                            , contact = updatedContact
+                                            , showLocationModal = False
+                                            , editingZipCode = Nothing
+                                            , editingCounty = Nothing
+                                            , availableCounties = []
+                                            , locationUpdateError = Nothing
+                                            , submittingLocation = False
+                                        }
+                                in
+                                -- Reload the page to refresh everything
+                                ( updatedModel
+                                , Nav.reload
+                                )
+
+                            multipleCounties ->
+                                -- Multiple counties, show dropdown
+                                ( { model
+                                    | availableCounties = multipleCounties
+                                    , zip = Just response.zipCode
+                                    , state = Just response.state
+                                    , editingCounty = Nothing
+                                    , submittingLocation = False
+                                  }
+                                , Cmd.none
+                                )
+
+                    else
+                        ( { model
+                            | locationUpdateError = Just "Failed to update location"
+                            , submittingLocation = False
+                          }
+                        , Cmd.none
+                        )
+
+                Err error ->
+                    ( { model
+                        | locationUpdateError = Just (httpErrorToString error)
+                        , submittingLocation = False
                       }
                     , Cmd.none
                     )
@@ -901,8 +1030,47 @@ httpErrorToString error =
 
 
 subscriptions : Model -> Sub Msg
-subscriptions _ =
-    Sub.none
+subscriptions model =
+    let
+        closeModalOnEscape : String -> Msg
+        closeModalOnEscape key =
+            if key == "Escape" then
+                case model of
+                    _ ->
+                        if model.showLocationModal then
+                            CloseLocationModal
+
+                        else if model.showGvsNVideo then
+                            CloseGvsNVideo
+
+                        else if model.showQualificationVideo then
+                            CloseQualificationVideo
+
+                        else if model.showRatesVideo then
+                            CloseRatesVideo
+
+                        else if model.showFAQ then
+                            CloseFAQ
+
+                        else
+                            NoOp
+
+            else
+                NoOp
+
+        shouldListenForEscape =
+            model.showLocationModal
+                || model.showGvsNVideo
+                || model.showQualificationVideo
+                || model.showRatesVideo
+                || model.showFAQ
+    in
+    if shouldListenForEscape then
+        Browser.Events.onKeyDown
+            (D.map closeModalOnEscape (D.field "key" D.string))
+
+    else
+        Sub.none
 
 
 
@@ -913,163 +1081,153 @@ view : Model -> Browser.Document Msg
 view model =
     { title = "Quote - Medicare Max"
     , body =
-        [ div [ class "bg-gray-50 min-h-screen pb-12" ]
-            [ div [ class "max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-3" ]
-                [ div [ class "bg-white rounded-lg shadow-sm p-4 mb-3 max-w-2xl mx-auto" ]
-                    [ div [ class "flex flex-col space-y-3" ]
-                        [ -- Top row - Quote and date info
-                          div [ class "flex justify-between" ]
-                            [ div []
-                                [ p [ class "text-xs text-gray-500" ] [ text "Quote for:" ]
-                                , p [ class "text-sm font-medium" ] [ text model.name ]
-                                ]
-                            , div [ class "text-right" ]
-                                [ p [ class "text-xs text-gray-500" ] [ text "Policy Effective Date:" ]
-                                , p [ class "text-sm font-medium" ] [ text "April 2025" ]
-                                ]
-                            ]
-                        , -- Middle row
-                          div [ class "flex justify-between" ]
-                            [ div []
-                                [ p [ class "text-xs text-gray-500" ] [ text "Email:" ]
-                                , p [ class "text-sm" ]
-                                    [ text (model.contact |> Maybe.map .email |> Maybe.withDefault "loading...") ]
-                                ]
-                            , div [ class "text-right" ]
-                                [ p [ class "text-xs text-gray-500" ] [ text "Birth Date:" ]
-                                , p [ class "text-sm" ] [ text (formatBirthDate model.dateOfBirth) ]
-                                ]
-                            ]
-                        , -- Bottom row
-                          div [ class "flex justify-between" ]
-                            [ div [ class "text-left" ]
-                                [ p [ class "text-xs text-gray-500" ] [ text "Details:" ]
-                                , p [ class "text-sm" ]
+        [ div [ class "bg-white min-h-screen pb-12" ]
+            [ div [ class "max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-3 space-y-10" ]
+                [ -- Personal Quote Card
+                  div [ class "bg-white rounded-[10px] border-2 border-[#DCE2E5] shadow-[0_1px_2px_rgba(16,24,40,0.05)]" ]
+                    [ -- Personal Quote Header
+                      div [ class "border-b-2 border-[#DCE2E5] bg-[#F9F5FF] px-6 py-3 rounded-t-[10px]" ]
+                        [ h2 [ class "text-2xl font-extrabold tracking-tight leading-[2] -tracking-[0.04em]" ] [ text "Personal Quote" ]
+                        ]
+                    , div [ class "p-6 flex justify-between items-start bg-white rounded-b-[10px]" ]
+                        [ -- Left side - Quote For
+                          div [ class "flex flex-col" ]
+                            [ div [ class "mb-2" ]
+                                [ p [ class "text-sm text-[#667085] mb-1" ] [ text "Quote For" ]
+                                , p [ class "text-[16px] font-medium" ] [ text (Maybe.withDefault "Loading..." model.name) ]
+                                , p [ class "text-[12px] text-[#667085]" ]
                                     [ text
-                                        (String.join " | "
-                                            [ if model.gender == "M" then
-                                                "Male"
+                                        (if Maybe.withDefault "" model.gender == "M" then
+                                            "M"
 
-                                              else
-                                                "Female"
-                                            , model.zip
-                                            , if model.tobacco then
-                                                "Tobacco"
-
-                                              else
-                                                "Non-Tobacco"
-                                            ]
+                                         else
+                                            "F"
                                         )
+                                    , span [ class "text-[#475569] mx-2 font-medium" ] [ text "│" ]
+                                    , text
+                                        (if Maybe.withDefault False model.tobacco then
+                                            "Tobacco"
+
+                                         else
+                                            "Non-Tobacco"
+                                        )
+                                    , span [ class "text-[#475569] mx-2 font-medium" ] [ text "│" ]
+                                    , text (String.fromInt (Maybe.withDefault 0 model.age))
+                                    , text " years"
+                                    , span [ class "text-[#475569] mx-2 font-medium" ] [ text "│" ]
+                                    , text (Maybe.withDefault "" model.state)
+                                    , text " "
+                                    , text (Maybe.withDefault "" model.zip)
                                     ]
                                 ]
-                            , if model.currentCarrier /= Nothing then
-                                div [ class "text-right" ]
-                                    [ p [ class "text-xs text-gray-500" ] [ text "Current Carrier:" ]
-                                    , p [ class "text-sm" ]
-                                        [ text (Maybe.withDefault "" model.currentCarrier) ]
-                                    ]
-
-                              else
-                                text ""
+                            , div []
+                                [ button [ class "text-xs text-[#2563EB] underline text-left", onClick ShowLocationModal ] [ text "Edit Location" ]
+                                , span [ class "text-[#667085] mx-2 font-medium" ] [ text "│" ]
+                                , a [ href ("/self-onboarding/" ++ Maybe.withDefault "" model.orgSlug), class "text-xs text-[#2563EB] underline text-left" ] [ text "Quote for a New Person" ]
+                                ]
                             ]
-                        , case ( model.quoteId, model.orgSlug ) of
-                            ( Just quoteId, Just orgSlug ) ->
-                                div [ class "flex justify-center" ]
-                                    [ button
-                                        [ class "text-purple-600 hover:text-purple-800 underline text-xs cursor-pointer"
-                                        , onClick (NavigateTo ("/self-onboarding/" ++ orgSlug ++ "?id=" ++ quoteId))
+
+                        -- Middle - Quote From
+                        , div [ class "flex flex-col" ]
+                            [ p [ class "text-sm text-[#667085] mb-1" ] [ text "Quote From" ]
+                            , p [ class "text-sm font-medium mb-2" ]
+                                [ text
+                                    (case model.agent of
+                                        Just agent ->
+                                            agent.firstName ++ " " ++ agent.lastName
+
+                                        Nothing ->
+                                            "Loading..."
+                                    )
+                                ]
+                            , div [ class "flex flex-col gap-2.5" ]
+                                [ div [ class "flex items-center gap-1.5 bg-[#F9F5FF] px-2.5 py-1 rounded" ]
+                                    [ svg [ Svg.Attributes.width "12", Svg.Attributes.height "12", Svg.Attributes.viewBox "0 0 12 12", Svg.Attributes.fill "none" ]
+                                        [ path [ Svg.Attributes.d "M1 6C1 4.1145 1 3.1715 1.586 2.586C2.1715 2 3.1145 2 5 2H7C8.8855 2 9.8285 2 10.414 2.586C11 3.1715 11 4.1145 11 6C11 7.8855 11 8.8285 10.414 9.414C9.8285 10 8.8855 10 7 10H5C3.1145 10 2.1715 10 1.586 9.414C1 8.8285 1 7.8855 1 6Z", Svg.Attributes.stroke "#03045E" ] []
+                                        , path [ Svg.Attributes.d "M3 4L4.0795 4.9C4.998 5.665 5.457 6.0475 6 6.0475C6.543 6.0475 7.0025 5.665 7.9205 4.8995L9 4", Svg.Attributes.stroke "#03045E", Svg.Attributes.strokeLinecap "round", Svg.Attributes.strokeLinejoin "round" ] []
                                         ]
-                                        [ text "Change" ]
+                                    , span [ class "text-xs text-[#03045E]" ]
+                                        [ text
+                                            (case model.agent of
+                                                Just agent ->
+                                                    agent.email
+
+                                                Nothing ->
+                                                    "Loading..."
+                                            )
+                                        ]
                                     ]
+                                , div [ class "flex items-center gap-1.5 bg-[#F9F5FF] px-2.5 py-1 rounded" ]
+                                    [ svg [ Svg.Attributes.width "12", Svg.Attributes.height "12", Svg.Attributes.viewBox "0 0 12 12", Svg.Attributes.fill "none" ]
+                                        [ path
+                                            [ Svg.Attributes.fillRule "evenodd"
+                                            , Svg.Attributes.clipRule "evenodd"
+                                            , Svg.Attributes.d "M1.75442 1.13022C2.80442 0.0802194 4.57692 0.160219 5.30817 1.47022L5.7138 2.19709C6.19067 3.05209 5.98755 4.13147 5.2888 4.83897C5.24752 4.90156 5.22497 4.97463 5.2238 5.04959C5.21567 5.20959 5.27255 5.58022 5.84692 6.15397C6.42067 6.72772 6.79067 6.78522 6.9513 6.77709C7.02626 6.77592 7.09934 6.75337 7.16192 6.71209C7.8688 6.01334 8.9488 5.81022 9.8038 6.28709L10.5307 6.69334C11.8407 7.42459 11.9207 9.19584 10.8707 10.2465C10.3088 10.8077 9.56255 11.3071 8.68442 11.3402C7.38442 11.3896 5.22442 11.0533 3.08567 8.91522C0.947548 6.77647 0.611298 4.61709 0.660673 3.31647C0.693798 2.43834 1.19317 1.69147 1.75442 1.13022ZM4.48942 1.92709C4.11442 1.25584 3.10817 1.10209 2.41755 1.79334C1.93317 2.27772 1.61755 2.81209 1.59755 3.35147C1.5563 4.43647 1.82442 6.32772 3.7488 8.25147C5.6738 10.1765 7.56442 10.4446 8.6488 10.4033C9.18817 10.3827 9.7238 10.0677 10.2075 9.58334C10.8988 8.89209 10.745 7.88584 10.0738 7.51147L9.34692 7.10584C8.89505 6.85397 8.25942 6.93959 7.8138 7.38584C7.77005 7.42959 7.4913 7.68959 6.99692 7.71334C6.49067 7.73834 5.87755 7.51084 5.18442 6.81709C4.49005 6.12334 4.26255 5.51022 4.28755 5.00334C4.3113 4.50897 4.57192 4.23022 4.61505 4.18647C5.0613 3.74084 5.14692 3.10584 4.89505 2.65397L4.48942 1.92709Z"
+                                            , Svg.Attributes.fill "#03045E"
+                                            ]
+                                            []
+                                        ]
+                                    , span [ class "text-xs text-[#03045E]" ]
+                                        [ text
+                                            (case model.agent of
+                                                Just agent ->
+                                                    formatPhoneNumber agent.phone
 
-                            _ ->
-                                text ""
-                        ]
-                    ]
-                ]
-            , -- Household Discount Checkbox
-              div [ class "flex justify-center mb-3" ]
-                [ div [ class "flex items-center" ]
-                    [ span
-                        [ class "flex items-center cursor-pointer"
-                        , onClick ToggleDiscount
-                        ]
-                        [ input
-                            [ type_ "checkbox"
-                            , class "form-checkbox h-4 w-4"
-                            , checked model.showDiscount
-                            ]
-                            []
-                        , span [ class "ml-3 text-sm text-gray-700" ]
-                            [ text "Apply Household Discount" ]
-                        ]
-                    , span
-                        [ class "ml-2 text-xs text-purple-600 underline cursor-pointer"
-                        , onClick ToggleDiscountInfo
-                        ]
-                        [ text "(what's this?)" ]
-                    ]
-                ]
-            , if model.showDiscountInfo then
-                div [ class "bg-purple-50 p-3 mt-2 rounded-md max-w-md mx-auto text-sm" ]
-                    [ p [ class "mb-2 text-gray-700" ]
-                        [ text "Some carriers offer premium discounts based on the number of people in the same household. Eligibility criteria and discount amounts vary by carrier." ]
-                    , div [ class "flex justify-center max-w-md" ]
-                        [ button
-                            [ class "text-xs text-purple-600 hover:text-purple-800 mt-1 cursor-pointer w-full py-2"
-                            , onClick ToggleDiscountInfo
-                            ]
-                            [ text "Close" ]
-                        ]
-                    ]
-
-              else
-                text ""
-            , -- G vs N Video Pill
-              div [ class "flex justify-center mb-4" ]
-                [ viewPillButton "Learn About Plan G vs. Plan N" True OpenGvsNVideo ]
-            , -- Main Content
-              if model.isLoading then
-                viewLoading
-
-              else
-                case model.error of
-                    Just error ->
-                        if String.startsWith "No plans available" error then
-                            -- Still loading or searching for plans
-                            viewLoading
-
-                        else
-                            -- Real error
-                            viewError error
-
-                    Nothing ->
-                        div [ class "max-w-[700px] mx-auto px-2" ]
-                            [ -- Plan G Section
-                              viewPlanTypeSection model "Plan G Monthly Premiums" "G" model.plans.planG
-                            , -- Plan N Section
-                              viewPlanTypeSection model "Plan N Monthly Premiums" "N" model.plans.planN
-                            , -- Continue button
-                              div [ class "flex justify-center mt-12" ]
-                                [ button
-                                    [ class "bg-purple-500 hover:bg-purple-600 text-white font-bold px-8 py-2 rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
-                                    , disabled (model.selectedPlan == Nothing)
-                                    , onClick
-                                        (case model.selectedPlan of
-                                            Just plan ->
-                                                SelectPlan plan
-
-                                            Nothing ->
-                                                NoOp
-                                        )
+                                                Nothing ->
+                                                    "Loading..."
+                                            )
+                                        ]
                                     ]
-                                    [ text "Continue with Selected Plan" ]
                                 ]
                             ]
+
+                        -- Right side - Video
+                        , div [ class "bg-[#F9F5FF] rounded-[10px] p-4 flex flex-col items-center cursor-pointer gap-2 border-2 border-[#DCE2E5] max-w-[180px]", onClick OpenGvsNVideo ]
+                            [ p [ class "text-[14px] font-bold text-[#03045E] -tracking-[0.03em] leading-[1.21] text-center" ] [ text "Learn About Plan G vs Plan N" ]
+                            , div [ class "w-[33px] h-[33px] rounded-full border-2 border-[#03045E] flex items-center justify-center" ]
+                                [ div [ class "w-0 h-0 border-t-[8px] border-t-transparent border-l-[12px] border-l-[#03045E] border-b-[8px] border-b-transparent ml-1" ] []
+                                ]
+                            , p [ class "text-[8px] text-[#667085] -tracking-[0.03em] leading-[1.21]" ] [ text "Watch the Video" ]
+                            ]
+                        ]
+                    ]
+
+                -- Plans Section
+                , div [ class "bg-white rounded-[10px] border-2 border-[#DCE2E5] shadow-[0_1px_2px_rgba(16,24,40,0.05)]" ]
+                    [ -- Header with Continue button
+                      div [ class "px-6 py-4 flex items-center justify-between border-b-2 border-[#DCE2E5] bg-[#F9F5FF] rounded-t-[10px]" ]
+                        [ div [ class "flex items-end gap-3" ]
+                            [ h2 [ class "text-2xl font-extrabold -tracking-[0.04em] text-[#101828] leading-[1.2]" ] [ text "Plans" ]
+                            , p [ class "text-[12px] font-medium text-[#667085] -tracking-[0.04em] leading-[1.2] pb-[2px]" ] [ text "Select one to continue" ]
+                            ]
+                        , button
+                            [ class "bg-[#03045E] text-white text-sm font-medium px-6 py-2 rounded disabled:opacity-50 disabled:cursor-not-allowed"
+                            , onClick (SelectPlan (Maybe.withDefault (Plan 0 0 Nothing 0 "" "" 0 "" "" "" "" "" "" 0 False "" False []) model.selectedPlan))
+                            , disabled (model.selectedPlan == Nothing)
+                            ]
+                            [ text "Continue" ]
+                        ]
+
+                    -- Plan G Section
+                    , div [ class "p-8 pb-2 bg-white" ]
+                        [ h3 [ class "text-base font-extrabold -tracking-[0.02em] mb-6 text-[#101828]" ] [ text "Plan G Monthly Premiums" ]
+                        , div [ class "grid grid-cols-3 gap-6" ]
+                            (List.map (viewPlanCard model "G") (getTopPlans model model.plans.planG 3))
+                        ]
+
+                    -- Plan N Section
+                    , div [ class "p-8 pt-6 bg-white rounded-b-[10px]" ]
+                        [ h3 [ class "text-base font-extrabold -tracking-[0.02em] mb-6 text-[#101828]" ] [ text "Plan N Monthly Premiums" ]
+                        , div [ class "grid grid-cols-3 gap-6" ]
+                            (List.map (viewPlanCard model "N") (getTopPlans model model.plans.planN 3))
+                        ]
+                    ]
+                ]
             ]
         , viewGvsNModal model
         , viewQualificationModal model
         , viewRatesModal model
+        , viewLocationModal model
         ]
     }
 
@@ -1100,130 +1258,68 @@ viewError error =
         ]
 
 
-viewPlanCard : Model -> Plan -> Html Msg
-viewPlanCard model plan =
+viewPlanCard : Model -> String -> Plan -> Html Msg
+viewPlanCard model planTypeCode plan =
     let
-        planType =
-            if String.toUpper plan.planType == "G" then
-                "Plan G"
-
-            else
-                "Plan N"
-
-        bgColor =
-            if plan.planType == "G" then
-                "bg-slate-100"
-
-            else
-                "bg-stone-100"
-
         isSelected =
             model.selectedPlan == Just plan
 
-        selectionClass =
-            if isSelected then
-                "ring-2 ring-purple-400 shadow-sm"
+        ( badgeTextColor, badgeBgColor ) =
+            if planTypeCode == "G" then
+                ( "text-[#363F72]", "bg-[#F8F9FC]" )
 
             else
-                "hover:border-gray-300"
+                ( "text-[#C4320A]", "bg-[#FFF6ED]" )
 
-        totalPrice =
-            "$" ++ formatFloat plan.price
+        borderClass =
+            if isSelected then
+                "border-2 border-[#2563EB]"
 
-        discountPrice =
-            "$" ++ formatFloat plan.priceDiscount
-
-        formatFloat : Float -> String
-        formatFloat value =
-            let
-                valueAsString =
-                    String.fromFloat value
-
-                parts =
-                    String.split "." valueAsString
-            in
-            case parts of
-                [ whole, decimal ] ->
-                    if String.length decimal == 1 then
-                        whole ++ "." ++ decimal ++ "0"
-
-                    else
-                        valueAsString
-
-                _ ->
-                    valueAsString
-
-        selectHeadClass =
-            "text-xs text-gray-600 mb-0.5"
-
-        softHeadClass =
-            "text-xs text-gray-400 mb-0.5"
-
-        selectBodyClass =
-            "text-sm font-bold"
-
-        softBodyClass =
-            "text-xs font-semibold text-gray-400"
+            else
+                "border border-[#D4D4D4]"
     in
     div
-        [ class ("bg-white border border-gray-200 rounded-md shadow-sm cursor-pointer w-full max-w-[200px] " ++ selectionClass)
+        [ class ("relative bg-white rounded-lg " ++ borderClass ++ " overflow-hidden cursor-pointer w-full pb-[75%]") -- 4:3 aspect ratio
         , onClick (SelectPlanCard plan)
         ]
-        [ div [ class "p-3" ]
-            [ div [ class "flex items-start mb-2" ]
-                [ div [ class ("text-dark font-medium text-xs px-3 py-1.5 rounded-full shadow-sm " ++ bgColor) ]
-                    [ text planType ]
-                ]
-            , div [ class "flex justify-center items-center py-3" ]
-                [ div [ class "text-center" ]
-                    [ img [ src plan.image, alt (plan.name ++ " logo"), class "h-8 mx-auto object-contain" ] [] ]
-                ]
-            ]
-        , div [ class "border-t border-gray-100 px-3 py-2 bg-gray-50 w-full" ]
-            [ div [ class "flex justify-between items-center" ]
-                [ div [ class "flex flex-col items-center" ]
-                    [ p
-                        [ class
-                            (if model.showDiscount then
-                                softHeadClass
+        [ div [ class "absolute inset-0 flex flex-col" ]
+            [ -- Top row with Plan type badge and radio
+              div [ class "flex items-center justify-between p-4" ]
+                [ div [ class ("px-2.5 py-0.5 rounded-lg text-xs font-medium leading-5 " ++ badgeTextColor ++ " " ++ badgeBgColor) ]
+                    [ text ("PLAN " ++ planTypeCode) ]
+                , div [ class "flex items-center gap-1.5" ]
+                    [ span [ class "text-xs font-medium text-[#667085]" ] [ text "Select Plan" ]
+                    , if isSelected then
+                        svg [ Svg.Attributes.width "16", Svg.Attributes.height "17", Svg.Attributes.viewBox "0 0 12 13", Svg.Attributes.fill "none" ]
+                            [ Svg.rect [ Svg.Attributes.x "0.5", Svg.Attributes.y "1", Svg.Attributes.width "11", Svg.Attributes.height "11", Svg.Attributes.rx "5.5", Svg.Attributes.fill "#F9F5FF" ] []
+                            , Svg.rect [ Svg.Attributes.x "0.5", Svg.Attributes.y "1", Svg.Attributes.width "11", Svg.Attributes.height "11", Svg.Attributes.rx "5.5", Svg.Attributes.stroke "#7F56D9" ] []
+                            , Svg.path [ Svg.Attributes.d "M9 4.25L4.875 8.375L3 6.5", Svg.Attributes.stroke "#7F56D9", Svg.Attributes.strokeWidth "1.6666", Svg.Attributes.strokeLinecap "round", Svg.Attributes.strokeLinejoin "round" ] []
+                            ]
 
-                             else
-                                selectHeadClass
-                            )
-                        ]
-                        [ text "Standard" ]
-                    , p
-                        [ class
-                            (if model.showDiscount then
-                                softBodyClass
-
-                             else
-                                selectBodyClass
-                            )
-                        ]
-                        [ text totalPrice ]
+                      else
+                        svg [ Svg.Attributes.width "16", Svg.Attributes.height "17", Svg.Attributes.viewBox "0 0 12 13", Svg.Attributes.fill "none" ]
+                            [ Svg.rect [ Svg.Attributes.x "0.5", Svg.Attributes.y "1", Svg.Attributes.width "11", Svg.Attributes.height "11", Svg.Attributes.rx "5.5", Svg.Attributes.fill "white" ] []
+                            , Svg.rect [ Svg.Attributes.x "0.5", Svg.Attributes.y "1", Svg.Attributes.width "11", Svg.Attributes.height "11", Svg.Attributes.rx "5.5", Svg.Attributes.stroke "#667085" ] []
+                            ]
                     ]
-                , div [ class "flex flex-col items-center" ]
-                    [ p
-                        [ class
-                            (if model.showDiscount then
-                                selectHeadClass
+                ]
 
-                             else
-                                softHeadClass
-                            )
-                        ]
-                        [ text "Discount" ]
-                    , p
-                        [ class
-                            (if model.showDiscount then
-                                selectBodyClass
+            -- Carrier Logo
+            , div [ class "flex-1 px-4 flex justify-center items-center min-h-[60px] max-h-[80px]" ]
+                [ img [ src plan.image, alt (plan.name ++ " logo"), class "h-10 max-w-[160px] object-contain" ] [] ]
 
-                             else
-                                softBodyClass
-                            )
-                        ]
-                        [ text discountPrice ]
+            -- Rates
+            , div [ class "flex justify-between px-6 py-4 bg-[#F9FAFB]" ]
+                [ -- Standard Rate
+                  div [ class "flex-1" ]
+                    [ p [ class "text-[10px] font-medium leading-5 text-[#667085] mb-0.5" ] [ text "Standard Rate" ]
+                    , p [ class "text-lg font-bold leading-6 text-[#667085]" ] [ text ("$" ++ String.fromInt (floor plan.price)) ]
+                    ]
+
+                -- Discount Rate
+                , div [ class "flex-1 text-right" ]
+                    [ p [ class "text-[10px] font-medium leading-5 text-[#667085] mb-0.5" ] [ text "Discount Rate" ]
+                    , p [ class "text-lg font-bold leading-6 text-[#667085]" ] [ text ("$" ++ String.fromInt (floor plan.priceDiscount)) ]
                     ]
                 ]
             ]
@@ -1233,8 +1329,8 @@ viewPlanCard model plan =
 viewGvsNModal : Model -> Html Msg
 viewGvsNModal model =
     if model.showGvsNVideo then
-        div [ class "fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" ]
-            [ div [ class "bg-white rounded-lg p-4 sm:p-8 w-[95%] max-w-5xl mx-auto flex flex-col items-center relative" ]
+        div [ class "fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4 backdrop-blur-sm" ]
+            [ div [ class "bg-white rounded-lg p-4 sm:p-8 w-[95%] max-w-5xl mx-auto shadow-lg" ]
                 [ button
                     [ class "absolute top-2 right-2 text-gray-500 hover:text-gray-700 text-xl p-1"
                     , onClick CloseGvsNVideo
@@ -1270,8 +1366,8 @@ viewGvsNModal model =
 viewQualificationModal : Model -> Html Msg
 viewQualificationModal model =
     if model.showQualificationVideo then
-        div [ class "fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" ]
-            [ div [ class "bg-white rounded-lg p-4 sm:p-8 w-[95%] max-w-5xl mx-auto flex flex-col items-center relative" ]
+        div [ class "fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4 backdrop-blur-sm" ]
+            [ div [ class "bg-white rounded-lg p-4 sm:p-8 w-[95%] max-w-5xl mx-auto shadow-lg" ]
                 [ button
                     [ class "absolute top-2 right-2 text-gray-500 hover:text-gray-700 text-xl p-1"
                     , onClick CloseQualificationVideo
@@ -1317,10 +1413,10 @@ viewRatesModal model =
                         ""
 
             countyText =
-                model.county
+                Maybe.withDefault "" model.county
 
             stateText =
-                model.state
+                Maybe.withDefault "" model.state
 
             planTypeText =
                 case model.selectedPlanType of
@@ -1330,8 +1426,8 @@ viewRatesModal model =
                     PlanN ->
                         "Plan N"
         in
-        div [ class "fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" ]
-            [ div [ class "bg-white rounded-lg p-4 sm:p-8 w-[95%] max-w-5xl mx-auto flex flex-col items-center relative" ]
+        div [ class "fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4 backdrop-blur-sm" ]
+            [ div [ class "bg-white rounded-lg p-4 sm:p-8 w-[95%] max-w-5xl mx-auto shadow-lg" ]
                 [ button
                     [ class "absolute top-2 right-2 text-gray-500 hover:text-gray-700 text-xl p-1"
                     , onClick CloseRatesVideo
@@ -1370,7 +1466,7 @@ viewPlanTypeSection model title code plans =
     div [ class "mb-8" ]
         [ h2 [ class "text-xl font-bold mb-4 text-center sm:text-left" ] [ text title ]
         , div [ class "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 justify-items-center" ]
-            (List.map (viewPlanCard model) (getTopPlans model plans 3))
+            (List.map (viewPlanCard model code) (getTopPlans model plans 3))
         ]
 
 
@@ -1481,24 +1577,18 @@ type alias ContactResponse =
     { success : Bool
     , orgSlug : String
     , carrierContracts : List Carrier
+    , agent : Agent
     , contact : Contact
     }
 
 
-contactDecoder : Decoder Contact
-contactDecoder =
-    D.succeed Contact
+agentDecoder : Decoder Agent
+agentDecoder =
+    D.succeed Agent
         |> Pipeline.required "firstName" D.string
         |> Pipeline.required "lastName" D.string
         |> Pipeline.required "email" D.string
-        |> Pipeline.required "phoneNumber" D.string
-        |> Pipeline.required "dateOfBirth" D.string
-        |> Pipeline.required "gender" D.string
-        |> Pipeline.required "tobacco" D.bool
-        |> Pipeline.required "state" D.string
-        |> Pipeline.required "zipCode" D.string
-        |> Pipeline.required "currentCarrier" (D.nullable D.string)
-        |> Pipeline.required "planType" (D.nullable D.string)
+        |> Pipeline.required "phone" D.string
 
 
 carrierContractsDecoder : Decoder (List Carrier)
@@ -1506,12 +1596,31 @@ carrierContractsDecoder =
     D.list carrierDecoder
 
 
+contactDecoder : Decoder Contact
+contactDecoder =
+    D.succeed Contact
+        |> Pipeline.required "id" D.int
+        |> Pipeline.required "firstName" D.string
+        |> Pipeline.required "lastName" D.string
+        |> Pipeline.required "email" D.string
+        |> Pipeline.required "phoneNumber" D.string
+        |> Pipeline.required "age" D.int
+        |> Pipeline.required "gender" D.string
+        |> Pipeline.required "tobacco" D.bool
+        |> Pipeline.required "state" D.string
+        |> Pipeline.required "zipCode" D.string
+        |> Pipeline.optional "county" (D.nullable D.string) Nothing
+        |> Pipeline.required "currentCarrier" (D.nullable D.string)
+        |> Pipeline.required "planType" (D.nullable D.string)
+
+
 contactResponseDecoder : Decoder ContactResponse
 contactResponseDecoder =
-    D.map4 ContactResponse
+    D.map5 ContactResponse
         (D.field "success" D.bool)
         (D.field "orgSlug" D.string)
         (D.field "carrierContracts" carrierContractsDecoder)
+        (D.field "agent" agentDecoder)
         (D.field "contact" contactDecoder)
 
 
@@ -1531,3 +1640,105 @@ viewPillButton label isVideo msg =
             text ""
         , text label
         ]
+
+
+locationUpdateResponseDecoder : Decoder LocationUpdateResponse
+locationUpdateResponseDecoder =
+    D.succeed LocationUpdateResponse
+        |> Pipeline.required "success" D.bool
+        |> Pipeline.required "zipCode" D.string
+        |> Pipeline.required "state" D.string
+        |> Pipeline.required "counties" (D.list D.string)
+
+
+viewLocationModal : Model -> Html Msg
+viewLocationModal model =
+    if model.showLocationModal then
+        div [ class "fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4 backdrop-blur-sm" ]
+            [ div [ class "bg-white rounded-lg p-6 w-[95%] max-w-md mx-auto shadow-lg" ]
+                [ div [ class "flex justify-between items-center mb-4" ]
+                    [ h2 [ class "text-xl font-extrabold -tracking-[0.04em] text-[#101828]" ] [ text "Update Location" ]
+                    , button
+                        [ class "text-[#667085] hover:text-[#101828] transition-colors"
+                        , onClick CloseLocationModal
+                        ]
+                        [ text "×" ]
+                    ]
+                , div [ class "mb-4" ]
+                    [ label [ class "block text-sm font-medium text-[#667085] mb-1" ]
+                        [ text "ZIP Code" ]
+                    , input
+                        [ type_ "text"
+                        , class "w-full px-3 py-2 border border-[#DCE2E5] rounded-md focus:outline-none focus:ring-1 focus:ring-[#03045E] focus:border-[#03045E]"
+                        , value (Maybe.withDefault "" model.editingZipCode)
+                        , onInput UpdateZipCode
+                        , maxlength 5
+                        , pattern "[0-9]*"
+                        ]
+                        []
+                    ]
+                , if not (List.isEmpty model.availableCounties) then
+                    div [ class "mb-4" ]
+                        [ label [ class "block text-sm font-medium text-[#667085] mb-1" ]
+                            [ text "County" ]
+                        , select
+                            [ class "w-full px-3 py-2 border border-[#DCE2E5] rounded-md focus:outline-none focus:ring-1 focus:ring-[#03045E] focus:border-[#03045E]"
+                            , onInput UpdateCounty
+                            , value (Maybe.withDefault "" model.editingCounty)
+                            ]
+                            (option [ value "" ] [ text "Select a county" ]
+                                :: List.map
+                                    (\county ->
+                                        option [ value county ]
+                                            [ text county ]
+                                    )
+                                    model.availableCounties
+                            )
+                        ]
+
+                  else
+                    text ""
+                , if model.locationUpdateError /= Nothing then
+                    div [ class "mb-4 text-red-600 text-sm" ]
+                        [ text (Maybe.withDefault "" model.locationUpdateError) ]
+
+                  else
+                    text ""
+                , div [ class "flex justify-end gap-3" ]
+                    [ button
+                        [ class "px-4 py-2 text-[#667085] hover:text-[#101828] transition-colors"
+                        , onClick CloseLocationModal
+                        ]
+                        [ text "Cancel" ]
+                    , button
+                        [ class "px-4 py-2 bg-[#03045E] text-white rounded hover:bg-[#02034D] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center min-w-[80px]"
+                        , onClick SubmitLocationUpdate
+                        , disabled
+                            (String.length (Maybe.withDefault "" model.editingZipCode)
+                                /= 5
+                                || (not (List.isEmpty model.availableCounties)
+                                        && Maybe.withDefault "" model.editingCounty
+                                        == ""
+                                   )
+                                || model.submittingLocation
+                            )
+                        ]
+                        [ if model.submittingLocation then
+                            div [ class "animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent mr-2" ] []
+
+                          else
+                            text ""
+                        , text
+                            (if model.submittingLocation then
+                                "Updating..."
+
+                             else
+                                "Update"
+                            )
+                        ]
+                    ]
+                ]
+            ]
+
+    else
+        text ""

@@ -371,33 +371,23 @@ init flags url key =
 
 
 type alias CompareParams =
-    { state : String
-    , zip : String
-    , county : String
-    , gender : String
-    , tobacco : Bool
-    , age : Int
-    , planType : String
-    , currentCarrier : Maybe String
-    , dateOfBirth : String
-    , quoteId : Maybe String
-    , trackingId : Maybe String
-    , orgId : Maybe String -- Add this field
+    { quoteId : Maybe String
+    , orgId : Maybe String
     }
 
 
 type alias CompareParamsPartial1 =
-    { state : String
-    , zip : String
-    , county : String
-    , gender : String
+    { state : Maybe String
+    , zip : Maybe String
+    , county : Maybe String
+    , gender : Maybe String
     }
 
 
 type alias CompareParamsPartial2 =
     { tobacco : Bool
-    , age : Int
-    , planType : String
+    , age : Maybe Int
+    , planType : Maybe String
     , currentCarrier : Maybe String
     }
 
@@ -480,43 +470,8 @@ setupProgressDecoder =
 
 compareParamsParser : Query.Parser CompareParams
 compareParamsParser =
-    let
-        part1 =
-            Query.map4 CompareParamsPartial1
-                (Query.string "state" |> Query.map (Maybe.withDefault "TX"))
-                (Query.string "zip" |> Query.map (Maybe.withDefault "75201"))
-                (Query.string "county" |> Query.map (Maybe.withDefault "Dallas"))
-                (Query.string "gender" |> Query.map (Maybe.withDefault "Male"))
-
-        part2 =
-            Query.map4 CompareParamsPartial2
-                (Query.string "tobacco" |> Query.map (Maybe.map (\t -> t == "yes") >> Maybe.withDefault False))
-                (Query.string "age" |> Query.map (Maybe.andThen String.toInt >> Maybe.withDefault 65))
-                (Query.string "planType" |> Query.map (Maybe.withDefault "G"))
-                (Query.string "currentCarrier")
-
-        combineParams p1 p2 dateOfBirth quoteId trackingId orgId =
-            { state = p1.state
-            , zip = p1.zip
-            , county = p1.county
-            , gender = p1.gender
-            , tobacco = p2.tobacco
-            , age = p2.age
-            , planType = p2.planType
-            , currentCarrier = p2.currentCarrier
-            , dateOfBirth = dateOfBirth
-            , quoteId = quoteId
-            , trackingId = trackingId
-            , orgId = orgId
-            }
-    in
-    Query.map6 combineParams
-        part1
-        part2
-        (Query.string "dateOfBirth" |> Query.map (Maybe.withDefault ""))
+    Query.map2 CompareParams
         (Query.string "id")
-        -- quoteId is the most important parameter now
-        (Query.string "tid")
         (Query.string "orgId")
 
 

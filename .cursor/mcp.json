@@ -1,0 +1,29 @@
+{
+    "mcpServers": {
+        "figma-developer-mcp": {
+            "url": "http://localhost:3333/sse"
+        },
+        "medicare-portal": {
+            "command": "bunx",
+            "args": [
+                "-y",
+                "mcp-turso"
+            ],
+            "env": {
+                "TURSO_DATABASE_URL": "libsql://medicare-portal-pyrex41.turso.io",
+                "TURSO_AUTH_TOKEN": "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3Mzg3MjQzOTYsImlkIjoiYTAyYjUyMGItZWJiMS00Yjc4LTkwNGMtMWNiNzBkZDIyNDI0In0.IeXKlaP36Pi8tlAdRyBKBmDpKFOTDvfJCuD-bPrk4Y_8vynSvLNyRiiWKKQbYVoqEwUV9NJ4aysCryH9BGKGCA"
+            }
+        },
+        "org-1": {
+            "command": "bunx",
+            "args": [
+                "-y",
+                "mcp-turso"
+            ],
+            "env": {
+                "TURSO_DATABASE_URL": "libsql://org-1-pyrex41.aws-us-east-1.turso.io",
+                "TURSO_AUTH_TOKEN": "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3NDA1NzU5MzksImlkIjoiOWQ4MThlNWUtOWE3Yy00ZWYwLThkZjMtYjNkNDVkMDZjMzFlIiwicmlkIjoiNjFhNDRmNjUtYjVlMy00NDhmLWE0ZmUtYTYxOWI3Y2ExZjMxIn0.q-aM3rGkpp1lbVIFjdItiZoQiEcOZzW2w1rGPJvYknvfc7unDx33GuS6xjkCuwyYPAt4eFMdHY5tdUbeSP9zCw"
+            }
+        }
+    }
+}
