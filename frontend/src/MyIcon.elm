@@ -216,3 +216,64 @@ squareActivity size color =
         [ rect [ width "18", height "18", x "3", y "3", rx "2" ] []
         , Svg.path [ d "M17 12h-2l-2 5-2-10-2 5H7" ] []
         ]
+
+
+clipboardPlus : Int -> String -> Svg msg
+clipboardPlus size color =
+    svg
+        [ width (String.fromInt size)
+        , height (String.fromInt size)
+        , viewBox "0 0 24 24"
+        , fill "none"
+        , stroke color
+        , strokeWidth "2"
+        , strokeLinecap "round"
+        , strokeLinejoin "round"
+        ]
+        [ Svg.rect [ width "8", height "4", x "8", y "2", rx "1", ry "1" ] []
+        , Svg.path [ d "M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" ] []
+        , Svg.path [ d "M9 14h6" ] []
+        , Svg.path [ d "M12 17v-6" ] []
+        ]
+
+
+undo2 : Int -> String -> Svg msg
+undo2 size color =
+    svg
+        [ width (String.fromInt size)
+        , height (String.fromInt size)
+        , viewBox "0 0 24 24"
+        , fill "none"
+        , stroke color
+        , strokeWidth "2"
+        , strokeLinecap "round"
+        , strokeLinejoin "round"
+        ]
+        [ Svg.path [ d "M9 14 4 9l5-5" ] []
+        , Svg.path [ d "M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11" ] []
+        ]
+
+
+calendarDays : Int -> String -> Svg msg
+calendarDays size color =
+    svg
+        [ width (String.fromInt size)
+        , height (String.fromInt size)
+        , viewBox "0 0 24 24"
+        , fill "none"
+        , stroke color
+        , strokeWidth "2"
+        , strokeLinecap "round"
+        , strokeLinejoin "round"
+        ]
+        [ Svg.path [ d "M8 2v4" ] []
+        , Svg.path [ d "M16 2v4" ] []
+        , Svg.rect [ width "18", height "18", x "3", y "4", rx "2" ] []
+        , Svg.path [ d "M3 10h18" ] []
+        , Svg.path [ d "M8 14h.01" ] []
+        , Svg.path [ d "M12 14h.01" ] []
+        , Svg.path [ d "M16 14h.01" ] []
+        , Svg.path [ d "M8 18h.01" ] []
+        , Svg.path [ d "M12 18h.01" ] []
+        , Svg.path [ d "M16 18h.01" ] []
+        ]

@@ -9,6 +9,9 @@ import Http
 import Json.Decode as D
 import Json.Encode as E
 import List.Extra
+import MyIcon
+import Svg
+import Svg.Attributes as SvgAttr
 import Url
 
 
@@ -19,8 +22,30 @@ type EligibilityStatus
 
 
 type alias OrgInfo =
-    { redirectUrl : Maybe String
-    , agentName : String
+    { orgName : Maybe String
+    , orgLogo : Maybe String
+    }
+
+
+type alias AgentInfo =
+    { name : String
+    , firstName : String
+    , phone : String
+    }
+
+
+type alias ContactInfo =
+    { email : String
+    , firstName : String
+    , lastName : String
+    , phoneNumber : String
+    }
+
+
+type alias ScheduleInfo =
+    { contact : ContactInfo
+    , organization : OrgInfo
+    , agent : AgentInfo
     }
 
 
@@ -35,6 +60,8 @@ type alias Model =
     , key : Nav.Key
     , status : EligibilityStatus
     , redirectUrl : Maybe String
+    , scheduleInfo : Maybe ScheduleInfo
+    , isLoading : Bool
     }
 
 
@@ -44,15 +71,7 @@ type Msg
     | UpdatePhoneNumber String
     | SubmitForm
     | GotSubmitResponse (Result Http.Error SubmitResponse)
-    | GotContactInfo (Result Http.Error ContactInfo)
-
-
-type alias ContactInfo =
-    { email : String
-    , firstName : String
-    , lastName : String
-    , phoneNumber : String
-    }
+    | GotScheduleInfo (Result Http.Error ScheduleInfo)
 
 
 type alias SubmitResponse =
@@ -79,8 +98,8 @@ init key maybeQuoteId maybeStatus =
             case maybeQuoteId of
                 Just quoteId ->
                     [ Http.get
-                        { url = "/api/quotes/decode/" ++ quoteId
-                        , expect = Http.expectJson GotContactInfo contactInfoDecoder
+                        { url = "/api/schedule/info/" ++ quoteId
+                        , expect = Http.expectJson GotScheduleInfo scheduleInfoDecoder
                         }
                     ]
 
@@ -97,6 +116,8 @@ init key maybeQuoteId maybeStatus =
       , key = key
       , status = status
       , redirectUrl = Just "https://calendly.com/medicareschool-max/30min"
+      , scheduleInfo = Nothing
+      , isLoading = True
       }
     , Cmd.batch commands
     )
@@ -104,13 +125,34 @@ init key maybeQuoteId maybeStatus =
 
 contactInfoDecoder : D.Decoder ContactInfo
 contactInfoDecoder =
-    D.field "contact"
-        (D.map4 ContactInfo
-            (D.field "email" D.string)
-            (D.field "firstName" D.string)
-            (D.field "lastName" D.string)
-            (D.field "phoneNumber" D.string)
-        )
+    D.map4 ContactInfo
+        (D.field "email" D.string)
+        (D.field "firstName" D.string)
+        (D.field "lastName" D.string)
+        (D.field "phoneNumber" D.string)
+
+
+agentInfoDecoder : D.Decoder AgentInfo
+agentInfoDecoder =
+    D.map3 AgentInfo
+        (D.field "name" D.string)
+        (D.field "firstName" D.string)
+        (D.field "phone" D.string)
+
+
+orgInfoDecoder : D.Decoder OrgInfo
+orgInfoDecoder =
+    D.map2 OrgInfo
+        (D.at [ "name" ] (D.nullable D.string))
+        (D.at [ "logo" ] (D.nullable D.string))
+
+
+scheduleInfoDecoder : D.Decoder ScheduleInfo
+scheduleInfoDecoder =
+    D.map3 ScheduleInfo
+        (D.field "contact" contactInfoDecoder)
+        (D.field "organization" orgInfoDecoder)
+        (D.field "agent" agentInfoDecoder)
 
 
 submitResponseDecoder : D.Decoder SubmitResponse
@@ -159,19 +201,21 @@ update msg model =
                     , Cmd.none
                     )
 
-        GotContactInfo result ->
+        GotScheduleInfo result ->
             case result of
                 Ok info ->
                     ( { model
-                        | email = Just info.email
-                        , name = Just (info.firstName ++ " " ++ info.lastName)
-                        , phoneNumber = Just info.phoneNumber
+                        | scheduleInfo = Just info
+                        , email = Just info.contact.email
+                        , name = Just (info.contact.firstName ++ " " ++ info.contact.lastName)
+                        , phoneNumber = Just info.contact.phoneNumber
+                        , isLoading = False
                       }
                     , Cmd.none
                     )
 
                 Err _ ->
-                    ( model, Cmd.none )
+                    ( { model | isLoading = False }, Cmd.none )
 
 
 stripPhoneNumber : String -> String
@@ -233,118 +277,258 @@ view : Model -> Browser.Document Msg
 view model =
     { title = getTitle model.status
     , body =
-        [ div [ class "min-h-screen bg-white" ]
-            [ div [ class "max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-12" ]
-                [ if model.success then
-                    div [ class "text-center" ]
-                        [ h1 [ class "text-2xl sm:text-3xl font-bold text-gray-900 mb-3 sm:mb-4" ]
-                            [ text "Thank You" ]
-                        , p [ class "text-gray-600 text-sm sm:text-base" ]
-                            [ text "We'll be in touch soon to discuss your options." ]
-                        ]
+        [ if model.isLoading then
+            viewLoading
 
-                  else
-                    div []
-                        [ h1 [ class "text-2xl sm:text-3xl font-bold text-center text-gray-900 mb-3 sm:mb-4" ]
-                            [ text (getHeading model.status) ]
-                        , p [ class "text-gray-600 text-center mb-6 sm:mb-8 text-sm sm:text-base" ]
-                            [ text (getMessage model.status) ]
-                        , case model.error of
-                            Just error ->
-                                div [ class "bg-red-50 border border-red-400 text-red-700 px-3 sm:px-4 py-2 sm:py-3 rounded mb-4 text-sm" ]
-                                    [ text error ]
+          else
+            div [ class "min-h-screen bg-[#F9FAFB]" ]
+                [ div [ class "max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-12" ]
+                    [ -- Organization Logo/Name
+                      div [ class "flex justify-center items-center mt-4 sm:mt-6 mb-6 sm:mb-8" ]
+                        [ case model.scheduleInfo of
+                            Just info ->
+                                case info.organization.orgLogo of
+                                    Just logo ->
+                                        div [ class "flex flex-col items-center" ]
+                                            [ img [ src logo, class "h-10 sm:h-12", alt "Organization Logo" ] []
+                                            ]
+
+                                    Nothing ->
+                                        case info.organization.orgName of
+                                            Just name ->
+                                                div [ class "text-[28px] font-black text-[#3DBDEC] font-['Fira_Sans']" ] [ text name ]
+
+                                            Nothing ->
+                                                text ""
 
                             Nothing ->
                                 text ""
-                        , Html.form [ onSubmit SubmitForm, class "space-y-4 sm:space-y-6 max-w-lg mx-auto" ]
-                            [ div []
-                                [ label [ class "block text-sm font-medium text-gray-700 mb-1" ]
-                                    [ text "Name" ]
-                                , input
-                                    [ type_ "text"
-                                    , class "w-full px-3 sm:px-4 py-2.5 sm:py-2 border border-gray-300 rounded-lg focus:ring-purple-500 focus:border-purple-500 text-sm sm:text-base"
-                                    , value (model.name |> Maybe.withDefault "")
-                                    , onInput UpdateName
-                                    , required True
-                                    ]
-                                    []
-                                ]
-                            , div []
-                                [ label [ class "block text-sm font-medium text-gray-700 mb-1" ]
-                                    [ text "Email" ]
-                                , input
-                                    [ type_ "email"
-                                    , class "w-full px-3 sm:px-4 py-2.5 sm:py-2 border border-gray-300 rounded-lg focus:ring-purple-500 focus:border-purple-500 text-sm sm:text-base"
-                                    , value (model.email |> Maybe.withDefault "")
-                                    , onInput UpdateEmail
-                                    , required True
-                                    ]
-                                    []
-                                ]
-                            , div []
-                                [ label [ class "block text-sm font-medium text-gray-700 mb-1" ]
-                                    [ text "Phone Number" ]
-                                , input
-                                    [ type_ "tel"
-                                    , class "w-full px-3 sm:px-4 py-2.5 sm:py-2 border border-gray-300 rounded-lg focus:ring-purple-500 focus:border-purple-500 text-sm sm:text-base"
-                                    , value (model.phoneNumber |> Maybe.map formatPhoneNumber |> Maybe.withDefault "")
-                                    , onInput UpdatePhoneNumber
-                                    , required True
-                                    ]
-                                    []
-                                ]
-                            , case model.redirectUrl of
-                                Just url ->
-                                    let
-                                        fullUrl =
-                                            List.Extra.zip
-                                                [ "email", "name", "location" ]
-                                                [ model.email
-                                                , model.name
-                                                , model.phoneNumber
-                                                ]
-                                                |> List.filterMap
-                                                    (\( key, value ) ->
-                                                        case value of
-                                                            Just s ->
-                                                                case key of
-                                                                    "location" ->
-                                                                        Just (key ++ "=1" ++ Url.percentEncode s)
-
-                                                                    _ ->
-                                                                        Just (key ++ "=" ++ Url.percentEncode s)
-
-                                                            Nothing ->
-                                                                Nothing
-                                                    )
-                                                |> String.join "&"
-                                                |> (\s -> url ++ "?" ++ s)
-                                    in
-                                    a
-                                        [ class "w-full bg-purple-600 text-white py-3 sm:py-3 px-4 rounded-lg hover:bg-purple-700 transition-colors duration-200 disabled:opacity-50 text-center block text-sm sm:text-base mt-4 sm:mt-4"
-                                        , href fullUrl
-                                        , target "_blank"
-                                        ]
-                                        [ text "Schedule Follow-up" ]
-
-                                Nothing ->
-                                    button
-                                        [ class "w-full bg-purple-600 text-white py-3 sm:py-3 px-4 rounded-lg hover:bg-purple-700 transition-colors duration-200 disabled:opacity-50 text-sm sm:text-base mt-4 sm:mt-4"
-                                        , type_ "submit"
-                                        , disabled model.isSubmitting
-                                        ]
-                                        [ if model.isSubmitting then
-                                            text "Submitting..."
-
-                                          else
-                                            text "Schedule Follow-up"
-                                        ]
-                            ]
                         ]
+                    , if model.success then
+                        div [ class "text-center" ]
+                            [ h1 [ class "text-2xl sm:text-3xl font-bold text-gray-900 mb-3 sm:mb-4" ]
+                                [ text "Thank You" ]
+                            , p [ class "text-gray-600 text-base sm:text-lg" ]
+                                [ text "We'll be in touch soon to discuss your options." ]
+                            ]
+
+                      else
+                        div [ class "grid grid-cols-1 md:grid-cols-2 gap-8" ]
+                            [ -- Left Column - Text Content
+                              div [ class "space-y-6" ]
+                                [ h1 [ class "text-3xl sm:text-4xl font-extrabold text-black mb-3 sm:mb-4 tracking-tight" ]
+                                    [ text (getHeading model.status) ]
+                                , div [ class "bg-[#F9F5FF] p-6 rounded-md mb-6" ]
+                                    [ p [ class "text-black text-base sm:text-lg leading-relaxed" ]
+                                        [ text (getMessage model.status) ]
+                                    ]
+                                ]
+
+                            -- Right Column - Calendar Components
+                            , div [ class "bg-white border border-[#DCE2E5] rounded-lg shadow-sm overflow-hidden" ]
+                                [ div [ class "p-6 sm:p-8" ]
+                                    [ p [ class "text-[#667085] text-sm font-medium mb-6" ]
+                                        [ text "Select an Option Below" ]
+                                    , case model.error of
+                                        Just error ->
+                                            div [ class "bg-red-50 border border-red-400 text-red-700 px-4 py-3 rounded mb-6 text-base" ]
+                                                [ text error ]
+
+                                        Nothing ->
+                                            text ""
+                                    , case model.scheduleInfo of
+                                        Just info ->
+                                            case model.status of
+                                                Accept ->
+                                                    viewAcceptButtons model info
+
+                                                Decline ->
+                                                    viewDeclineButtons model info
+
+                                                Generic ->
+                                                    viewGenericButtons model info
+
+                                        Nothing ->
+                                            text ""
+                                    ]
+                                ]
+                            ]
+                    ]
                 ]
-            ]
         ]
     }
+
+
+viewAcceptButtons : Model -> ScheduleInfo -> Html Msg
+viewAcceptButtons model info =
+    div [ class "space-y-4" ]
+        [ a
+            [ class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
+            , href (makeCalendlyUrl model)
+            , target "_blank"
+            ]
+            [ div [ class "flex items-center space-x-3" ]
+                [ span [ class "w-6 h-6 flex items-center justify-center" ]
+                    [ MyIcon.calendarDays 24 "#03045E" ]
+                , span [ class "font-semibold text-base" ]
+                    [ text ("Schedule a Call with " ++ info.agent.firstName) ]
+                ]
+            ]
+        , button
+            [ class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
+            , type_ "button"
+            ]
+            [ div [ class "flex items-center space-x-3" ]
+                [ span [ class "w-6 h-6 flex items-center justify-center" ]
+                    [ MyIcon.heartPulse 24 "#03045E" ]
+                , span [ class "font-semibold text-base" ]
+                    [ text ("Request a Call from " ++ info.agent.firstName) ]
+                ]
+            ]
+        , if not (String.isEmpty info.agent.phone) then
+            p [ class "text-center text-[#03045E] font-bold text-base mt-6" ]
+                [ text ("or Give " ++ info.agent.firstName ++ " a call at: ")
+                , a [ href ("tel:" ++ info.agent.phone), class "text-[#03045E]" ]
+                    [ text (formatPhoneNumber info.agent.phone) ]
+                ]
+
+          else
+            text ""
+        ]
+
+
+viewDeclineButtons : Model -> ScheduleInfo -> Html Msg
+viewDeclineButtons model info =
+    div [ class "space-y-4" ]
+        [ a
+            [ class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
+            , href (makeCalendlyUrl model)
+            , target "_blank"
+            ]
+            [ div [ class "flex items-center space-x-3" ]
+                [ span [ class "w-6 h-6 flex items-center justify-center" ]
+                    [ MyIcon.calendarDays 24 "#03045E" ]
+                , span [ class "font-semibold text-base" ]
+                    [ text ("Schedule a Call with " ++ info.agent.firstName) ]
+                ]
+            ]
+        , button
+            [ class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
+            , type_ "button"
+            ]
+            [ div [ class "flex items-center space-x-3" ]
+                [ span [ class "w-6 h-6 flex items-center justify-center" ]
+                    [ MyIcon.undo2 24 "#03045E" ]
+                , span [ class "font-semibold text-base" ]
+                    [ text "Try to Qualify for a Different Plan" ]
+                ]
+            ]
+        , -- Advantage Plan Section
+          div [ class "mt-8 mb-4" ]
+            [ h3 [ class "text-[#03045E] font-bold text-base mb-3" ]
+                [ text "Interested in an Advantage Plan?" ]
+            , p [ class "text-[#03045E] text-sm mb-6 leading-relaxed" ]
+                [ text "We can switch you to an Advantage Plan during the Annual Enrollment Period (Oct. 7 - Dec. 7) - Click below so we know to contact you during AEP." ]
+            , button
+                [ class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
+                , type_ "button"
+                ]
+                [ div [ class "flex items-center space-x-3" ]
+                    [ span [ class "w-6 h-6 flex items-center justify-center" ]
+                        [ MyIcon.clipboardPlus 24 "#03045E" ]
+                    , span [ class "font-semibold text-base" ]
+                        [ text "Get on the Advantage Plan List" ]
+                    ]
+                ]
+            ]
+        , if not (String.isEmpty info.agent.phone) then
+            p [ class "text-center text-[#03045E] font-bold text-base mt-6" ]
+                [ text ("or Give " ++ info.agent.firstName ++ " a call at: ")
+                , a [ href ("tel:" ++ info.agent.phone), class "text-[#03045E]" ]
+                    [ text (formatPhoneNumber info.agent.phone) ]
+                ]
+
+          else
+            text ""
+        ]
+
+
+viewGenericButtons : Model -> ScheduleInfo -> Html Msg
+viewGenericButtons model info =
+    div [ class "space-y-4" ]
+        [ a
+            [ class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
+            , href (makeCalendlyUrl model)
+            , target "_blank"
+            ]
+            [ div [ class "flex items-center space-x-3" ]
+                [ span [ class "w-6 h-6 flex items-center justify-center" ]
+                    [ MyIcon.calendarDays 24 "#03045E" ]
+                , span [ class "font-semibold text-base" ]
+                    [ text ("Schedule a Call with " ++ info.agent.firstName) ]
+                ]
+            ]
+        , button
+            [ class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
+            , type_ "button"
+            ]
+            [ div [ class "flex items-center space-x-3" ]
+                [ span [ class "w-6 h-6 flex items-center justify-center" ]
+                    [ MyIcon.heartPulse 24 "#03045E" ]
+                , span [ class "font-semibold text-base" ]
+                    [ text ("Request a Call from " ++ info.agent.firstName) ]
+                ]
+            ]
+        , if not (String.isEmpty info.agent.phone) then
+            p [ class "text-center text-[#03045E] font-bold text-base mt-6" ]
+                [ text ("or Give " ++ info.agent.firstName ++ " a call at: ")
+                , a [ href ("tel:" ++ info.agent.phone), class "text-[#03045E]" ]
+                    [ text (formatPhoneNumber info.agent.phone) ]
+                ]
+
+          else
+            text ""
+        ]
+
+
+viewLoading : Html Msg
+viewLoading =
+    div [ class "fixed inset-0 bg-white flex flex-col items-center justify-center gap-4 text-center" ]
+        [ div [ class "animate-spin rounded-full h-12 w-12 border-4 border-[#03045E] border-t-transparent" ] []
+        , p [ class "text-center text-lg font-medium text-gray-600" ]
+            [ text "Loading your schedule page..." ]
+        ]
+
+
+makeCalendlyUrl : Model -> String
+makeCalendlyUrl model =
+    case model.redirectUrl of
+        Just url ->
+            List.Extra.zip
+                [ "email", "name", "location" ]
+                [ model.email
+                , model.name
+                , model.phoneNumber
+                ]
+                |> List.filterMap
+                    (\( key, value ) ->
+                        case value of
+                            Just s ->
+                                case key of
+                                    "location" ->
+                                        Just (key ++ "=1" ++ Url.percentEncode s)
+
+                                    _ ->
+                                        Just (key ++ "=" ++ Url.percentEncode s)
+
+                            Nothing ->
+                                Nothing
+                    )
+                |> String.join "&"
+                |> (\s -> url ++ "?" ++ s)
+
+        Nothing ->
+            "#"
 
 
 getTitle : EligibilityStatus -> String
@@ -364,10 +548,10 @@ getHeading : EligibilityStatus -> String
 getHeading status =
     case status of
         Accept ->
-            "Great News!"
+            "Great News..."
 
         Decline ->
-            "We Need to Talk"
+            "Here are some options..."
 
         Generic ->
             "Let's Connect"
@@ -377,10 +561,10 @@ getMessage : EligibilityStatus -> String
 getMessage status =
     case status of
         Accept ->
-            "Based on your answers, you look like a good candidate to switch plans. Let's schedule a follow-up to discuss your options."
+            "Based on your answers, you look like a good candidate to switch plans. Let's schedule a follow-up to discuss your options or jump on a call now."
 
         Decline ->
-            "Based on your answers, you may not qualify for this plan. However, we'd love to help you find a different plan that's a perfect fit for your needs."
+            "Based on your answers, you may not qualify for this plan. However, there are some options and we'd love to help you find a different plan that's a perfect fit for your needs."
 
         Generic ->
             "Let's schedule a follow-up call to discuss your Medicare options and find the best plan for your needs."
