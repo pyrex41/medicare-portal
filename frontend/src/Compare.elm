@@ -52,6 +52,8 @@ type alias ContactResponse =
     { contact : Contact
     , agent : Agent
     , orgSlug : String
+    , orgName : String
+    , orgLogo : Maybe String
     , carrierContracts : List Carrier
     }
 
@@ -155,6 +157,8 @@ type alias Model =
     , carrierContracts : List Carrier
     , currentDate : Maybe Date
     , orgId : Maybe String
+    , orgName : Maybe String
+    , orgLogo : Maybe String
     , name : Maybe String
     , contact : Maybe Contact
     , agent : Maybe Agent
@@ -249,6 +253,8 @@ init key maybeParams =
             , carrierContracts = []
             , currentDate = Nothing
             , orgId = Nothing
+            , orgName = Nothing
+            , orgLogo = Nothing
             , name = Nothing
             , contact = Nothing
             , agent = Nothing
@@ -755,6 +761,8 @@ update msg model =
                                 | contact = Just response.contact
                                 , agent = Just response.agent
                                 , orgSlug = Just response.orgSlug
+                                , orgName = Just response.orgName
+                                , orgLogo = response.orgLogo
                                 , carrierContracts = response.carrierContracts
                                 , loadingContact = False
                                 , name = Just (response.contact.firstName ++ " " ++ response.contact.lastName)
@@ -1348,7 +1356,20 @@ view : Model -> Browser.Document Msg
 view model =
     { title = "Quote - Medicare Max"
     , body =
-        [ div [ class "bg-white min-h-screen pb-12" ]
+        [ div [ class "flex justify-center items-center mt-8 mb-4" ]
+            [ case model.orgLogo of
+                Just logo ->
+                    img [ src logo, alt "Organization Logo", class "h-16 max-w-[200px] object-contain" ] []
+
+                Nothing ->
+                    case model.orgName of
+                        Just name ->
+                            div [ class "text-2xl font-bold text-[#101828] leading-[1.2]" ] [ text name ]
+
+                        Nothing ->
+                            text ""
+            ]
+        , div [ class "bg-white min-h-screen pb-12" ]
             [ if model.loadingContact || model.isLoading then
                 viewLoading
 
@@ -1654,10 +1675,12 @@ formatPhoneNumber phone =
 
 contactResponseDecoder : Decoder ContactResponse
 contactResponseDecoder =
-    D.map4 ContactResponse
+    D.map6 ContactResponse
         (D.field "contact" contactDecoder)
         (D.field "agent" agentDecoder)
         (D.field "orgSlug" D.string)
+        (D.field "orgName" D.string)
+        (D.field "orgLogo" (D.nullable D.string))
         (D.field "carrierContracts" (D.list carrierDecoder))
 
 

@@ -167,8 +167,8 @@ export const quotesRoutes = (app: Elysia) => {
             
             const mainDb = new Database();
             logger.info(`Fetching organization details for orgId: ${decoded.orgId}`);
-            const result = await mainDb.fetchOne<{ slug: string, org_settings: string }>(
-                'SELECT slug, org_settings FROM organizations WHERE id = ?',
+            const result = await mainDb.fetchOne<{ slug: string, org_settings: string, name: string, logo_data: string }>(
+                'SELECT slug, org_settings, name, logo_data FROM organizations WHERE id = ?',
                 [decoded.orgId]
             );
 
@@ -253,6 +253,8 @@ export const quotesRoutes = (app: Elysia) => {
                 success: true,
                 orgId: decoded.orgId.toString(),
                 orgSlug: orgSlug || null,
+                orgName: result.name,
+                orgLogo: result.logo_data || null,
                 carrierContracts: carrierContracts || null,
                 agent: {
                     firstName: agent.first_name,
