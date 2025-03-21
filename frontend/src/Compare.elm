@@ -12,6 +12,7 @@ module Compare exposing
 
 import BirthdayRules exposing (isInBirthdayRuleWindow)
 import Browser
+import Browser.Dom as Dom
 import Browser.Events
 import Browser.Navigation as Nav
 import CarrierNaic exposing (Carrier(..), carrierDecoder, carrierToNaics, carrierToString, naicToCarrier, stringToCarrier)
@@ -630,38 +631,41 @@ update msg model =
 
         SelectPlan plan ->
             ( { model | showQualificationVideo = True }
-            , Nav.pushUrl model.key
-                (case model.quoteId of
-                    Just id ->
-                        let
-                            orgIdParam =
-                                case model.orgId of
-                                    Just orgId ->
-                                        "&orgId=" ++ orgId
+            , Cmd.batch
+                [ Nav.pushUrl model.key
+                    (case model.quoteId of
+                        Just id ->
+                            let
+                                orgIdParam =
+                                    case model.orgId of
+                                        Just orgId ->
+                                            "&orgId=" ++ orgId
 
-                                    Nothing ->
-                                        -- Try to extract orgId from the quoteId as a fallback
-                                        case String.split "-" id |> List.head of
-                                            Just extractedOrgId ->
-                                                "&orgId=" ++ extractedOrgId
+                                        Nothing ->
+                                            -- Try to extract orgId from the quoteId as a fallback
+                                            case String.split "-" id |> List.head of
+                                                Just extractedOrgId ->
+                                                    "&orgId=" ++ extractedOrgId
 
-                                            Nothing ->
-                                                ""
-                        in
-                        "/eligibility?id=" ++ id ++ orgIdParam
+                                                Nothing ->
+                                                    ""
+                            in
+                            "/eligibility?id=" ++ id ++ orgIdParam
 
-                    Nothing ->
-                        let
-                            orgIdParam =
-                                case model.orgId of
-                                    Just orgId ->
-                                        "?orgId=" ++ orgId
+                        Nothing ->
+                            let
+                                orgIdParam =
+                                    case model.orgId of
+                                        Just orgId ->
+                                            "?orgId=" ++ orgId
 
-                                    Nothing ->
-                                        ""
-                        in
-                        "/eligibility" ++ orgIdParam
-                )
+                                        Nothing ->
+                                            ""
+                            in
+                            "/eligibility" ++ orgIdParam
+                    )
+                , Task.perform (\_ -> NoOp) (Dom.setViewport 0 0)
+                ]
             )
 
         SelectPlanCard plan ->
