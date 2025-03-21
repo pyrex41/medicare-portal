@@ -8,6 +8,8 @@ if (!root) {
   throw new Error('Could not find root element')
 }
 
+
+
 // Add a hook to capture redirects in case we're still having issues
 const originalPushState = history.pushState;
 history.pushState = function(data: any, unused: string, url?: string | URL | null) {

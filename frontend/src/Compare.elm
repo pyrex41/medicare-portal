@@ -1243,7 +1243,7 @@ viewPlanCard model planTypeCode plan =
                 ( "text-[#363F72]", "bg-[#F8F9FC]" )
 
             else
-                ( "text-[#C4320A]", "bg-[#FFF6ED]" )
+                ( "text-[#F8F9FC]", "bg-[#363F72]" )
 
         borderClass =
             if isSelected then
@@ -1317,7 +1317,7 @@ viewPlansSection model =
                 , onClick (SelectPlan (Maybe.withDefault (Plan 0 0 Nothing 0 "" "" 0 "" "" "" "" "" "" 0 False "" False []) model.selectedPlan))
                 , disabled (model.selectedPlan == Nothing)
                 ]
-                [ text "Continue" ]
+                [ text "Qualify" ]
             ]
 
         -- Mobile header
@@ -1347,7 +1347,7 @@ viewPlansSection model =
                 , onClick (SelectPlan (Maybe.withDefault (Plan 0 0 Nothing 0 "" "" 0 "" "" "" "" "" "" 0 False "" False []) model.selectedPlan))
                 , disabled (model.selectedPlan == Nothing)
                 ]
-                [ text "Continue" ]
+                [ text "Qualify" ]
             ]
         ]
 

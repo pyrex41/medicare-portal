@@ -2,11 +2,14 @@ module Eligibility exposing (Model, Msg(..), init, subscriptions, update, view)
 
 import Browser
 import Browser.Navigation as Nav
+import Dict exposing (Dict)
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (onClick, onInput, onSubmit)
 import Http
+import Json.Decode as D
 import Json.Encode as E
+import MyIcon
 import Url.Builder as Builder
 
 
@@ -14,17 +17,36 @@ import Url.Builder as Builder
 -- TYPES
 
 
-type QuestionType
-    = MainQuestion
-    | FollowUpQuestion Int -- Parent question ID
+type Color
+    = DangerColor
+    | BlueColor
+    | AmberColor
+    | SuccessColor
+    | PurpleColor
+    | BrandColor
+
+
+type AnswerType
+    = BooleanAnswer (Maybe Bool)
+    | TextAnswer String
+
+
+type alias FollowUpQuestion =
+    { id : Int
+    , text : String
+    , answerType : AnswerType
+    }
 
 
 type alias Question =
     { id : Int
+    , icon : Icon
+    , title : String
     , text : String
-    , questionType : QuestionType
+    , color : Color
     , answer : Maybe Bool
-    , followUpText : Maybe String -- Optional text field for follow-up responses
+    , followUpQuestions : List FollowUpQuestion
+    , isExpanded : Bool
     }
 
 
@@ -32,7 +54,9 @@ type alias Model =
     { key : Nav.Key
     , questions : List Question
     , quoteId : Maybe String
-    , orgId : String -- Required organization ID
+    , orgId : String
+    , orgName : Maybe String
+    , orgLogo : Maybe String
     , isSubmitting : Bool
     , submissionError : Maybe String
     }
@@ -40,26 +64,190 @@ type alias Model =
 
 type Msg
     = AnswerQuestion Int Bool
-    | UpdateFollowUpText Int String
+    | ToggleExpand Int
+    | UpdateFollowUpText Int Int String
+    | AnswerFollowUpQuestion Int Int Bool
     | SubmitAnswers
     | SkipQuestions
-    | GotSubmitResponse (Result Http.Error String)
+    | GotSubmitResponse (Result Http.Error ContactResponse)
     | GotTempContactResponse (Result Http.Error String)
+    | GotOrgDetails (Result Http.Error OrgDetailsResponse)
+    | GotExistingAnswers (Result Http.Error ExistingAnswersResponse)
+
+
+type alias ContactResponse =
+    { contactId : String
+    , orgName : String
+    , orgLogo : Maybe String
+    }
+
+
+type alias OrgDetailsResponse =
+    { orgName : String
+    , orgLogo : Maybe String
+    }
+
+
+type Icon
+    = HeartIcon
+    | LungsIcon
+    | AlertCircleIcon
+    | DropletsIcon
+    | BrainIcon
+    | Building2Icon
+    | StethoscopeIcon
+
+
+type alias ExistingAnswersResponse =
+    { answers : List ExistingAnswer
+    , orgName : String
+    , orgLogo : Maybe String
+    }
+
+
+type alias ExistingAnswer =
+    { questionId : Int
+    , questionText : String
+    , questionType : String
+    , answer : Bool
+    }
 
 
 
 -- INIT
 
 
+defaultQuestions : List Question
+defaultQuestions =
+    [ { id = 1
+      , icon = HeartIcon
+      , title = "Heart Health"
+      , text = "Have you ever been diagnosed with or treated for any heart condition, including but not limited to heart failure, coronary artery disease, angina, atrial fibrillation, or heart valve problems?"
+      , color = DangerColor
+      , answer = Nothing
+      , isExpanded = False
+      , followUpQuestions =
+            [ { id = 101
+              , text = "What specific heart condition(s) have you been diagnosed with?"
+              , answerType = TextAnswer ""
+              }
+            , { id = 102
+              , text = "In the past 2 years, have you been hospitalized, had surgery, or any cardiac procedures (like angioplasty or stenting) for this condition?"
+              , answerType = BooleanAnswer Nothing
+              }
+            , { id = 103
+              , text = "Are you currently taking 3 or more medications for this heart condition, or using oxygen or nitroglycerin?"
+              , answerType = BooleanAnswer Nothing
+              }
+            ]
+      }
+    , { id = 2
+      , icon = LungsIcon
+      , title = "Lung Health"
+      , text = "Have you ever been diagnosed with or treated for a chronic lung condition such as COPD, emphysema, chronic bronchitis, or cystic fibrosis?"
+      , color = BlueColor
+      , answer = Nothing
+      , isExpanded = False
+      , followUpQuestions =
+            [ { id = 201
+              , text = "What specific lung condition(s) have you been diagnosed with?"
+              , answerType = TextAnswer ""
+              }
+            , { id = 202
+              , text = "Does this condition require you to use oxygen at home or a nebulizer?"
+              , answerType = BooleanAnswer Nothing
+              }
+            , { id = 203
+              , text = "In the past year, have you been hospitalized due to lung problems or had frequent (3 or more) respiratory infections requiring antibiotics or steroids?"
+              , answerType = BooleanAnswer Nothing
+              }
+            ]
+      }
+    , { id = 3
+      , icon = AlertCircleIcon
+      , title = "Cancer History"
+      , text = "Have you ever been diagnosed with or treated for cancer, leukemia, or lymphoma (excluding basal cell skin cancer)?"
+      , color = AmberColor
+      , answer = Nothing
+      , isExpanded = False
+      , followUpQuestions =
+            [ { id = 301
+              , text = "What type of cancer were you diagnosed with?"
+              , answerType = TextAnswer ""
+              }
+            , { id = 302
+              , text = "When were you initially diagnosed?"
+              , answerType = TextAnswer ""
+              }
+            , { id = 303
+              , text = "Are you currently undergoing active cancer treatment (chemotherapy, radiation, immunotherapy, targeted therapy, or hormone therapy)?"
+              , answerType = BooleanAnswer Nothing
+              }
+            ]
+      }
+    , { id = 4
+      , icon = DropletsIcon
+      , title = "Diabetes with Complications"
+      , text = "Have you ever been diagnosed with diabetes that has resulted in any complications affecting your eyes (retinopathy), nerves (neuropathy), kidneys (nephropathy), circulation (vascular disease), or heart?"
+      , color = SuccessColor
+      , answer = Nothing
+      , isExpanded = False
+      , followUpQuestions =
+            [ { id = 401
+              , text = "Which complications of diabetes have you experienced? (e.g., Neuropathy, Retinopathy, Kidney Problems, Vascular Disease, Heart Problems)"
+              , answerType = TextAnswer ""
+              }
+            , { id = 402
+              , text = "Do you require insulin to manage your diabetes, and if so, what is your typical daily insulin dosage?"
+              , answerType = TextAnswer ""
+              }
+            ]
+      }
+    , { id = 5
+      , icon = BrainIcon
+      , title = "Memory or Cognitive Health"
+      , text = "Do you have any concerns about your memory, thinking, or cognitive function, OR have you ever been diagnosed with dementia, Alzheimer's disease, or any other cognitive impairment?"
+      , color = PurpleColor
+      , answer = Nothing
+      , isExpanded = False
+      , followUpQuestions =
+            [ { id = 501
+              , text = "Have you been formally diagnosed with any cognitive impairment? If yes, what diagnosis?"
+              , answerType = TextAnswer ""
+              }
+            , { id = 502
+              , text = "Do you require assistance with activities of daily living such as remembering medications, managing finances, or personal care due to cognitive impairment?"
+              , answerType = BooleanAnswer Nothing
+              }
+            ]
+      }
+    , { id = 6
+      , icon = Building2Icon
+      , title = "Recent and Current Hospitalizations"
+      , text = "In the past 2 years, have you been hospitalized overnight in a hospital more than two times for any medical condition (excluding planned surgeries)?"
+      , color = BrandColor
+      , answer = Nothing
+      , isExpanded = False
+      , followUpQuestions = []
+      }
+    , { id = 7
+      , icon = StethoscopeIcon
+      , title = "Current Hospitalization or Medical Test"
+      , text = "Are you currently hospitalized or waiting on results from a medical test, or been recommended by a doctor to have a medical test performed?"
+      , color = BlueColor
+      , answer = Nothing
+      , isExpanded = False
+      , followUpQuestions = []
+      }
+    ]
+
+
 init : Nav.Key -> { quoteId : Maybe String, orgId : Maybe String } -> ( Model, Cmd Msg )
 init key { quoteId, orgId } =
     let
-        -- Extract org ID from quote ID if not provided explicitly
-        -- Quote IDs are formatted as "orgId-contactId-hash"
         extractedOrgId =
             case ( orgId, quoteId ) of
                 ( Nothing, Just id ) ->
-                    -- Try to extract orgId from the quoteId (first part before the first dash)
                     id
                         |> String.split "-"
                         |> List.head
@@ -70,147 +258,52 @@ init key { quoteId, orgId } =
 
                 ( Nothing, Nothing ) ->
                     ""
+
+        initialModel =
+            { key = key
+            , questions = defaultQuestions
+            , quoteId = quoteId
+            , orgId = extractedOrgId
+            , orgName = Nothing
+            , orgLogo = Nothing
+            , isSubmitting = False
+            , submissionError = Nothing
+            }
+
+        loadOrgDetails =
+            if String.isEmpty extractedOrgId then
+                Cmd.none
+
+            else
+                Http.get
+                    { url = "/api/org/" ++ extractedOrgId ++ "/details"
+                    , expect = Http.expectJson GotOrgDetails orgDetailsResponseDecoder
+                    }
+
+        loadExistingAnswers =
+            case quoteId of
+                Just id ->
+                    let
+                        contactId =
+                            String.split "-" id
+                                |> List.drop 1
+                                |> List.head
+                                |> Maybe.withDefault ""
+                    in
+                    if not (String.isEmpty contactId) then
+                        Http.get
+                            { url = "/api/org/" ++ extractedOrgId ++ "/eligibility-answers/" ++ contactId
+                            , expect = Http.expectJson GotExistingAnswers existingAnswersResponseDecoder
+                            }
+
+                    else
+                        Cmd.none
+
+                Nothing ->
+                    Cmd.none
     in
-    ( { key = key
-      , questions =
-            [ -- Heart Health
-              { id = 1
-              , text = "Heart Health: Have you ever been diagnosed with or treated for any heart condition, including but not limited to heart failure, coronary artery disease, angina, atrial fibrillation, or heart valve problems?"
-              , questionType = MainQuestion
-              , answer = Nothing
-              , followUpText = Nothing
-              }
-            , { id = 101
-              , text = "What specific heart condition(s) have you been diagnosed with?"
-              , questionType = FollowUpQuestion 1
-              , answer = Nothing
-              , followUpText = Just ""
-              }
-            , { id = 102
-              , text = "In the past 2 years, have you been hospitalized, had surgery, or any cardiac procedures (like angioplasty or stenting) for this condition?"
-              , questionType = FollowUpQuestion 1
-              , answer = Nothing
-              , followUpText = Nothing
-              }
-            , { id = 103
-              , text = "Are you currently taking 3 or more medications for this heart condition, or using oxygen or nitroglycerin?"
-              , questionType = FollowUpQuestion 1
-              , answer = Nothing
-              , followUpText = Nothing
-              }
-
-            -- Lung Health
-            , { id = 2
-              , text = "Lung Health: Have you ever been diagnosed with or treated for a chronic lung condition such as COPD, emphysema, chronic bronchitis, or cystic fibrosis?"
-              , questionType = MainQuestion
-              , answer = Nothing
-              , followUpText = Nothing
-              }
-            , { id = 201
-              , text = "What specific lung condition(s) have you been diagnosed with?"
-              , questionType = FollowUpQuestion 2
-              , answer = Nothing
-              , followUpText = Just ""
-              }
-            , { id = 202
-              , text = "Does this condition require you to use oxygen at home or a nebulizer?"
-              , questionType = FollowUpQuestion 2
-              , answer = Nothing
-              , followUpText = Nothing
-              }
-            , { id = 203
-              , text = "In the past year, have you been hospitalized due to lung problems or had frequent (3 or more) respiratory infections requiring antibiotics or steroids?"
-              , questionType = FollowUpQuestion 2
-              , answer = Nothing
-              , followUpText = Nothing
-              }
-
-            -- Cancer History
-            , { id = 3
-              , text = "Cancer History: Have you ever been diagnosed with or treated for cancer, leukemia, or lymphoma (excluding basal cell skin cancer)?"
-              , questionType = MainQuestion
-              , answer = Nothing
-              , followUpText = Nothing
-              }
-            , { id = 301
-              , text = "What type of cancer were you diagnosed with?"
-              , questionType = FollowUpQuestion 3
-              , answer = Nothing
-              , followUpText = Just ""
-              }
-            , { id = 302
-              , text = "When were you initially diagnosed?"
-              , questionType = FollowUpQuestion 3
-              , answer = Nothing
-              , followUpText = Just ""
-              }
-            , { id = 303
-              , text = "Are you currently undergoing active cancer treatment (chemotherapy, radiation, immunotherapy, targeted therapy, or hormone therapy)?"
-              , questionType = FollowUpQuestion 3
-              , answer = Nothing
-              , followUpText = Nothing
-              }
-
-            -- Diabetes with Complications
-            , { id = 4
-              , text = "Diabetes with Complications: Have you ever been diagnosed with diabetes that has resulted in any complications affecting your eyes (retinopathy), nerves (neuropathy), kidneys (nephropathy), circulation (vascular disease), or heart?"
-              , questionType = MainQuestion
-              , answer = Nothing
-              , followUpText = Nothing
-              }
-            , { id = 401
-              , text = "Which complications of diabetes have you experienced? (e.g., Neuropathy, Retinopathy, Kidney Problems, Vascular Disease, Heart Problems)"
-              , questionType = FollowUpQuestion 4
-              , answer = Nothing
-              , followUpText = Just ""
-              }
-            , { id = 402
-              , text = "Do you require insulin to manage your diabetes, and if so, what is your typical daily insulin dosage?"
-              , questionType = FollowUpQuestion 4
-              , answer = Nothing
-              , followUpText = Just ""
-              }
-
-            -- Memory or Cognitive Health
-            , { id = 5
-              , text = "Memory or Cognitive Health: Do you have any concerns about your memory, thinking, or cognitive function, OR have you ever been diagnosed with dementia, Alzheimer's disease, or any other cognitive impairment?"
-              , questionType = MainQuestion
-              , answer = Nothing
-              , followUpText = Nothing
-              }
-            , { id = 501
-              , text = "Have you been formally diagnosed with any cognitive impairment? If yes, what diagnosis?"
-              , questionType = FollowUpQuestion 5
-              , answer = Nothing
-              , followUpText = Just ""
-              }
-            , { id = 502
-              , text = "Do you require assistance with activities of daily living such as remembering medications, managing finances, or personal care due to cognitive impairment?"
-              , questionType = FollowUpQuestion 5
-              , answer = Nothing
-              , followUpText = Nothing
-              }
-
-            -- Recent and Current Hospitalizations
-            , { id = 6
-              , text = "In the past 2 years, have you been hospitalized overnight in a hospital more than two times for any medical condition (excluding planned surgeries)?"
-              , questionType = MainQuestion
-              , answer = Nothing
-              , followUpText = Nothing
-              }
-            , { id = 7
-              , text = "Are you currently hospitalized or waiting on results from a medical test, or been recommended by a doctor to have a medical test performed?"
-              , questionType = MainQuestion
-              , answer = Nothing
-              , followUpText = Nothing
-              }
-            ]
-      , quoteId = quoteId
-      , orgId = extractedOrgId
-      , isSubmitting = False
-      , submissionError = Nothing
-      }
-    , Cmd.none
+    ( initialModel
+    , Cmd.batch [ loadOrgDetails, loadExistingAnswers ]
     )
 
 
@@ -243,7 +336,10 @@ update msg model =
                     List.map
                         (\q ->
                             if q.id == id then
-                                { q | answer = Just answer }
+                                { q
+                                    | answer = Just answer
+                                    , isExpanded = answer -- Auto-expand when answered Yes
+                                }
 
                             else
                                 q
@@ -253,13 +349,67 @@ update msg model =
             , Cmd.none
             )
 
-        UpdateFollowUpText id text ->
+        ToggleExpand id ->
             ( { model
                 | questions =
                     List.map
                         (\q ->
                             if q.id == id then
-                                { q | followUpText = Just text }
+                                { q | isExpanded = not q.isExpanded }
+
+                            else
+                                q
+                        )
+                        model.questions
+              }
+            , Cmd.none
+            )
+
+        UpdateFollowUpText questionId answerId text ->
+            ( { model
+                | questions =
+                    List.map
+                        (\q ->
+                            if q.id == questionId then
+                                { q
+                                    | followUpQuestions =
+                                        List.map
+                                            (\f ->
+                                                if f.id == answerId then
+                                                    { f | answerType = TextAnswer text }
+
+                                                else
+                                                    f
+                                            )
+                                            q.followUpQuestions
+                                }
+
+                            else
+                                q
+                        )
+                        model.questions
+              }
+            , Cmd.none
+            )
+
+        AnswerFollowUpQuestion questionId answerId answer ->
+            ( { model
+                | questions =
+                    List.map
+                        (\q ->
+                            if q.id == questionId then
+                                { q
+                                    | followUpQuestions =
+                                        List.map
+                                            (\f ->
+                                                if f.id == answerId then
+                                                    { f | answerType = BooleanAnswer (Just answer) }
+
+                                                else
+                                                    f
+                                            )
+                                            q.followUpQuestions
+                                }
 
                             else
                                 q
@@ -271,10 +421,16 @@ update msg model =
 
         GotSubmitResponse result ->
             case result of
-                Ok contactId ->
+                Ok response ->
                     let
+                        _ =
+                            Debug.log "response" response
+
+                        _ =
+                            Debug.log "model.questions" model.questions
+
                         anyYes =
-                            List.any (\q -> q.questionType == MainQuestion && q.answer == Just True) model.questions
+                            List.any (\q -> q.answer == Just True) model.questions
 
                         nextUrl =
                             Builder.absolute [ "schedule" ]
@@ -292,11 +448,15 @@ update msg model =
                                                 [ Builder.string "id" id ]
 
                                             Nothing ->
-                                                [ Builder.string "contactId" contactId ]
+                                                [ Builder.string "contactId" response.contactId ]
                                        )
                                 )
                     in
-                    ( { model | isSubmitting = False }
+                    ( { model
+                        | isSubmitting = False
+                        , orgName = Just response.orgName
+                        , orgLogo = response.orgLogo
+                      }
                     , Nav.pushUrl model.key nextUrl
                     )
 
@@ -328,7 +488,7 @@ update msg model =
                                     [ ( "contact_id", E.string contactId )
                                     , ( "answers", encodedAnswers )
                                     ]
-                        , expect = Http.expectString GotSubmitResponse
+                        , expect = Http.expectJson GotSubmitResponse contactResponseDecoder
                         }
                     )
 
@@ -340,6 +500,49 @@ update msg model =
                     , Cmd.none
                     )
 
+        GotOrgDetails result ->
+            case result of
+                Ok response ->
+                    ( { model
+                        | orgName = Just response.orgName
+                        , orgLogo = response.orgLogo
+                      }
+                    , Cmd.none
+                    )
+
+                Err _ ->
+                    ( model, Cmd.none )
+
+        GotExistingAnswers result ->
+            case result of
+                Ok response ->
+                    let
+                        updatedQuestions =
+                            List.map
+                                (\q ->
+                                    case List.filter (\a -> a.questionId == q.id) response.answers of
+                                        existingAnswer :: _ ->
+                                            { q
+                                                | answer = Just existingAnswer.answer
+                                                , isExpanded = existingAnswer.answer -- Auto-expand if answered Yes
+                                            }
+
+                                        [] ->
+                                            q
+                                )
+                                model.questions
+                    in
+                    ( { model
+                        | questions = updatedQuestions
+                        , orgName = Just response.orgName
+                        , orgLogo = response.orgLogo
+                      }
+                    , Cmd.none
+                    )
+
+                Err _ ->
+                    ( model, Cmd.none )
+
         SubmitAnswers ->
             let
                 relevantQuestions =
@@ -348,12 +551,21 @@ update msg model =
                 allRelevantQuestionsAnswered =
                     List.all
                         (\q ->
-                            case q.followUpText of
-                                Just _ ->
-                                    True
-
-                                Nothing ->
+                            case q.followUpQuestions of
+                                [] ->
                                     q.answer /= Nothing
+
+                                followUps ->
+                                    List.all
+                                        (\fq ->
+                                            case fq.answerType of
+                                                TextAnswer _ ->
+                                                    True
+
+                                                BooleanAnswer _ ->
+                                                    q.answer /= Nothing
+                                        )
+                                        followUps
                         )
                         relevantQuestions
 
@@ -365,16 +577,7 @@ update msg model =
                     Just quoteId ->
                         -- If we have a quote ID, submit answers directly
                         ( { model | isSubmitting = True, submissionError = Nothing }
-                        , Http.post
-                            { url = "/api/org/" ++ model.orgId ++ "/eligibility-answers"
-                            , body =
-                                Http.jsonBody <|
-                                    E.object
-                                        [ ( "quote_id", E.string quoteId )
-                                        , ( "answers", encodedAnswers )
-                                        ]
-                            , expect = Http.expectString GotSubmitResponse
-                            }
+                        , submitAnswers model
                         )
 
                     Nothing ->
@@ -400,32 +603,10 @@ update msg model =
 getRelevantQuestions : Model -> List Question
 getRelevantQuestions model =
     let
-        mainQuestions =
-            List.filter (\q -> q.questionType == MainQuestion) model.questions
-
-        followUpQuestions =
-            List.filter
-                (\q ->
-                    case q.questionType of
-                        FollowUpQuestion parentId ->
-                            let
-                                parentQuestion =
-                                    List.filter (\p -> p.id == parentId) model.questions
-                                        |> List.head
-                            in
-                            case parentQuestion of
-                                Just parent ->
-                                    parent.answer == Just True
-
-                                Nothing ->
-                                    False
-
-                        MainQuestion ->
-                            False
-                )
-                model.questions
+        answeredQuestions =
+            List.filter (\q -> q.answer /= Nothing) model.questions
     in
-    mainQuestions ++ followUpQuestions
+    answeredQuestions
 
 
 encodeAnswers : List Question -> E.Value
@@ -433,18 +614,30 @@ encodeAnswers questions =
     E.object
         (List.filterMap
             (\q ->
-                if q.answer == Nothing && q.followUpText == Nothing then
+                if q.answer == Nothing then
                     Nothing
 
                 else
                     let
                         questionType =
-                            case q.questionType of
-                                MainQuestion ->
+                            case q.color of
+                                DangerColor ->
                                     "main"
 
-                                FollowUpQuestion parentId ->
-                                    "followup_" ++ String.fromInt parentId
+                                BlueColor ->
+                                    "lung_health"
+
+                                AmberColor ->
+                                    "cancer_history"
+
+                                SuccessColor ->
+                                    "diabetes_with_complications"
+
+                                PurpleColor ->
+                                    "memory_or_cognitive_health"
+
+                                BrandColor ->
+                                    "recent_and_current_hospitalizations"
 
                         answerValue =
                             case q.answer of
@@ -452,12 +645,7 @@ encodeAnswers questions =
                                     E.bool ans
 
                                 Nothing ->
-                                    case q.followUpText of
-                                        Just text ->
-                                            E.string text
-
-                                        Nothing ->
-                                            E.null
+                                    E.null
                     in
                     Just
                         ( String.fromInt q.id
@@ -472,6 +660,122 @@ encodeAnswers questions =
         )
 
 
+iconToSvg : Icon -> Color -> Html msg
+iconToSvg icon color =
+    let
+        iconColor =
+            case color of
+                DangerColor ->
+                    "text-medicare-danger"
+
+                BlueColor ->
+                    "text-[#0075F2]"
+
+                AmberColor ->
+                    "text-amber-500"
+
+                SuccessColor ->
+                    "text-medicare-success"
+
+                PurpleColor ->
+                    "text-[#7F56D9]"
+
+                BrandColor ->
+                    "text-[#03045E]"
+    in
+    case icon of
+        HeartIcon ->
+            div [ class iconColor ] [ MyIcon.heartPulse 24 "currentColor" ]
+
+        LungsIcon ->
+            div [ class iconColor ] [ MyIcon.lungs 24 "currentColor" ]
+
+        AlertCircleIcon ->
+            div [ class iconColor ] [ MyIcon.activity 24 "currentColor" ]
+
+        DropletsIcon ->
+            div [ class iconColor ] [ MyIcon.droplets 24 "currentColor" ]
+
+        BrainIcon ->
+            div [ class iconColor ] [ MyIcon.brain 24 "currentColor" ]
+
+        Building2Icon ->
+            div [ class iconColor ] [ MyIcon.building2 24 "currentColor" ]
+
+        StethoscopeIcon ->
+            div [ class iconColor ] [ MyIcon.stethoscope 24 "currentColor" ]
+
+
+colorToClasses : Color -> Bool -> { card : String, title : String, indicator : String }
+colorToClasses color isActive =
+    case color of
+        DangerColor ->
+            { card =
+                if isActive then
+                    "bg-medicare-danger-light"
+
+                else
+                    "bg-white"
+            , title = "text-medicare-danger"
+            , indicator = "bg-medicare-danger-light"
+            }
+
+        BlueColor ->
+            { card =
+                if isActive then
+                    "bg-[#0075F2]/20"
+
+                else
+                    "bg-white"
+            , title = "text-[#0075F2]"
+            , indicator = "bg-[#0075F2]/10"
+            }
+
+        AmberColor ->
+            { card =
+                if isActive then
+                    "bg-amber-50"
+
+                else
+                    "bg-white"
+            , title = "text-amber-500"
+            , indicator = "bg-amber-50"
+            }
+
+        SuccessColor ->
+            { card =
+                if isActive then
+                    "bg-medicare-success-light"
+
+                else
+                    "bg-white"
+            , title = "text-medicare-success"
+            , indicator = "bg-medicare-success-light"
+            }
+
+        PurpleColor ->
+            { card =
+                if isActive then
+                    "bg-[#7F56D9]/20"
+
+                else
+                    "bg-white"
+            , title = "text-[#7F56D9]"
+            , indicator = "bg-[#7F56D9]/10"
+            }
+
+        BrandColor ->
+            { card =
+                if isActive then
+                    "bg-[#03045E]/20"
+
+                else
+                    "bg-white"
+            , title = "text-[#03045E]"
+            , indicator = "bg-[#03045E]/10"
+            }
+
+
 
 -- VIEW
 
@@ -482,7 +786,22 @@ view model =
     , body =
         [ div [ class "min-h-screen bg-white" ]
             [ div [ class "max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8" ]
-                [ h1 [ class "text-2xl sm:text-3xl font-bold text-center text-gray-900 mb-2 sm:mb-3" ]
+                [ -- Organization Logo/Name
+                  div [ class "flex justify-center mt-4 sm:mt-6 mb-6 sm:mb-6" ]
+                    [ case model.orgLogo of
+                        Just logo ->
+                            img [ src logo, class "h-10 sm:h-12", alt "Organization Logo" ] []
+
+                        Nothing ->
+                            case model.orgName of
+                                Just name ->
+                                    div [ class "text-2xl font-bold text-[#101828] leading-[1.2]" ] [ text name ]
+
+                                Nothing ->
+                                    --img [ src "/images/medicare-max-logo.png", class "h-10 sm:h-12", alt "Medicare Max Logo" ] []
+                                    text ""
+                    ]
+                , h1 [ class "text-2xl sm:text-3xl font-bold text-center text-gray-900 mb-2 sm:mb-3" ]
                     [ text "Underwriting Assessment" ]
                 , p [ class "text-gray-600 text-center mb-6 sm:mb-8 text-sm sm:text-base max-w-xl mx-auto" ]
                     [ text "In order to qualify for a new Supplemental plan you must pass medical underwriting. Please answer all questions to the best of your knowledge." ]
@@ -513,82 +832,124 @@ view model =
 
 viewQuestionsWithFollowUps : Model -> List (Html Msg)
 viewQuestionsWithFollowUps model =
-    let
-        mainQuestions =
-            List.filter (\q -> q.questionType == MainQuestion) model.questions
-    in
     List.map
-        (\mainQ ->
+        (\q ->
             let
-                followUps =
-                    List.filter
-                        (\q ->
-                            case q.questionType of
-                                FollowUpQuestion parentId ->
-                                    parentId == mainQ.id
-
-                                MainQuestion ->
-                                    False
-                        )
-                        model.questions
-
                 shouldShowFollowUps =
-                    mainQ.answer == Just True
+                    q.answer == Just True && q.isExpanded
             in
             div [ class "mb-6 transition-all duration-200" ]
-                [ viewQuestion mainQ
+                [ viewQuestion q
                 , if shouldShowFollowUps then
                     div
                         [ class "relative pl-6 mt-2 transition-all duration-300 overflow-hidden" ]
                         [ div [ class "absolute top-0 bottom-0 left-6 w-0.5 bg-blue-300" ] []
                         , div [ class "border border-gray-200 rounded-lg shadow-sm overflow-hidden" ]
-                            (List.map viewFollowUpQuestion followUps)
+                            (List.map (\f -> viewFollowUpQuestion f q.id) q.followUpQuestions)
                         ]
 
                   else
                     text ""
                 ]
         )
-        mainQuestions
+        model.questions
 
 
 viewQuestion : Question -> Html Msg
 viewQuestion question =
-    div [ class "border border-gray-300 rounded-lg shadow-md overflow-hidden" ]
-        [ div [ class "px-4 py-4 sm:px-5 sm:py-5 bg-white" ]
-            [ p [ class "text-gray-900 text-sm sm:text-base font-medium mb-3" ]
-                [ text question.text ]
-            , div [ class "grid grid-cols-2 gap-2 sm:gap-3" ]
-                [ viewRadioButton question "Yes" True
-                , viewRadioButton question "No" False
+    let
+        colorClasses =
+            colorToClasses question.color (question.answer == Just True)
+
+        hasFollowUps =
+            not (List.isEmpty question.followUpQuestions)
+    in
+    div
+        [ class <|
+            "rounded-lg shadow-card overflow-hidden transition-all duration-300 border "
+                ++ colorClasses.card
+        ]
+        [ div [ class "p-3 sm:p-5" ]
+            [ div [ class "flex items-start gap-2 sm:gap-4" ]
+                [ div [ class "flex-shrink-0 mt-0.5 sm:mt-1" ]
+                    [ iconToSvg question.icon question.color ]
+                , div [ class "flex-1 min-w-0" ]
+                    [ div [ class "flex justify-between items-start" ]
+                        [ h3 [ class <| "font-semibold text-base sm:text-lg mb-1.5 sm:mb-2 " ++ colorClasses.title ]
+                            [ text question.title ]
+                        , if hasFollowUps && question.answer == Just True then
+                            button
+                                [ onClick (ToggleExpand question.id)
+                                , class <| "p-1 " ++ colorClasses.title ++ " hover:opacity-80"
+                                ]
+                                [ if question.isExpanded then
+                                    MyIcon.heartScan 20 "currentColor"
+
+                                  else
+                                    MyIcon.hospital 20 "currentColor"
+                                ]
+
+                          else
+                            text ""
+                        ]
+                    , p [ class "text-gray-700 text-sm sm:text-base mb-3 sm:mb-4" ]
+                        [ text question.text ]
+                    , div [ class "flex gap-2 sm:gap-3" ]
+                        [ viewAnswerButton question True
+                        , viewAnswerButton question False
+                        ]
+                    ]
                 ]
             ]
         ]
 
 
-viewFollowUpQuestion : Question -> Html Msg
-viewFollowUpQuestion question =
-    div
-        [ class "px-4 py-3 sm:px-5 sm:py-4 bg-white border-b border-gray-100 last:border-b-0" ]
+viewFollowUpQuestion : FollowUpQuestion -> Int -> Html Msg
+viewFollowUpQuestion followUp parentId =
+    div [ class "px-3 py-2.5 sm:px-5 sm:py-4 bg-white border-b border-gray-100 last:border-b-0" ]
         [ p [ class "text-gray-700 text-sm sm:text-base mb-2" ]
-            [ text question.text ]
-        , case question.followUpText of
-            Just textValue ->
+            [ text followUp.text ]
+        , case followUp.answerType of
+            TextAnswer textValue ->
                 div [ class "mt-2" ]
                     [ textarea
-                        [ class "w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-sm"
+                        [ class "w-full p-2.5 sm:p-3 text-sm sm:text-base border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#03045E] focus:border-[#03045E]"
                         , rows 2
                         , placeholder "Please provide details..."
                         , value textValue
-                        , onInput (UpdateFollowUpText question.id)
+                        , onInput (\text -> UpdateFollowUpText parentId followUp.id text)
                         ]
                         []
                     ]
 
-            Nothing ->
-                div [ class "grid grid-cols-2 gap-2 sm:gap-3" ]
-                    [ viewRadioButton question "Yes" True
-                    , viewRadioButton question "No" False
+            BooleanAnswer answer ->
+                div [ class "flex gap-2 sm:gap-3" ]
+                    [ button
+                        [ type_ "button"
+                        , onClick (AnswerFollowUpQuestion parentId followUp.id True)
+                        , class <|
+                            "flex-1 py-2 sm:py-2.5 px-3 sm:px-4 text-sm sm:text-base rounded-lg font-medium transition-colors border "
+                                ++ (if answer == Just True then
+                                        "bg-[#03045E] text-white border-[#03045E]"
+
+                                    else
+                                        "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
+                                   )
+                        ]
+                        [ text "Yes" ]
+                    , button
+                        [ type_ "button"
+                        , onClick (AnswerFollowUpQuestion parentId followUp.id False)
+                        , class <|
+                            "flex-1 py-2 sm:py-2.5 px-3 sm:px-4 text-sm sm:text-base rounded-lg font-medium transition-colors border "
+                                ++ (if answer == Just False then
+                                        "bg-gray-900 text-white border-gray-900"
+
+                                    else
+                                        "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
+                                   )
+                        ]
+                        [ text "No" ]
                     ]
         ]
 
@@ -622,37 +983,83 @@ viewRadioButton question labelText value =
         ]
 
 
+viewAnswerButton : Question -> Bool -> Html Msg
+viewAnswerButton question isYes =
+    button
+        [ type_ "button"
+        , onClick (AnswerQuestion question.id isYes)
+        , class <|
+            "flex-1 py-2 sm:py-2.5 px-3 sm:px-4 text-sm sm:text-base rounded-lg font-medium transition-colors border "
+                ++ (if question.answer == Just isYes then
+                        if isYes then
+                            "bg-[#03045E] text-white border-[#03045E]"
+
+                        else
+                            "bg-gray-900 text-white border-gray-900"
+
+                    else
+                        "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
+                   )
+        ]
+        [ text
+            (if isYes then
+                "Yes"
+
+             else
+                "No"
+            )
+        ]
+
+
 viewSubmitButton : Model -> Html Msg
 viewSubmitButton model =
     let
-        relevantQuestions =
-            getRelevantQuestions model
+        -- Check if all main questions are answered
+        allMainQuestionsAnswered =
+            List.all (\q -> q.answer /= Nothing) model.questions
 
-        allRelevantQuestionsAnswered =
+        -- For any "Yes" answers with follow-up questions, check if all boolean follow-ups are answered
+        allRequiredFollowUpsAnswered =
             List.all
                 (\q ->
-                    case q.followUpText of
-                        Just _ ->
-                            True
+                    case q.answer of
+                        Just True ->
+                            -- If answered Yes, check follow-up questions
+                            List.all
+                                (\fq ->
+                                    case fq.answerType of
+                                        TextAnswer _ ->
+                                            -- Text answers are optional
+                                            True
 
-                        Nothing ->
-                            q.answer /= Nothing
+                                        BooleanAnswer answer ->
+                                            -- Boolean answers must be answered
+                                            answer /= Nothing
+                                )
+                                q.followUpQuestions
+
+                        _ ->
+                            -- If not answered Yes, follow-ups don't matter
+                            True
                 )
-                relevantQuestions
+                model.questions
+
+        canSubmit =
+            allMainQuestionsAnswered && allRequiredFollowUpsAnswered && not model.isSubmitting
 
         buttonClass =
             "w-full py-2.5 sm:py-3 rounded-lg text-white font-medium transition-colors duration-200 mt-4 sm:mt-6 text-sm sm:text-base shadow-sm "
-                ++ (if allRelevantQuestionsAnswered && not model.isSubmitting then
-                        "bg-purple-600 hover:bg-purple-700"
+                ++ (if canSubmit then
+                        "bg-[#03045E] hover:bg-[#03045E]/90"
 
                     else
-                        "bg-gray-300 cursor-not-allowed"
+                        "bg-[#03045E]/70 cursor-not-allowed"
                    )
     in
     button
         [ class buttonClass
         , type_ "submit"
-        , disabled (not allRelevantQuestionsAnswered || model.isSubmitting)
+        , disabled (not canSubmit)
         ]
         [ if model.isSubmitting then
             text "Submitting..."
@@ -669,3 +1076,63 @@ viewSubmitButton model =
 subscriptions : Model -> Sub Msg
 subscriptions _ =
     Sub.none
+
+
+
+-- Add this near other decoders
+
+
+contactResponseDecoder : D.Decoder ContactResponse
+contactResponseDecoder =
+    D.map3 ContactResponse
+        (D.field "contactId" D.string)
+        (D.field "orgName" D.string)
+        (D.field "orgLogo" (D.nullable D.string))
+
+
+orgDetailsResponseDecoder : D.Decoder OrgDetailsResponse
+orgDetailsResponseDecoder =
+    D.map2 OrgDetailsResponse
+        (D.field "name" D.string)
+        (D.field "logo_data" (D.nullable D.string))
+
+
+submitAnswers : Model -> Cmd Msg
+submitAnswers model =
+    Http.post
+        { url = "/api/org/" ++ model.orgId ++ "/eligibility-answers"
+        , body =
+            Http.jsonBody <|
+                E.object
+                    [ ( "quote_id", E.string (Maybe.withDefault "" model.quoteId) )
+                    , ( "answers", encodeAnswers (getRelevantQuestions model) )
+                    ]
+        , expect = Http.expectJson GotSubmitResponse contactResponseDecoder
+        }
+
+
+existingAnswersResponseDecoder : D.Decoder ExistingAnswersResponse
+existingAnswersResponseDecoder =
+    D.map3 ExistingAnswersResponse
+        (D.field "answers" (D.dict existingAnswerDecoder |> D.map dictToAnswerList))
+        (D.field "orgName" D.string)
+        (D.field "orgLogo" (D.nullable D.string))
+
+
+existingAnswerDecoder : D.Decoder ExistingAnswer
+existingAnswerDecoder =
+    D.map4 ExistingAnswer
+        (D.succeed 0)
+        -- Will be replaced with the key from the dict
+        (D.field "question_text" D.string)
+        (D.field "question_type" D.string)
+        (D.field "answer" D.bool)
+
+
+dictToAnswerList : Dict String ExistingAnswer -> List ExistingAnswer
+dictToAnswerList dict =
+    Dict.toList dict
+        |> List.map
+            (\( key, answer ) ->
+                { answer | questionId = String.toInt key |> Maybe.withDefault 0 }
+            )
