@@ -13,6 +13,7 @@ import MyIcon
 import Svg
 import Svg.Attributes as SvgAttr
 import Url
+import Utils.QuoteHeader exposing (viewHeader)
 
 
 type EligibilityStatus
@@ -354,22 +355,10 @@ view model =
             div [ class "min-h-screen bg-[#F9FAFB]" ]
                 [ div [ class "max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-12" ]
                     [ -- Organization Logo/Name
-                      div [ class "flex justify-center items-center mt-4 sm:mt-6 mb-8 sm:mb-10" ]
+                      div [ class "flex justify-center items-center mb-16 sm:mb-24" ]
                         [ case model.scheduleInfo of
                             Just info ->
-                                case info.organization.orgLogo of
-                                    Just logo ->
-                                        div [ class "flex flex-col items-center" ]
-                                            [ img [ src logo, class "h-10 sm:h-12", alt "Organization Logo" ] []
-                                            ]
-
-                                    Nothing ->
-                                        case info.organization.orgName of
-                                            Just name ->
-                                                div [ class "text-[28px] font-black text-[#3DBDEC] font-['Fira_Sans']" ] [ text name ]
-
-                                            Nothing ->
-                                                text ""
+                                viewHeader info.organization.orgLogo info.organization.orgName
 
                             Nothing ->
                                 text ""

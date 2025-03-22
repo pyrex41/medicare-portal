@@ -16,6 +16,7 @@ import Time
 import Url exposing (Url)
 import Url.Builder as Builder
 import Url.Parser as Parser exposing ((</>), Parser, oneOf, string)
+import Utils.QuoteHeader exposing (viewHeader)
 
 
 
@@ -36,6 +37,7 @@ type alias Model =
     { orgId : Maybe String
     , orgSlug : Maybe String
     , logo : Maybe String
+    , orgName : Maybe String
     , email : String
     , firstName : String
     , lastName : String
@@ -108,6 +110,7 @@ init key url =
             { orgId = Nothing
             , orgSlug = Nothing
             , logo = Nothing
+            , orgName = Nothing
             , email = ""
             , firstName = ""
             , lastName = ""
@@ -361,6 +364,7 @@ type alias OrgDetails =
     , orgSlug : String
     , contact : Maybe Contact
     , logo : Maybe String
+    , orgName : Maybe String
     }
 
 
@@ -461,6 +465,7 @@ update msg model =
                     ( { model
                         | orgId = Just details.orgId
                         , orgSlug = Just details.orgSlug
+                        , orgName = details.orgName
                         , logo = details.logo
                         , email = Maybe.map .email contact |> Maybe.withDefault model.email
                         , firstName = Maybe.map .firstName contact |> Maybe.withDefault model.firstName
@@ -701,7 +706,12 @@ update msg model =
             case result of
                 Ok response ->
                     if response.success then
-                        ( { model | isSubmitting = False, success = True, error = Nothing, isGeneratingQuote = True }
+                        ( { model
+                            | isSubmitting = False
+                            , success = True
+                            , error = Nothing
+                            , isGeneratingQuote = True
+                          }
                         , Cmd.batch
                             [ saveDebugInfo <| "SignupResponse: contactId=" ++ String.fromInt response.contactId ++ ", email=" ++ response.email
                             , generateQuote model.orgId response.contactId response.email
@@ -1014,11 +1024,12 @@ contactDecoder =
 
 orgDetailsDecoder : Decoder OrgDetails
 orgDetailsDecoder =
-    Decode.map4 OrgDetails
+    Decode.map5 OrgDetails
         (Decode.field "orgId" Decode.string)
         (Decode.field "orgSlug" Decode.string)
         (Decode.maybe (Decode.field "contact" contactDecoder))
         (Decode.maybe (Decode.field "logo" Decode.string))
+        (Decode.maybe (Decode.field "orgName" Decode.string))
 
 
 signupResponseDecoder : Decoder SignupResponse
@@ -1100,14 +1111,7 @@ viewFormStep model =
     case model.formStep of
         SingleStep ->
             div []
-                [ case model.logo of
-                    Just logo ->
-                        div [ class "flex justify-center mt-4 sm:mt-6 mb-12 sm:mb-20" ]
-                            [ img [ src logo, class "h-10 sm:h-12", alt "Organization Logo" ] [] ]
-
-                    Nothing ->
-                        div [ class "flex justify-center mt-4 sm:mt-6 mb-12 sm:mb-20" ]
-                            [ img [ src "/images/medicare-max-logo.png", class "h-10 sm:h-12", alt "Medicare Max Logo" ] [] ]
+                [ viewHeader model.logo model.orgName
                 , div [ class "text-center mb-6 px-2 sm:px-0" ]
                     [ h1 [ class "text-2xl sm:text-3xl font-bold text-[#101828]" ] [ text "Let's Get Some Details" ]
                     , p [ class "text-[#475467] mt-2 text-sm sm:text-base" ] [ text "We use this information to get you the most accurate quote for your area." ]

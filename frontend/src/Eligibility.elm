@@ -11,6 +11,7 @@ import Json.Decode as D
 import Json.Encode as E
 import MyIcon
 import Url.Builder as Builder
+import Utils.QuoteHeader exposing (viewHeader)
 
 
 
@@ -781,20 +782,7 @@ view model =
         [ div [ class "min-h-screen bg-white" ]
             [ div [ class "max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8" ]
                 [ -- Organization Logo/Name
-                  div [ class "flex justify-center mt-4 sm:mt-6 mb-6 sm:mb-6" ]
-                    [ case model.orgLogo of
-                        Just logo ->
-                            img [ src logo, class "h-10 sm:h-12", alt "Organization Logo" ] []
-
-                        Nothing ->
-                            case model.orgName of
-                                Just name ->
-                                    div [ class "text-2xl font-bold text-[#101828] leading-[1.2]" ] [ text name ]
-
-                                Nothing ->
-                                    --img [ src "/images/medicare-max-logo.png", class "h-10 sm:h-12", alt "Medicare Max Logo" ] []
-                                    text ""
-                    ]
+                  viewHeader model.orgLogo model.orgName
                 , h1 [ class "text-2xl sm:text-3xl font-bold text-center text-gray-900 mb-2 sm:mb-3" ]
                     [ text "Underwriting Assessment" ]
                 , p [ class "text-gray-600 text-center mb-6 sm:mb-8 text-sm sm:text-base max-w-xl mx-auto" ]

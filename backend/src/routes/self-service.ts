@@ -414,7 +414,7 @@ export function createSelfServiceRoutes() {
         // Regular slug lookup
         const db = new Database();
         const result = await db.query(
-          'SELECT id, logo_data FROM organizations WHERE slug = ?',
+          'SELECT id, name, logo_data FROM organizations WHERE slug = ?',
           [orgSlug]
         );
 
@@ -426,14 +426,15 @@ export function createSelfServiceRoutes() {
         const orgId = result[0].id;
         const orgIdStr = orgId.toString();
         const logo = result[0].logo_data;
-        
+        const orgName = result[0].name;
         // Create response object with organization info
         const response = {
           success: true,
           orgId: orgIdStr,
           orgSlug,
           selfOnboardingUrl: `${config.PUBLIC_URL}/self-onboarding/${orgSlug}`,
-          logo
+          logo,
+          orgName
         };
         
         // Try to find contact information if email or quoteId provided
