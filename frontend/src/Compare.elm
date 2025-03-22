@@ -1350,7 +1350,7 @@ viewPlansSection model =
                 , p [ class "text-[16px] font-medium text-[#667085] -tracking-[0.04em] leading-[1.2] pb-[2px]" ] [ text "Select one to continue" ]
                 ]
             , button
-                [ class "bg-[#03045E] text-white text-sm font-medium px-6 py-2 rounded disabled:opacity-50 disabled:cursor-not-allowed"
+                [ class "bg-[#03045E] text-white text-sm font-medium px-6 py-2 rounded disabled:bg-zinc-400 disabled:text-gray-100 disabled:cursor-not-allowed"
                 , onClick (SelectPlan (Maybe.withDefault (Plan 0 0 Nothing 0 "" "" 0 "" "" "" "" "" "" 0 False "" False []) model.selectedPlan))
                 , disabled (model.selectedPlan == Nothing)
                 ]
@@ -1366,14 +1366,14 @@ viewPlansSection model =
         -- Plan G Section
         , div [ class "px-3 sm:px-4 py-6 bg-white" ]
             [ h3 [ class "text-xl font-extrabold -tracking-[0.02em] mb-6 text-[#101828]" ] [ text "Plan G Monthly Premiums" ]
-            , div [ class "flex flex-wrap gap-8 justify-center sm:justify-start" ]
+            , div [ class "flex flex-wrap gap-8 justify-center sm:justify-start sm:pl-8" ]
                 (List.map (viewPlanCard model "G") (getTopPlans model model.plans.planG 3))
             ]
 
         -- Plan N Section
         , div [ class "px-3 sm:px-4 py-6 bg-white" ]
             [ h3 [ class "text-xl font-extrabold -tracking-[0.02em] mb-6 text-[#101828]" ] [ text "Plan N Monthly Premiums" ]
-            , div [ class "flex flex-wrap gap-8 justify-center sm:justify-start" ]
+            , div [ class "flex flex-wrap gap-8 justify-center sm:justify-start sm:pl-8" ]
                 (List.map (viewPlanCard model "N") (getTopPlans model model.plans.planN 3))
             ]
         ]
