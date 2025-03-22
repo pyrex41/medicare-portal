@@ -1323,18 +1323,16 @@ viewPlanCard model planTypeCode plan =
                 ]
             ]
         , if isSelected then
-            div [ class "w-[calc(100vw-72px)] sm:w-[320px] bg-white mt-6 mb-2 flex justify-center transition-all duration-300 ease-in-out" ]
-                [ button
-                    [ class "w-[200px] bg-[#03045E] text-white text-sm font-medium px-4 py-4 rounded-lg hover:bg-[#02034D] transition-colors"
-                    , onClick (SelectPlan plan)
+            div [ class "block sm:hidden" ]
+                [ div [ class "w-[calc(100vw-72px)] bg-white mt-6 mb-2 flex justify-center transition-all duration-300 ease-in-out" ]
+                    [ button
+                        [ class "w-[200px] bg-[#03045E] text-white text-sm font-medium px-4 py-4 rounded-lg hover:bg-[#02034D] transition-colors"
+                        , onClick (SelectPlan plan)
+                        ]
+                        [ text "See if I Qualify" ]
                     ]
-                    [ text "See if I Qualify" ]
+                , div [ class "w-[calc(100vw-60px)] h-[1px] bg-[#DCE2E5] mt-4" ] []
                 ]
-
-          else
-            text ""
-        , if isSelected then
-            div [ class "w-[calc(100vw-60px)] sm:w-[320px] h-[1px] bg-[#DCE2E5] mt-4" ] []
 
           else
             text ""
