@@ -666,6 +666,7 @@ update msg model =
                             in
                             "/eligibility" ++ orgIdParam
                     )
+                , Task.perform (\_ -> NoOp) (Dom.setViewport 0 0)
                 ]
             )
 
