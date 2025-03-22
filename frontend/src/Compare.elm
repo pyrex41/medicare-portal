@@ -180,6 +180,7 @@ type Msg
     | TogglePlanType
     | SelectPlan Plan
     | SelectPlanCard Plan
+    | ScrollDown Dom.Viewport
     | CloseReviewVideo
     | OpenGvsNVideo
     | CloseGvsNVideo
@@ -664,7 +665,6 @@ update msg model =
                             in
                             "/eligibility" ++ orgIdParam
                     )
-                , Task.perform (\_ -> NoOp) (Dom.setViewport 0 0)
                 ]
             )
 
@@ -682,6 +682,9 @@ update msg model =
               }
             , Cmd.none
             )
+
+        ScrollDown viewport ->
+            ( model, Cmd.none )
 
         CloseReviewVideo ->
             ( { model | showReviewVideo = False }
@@ -1321,7 +1324,7 @@ viewPlansSection model =
                 , onClick (SelectPlan (Maybe.withDefault (Plan 0 0 Nothing 0 "" "" 0 "" "" "" "" "" "" 0 False "" False []) model.selectedPlan))
                 , disabled (model.selectedPlan == Nothing)
                 ]
-                [ text "Qualify" ]
+                [ text "See if I Qualify" ]
             ]
 
         -- Mobile header
@@ -1345,13 +1348,16 @@ viewPlansSection model =
             ]
 
         -- Mobile continue button
-        , div [ class "block sm:hidden p-4 bg-[#F9F5FF] rounded-b-[10px] border-t-2 border-[#DCE2E5]" ]
+        , div
+            [ class "block sm:hidden sticky bottom-0 p-4 bg-[#F9F5FF] rounded-b-[10px] border-t-2 border-[#DCE2E5]"
+            , id "mobile-continue"
+            ]
             [ button
                 [ class "w-full bg-[#03045E] text-white text-sm font-medium px-6 py-2 rounded disabled:opacity-50 disabled:cursor-not-allowed"
                 , onClick (SelectPlan (Maybe.withDefault (Plan 0 0 Nothing 0 "" "" 0 "" "" "" "" "" "" 0 False "" False []) model.selectedPlan))
                 , disabled (model.selectedPlan == Nothing)
                 ]
-                [ text "Qualify" ]
+                [ text "See if I Qualify" ]
             ]
         ]
 
@@ -1373,7 +1379,7 @@ view model =
                         Nothing ->
                             text ""
             ]
-        , div [ class "bg-white min-h-screen pb-12" ]
+        , div [ class "bg-white min-h-screen pb-12 scroll-smooth" ]
             [ if model.loadingContact || model.isLoading then
                 viewLoading
 
