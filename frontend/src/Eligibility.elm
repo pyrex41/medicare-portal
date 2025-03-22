@@ -60,6 +60,7 @@ type alias Model =
     , orgLogo : Maybe String
     , isSubmitting : Bool
     , submissionError : Maybe String
+    , isLoading : Bool
     }
 
 
@@ -269,6 +270,7 @@ init key { quoteId, orgId } =
             , orgLogo = Nothing
             , isSubmitting = False
             , submissionError = Nothing
+            , isLoading = True
             }
 
         loadOrgDetails =
@@ -780,33 +782,41 @@ view model =
     { title = "Underwriting Assessment"
     , body =
         [ div [ class "min-h-screen bg-white" ]
-            [ div [ class "max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8" ]
-                [ -- Organization Logo/Name
-                  viewHeader model.orgLogo model.orgName
-                , h1 [ class "text-2xl sm:text-3xl font-bold text-center text-gray-900 mb-2 sm:mb-3" ]
-                    [ text "Underwriting Assessment" ]
-                , p [ class "text-gray-600 text-center mb-6 sm:mb-8 text-sm sm:text-base max-w-xl mx-auto" ]
-                    [ text "In order to qualify for a new Supplemental plan you must pass medical underwriting. Please answer all questions to the best of your knowledge." ]
-                , if model.submissionError /= Nothing then
-                    div [ class "mb-4 p-3 bg-red-100 text-red-700 rounded-lg text-sm" ]
-                        [ text (Maybe.withDefault "" model.submissionError) ]
-
-                  else
-                    text ""
-                , Html.form [ onSubmit SubmitAnswers, class "space-y-4 sm:space-y-6" ]
-                    (viewQuestionsWithFollowUps model
-                        ++ [ viewSubmitButton model ]
-                    )
-                , div [ class "text-center mt-3 sm:mt-4" ]
-                    [ button
-                        [ onClick SkipQuestions
-                        , class "text-blue-600 hover:text-blue-800 underline text-sm py-2"
-                        , type_ "button"
-                        , disabled model.isSubmitting
-                        ]
-                        [ text "Skip" ]
+            [ if model.isLoading then
+                div [ class "fixed inset-0 bg-white flex flex-col items-center justify-center gap-4 text-center" ]
+                    [ div [ class "animate-spin rounded-full h-12 w-12 border-4 border-[#03045E] border-t-transparent" ] []
+                    , p [ class "text-center text-lg font-medium text-gray-600" ]
+                        [ text "Loading assessment..." ]
                     ]
-                ]
+
+              else
+                div [ class "max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8" ]
+                    [ -- Organization Logo/Name
+                      viewHeader model.orgLogo model.orgName
+                    , h1 [ class "text-2xl sm:text-3xl font-bold text-center text-gray-900 mb-2 sm:mb-3" ]
+                        [ text "Underwriting Assessment" ]
+                    , p [ class "text-gray-600 text-center mb-6 sm:mb-8 text-sm sm:text-base max-w-xl mx-auto" ]
+                        [ text "In order to qualify for a new Supplemental plan you must pass medical underwriting. Please answer all questions to the best of your knowledge." ]
+                    , if model.submissionError /= Nothing then
+                        div [ class "mb-4 p-3 bg-red-100 text-red-700 rounded-lg text-sm" ]
+                            [ text (Maybe.withDefault "" model.submissionError) ]
+
+                      else
+                        text ""
+                    , Html.form [ onSubmit SubmitAnswers, class "space-y-4 sm:space-y-6" ]
+                        (viewQuestionsWithFollowUps model
+                            ++ [ viewSubmitButton model ]
+                        )
+                    , div [ class "text-center mt-3 sm:mt-4" ]
+                        [ button
+                            [ onClick SkipQuestions
+                            , class "text-blue-600 hover:text-blue-800 underline text-sm py-2"
+                            , type_ "button"
+                            , disabled model.isSubmitting
+                            ]
+                            [ text "Skip" ]
+                        ]
+                    ]
             ]
         ]
     }
