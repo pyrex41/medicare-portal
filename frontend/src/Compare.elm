@@ -1388,12 +1388,12 @@ view model =
                 viewLoading
 
               else
-                div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 space-y-6 sm:space-y-10" ]
+                div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 space-y-8 sm:space-y-10" ]
                     [ -- Personal Quote Card
                       viewPersonalInfo model
 
                     -- Mobile video button
-                    , div [ class "block sm:hidden" ]
+                    , div [ class "block sm:hidden mt-8 sm:mt-0" ]
                         [ div [ class "mx-auto max-w-[280px] bg-[#F9F5FF] rounded-[10px] p-4 flex flex-row items-center cursor-pointer gap-4 border border-[#DCE2E5]", onClick OpenGvsNVideo ]
                             [ div [ class "w-[33px] h-[33px] rounded-full border border-[#03045E] flex items-center justify-center flex-shrink-0" ]
                                 [ div [ class "w-0 h-0 border-t-[8px] border-t-transparent border-l-[12px] border-l-[#03045E] border-b-[8px] border-b-transparent ml-1" ] []
