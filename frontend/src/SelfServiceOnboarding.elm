@@ -341,7 +341,6 @@ type Msg
     | UpdateCurrentPremium String
     | UpdateCurrentCarrier String
     | UpdateSelectedCounty String
-    | ToggleOptIn Bool
     | SubmitForm
     | GotCurrentDate Date
     | GotZipInfo (Result Http.Error ZipInfo)
@@ -656,9 +655,6 @@ update msg model =
 
         UpdateCurrentCarrier carrier ->
             ( { model | currentCarrier = carrier }, Cmd.none )
-
-        ToggleOptIn newValue ->
-            ( { model | optInQuarterlyUpdates = newValue }, Cmd.none )
 
         GotCurrentDate date ->
             ( { model | currentDate = Just date }, Cmd.none )
@@ -1309,10 +1305,10 @@ viewCombinedForm model =
                     ]
                 ]
             ]
-        , h3 [ class "font-medium text-base sm:text-lg mb-4 text-gray-700" ] [ text "Current Coverage (Optional)" ]
+        , h3 [ class "font-medium text-base sm:text-lg mb-4 text-gray-700" ] [ text "Current Coverage" ]
         , div [ class "grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-4" ]
             [ div [ class "col-span-1" ]
-                [ label [ class "block text-sm font-medium text-gray-700 mb-1" ] [ text "Current Carrier" ]
+                [ label [ class "block text-sm font-medium text-gray-700 mb-1" ] [ text "Current Carrier (optional)" ]
                 , div [ class "relative" ]
                     [ input
                         [ type_ "text"
@@ -1326,7 +1322,7 @@ viewCombinedForm model =
                     ]
                 ]
             , div [ class "col-span-1" ]
-                [ label [ class "block text-sm font-medium text-gray-700 mb-1" ] [ text "Current Monthly Premium" ]
+                [ label [ class "block text-sm font-medium text-gray-700 mb-1" ] [ text "Current Monthly Premium (optional)" ]
                 , div [ class "relative" ]
                     [ div [ class "absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none" ]
                         [ span [ class "text-gray-500" ] [ text "$" ] ]
@@ -1343,8 +1339,10 @@ viewCombinedForm model =
                     ]
                 ]
             ]
-        , div [ class "mt-6 flex justify-center" ]
-            [ checkboxField "I agree to receive Medicare Supplement plan updates" model.optInQuarterlyUpdates ToggleOptIn ]
+        , div [ class "mt-6 text-center" ]
+            [ p [ class "text-sm text-[#475467]" ]
+                [ text "By clicking below, you agree to receive Medicare Supplement plan updates that can help you save money." ]
+            ]
         ]
 
 
@@ -1371,23 +1369,6 @@ inputField labelText inputType inputValue msg isDisabled =
             , disabled isDisabled
             ]
             []
-        ]
-
-
-checkboxField : String -> Bool -> (Bool -> Msg) -> Html Msg
-checkboxField labelText isChecked toMsg =
-    div [ class "mb-4" ]
-        [ label [ class "flex items-center" ]
-            [ input
-                [ type_ "checkbox"
-                , class "h-4 w-4 text-[#3DBDEC] focus:ring-[#3DBDEC] border-[#D0D5DD] rounded"
-                , checked isChecked
-                , onCheck toMsg
-                , required True
-                ]
-                []
-            , span [ class "ml-2 text-sm text-[#475467]" ] [ text (labelText ++ " (Required)") ]
-            ]
         ]
 
 
