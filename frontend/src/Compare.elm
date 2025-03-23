@@ -1346,8 +1346,8 @@ viewPlansSection model =
         [ -- Header (desktop only)
           div [ class "hidden sm:flex px-4 sm:px-6 py-4 flex-row items-center justify-between border-b border-[#DCE2E5] bg-[#F9F5FF] rounded-t-[10px]" ]
             [ div [ class "flex items-end gap-3" ]
-                [ h2 [ class "text-2xl font-extrabold -tracking-[0.04em] text-[#101828] leading-[1.2]" ] [ text "Recommended Plans" ]
-                , p [ class "text-[16px] font-medium text-[#667085] -tracking-[0.04em] leading-[1.2] pb-[2px]" ] [ text "Select one to continue" ]
+                [ h2 [ class "text-2xl font-extrabold -tracking-[0.04em] text-[#101828] leading-[1.2]" ] [ text "Recommended Plans for You" ]
+                , p [ class "text-[16px] font-medium text-[#667085] -tracking-[0.04em] leading-[1.2] pb-[2px]" ] [ text "Select one to see if you qualify" ]
                 ]
             , button
                 [ class "bg-[#03045E] text-white text-sm font-medium px-6 py-2 rounded disabled:bg-zinc-400 disabled:text-gray-100 disabled:cursor-not-allowed"
