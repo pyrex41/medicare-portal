@@ -355,7 +355,7 @@ view model =
             div [ class "min-h-screen bg-[#F9FAFB]" ]
                 [ div [ class "max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-12" ]
                     [ -- Organization Logo/Name
-                      div [ class "flex justify-center items-center mb-16 sm:mb-24" ]
+                      div [ class "flex justify-center items-center mb-8 px-4" ]
                         [ case model.scheduleInfo of
                             Just info ->
                                 viewHeader info.organization.orgLogo info.organization.orgName
@@ -386,43 +386,40 @@ view model =
                             ]
 
                       else
-                        div [ class "grid grid-cols-1 md:grid-cols-2 gap-8" ]
-                            [ -- Left Column - Text Content
-                              div [ class "space-y-6" ]
-                                [ h1 [ class "text-3xl sm:text-4xl font-extrabold text-black mb-3 sm:mb-4 tracking-tight text-center md:text-left" ]
-                                    [ text (getHeading model.status) ]
-                                , div [ class "bg-[#F9F5FF] p-6 rounded-md mb-6" ]
-                                    [ p [ class "text-black text-base sm:text-lg leading-relaxed" ]
-                                        [ text (getMessage model.status) ]
-                                    ]
-                                ]
+                        div [ class "flex flex-col max-w-xl mx-auto" ]
+                            [ div [ class "text-center" ]
+                                [ div [ class "border border-[#DCE2E5] shadow-sm overflow-hidden rounded-lg" ]
+                                    [ div [ class "bg-[#F9F5FF] p-6" ]
+                                        [ h1 [ class "text-3xl sm:text-4xl font-extrabold text-black mb-6" ]
+                                            [ text (getHeading model.status) ]
+                                        , p [ class "text-black text-base sm:text-lg leading-relaxed" ]
+                                            [ text (getMessage model.status) ]
+                                        ]
+                                    , div [ class "bg-white p-6 sm:p-8" ]
+                                        [ p [ class "text-[#667085] text-sm font-medium mb-6" ]
+                                            [ text "Select an Option Below" ]
+                                        , case model.error of
+                                            Just error ->
+                                                div [ class "bg-red-50 border border-red-400 text-red-700 px-4 py-3 rounded mb-6 text-base" ]
+                                                    [ text error ]
 
-                            -- Right Column - Calendar Components
-                            , div [ class "bg-white border border-[#DCE2E5] rounded-lg shadow-sm overflow-hidden" ]
-                                [ div [ class "p-6 sm:p-8" ]
-                                    [ p [ class "text-[#667085] text-sm font-medium mb-6" ]
-                                        [ text "Select an Option Below" ]
-                                    , case model.error of
-                                        Just error ->
-                                            div [ class "bg-red-50 border border-red-400 text-red-700 px-4 py-3 rounded mb-6 text-base" ]
-                                                [ text error ]
+                                            Nothing ->
+                                                text ""
+                                        , case model.scheduleInfo of
+                                            Just info ->
+                                                case model.status of
+                                                    Accept ->
+                                                        viewAcceptButtons model info
 
-                                        Nothing ->
-                                            text ""
-                                    , case model.scheduleInfo of
-                                        Just info ->
-                                            case model.status of
-                                                Accept ->
-                                                    viewAcceptButtons model info
+                                                    Decline ->
+                                                        viewDeclineButtons model info
 
-                                                Decline ->
-                                                    viewDeclineButtons model info
+                                                    Generic ->
+                                                        viewGenericButtons model info
 
-                                                Generic ->
-                                                    viewGenericButtons model info
-
-                                        Nothing ->
-                                            text ""
+                                            Nothing ->
+                                                text ""
+                                        ]
                                     ]
                                 ]
                             ]
@@ -498,8 +495,7 @@ viewDeclineButtons model info =
                     [ text ("Schedule a Call with " ++ info.agent.firstName) ]
                 ]
             ]
-        , -- Advantage Plan Section
-          div [ class "mt-8 mb-4" ]
+        , div [ class "mt-8 mb-4" ]
             [ h3 [ class "text-[#03045E] font-bold text-base mb-3" ]
                 [ text "Interested in an Advantage Plan?" ]
             , p [ class "text-[#03045E] text-sm mb-6 leading-relaxed" ]

@@ -503,12 +503,15 @@ update msg model =
                     ( { model
                         | orgName = Just response.orgName
                         , orgLogo = response.orgLogo
+                        , isLoading = False
                       }
                     , Cmd.none
                     )
 
                 Err _ ->
-                    ( model, Cmd.none )
+                    ( { model | isLoading = False }
+                    , Cmd.none
+                    )
 
         GotExistingAnswers result ->
             case result of
@@ -533,12 +536,15 @@ update msg model =
                         | questions = updatedQuestions
                         , orgName = Just response.orgName
                         , orgLogo = response.orgLogo
+                        , isLoading = False
                       }
                     , Cmd.none
                     )
 
                 Err _ ->
-                    ( model, Cmd.none )
+                    ( { model | isLoading = False }
+                    , Cmd.none
+                    )
 
         SubmitAnswers ->
             let
@@ -663,7 +669,7 @@ iconToSvg icon color =
         iconColor =
             case color of
                 DangerColor ->
-                    "text-medicare-danger"
+                    "text-[#DC2626]"
 
                 BlueColor ->
                     "text-[#0075F2]"
@@ -709,12 +715,12 @@ colorToClasses color isActive =
         DangerColor ->
             { card =
                 if isActive then
-                    "bg-medicare-danger-light"
+                    "bg-[#DC2626]/10"
 
                 else
                     "bg-white"
-            , title = "text-medicare-danger"
-            , indicator = "bg-medicare-danger-light"
+            , title = "text-[#DC2626]"
+            , indicator = "bg-[#DC2626]/10"
             }
 
         BlueColor ->
@@ -795,7 +801,7 @@ view model =
                       viewHeader model.orgLogo model.orgName
                     , h1 [ class "text-2xl sm:text-3xl font-bold text-center text-gray-900 mb-2 sm:mb-3" ]
                         [ text "Underwriting Assessment" ]
-                    , p [ class "text-gray-600 text-center mb-6 sm:mb-8 text-sm sm:text-base max-w-xl mx-auto" ]
+                    , p [ class "text-gray-600 px-5 md:px-0 text-center mb-6 sm:mb-8 text-sm sm:text-base max-w-xl mx-auto" ]
                         [ text "In order to qualify for a new Supplemental plan you must pass medical underwriting. Please answer all questions to the best of your knowledge." ]
                     , if model.submissionError /= Nothing then
                         div [ class "mb-4 p-3 bg-red-100 text-red-700 rounded-lg text-sm" ]
@@ -826,23 +832,8 @@ viewQuestionsWithFollowUps : Model -> List (Html Msg)
 viewQuestionsWithFollowUps model =
     List.map
         (\q ->
-            let
-                shouldShowFollowUps =
-                    q.answer == Just True && q.isExpanded
-            in
             div [ class "mb-6 transition-all duration-200" ]
-                [ viewQuestion q
-                , if shouldShowFollowUps then
-                    div
-                        [ class "relative pl-6 mt-2 transition-all duration-300 overflow-hidden" ]
-                        [ div [ class "absolute top-0 bottom-0 left-6 w-0.5 bg-blue-300" ] []
-                        , div [ class "border border-gray-200 rounded-lg shadow-sm overflow-hidden" ]
-                            (List.map (\f -> viewFollowUpQuestion f q.id) q.followUpQuestions)
-                        ]
-
-                  else
-                    text ""
-                ]
+                [ viewQuestion q ]
         )
         model.questions
 
@@ -853,13 +844,40 @@ viewQuestion question =
         colorClasses =
             colorToClasses question.color (question.answer == Just True)
 
+        shouldShowFollowUps =
+            question.answer == Just True && question.isExpanded
+
         hasFollowUps =
             not (List.isEmpty question.followUpQuestions)
+
+        bgColorClass =
+            if question.answer == Just True then
+                case question.color of
+                    DangerColor ->
+                        "bg-[#DC2626]/10"
+
+                    BlueColor ->
+                        "bg-[#0075F2]/10"
+
+                    AmberColor ->
+                        "bg-amber-50"
+
+                    SuccessColor ->
+                        "bg-medicare-success-light"
+
+                    PurpleColor ->
+                        "bg-[#7F56D9]/10"
+
+                    BrandColor ->
+                        "bg-[#03045E]/10"
+
+            else
+                "bg-white"
     in
     div
         [ class <|
-            "rounded-lg shadow-card overflow-hidden transition-all duration-300 border "
-                ++ colorClasses.card
+            "rounded-lg shadow-card overflow-hidden transition-all duration-300 border border-[#DCE2E5] "
+                ++ bgColorClass
         ]
         [ div [ class "p-3 sm:p-5" ]
             [ div [ class "flex items-start gap-2 sm:gap-4" ]
@@ -869,20 +887,6 @@ viewQuestion question =
                     [ div [ class "flex justify-between items-start" ]
                         [ h3 [ class <| "font-semibold text-base sm:text-lg mb-1.5 sm:mb-2 " ++ colorClasses.title ]
                             [ text question.title ]
-                        , if hasFollowUps && question.answer == Just True then
-                            button
-                                [ onClick (ToggleExpand question.id)
-                                , class <| "p-1 " ++ colorClasses.title ++ " hover:opacity-80"
-                                ]
-                                [ if question.isExpanded then
-                                    MyIcon.heartScan 20 "currentColor"
-
-                                  else
-                                    MyIcon.hospital 20 "currentColor"
-                                ]
-
-                          else
-                            text ""
                         ]
                     , p [ class "text-gray-700 text-sm sm:text-base mb-3 sm:mb-4" ]
                         [ text question.text ]
@@ -893,19 +897,25 @@ viewQuestion question =
                     ]
                 ]
             ]
+        , if shouldShowFollowUps then
+            div [ class "mt-4 space-y-4 border-t border-[#DCE2E5] pt-4 pb-4 sm:pb-5" ]
+                (List.map (\f -> viewFollowUpQuestion f question.id) question.followUpQuestions)
+
+          else
+            text ""
         ]
 
 
 viewFollowUpQuestion : FollowUpQuestion -> Int -> Html Msg
 viewFollowUpQuestion followUp parentId =
-    div [ class "px-3 py-2.5 sm:px-5 sm:py-4 bg-white border-b border-gray-100 last:border-b-0" ]
+    div [ class "px-3 sm:px-5" ]
         [ p [ class "text-gray-700 text-sm sm:text-base mb-2" ]
             [ text followUp.text ]
         , case followUp.answerType of
             TextAnswer textValue ->
                 div [ class "mt-2" ]
                     [ textarea
-                        [ class "w-full p-2.5 sm:p-3 text-sm sm:text-base border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#03045E] focus:border-[#03045E]"
+                        [ class "w-full p-2.5 sm:p-3 text-sm sm:text-base border border-[#DCE2E5] rounded-lg focus:ring-2 focus:ring-[#03045E] focus:border-[#03045E]"
                         , rows 2
                         , placeholder "Please provide details..."
                         , value textValue
@@ -925,7 +935,7 @@ viewFollowUpQuestion followUp parentId =
                                         "bg-[#03045E] text-white border-[#03045E]"
 
                                     else
-                                        "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
+                                        "bg-white text-gray-700 border-[#DCE2E5] hover:bg-gray-50"
                                    )
                         ]
                         [ text "Yes" ]
@@ -938,7 +948,7 @@ viewFollowUpQuestion followUp parentId =
                                         "bg-gray-900 text-white border-gray-900"
 
                                     else
-                                        "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
+                                        "bg-white text-gray-700 border-[#DCE2E5] hover:bg-gray-50"
                                    )
                         ]
                         [ text "No" ]
