@@ -915,7 +915,7 @@ viewFollowUpQuestion followUp parentId =
             TextAnswer textValue ->
                 div [ class "mt-2" ]
                     [ textarea
-                        [ class "w-full p-2.5 sm:p-3 text-sm sm:text-base border border-[#DCE2E5] rounded-lg focus:ring-2 focus:ring-[#03045E] focus:border-[#03045E]"
+                        [ class "w-full p-2.5 sm:p-3 text-sm sm:text-base bg-white border border-[#DCE2E5] rounded-lg focus:ring-2 focus:ring-[#03045E] focus:border-[#03045E]"
                         , rows 2
                         , placeholder "Please provide details..."
                         , value textValue
