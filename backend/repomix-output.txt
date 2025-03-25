@@ -49,12 +49,15 @@ Directory Structure
 ================================================================
 scripts/
   add-agent.ts
+  generate-test-data.ts
   generateQuoteId.ts
   generateQuoteUrl.ts
   manage-recommendations.ts
   manage-turso.ts
+  test-bulk-import.ts
 src/
   config/
+    index.ts
     turso.ts
   middleware/
     account-status.ts
@@ -226,6 +229,128 @@ main().catch((error) => {
   p.outro(chalk.red(`Fatal error: ${error}`));
   exit(1);
 });
+
+================
+File: scripts/generate-test-data.ts
+================
+import fs from 'fs/promises';
+import { stringify } from 'csv-stringify/sync';
+import path from 'path';
+
+/**
+ * Script to generate a large dataset of test contacts for performance testing
+ * 
+ * Usage:
+ *   bun run scripts/generate-test-data.ts <count> [output-file]
+ * 
+ * Where:
+ *   <count> is the number of contacts to generate
+ *   [output-file] is the optional output file path (defaults to ./scripts/test-contacts-{count}.csv)
+ */
+
+// Sample data for random generation
+const firstNames = ['John', 'Jane', 'Robert', 'Mary', 'Michael', 'Jennifer', 'William', 'Patricia', 'Richard', 'Linda', 
+  'David', 'Elizabeth', 'Joseph', 'Barbara', 'Thomas', 'Susan', 'Charles', 'Jessica', 'Daniel', 'Sarah', 'Matthew', 'Karen', 
+  'Anthony', 'Nancy', 'Mark', 'Lisa', 'Donald', 'Betty', 'Steven', 'Dorothy'];
+
+const lastNames = ['Smith', 'Johnson', 'Williams', 'Jones', 'Brown', 'Davis', 'Miller', 'Wilson', 'Moore', 'Taylor', 
+  'Anderson', 'Thomas', 'Jackson', 'White', 'Harris', 'Martin', 'Thompson', 'Garcia', 'Martinez', 'Robinson', 'Clark', 
+  'Rodriguez', 'Lewis', 'Lee', 'Walker', 'Hall', 'Allen', 'Young', 'Hernandez', 'King'];
+
+const carriers = ['Aetna', 'Humana', 'UnitedHealthcare', 'Cigna', 'Blue Cross Blue Shield', 'Kaiser Permanente', 
+  'Anthem', 'Wellcare', 'Centene', 'Molina Healthcare'];
+
+const planTypes = ['A', 'B', 'C', 'D', 'F', 'G', 'K', 'L', 'M', 'N'];
+
+const states = ['AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA', 'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 
+  'LA', 'ME', 'MD', 'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ', 'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 
+  'OR', 'PA', 'RI', 'SC', 'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY'];
+
+// Helper functions for random data generation
+function getRandomItem<T>(array: T[]): T {
+  return array[Math.floor(Math.random() * array.length)];
+}
+
+function getRandomDate(start: Date, end: Date): string {
+  const date = new Date(start.getTime() + Math.random() * (end.getTime() - start.getTime()));
+  return date.toISOString().split('T')[0];
+}
+
+function getRandomPhone(): string {
+  return `${Math.floor(Math.random() * 900) + 100}-${Math.floor(Math.random() * 900) + 100}-${Math.floor(Math.random() * 9000) + 1000}`;
+}
+
+function getRandomZip(): string {
+  return `${Math.floor(Math.random() * 90000) + 10000}`;
+}
+
+// Main function
+async function main() {
+  try {
+    const args = process.argv.slice(2);
+    
+    if (args.length < 1) {
+      console.error('Usage: bun run scripts/generate-test-data.ts <count> [output-file]');
+      process.exit(1);
+    }
+    
+    const count = parseInt(args[0], 10);
+    
+    if (isNaN(count) || count <= 0) {
+      console.error('Count must be a positive number');
+      process.exit(1);
+    }
+    
+    const outputFile = args[1] || path.join(process.cwd(), 'scripts', `test-contacts-${count}.csv`);
+    
+    console.log(`Generating ${count} test contacts...`);
+    
+    // Generate the contacts
+    const contacts = [];
+    
+    for (let i = 0; i < count; i++) {
+      const firstName = getRandomItem(firstNames);
+      const lastName = getRandomItem(lastNames);
+      const email = `${firstName.toLowerCase()}.${lastName.toLowerCase()}${Math.floor(Math.random() * 10000)}@example.com`;
+      
+      contacts.push({
+        first_name: firstName,
+        last_name: lastName,
+        email: email,
+        current_carrier: getRandomItem(carriers),
+        plan_type: getRandomItem(planTypes),
+        effective_date: getRandomDate(new Date('2022-01-01'), new Date('2023-12-31')),
+        birth_date: getRandomDate(new Date('1940-01-01'), new Date('1965-12-31')),
+        tobacco_user: Math.random() > 0.8 ? 1 : 0, // 20% are tobacco users
+        gender: Math.random() > 0.5 ? 'Male' : 'Female',
+        state: getRandomItem(states),
+        zip_code: getRandomZip(),
+        phone_number: getRandomPhone()
+      });
+      
+      // Log progress for large datasets
+      if (i > 0 && i % 10000 === 0) {
+        console.log(`Generated ${i} contacts...`);
+      }
+    }
+    
+    // Convert to CSV
+    console.log('Converting to CSV...');
+    const csv = stringify(contacts, { header: true });
+    
+    // Write to file
+    console.log(`Writing to ${outputFile}...`);
+    await fs.writeFile(outputFile, csv);
+    
+    console.log(`Successfully generated ${count} contacts in ${outputFile}`);
+    
+  } catch (error) {
+    console.error(`Error generating test data: ${error}`);
+    process.exit(1);
+  }
+}
+
+main();
 
 ================
 File: scripts/generateQuoteId.ts
@@ -848,6 +973,153 @@ main().catch((error) => {
   p.outro(chalk.red(`Fatal error: ${error}`));
   exit(1);
 });
+
+================
+File: scripts/test-bulk-import.ts
+================
+import { Database } from '../src/database';
+import { ContactCreate } from '../src/types';
+import { logger } from '../src/logger';
+import fs from 'fs/promises';
+import { parse } from 'csv-parse/sync';
+
+/**
+ * Test utility for the bulk contact import feature
+ * 
+ * Usage:
+ *   bun run scripts/test-bulk-import.ts <org_id> <csv_file> [--overwrite]
+ * 
+ * Where:
+ *   <org_id> is the organization ID to import contacts for
+ *   <csv_file> is the path to a CSV file containing contacts
+ *   --overwrite is an optional flag to overwrite existing contacts
+ * 
+ * The CSV file should have headers that match the ContactCreate interface properties
+ * Columns can be in either camelCase (firstName) or snake_case (first_name) format
+ */
+
+async function main() {
+  try {
+    // Parse command line arguments
+    const args = process.argv.slice(2);
+    
+    if (args.length < 2) {
+      console.error('Usage: bun run scripts/test-bulk-import.ts <org_id> <csv_file> [--overwrite]');
+      process.exit(1);
+    }
+    
+    const orgId = args[0];
+    const csvPath = args[1];
+    const overwriteExisting = args.includes('--overwrite');
+    
+    // Read and parse the CSV file
+    logger.info(`Reading contacts from ${csvPath}`);
+    const csvContent = await fs.readFile(csvPath, 'utf-8');
+    
+    // Parse CSV with header row
+    const records = parse(csvContent, {
+      columns: true,
+      skip_empty_lines: true,
+      trim: true
+    });
+    
+    logger.info(`Parsed ${records.length} records from CSV`);
+    
+    // Convert records to ContactCreate objects
+    const contacts: ContactCreate[] = records.map((record: any) => {
+      return {
+        first_name: record.first_name || record.firstName || '',
+        last_name: record.last_name || record.lastName || '',
+        email: record.email || '',
+        current_carrier: record.current_carrier || record.currentCarrier || '',
+        plan_type: record.plan_type || record.planType || '',
+        effective_date: record.effective_date || record.effectiveDate || '',
+        birth_date: record.birth_date || record.birthDate || '',
+        tobacco_user: record.tobacco_user === '1' || record.tobacco_user === 'true' || record.tobaccoUser === true || record.tobaccoUser === '1' || record.tobaccoUser === 'true',
+        gender: record.gender || '',
+        state: record.state || '',
+        zip_code: record.zip_code || record.zipCode || '',
+        phone_number: record.phone_number || record.phoneNumber || '',
+        agent_id: record.agent_id || record.agentId || null
+      };
+    });
+    
+    // Log a sample contact
+    logger.info(`Sample contact: ${JSON.stringify(contacts[0])}`);
+    
+    // Validate contacts
+    const validContacts = contacts.filter(contact => {
+      return contact.first_name && contact.last_name && contact.email;
+    });
+    
+    logger.info(`Found ${validContacts.length} valid contacts out of ${contacts.length}`);
+    
+    // Confirm with user
+    console.log(`Ready to import ${validContacts.length} contacts for organization ${orgId}.`);
+    console.log(`Overwrite existing: ${overwriteExisting}`);
+    
+    // Add a delay to allow cancellation
+    console.log('Starting import in 5 seconds... Press Ctrl+C to cancel');
+    await new Promise(resolve => setTimeout(resolve, 5000));
+    
+    // Execute bulk import
+    const startTime = Date.now();
+    logger.info('Starting bulk import...');
+    
+    await Database.bulkImportContacts(orgId, validContacts, overwriteExisting);
+    
+    const totalTime = (Date.now() - startTime) / 1000;
+    logger.info(`Bulk import completed in ${totalTime.toFixed(2)} seconds`);
+    
+  } catch (error) {
+    logger.error(`Error in test-bulk-import: ${error}`);
+    process.exit(1);
+  }
+}
+
+main();
+
+================
+File: src/config/index.ts
+================
+interface Config {
+  TURSO_DATABASE_URL?: string;
+  TURSO_AUTH_TOKEN?: string;
+  TURSO_DATABASE_PATH?: string;
+  TURSO_API_TOKEN?: string;
+  TURSO_ORG_GROUP: string;
+  TURSO_ORG_SLUG: string;
+  STRIPE_SECRET_KEY?: string;
+  STRIPE_WEBHOOK_SECRET?: string;
+  SENDGRID_API_KEY?: string;
+  SENDGRID_FROM_EMAIL?: string;
+  SENDGRID_TEMPLATES: Record<string, string>;
+  USE_LOCAL_SQLITE: boolean;
+  LOCAL_DB_PATH: string;
+  clientUrl: string;
+}
+
+export const config: Config = {
+  TURSO_DATABASE_URL: process.env.TURSO_DATABASE_URL,
+  TURSO_AUTH_TOKEN: process.env.TURSO_AUTH_TOKEN,
+  TURSO_DATABASE_PATH: process.env.TURSO_DATABASE_PATH,
+  TURSO_API_TOKEN: process.env.TURSO_API_TOKEN,
+  TURSO_ORG_GROUP: process.env.TURSO_ORG_GROUP || 'default',
+  TURSO_ORG_SLUG: process.env.TURSO_ORG_SLUG || 'default',
+  STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY,
+  STRIPE_WEBHOOK_SECRET: process.env.STRIPE_WEBHOOK_SECRET,
+  SENDGRID_API_KEY: process.env.SENDGRID_API_KEY,
+  SENDGRID_FROM_EMAIL: process.env.SENDGRID_FROM_EMAIL,
+  SENDGRID_TEMPLATES: {
+    QUOTE_EMAIL: 'd-f43dasd8f9a8sd7f98asd7f',
+    WELCOME_EMAIL: 'd-a9s8d7f98as7df89as7df9'
+  },
+  USE_LOCAL_SQLITE: process.env.USE_LOCAL_SQLITE !== 'false',
+  LOCAL_DB_PATH: process.env.LOCAL_DB_PATH || 'data/organizations',
+  clientUrl: process.env.NODE_ENV === 'production' 
+    ? 'https://app.example.com'
+    : 'http://localhost:5173'
+}
 
 ================
 File: src/config/turso.ts
@@ -1557,53 +1829,190 @@ export function createBrandRoutes() {
 ================
 File: src/routes/contacts.ts
 ================
-import { createClient } from '@libsql/client';
+import { Elysia, t } from 'elysia';
+import { Database } from '../database';
+import { logger } from '../logger';
+import type { ContactCreate } from '../types';
+import fs from 'fs/promises';
+import path from 'path';
+import os from 'os';
 
-// Get Turso client for organization
-async function getOrgTursoClient(orgId: string) {
-  const org = await db.one(`
-    SELECT turso_db_url, turso_auth_token 
-    FROM organizations 
-    WHERE id = $1`,
-    [orgId]
-  );
+type User = {
+  id: number;
+  organization_id: number;
+  is_admin: boolean;
+};
 
-  return createClient({
-    url: org.turso_db_url,
-    authToken: org.turso_auth_token
-  });
-}
+type Store = {
+  user: User;
+};
 
-// Update contacts endpoints to use org's Turso DB
-app.post('/api/contacts/upload', async (req, res) => {
-  const orgId = req.user.organizationId;
-  const tursoClient = await getOrgTursoClient(orgId);
+type Context = {
+  request: Request;
+  store: Store;
+  set: { status: number };
+  body: { overwriteExisting?: boolean };
+  params: { orgId: string };
+};
 
-  try {
-    // Process CSV file
-    const contacts = parseCSV(req.file);
+/**
+ * Contacts API endpoints
+ */
+export const contactsRoutes = new Elysia({ prefix: '/api/contacts' })
+  .guard({ beforeHandle: [Database.getUserFromSession] }, app => app
     
-    // Insert into org's Turso DB
-    for (const contact of contacts) {
-      await tursoClient.execute(`
-        INSERT INTO contacts (
-          first_name, last_name, email, /* other fields */
-        ) VALUES (?, ?, ?, /* other values */)`,
-        [contact.firstName, contact.lastName, contact.email /* other values */]
-      );
-    }
+    // Bulk import contacts from CSV
+    .post('/bulk-import',
+      {
+        body: t.Object({
+          overwriteExisting: t.Optional(t.Boolean())
+        })
+      },
+      async ({ request, store, set, body }: Context) => {
+        const user = store.user;
+        if (!user || !user.organization_id || !user.is_admin) {
+          set.status = 401;
+          return { error: 'Not authorized for bulk import' };
+        }
 
-    res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ 
-      success: false,
-      message: err.message,
-      // Include other error details as needed
-    });
-  }
-});
+        try {
+          const formData = await request.formData();
+          const file = formData.get('file');
+          if (!file || !(file instanceof File) || path.extname(file.name).toLowerCase() !== '.csv') {
+            set.status = 400;
+            return { error: 'File must be a CSV' };
+          }
 
-// Similar updates needed for other contact endpoints
+          const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'import-'));
+          const tempFilePath = path.join(tempDir, 'contacts.csv');
+          await fs.writeFile(tempFilePath, Buffer.from(await file.arrayBuffer()));
+
+          logger.info(`CSV file saved to ${tempFilePath}, starting import`);
+
+          try {
+            await Database.bulkImportContacts(
+              user.organization_id.toString(), 
+              tempFilePath, 
+              body.overwriteExisting || false
+            );
+
+            await fs.rm(tempDir, { recursive: true, force: true });
+
+            return { 
+              success: true, 
+              message: 'Contacts imported successfully',
+              error_csv: null,
+              converted_carriers_csv: null,
+              total_rows: 0,
+              error_rows: 0,
+              valid_rows: 0,
+              converted_carrier_rows: 0,
+              supported_carriers: []
+            };
+          } catch (error) {
+            await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+            throw error;
+          }
+        } catch (error) {
+          const err = error as Error;
+          logger.error(`Error in bulk import: ${err}`);
+          set.status = 500;
+          return { error: 'Failed to process import: ' + err.message };
+        }
+      }
+    )
+    
+    // Add route to check import status
+    .get('/import-status/:orgId', async ({ params, store, set }: Context) => {
+      const user = store.user;
+      
+      if (!user || !user.organization_id) {
+        set.status = 401;
+        return { error: 'Not authorized' };
+      }
+      
+      // Only admins can check import status for any org
+      // Regular users can only check their own org's status
+      if (Number(params.orgId) !== user.organization_id && !user.is_admin) {
+        set.status = 403;
+        return { error: 'Not authorized to view this organization' };
+      }
+      
+      try {
+        // Look for a backup file to indicate an import is in progress
+        const backupDir = path.join(process.cwd(), 'backups');
+        const files = await fs.readdir(backupDir);
+        
+        // Filter files for this organization
+        const orgBackups = files.filter(file => file.startsWith(`org-${params.orgId}-`));
+        
+        if (orgBackups.length === 0) {
+          return { 
+            status: 'none',
+            message: 'No import in progress or recently completed' 
+          };
+        }
+        
+        // Sort by creation time (most recent first)
+        const statPromises = orgBackups.map(async (file) => {
+          const stats = await fs.stat(path.join(backupDir, file));
+          return { file, stats };
+        });
+        
+        const fileStats = await Promise.all(statPromises);
+        fileStats.sort((a, b) => b.stats.mtimeMs - a.stats.mtimeMs);
+        
+        const latestBackup = fileStats[0];
+        const ageInMinutes = (Date.now() - latestBackup.stats.mtimeMs) / 60000;
+        
+        // If backup file is less than 30 minutes old, consider it active
+        if (ageInMinutes < 30) {
+          const timestamp = latestBackup.file.split('-').pop()?.split('.')[0] || '';
+          
+          // Check logs for progress info
+          let progress = "unknown";
+          try {
+            const logs = await fs.readFile(path.join(process.cwd(), 'logs', 'ai-interactions.log'), 'utf-8');
+            const progressLines = logs.split('\n').filter(line => 
+              line.includes(`org-${params.orgId}-${timestamp}`) && line.includes('contacts')
+            );
+            
+            if (progressLines.length > 0) {
+              const lastLine = progressLines[progressLines.length - 1];
+              if (lastLine.includes('completed successfully')) {
+                progress = "completed";
+              } else {
+                progress = "in progress";
+              }
+            }
+          } catch (error) {
+            // Can't read logs, continue with unknown status
+          }
+          
+          return {
+            status: progress,
+            message: `Import ${progress === "completed" ? "completed" : "in progress"}`,
+            timestamp: new Date(parseInt(timestamp)).toISOString(),
+            age: Math.round(ageInMinutes)
+          };
+        } else {
+          return {
+            status: 'completed',
+            message: 'Import completed',
+            timestamp: new Date(latestBackup.stats.mtimeMs).toISOString(),
+            age: Math.round(ageInMinutes)
+          };
+        }
+      } catch (error) {
+        const err = error as Error;
+        logger.error(`Error checking import status: ${err}`);
+        return { 
+          status: 'error',
+          message: `Error checking import status: ${err.message}`
+        };
+      }
+    })
+  );
 
 ================
 File: src/routes/eligibility.ts
@@ -1852,14 +2261,14 @@ export const eligibilityRoutes = (app: Elysia) => {
                 if (existingAnswers) {
                     // Update existing answers
                     await orgDb.execute(
-                        'UPDATE eligibility_answers SET answers = ?, created_at = CURRENT_TIMESTAMP WHERE contact_id = ?',
-                        [answersJson, contactId]
+                        'UPDATE eligibility_answers SET answers = ?, quote_id = ?, created_at = CURRENT_TIMESTAMP WHERE contact_id = ?',
+                        [answersJson, data.quote_id || null, contactId]
                     );
                 } else {
                     // Insert new answers
                     await orgDb.execute(
-                        'INSERT INTO eligibility_answers (contact_id, answers) VALUES (?, ?)',
-                        [contactId, answersJson]
+                        'INSERT INTO eligibility_answers (contact_id, quote_id, answers) VALUES (?, ?, ?)',
+                        [contactId, data.quote_id || null, answersJson]
                     );
                 }
                 
@@ -5429,7 +5838,7 @@ export const quotesRoutes = (app: Elysia) => {
 ================
 File: src/routes/schedule.ts
 ================
-import { Elysia } from 'elysia';import { Elysia } from 'elysia';
+import { Elysia } from 'elysia';
 import { Database } from '../database';
 import { logger } from '../logger';
 import { decodeQuoteId } from '../utils/quoteId';
@@ -8075,237 +8484,475 @@ File: src/services/turso.ts
 import { createClient } from '@libsql/client';
 import { TURSO_CONFIG } from '../config/turso';
 import { logger } from '../logger';
+import { config } from '../config'
+import fetch from 'node-fetch'
+
+// Use non-null assertion since we check these values immediately
+const TURSO_DB_URL = config.TURSO_DATABASE_URL!;
+const TURSO_AUTH_TOKEN = config.TURSO_AUTH_TOKEN!;
+
+if (!config.TURSO_DATABASE_URL) {
+  throw new Error('TURSO_DATABASE_URL is not set');
+}
+
+if (!config.TURSO_AUTH_TOKEN) {
+  throw new Error('TURSO_AUTH_TOKEN is not set');
+}
+
+export const tursoClient = createClient({
+  url: TURSO_DB_URL,
+  authToken: TURSO_AUTH_TOKEN,
+});
+
+export async function getTursoClient() {
+  try {
+    await tursoClient.execute('SELECT 1');
+    return tursoClient;
+  } catch (error) {
+    logger.error(`Error connecting to Turso: ${error instanceof Error ? error.message : String(error)}`);
+    throw error;
+  }
+}
+
+// Export a function to check if the client is healthy
+export async function checkTursoHealth(): Promise<boolean> {
+  try {
+    await tursoClient.execute('SELECT 1');
+    return true;
+  } catch (error) {
+    logger.error(`Turso health check failed: ${error instanceof Error ? error.message : String(error)}`);
+    return false;
+  }
+}
+
+interface TursoResponse {
+  databases?: Array<{
+    Name: string;
+    DbId: string;
+    Hostname: string;
+    Region: string;
+  }>;
+  jwt?: string;
+  [key: string]: unknown;
+}
 
 export class TursoService {
-  private headers = {
-    'Authorization': `Bearer ${TURSO_CONFIG.API_TOKEN}`,
-    'Content-Type': 'application/json'
-  };
+  private apiToken: string
+  private client;
+
+  constructor() {
+    const token = config.TURSO_API_TOKEN;
+    if (!token) {
+      throw new Error('TURSO_API_TOKEN is not set');
+    }
+    this.apiToken = token;
+    this.client = tursoClient;
+    
+    logger.info('TursoService initialized with API token')
+  }
 
   async createOrganizationDatabase(orgId: string): Promise<{url: string, token: string}> {
-    const dbName = `org-${orgId}`;
-
-    // Create database using Turso API
-    const createDbResponse = await fetch(
-      `${TURSO_CONFIG.API_URL}/organizations/${TURSO_CONFIG.ORG_SLUG}/databases`, 
-      {
+    const dbName = `org-${orgId}-${Date.now()}`
+    
+    try {
+      // Create database
+      logger.info(`Creating Turso database for org ${orgId} with name ${dbName}`)
+      const createResponse = await fetch('https://api.turso.tech/v1/databases', {
         method: 'POST',
-        headers: this.headers,
+        headers: {
+          'Authorization': `Bearer ${this.apiToken}`,
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({
           name: dbName,
-          group: TURSO_CONFIG.GROUP_NAME
-        })
+          group: 'default',
+        }),
+      })
+
+      if (!createResponse.ok) {
+        const errorText = await createResponse.text()
+        logger.error(`Failed to create database: ${errorText}`)
+        throw new Error(`Failed to create database: ${errorText}`)
       }
-    );
 
-    if (!createDbResponse.ok) {
-      throw new Error(`Failed to create database: ${await createDbResponse.text()}`);
-    }
-
-    const dbData = await createDbResponse.json();
-    
-    // Generate auth token for the database
-    const tokenResponse = await fetch(
-      `${TURSO_CONFIG.API_URL}/organizations/${TURSO_CONFIG.ORG_SLUG}/databases/${dbName}/auth/tokens`,
-      {
+      const createData = await createResponse.json() as any
+      logger.info(`Database creation response: ${JSON.stringify(createData)}`)
+      
+      const hostname = createData.database?.Hostname
+      if (!hostname) {
+        logger.error(`Invalid database creation response - missing hostname: ${JSON.stringify(createData)}`)
+        throw new Error('Failed to get database hostname')
+      }
+      logger.info(`Successfully created database with hostname: ${hostname}`)
+      
+      // Create access token
+      logger.info(`Creating access token for database ${dbName}`)
+      const tokenUrl = `https://api.turso.tech/v1/databases/${dbName}/auth/tokens`
+      logger.info(`Token creation URL: ${tokenUrl}`)
+      
+      const tokenResponse = await fetch(tokenUrl, {
         method: 'POST',
-        headers: this.headers
+        headers: {
+          'Authorization': `Bearer ${this.apiToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          expiration: 'never',
+        }),
+      })
+
+      if (!tokenResponse.ok) {
+        const errorText = await tokenResponse.text()
+        logger.error(`Failed to create token (status ${tokenResponse.status}): ${errorText}`)
+        // Log response headers for debugging
+        const headers: Record<string, string> = {}
+        tokenResponse.headers.forEach((value, key) => {
+          headers[key] = value
+        })
+        logger.error(`Token response headers: ${JSON.stringify(headers)}`)
+        throw new Error(`Failed to create token: ${errorText}`)
       }
-    );
 
-    if (!tokenResponse.ok) {
-      throw new Error(`Failed to create auth token: ${await tokenResponse.text()}`);
+      const tokenData = await tokenResponse.json() as any
+      logger.info(`Token creation response: ${JSON.stringify(tokenData)}`)
+      
+      const token = tokenData.jwt
+      if (!token) {
+        logger.error(`Invalid token response - missing jwt: ${JSON.stringify(tokenData)}`)
+        throw new Error('Failed to get database access token')
+      }
+      
+      logger.info(`Successfully created token for database ${dbName}`)
+      
+      return {
+        url: hostname,
+        token,
+      }
+    } catch (error) {
+      logger.error(`Error creating organization database: ${error instanceof Error ? error.message : String(error)}`)
+      if (error instanceof Error && error.stack) {
+        logger.error(`Stack trace: ${error.stack}`)
+      }
+      throw error
     }
-
-    const tokenData = await tokenResponse.json();
-
-    // Initialize database client and create schema
-    const client = createClient({
-      url: `https://${dbData.database.Hostname}`,
-      authToken: tokenData.jwt
-    });
-
-    // Execute SQL statements one at a time
-    const statements = [
-      `CREATE TABLE contacts (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        first_name TEXT NOT NULL,
-        last_name TEXT NOT NULL,
-        email TEXT NOT NULL,
-        current_carrier TEXT NOT NULL,
-        plan_type TEXT NOT NULL,
-        effective_date TEXT NOT NULL,
-        birth_date TEXT NOT NULL,
-        tobacco_user BOOLEAN NOT NULL,
-        gender TEXT NOT NULL,
-        state TEXT NOT NULL,
-        zip_code TEXT NOT NULL,
-        agent_id INTEGER,
-        last_emailed TEXT,
-        phone_number TEXT NOT NULL DEFAULT '',
-        status TEXT NOT NULL DEFAULT '',
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP
-      )`,
-      `CREATE TABLE leads (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        email TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'new',
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        converted_contact_id INTEGER,
-        FOREIGN KEY (converted_contact_id) REFERENCES contacts(id)
-      )`,
-      `CREATE INDEX IF NOT EXISTS idx_leads_email ON leads(email)`,
-      `CREATE INDEX IF NOT EXISTS idx_leads_status ON leads(status)`,
-      `CREATE TABLE contact_events (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        contact_id INTEGER,
-        lead_id INTEGER,
-        event_type TEXT NOT NULL,
-        metadata TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (contact_id) REFERENCES contacts(id),
-        FOREIGN KEY (lead_id) REFERENCES leads(id),
-        CHECK ((contact_id IS NOT NULL AND lead_id IS NULL) OR (contact_id IS NULL AND lead_id IS NOT NULL))
-      )`,
-      `CREATE INDEX IF NOT EXISTS idx_contact_events_contact_id ON contact_events(contact_id)`,
-      `CREATE INDEX IF NOT EXISTS idx_contact_events_lead_id ON contact_events(lead_id)`,
-      `CREATE INDEX IF NOT EXISTS idx_contact_events_type ON contact_events(event_type)`,
-      `CREATE TABLE contact_requests (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        email TEXT NOT NULL,
-        request_type TEXT NOT NULL CHECK(request_type IN ('accept', 'decline', 'generic')),
-        contact_id INTEGER,
-        status TEXT NOT NULL DEFAULT 'new',
-        agent_name TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (contact_id) REFERENCES contacts(id)
-      )`,
-      `CREATE TABLE eligibility_answers (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        contact_id INTEGER NOT NULL,
-        quote_id TEXT NOT NULL,
-        answers TEXT NOT NULL,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (contact_id) REFERENCES contacts(id)
-      )`,
-      `CREATE INDEX IF NOT EXISTS idx_eligibility_answers_contact_id ON eligibility_answers(contact_id)`
-    ];
-
-    // Execute each statement
-    for (const statement of statements) {
-      await client.execute(statement);
-    }
-
-    return {
-      url: `https://${dbData.database.Hostname}`,
-      token: tokenData.jwt
-    };
   }
 
   async deleteOrganizationDatabase(dbName: string): Promise<void> {
-    const response = await fetch(
-      `${TURSO_CONFIG.API_URL}/organizations/${TURSO_CONFIG.ORG_SLUG}/databases/${dbName}`,
-      {
+    try {
+      logger.info(`Deleting Turso database ${dbName}`)
+      const response = await fetch(`https://api.turso.tech/v1/databases/${dbName}`, {
         method: 'DELETE',
-        headers: this.headers
-      }
-    );
+        headers: {
+          'Authorization': `Bearer ${this.apiToken}`,
+        },
+      })
 
-    if (!response.ok) {
-      throw new Error(`Failed to delete database: ${await response.text()}`);
+      if (!response.ok) {
+        const errorText = await response.text()
+        logger.error(`Failed to delete database: ${errorText}`)
+        throw new Error(`Failed to delete database: ${errorText}`)
+      }
+      
+      logger.info(`Successfully deleted database ${dbName}`)
+    } catch (error) {
+      logger.error(`Error deleting organization database: ${error}`)
+      throw error
     }
   }
 
+  // Helper function to normalize database URLs
+  private normalizeDbUrl(url: string): { hostname: string, apiUrl: string, dbUrl: string } {
+    // Strip any protocol prefix
+    const hostname = url.replace(/(^https?:\/\/)|(^libsql:\/\/)/, '');
+    return {
+      hostname,  // Raw hostname without protocol
+      apiUrl: `https://${hostname}`,  // For API calls
+      dbUrl: `libsql://${hostname}`   // For database connections
+    };
+  }
+
   async downloadDatabaseDump(dbUrl: string, authToken: string): Promise<string> {
-    const response = await fetch(
-      dbUrl.replace('libsql://', 'https://') + '/dump',
-      {
+    try {
+      const { apiUrl } = this.normalizeDbUrl(dbUrl);
+      logger.info(`Downloading database dump from ${apiUrl}/dump`);
+      
+      const response = await fetch(`${apiUrl}/dump`, {
+        method: 'GET',
         headers: {
-          'Authorization': `Bearer ${authToken}`
-        }
+          'Authorization': `Bearer ${authToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Failed to download dump: ${errorText}`);
       }
-    );
 
-    if (!response.ok) {
-      throw new Error(`Failed to download database dump: ${await response.text()}`);
+      return await response.text();
+    } catch (error) {
+      logger.error(`Error downloading database dump: ${error}`);
+      throw error;
     }
-
-    return await response.text();
   }
 
   async createDatabaseFromDump(orgId: string, suffix: string, dumpContent: string): Promise<{url: string, token: string}> {
     const dbName = `org-${orgId}-${suffix}`;
 
-    // Create new database with the timestamped name
-    const createDbResponse = await fetch(
-      `${TURSO_CONFIG.API_URL}/organizations/${TURSO_CONFIG.ORG_SLUG}/databases`, 
-      {
-        method: 'POST',
-        headers: this.headers,
-        body: JSON.stringify({
-          name: dbName,
-          group: TURSO_CONFIG.GROUP_NAME
-        })
+    try {
+      logger.info(`Creating new database: ${dbName}`);
+      
+      // Step 1: Create the database with a unique name
+      const createDbResponse = await fetch(
+        `${TURSO_CONFIG.API_URL}/organizations/${TURSO_CONFIG.ORG_SLUG}/databases`, 
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${this.apiToken}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            name: dbName,
+            group: TURSO_CONFIG.GROUP_NAME
+          })
+        }
+      );
+
+      if (!createDbResponse.ok) {
+        const errorText = await createDbResponse.text();
+        throw new Error(`Failed to create database: ${errorText}`);
       }
-    );
 
-    if (!createDbResponse.ok) {
-      throw new Error(`Failed to create database: ${await createDbResponse.text()}`);
-    }
+      const dbData = await createDbResponse.json() as { database: { Hostname: string } };
+      const { dbUrl, apiUrl } = this.normalizeDbUrl(dbData.database.Hostname);
+      logger.info(`Database created: ${dbUrl}`);
+      
+      // Step 2: Generate an auth token for the database
+      logger.info(`Generating auth token for database ${dbName}`);
+      const tokenResponse = await fetch(
+        `${TURSO_CONFIG.API_URL}/organizations/${TURSO_CONFIG.ORG_SLUG}/databases/${dbName}/auth/tokens`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${this.apiToken}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
 
-    const dbData = await createDbResponse.json();
-    
-    // Generate auth token for the database
-    const tokenResponse = await fetch(
-      `${TURSO_CONFIG.API_URL}/organizations/${TURSO_CONFIG.ORG_SLUG}/databases/${dbName}/auth/tokens`,
-      {
-        method: 'POST',
-        headers: this.headers
-      }
-    );
-
-    if (!tokenResponse.ok) {
-      throw new Error(`Failed to create auth token: ${await tokenResponse.text()}`);
-    }
-
-    const tokenData = await tokenResponse.json();
-    const url = `https://${dbData.database.Hostname}`;
-    const token = tokenData.jwt;
-    
-    // Initialize database with dump
-    const client = createClient({
-      url: url,
-      authToken: token
-    });
-
-    // Split dump into statements and execute each one
-    const statements = dumpContent
-      .split(';')
-      .map(stmt => stmt.trim())
-      .filter(stmt => stmt.length > 0);
-
-    for (const statement of statements) {
-      try {
-        await client.execute(statement + ';');
-      } catch (error) {
-        logger.error(`Error executing statement: ${error}`);
-        logger.error(`Problematic statement: ${statement.substring(0, 200)}...`);
-        
-        // Try to cleanup the newly created database on error
+      if (!tokenResponse.ok) {
+        const errorText = await tokenResponse.text();
+        // Try to clean up the created database
         try {
           await this.deleteOrganizationDatabase(dbName);
-          logger.info(`Cleaned up database ${dbName} after error`);
         } catch (cleanupError) {
-          logger.warn(`Failed to clean up database ${dbName} after error: ${cleanupError}`);
+          logger.warn(`Failed to delete database after token error: ${cleanupError}`);
         }
-        
-        throw error;
+        throw new Error(`Failed to create auth token: ${errorText}`);
       }
-    }
 
-    return { url, token };
+      const tokenData = await tokenResponse.json() as { jwt: string };
+      const token = tokenData.jwt;
+      
+      logger.info(`Successfully created database ${dbName} with auth token`);
+      
+      // Create client for the new database using libsql:// URL
+      const client = createClient({
+        url: dbUrl,
+        authToken: token
+      });
+      
+      // Split dump into logical statement groups for more reliable execution
+      const statements = dumpContent
+        .split(';')
+        .map(stmt => stmt.trim())
+        .filter(stmt => stmt.length > 0);
+      
+      logger.info(`Split SQL dump into ${statements.length} statements`);
+      
+      // Execute statements in phases - first schema statements, then data statements
+      // Parse and categorize statements
+      const schemaStatements = statements.filter(stmt => 
+        stmt.toUpperCase().startsWith('CREATE TABLE')
+      );
+      
+      const indexStatements = statements.filter(stmt => 
+        stmt.toUpperCase().startsWith('CREATE INDEX') || 
+        stmt.toUpperCase().startsWith('CREATE UNIQUE INDEX')
+      );
+      
+      const insertStatements = statements.filter(stmt => 
+        stmt.toUpperCase().startsWith('INSERT')
+      );
+      
+      const otherStatements = statements.filter(stmt => 
+        !schemaStatements.includes(stmt) && 
+        !indexStatements.includes(stmt) && 
+        !insertStatements.includes(stmt)
+      );
+      
+      logger.info(`Processing ${schemaStatements.length} tables, ${indexStatements.length} indexes, ${insertStatements.length} data inserts, and ${otherStatements.length} other statements`);
+      
+      // Phase 1: Create tables
+      for (const tableStatement of schemaStatements) {
+        try {
+          logger.info(`Creating table: ${tableStatement.substring(0, 60)}...`);
+          await client.execute(tableStatement);
+        } catch (error) {
+          // If there's an error with the contacts table missing updated_at, add it
+          if (tableStatement.includes('contacts') && 
+              error.toString().includes('no column named updated_at')) {
+            logger.warn('Error creating contacts table, attempting to fix missing updated_at column');
+            
+            // Add the updated_at column if it's missing
+            try {
+              // First create the table without the updated_at column
+              await client.execute(tableStatement);
+              
+              // Then add the updated_at column
+              await client.execute(`
+                ALTER TABLE contacts
+                ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+              `);
+              
+              logger.info('Successfully added missing updated_at column to contacts table');
+            } catch (altError) {
+              logger.error(`Failed to fix contacts table: ${altError}`);
+              throw altError;
+            }
+          } else {
+            // For other errors, just throw them
+            throw error;
+          }
+        }
+      }
+      
+      // Phase 2: Execute other statements (drops, alters, etc)
+      for (const statement of otherStatements) {
+        await client.execute(statement);
+      }
+      
+      // Phase 3: Insert data
+      logger.info(`Inserting data (${insertStatements.length} statements)...`);
+      let successCount = 0;
+      let errorCount = 0;
+      
+      // Check if we've already detected updated_at missing
+      let updatedAtMissing = false;
+      let checkedUpdatedAt = false;
+      
+      for (const insertStatement of insertStatements) {
+        try {
+          // Skip if we know the statement will fail due to updated_at missing
+          if (updatedAtMissing && insertStatement.includes('updated_at')) {
+            // Try to fix the insert statement by removing the updated_at column
+            const fixedInsert = insertStatement
+              .replace(/updated_at\s*,/i, '')  // Remove updated_at from column list
+              .replace(/(\w+\s*,\s*)CURRENT_TIMESTAMP(\s*\))/gi, '$1$2')  // Remove corresponding value in VALUES
+              .replace(/,\s*\)/g, ')');  // Fix any trailing commas
+            
+            try {
+              await client.execute(fixedInsert);
+              successCount++;
+              
+              // Log progress periodically
+              if (successCount % 50 === 0) {
+                logger.info(`Imported ${successCount}/${insertStatements.length} data statements (with fixes)`);
+              }
+            } catch (fixError) {
+              errorCount++;
+              logger.error(`Error executing fixed INSERT: ${fixError}`);
+              // Continue with next statement
+            }
+            continue;
+          }
+          
+          // Try the original statement
+          await client.execute(insertStatement);
+          successCount++;
+          
+          // Log progress periodically
+          if (successCount % 50 === 0) {
+            logger.info(`Imported ${successCount}/${insertStatements.length} data statements`);
+          }
+        } catch (error) {
+          // Check if this is the updated_at missing error
+          if (!checkedUpdatedAt && error.toString().includes('no column named updated_at')) {
+            updatedAtMissing = true;
+            checkedUpdatedAt = true;
+            logger.warn('Detected missing updated_at column in contacts table, will attempt to fix INSERT statements');
+            
+            // Try to add the column if it's missing
+            try {
+              await client.execute(`
+                ALTER TABLE contacts
+                ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+              `);
+              logger.info('Added missing updated_at column to contacts table');
+              
+              // Now we have the column, try the statement again
+              try {
+                await client.execute(insertStatement);
+                successCount++;
+                logger.info('Successfully executed INSERT after adding updated_at column');
+                
+                // We fixed the table, so we don't need to modify statements anymore
+                updatedAtMissing = false;
+              } catch (retryError) {
+                errorCount++;
+                logger.error(`Error retrying INSERT after adding column: ${retryError}`);
+              }
+            } catch (alterError) {
+              logger.warn(`Could not add updated_at column: ${alterError}`);
+              // Still mark as missing so we can fix the statements
+            }
+          } else {
+            errorCount++;
+            logger.error(`Error executing INSERT: ${error}`);
+            // Continue with next statement - don't fail everything for one bad insert
+          }
+        }
+      }
+      
+      // Phase 4: Create indexes (do this last for better performance)
+      logger.info(`Creating ${indexStatements.length} indexes...`);
+      for (const indexStatement of indexStatements) {
+        try {
+          await client.execute(indexStatement);
+        } catch (error) {
+          logger.warn(`Error creating index: ${error}`);
+          // Continue with next index - not fatal
+        }
+      }
+      
+      // Log summary
+      logger.info(`Database import complete: ${successCount} successful inserts, ${errorCount} errors`);
+      
+      // Verify the database
+      try {
+        const result = await client.execute('SELECT COUNT(*) as count FROM contacts');
+        const count = result.rows?.[0]?.[0];
+        logger.info(`Database verification: ${count} contacts found`);
+      } catch (error) {
+        logger.warn(`Error verifying database: ${error}`);
+      }
+      
+      return { url: dbUrl, token };
+    } catch (error) {
+      logger.error(`Error creating database from dump: ${error}`);
+      throw error;
+    }
+  }
+
+  private handleError(error: unknown): never {
+    logger.error(`Turso service error: ${error instanceof Error ? error.message : String(error)}`);
+    throw error instanceof Error ? error : new Error(String(error));
+  }
+
+  private validateResponse(data: unknown): TursoResponse {
+    if (!data || typeof data !== 'object') {
+      throw new Error('Invalid response from Turso API');
+    }
+    return data as TursoResponse;
   }
 }
 
@@ -8367,6 +9014,9 @@ import { config as dotenvConfig } from 'dotenv'
 import { resolve } from 'path'
 import { logger } from './logger'
 import { existsSync } from 'fs'
+import dotenv from 'dotenv'
+import fs from 'fs'
+import path from 'path'
 
 // Get absolute path to .env file
 const envPath = resolve(__dirname, '../.env')
@@ -8396,11 +9046,23 @@ console.log('📝 Environment variables available:', {
   TURSO_DATABASE_PATH: process.env.TURSO_DATABASE_PATH ? '[PRESENT]' : '[MISSING]'
 })
 
+// Load environment variables from .env file
+if (fs.existsSync(path.join(process.cwd(), '.env'))) {
+  dotenv.config()
+}
+
 export const config = {
   TURSO_DATABASE_URL: process.env.TURSO_DATABASE_URL,
   TURSO_AUTH_TOKEN: process.env.TURSO_AUTH_TOKEN,
   TURSO_DATABASE_PATH: process.env.TURSO_DATABASE_PATH,
+  TURSO_API_TOKEN: process.env.TURSO_API_TOKEN,
+  TURSO_ORG_GROUP: process.env.TURSO_ORG_GROUP || 'medicare-portal',
+  TURSO_ORG_SLUG: process.env.TURSO_ORG_SLUG || 'pyrex41',
   quoteApiKey: process.env.QUOTE_API_KEY,
+  quoteSecret: process.env.QUOTE_SECRET,
+  magicLinkSecret: process.env.MAGIC_LINK_SECRET,
+  sendgridApiKey: process.env.SENDGRID_API_KEY,
+  sendgridFromEmail: process.env.SENDGRID_FROM_EMAIL,
   PUBLIC_URL: process.env.PUBLIC_URL || (process.env.NODE_ENV === 'development' 
     ? 'http://localhost:5173'
     : 'http://localhost:3000'),
@@ -8414,11 +9076,13 @@ export const config = {
       enterprise: process.env.STRIPE_PRICE_ENTERPRISE || '',
       extraAgent: process.env.STRIPE_PRICE_EXTRA_AGENT || '',
       extraContact: process.env.STRIPE_PRICE_EXTRA_CONTACT || '',
-    }
+    },
+    publicKey: process.env.STRIPE_PUBLIC_KEY,
+    connectAccount: process.env.STRIPE_CONNECT_ACCOUNT,
   },
-  stripeApiKey: process.env.STRIPE_API_KEY,
+  stripeApiKey: process.env.STRIPE_SECRET_KEY,
   stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
-  clientUrl: process.env.CLIENT_URL || 'http://localhost:3000',
+  clientUrl: process.env.PUBLIC_URL || 'http://localhost:5173',
 }
 
 // Log loaded config (safely)
@@ -8431,54 +9095,98 @@ import { createClient } from '@libsql/client'
 import { config } from './config'
 import { logger } from './logger'
 import { TursoService } from './services/turso'
-import sqlite3 from 'sqlite3'
+import { Database as BunDatabase } from 'bun:sqlite'
 import fs from 'fs'
 import path from 'path'
-import os from 'os'
-import { Database as BunDatabase } from 'bun:sqlite'
-import { ContactCreate } from './types'
+import { parse } from 'csv-parse'
+import { pipeline } from 'stream/promises'
+import fetch from 'node-fetch'
+import type { ContactCreate } from './types'
 
 export class Database {
   private client: any
   private url: string
+  private isLocal: boolean
+  private bunDb: BunDatabase | null = null
+
+  public static normalizeDbUrl(url: string): { hostname: string, apiUrl: string, dbUrl: string, dbName: string } {
+    // Strip any protocol prefix
+    const hostname = url.replace(/(^https?:\/\/)|(^libsql:\/\/)/, '');
+    const dbName = hostname.split('/').pop()?.split('.')[0] || '';
+    return {
+      hostname,  // Raw hostname without protocol
+      apiUrl: `https://${hostname}`,  // For API calls
+      dbUrl: `libsql://${hostname}`,   // For database connections
+      dbName // For local SQLite files
+    };
+  }
 
   constructor(dbUrl?: string, authToken?: string) {
     const url = dbUrl || config.TURSO_DATABASE_URL
     const token = authToken || config.TURSO_AUTH_TOKEN
 
-    if (!url || !token) {
-      logger.error('Missing database credentials')
-      throw new Error('Missing database credentials')
+    if (!url) {
+      logger.error('Missing database URL')
+      throw new Error('Missing database URL')
     }
 
-    this.url = url
-    this.client = createClient({
-      url: url,
-      authToken: token,
-    })
+    const { dbUrl: normalizedUrl, dbName } = Database.normalizeDbUrl(url)
+    this.url = normalizedUrl
+    this.isLocal = config.USE_LOCAL_SQLITE
+
+    if (this.isLocal) {
+      const dbPath = path.join(process.cwd(), config.LOCAL_DB_PATH, `${dbName}.sqlite`)
+      logger.info(`Using local SQLite database at: ${dbPath}`)
+      
+      // Create directory if it doesn't exist
+      const dbDir = path.dirname(dbPath)
+      if (!fs.existsSync(dbDir)) {
+        fs.mkdirSync(dbDir, { recursive: true })
+      }
+      
+      this.bunDb = new BunDatabase(dbPath)
+      this.client = this.bunDb
+      
+      // Enable foreign keys
+      this.bunDb.exec('PRAGMA foreign_keys = ON;')
+    } else {
+      if (!token) {
+        logger.error('Missing database token')
+        throw new Error('Missing database token')
+      }
+      this.client = createClient({
+        url: normalizedUrl,
+        authToken: token,
+        // Set high concurrency for parallel operations
+        concurrency: 100
+      })
+    }
     
-    logger.info(`Database connected to: ${this.url}`)
+    logger.info(`Database connected to: ${this.isLocal ? dbName : this.url}`)
   }
 
   static async getOrgDb(orgId: string): Promise<Database> {
-    try {
-      // Use main DB to get org's Turso credentials
-      const mainDb = new Database()
-      const org = await mainDb.fetchOne<{turso_db_url: string, turso_auth_token: string}>(
-        'SELECT turso_db_url, turso_auth_token FROM organizations WHERE id = ?',
-        [orgId]
-      )
-
-      if (!org?.turso_db_url || !org?.turso_auth_token) {
-        logger.error(`No Turso credentials found for org ${orgId}`)
+    const mainDb = new Database()
+    const org = await mainDb.fetchOne<{ turso_db_url: string; turso_auth_token: string }>(
+      'SELECT turso_db_url, turso_auth_token FROM organizations WHERE id = ?',
+      [orgId]
+    )
+    if (!org?.turso_db_url) {
+      logger.error(`No database URL found for org ${orgId}`)
+      throw new Error('Organization database not configured')
+    }
+    
+    // If using local SQLite, we don't need the auth token
+    if (config.USE_LOCAL_SQLITE) {
+      logger.info(`Creating local SQLite client for org ${orgId}`)
+      return new Database(org.turso_db_url)
+    } else {
+      if (!org.turso_auth_token) {
+        logger.error(`No auth token found for org ${orgId}`)
         throw new Error('Organization database not configured')
       }
-
-      logger.info(`Creating client for org ${orgId} database: ${org.turso_db_url}`)
+      logger.info(`Creating Turso client for org ${orgId}`)
       return new Database(org.turso_db_url, org.turso_auth_token)
-    } catch (error) {
-      logger.error(`Failed to get org database: ${error}`)
-      throw error
     }
   }
 
@@ -8488,53 +9196,69 @@ export class Database {
    */
   static async getOrInitOrgDb(orgId: string): Promise<Database> {
     try {
-      // First try to get the existing database
       const db = await Database.getOrgDb(orgId)
-      
-      // Ensure schema is up to date
-      await Database.ensureDatabaseSchema(orgId)
-      
+      await Database.ensureOrgSchema(db)
       return db
     } catch (error) {
-      // If the error is that the database doesn't exist, initialize it
       if (error instanceof Error && error.message === 'Organization database not configured') {
         logger.info(`No database found for org ${orgId}, initializing new database`)
-        
+        const mainDb = new Database()
+        const orgExists = await mainDb.fetchOne<{ id: number }>(
+          'SELECT id FROM organizations WHERE id = ?',
+          [orgId]
+        )
+        if (!orgExists) throw new Error('Organization not found')
+
+        const turso = new TursoService()
+        logger.info(`Creating new Turso database for org ${orgId}`)
+        const { url, token } = await turso.createOrganizationDatabase(orgId)
+        logger.info(`Got new database URL: ${url}`)
+        logger.info(`Got new database token (length: ${token.length})`)
+
+        // Verify we can connect with the new credentials
         try {
-          // Use main DB to check if the organization exists
-          const mainDb = new Database()
-          const orgExists = await mainDb.fetchOne<{id: number}>(
-            'SELECT id FROM organizations WHERE id = ?',
-            [orgId]
-          )
-
-          if (!orgExists) {
-            logger.error(`Cannot initialize database: Organization ${orgId} does not exist`)
-            throw new Error('Organization not found')
-          }
-
-          // Create the database using the TursoService
-          const turso = new TursoService()
-          const { url, token } = await turso.createOrganizationDatabase(orgId)
-
-          // Update the organization record with the new database credentials
-          await mainDb.execute(
-            'UPDATE organizations SET turso_db_url = ?, turso_auth_token = ? WHERE id = ?',
-            [url, token, orgId]
-          )
-
-          logger.info(`Successfully initialized database for organization ${orgId}`)
-          
-          // Return a new database instance with the created credentials
-          return new Database(url, token)
-        } catch (initError) {
-          logger.error(`Failed to initialize database for org ${orgId}: ${initError}`)
-          throw initError
+          logger.info('Verifying connection with new credentials...')
+          const testDb = new Database(url, token)
+          await testDb.execute('SELECT 1')
+          logger.info('Successfully verified connection with new credentials')
+        } catch (connError) {
+          logger.error(`Failed to verify connection with new credentials: ${connError instanceof Error ? connError.message : String(connError)}`)
+          throw new Error('Failed to verify connection with new database credentials')
         }
-      } else {
-        // If it's some other error, rethrow it
-        throw error
+
+        // Update organization with new credentials
+        logger.info(`Updating organization ${orgId} with new database credentials`)
+        await mainDb.execute(
+          'UPDATE organizations SET turso_db_url = ?, turso_auth_token = ? WHERE id = ?',
+          [url, token, orgId]
+        )
+
+        // Verify the update
+        const updatedOrg = await mainDb.fetchOne<{ turso_db_url: string, turso_auth_token: string }>(
+          'SELECT turso_db_url, turso_auth_token FROM organizations WHERE id = ?',
+          [orgId]
+        )
+        if (!updatedOrg) {
+          logger.error('Failed to fetch updated organization after credential update')
+          throw new Error('Failed to update organization credentials')
+        }
+        if (updatedOrg.turso_db_url !== url || updatedOrg.turso_auth_token !== token) {
+          logger.error('Organization credentials mismatch after update')
+          logger.error(`Expected URL: ${url}, got: ${updatedOrg.turso_db_url}`)
+          logger.error(`Expected token length: ${token.length}, got: ${updatedOrg.turso_auth_token.length}`)
+          throw new Error('Organization credentials mismatch after update')
+        }
+
+        logger.info(`Successfully initialized database for organization ${orgId}`)
+        const newDb = new Database(url, token)
+        await Database.ensureOrgSchema(newDb)
+        return newDb
       }
+      logger.error(`Error in getOrInitOrgDb: ${error instanceof Error ? error.message : String(error)}`)
+      if (error instanceof Error && error.stack) {
+        logger.error(`Stack trace: ${error.stack}`)
+      }
+      throw error
     }
   }
 
@@ -8543,11 +9267,7 @@ export class Database {
    * This can be used to add new tables to existing databases when the schema changes
    */
   static async ensureDatabaseSchema(orgId: string): Promise<void> {
-    try {
-      // Get the organization database
-      const orgDb = await Database.getOrgDb(orgId)
-      
-      // Check for existence of each table and create if missing
+    const orgDb = await Database.getOrgDb(orgId);
       const tables = [
         {
           name: 'contacts',
@@ -8570,16 +9290,11 @@ export class Database {
               phone_number TEXT NOT NULL DEFAULT '',
               created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
               updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-          `,
+          )`,
           indexStatements: [
             `CREATE INDEX IF NOT EXISTS idx_contacts_email ON contacts(email)`,
-            `CREATE INDEX IF NOT EXISTS idx_contacts_agent_id ON contacts(agent_id)`,
-            `CREATE INDEX IF NOT EXISTS idx_contacts_state ON contacts(state)`,
-            `CREATE INDEX IF NOT EXISTS idx_contacts_current_carrier ON contacts(current_carrier)`,
-            `CREATE INDEX IF NOT EXISTS idx_contacts_effective_date ON contacts(effective_date)`,
-            `CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_email_unique ON contacts(LOWER(TRIM(email)))`
-          ]
+          `CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_email_unique ON contacts(LOWER(TRIM(email)))`,
+        ],
         },
         {
           name: 'eligibility_answers',
@@ -8626,34 +9341,20 @@ export class Database {
             `CREATE INDEX IF NOT EXISTS idx_leads_email ON leads(email)`
           ]
         }
-      ]
+    ];
       
-      // Execute each table creation statement
       for (const table of tables) {
-        try {
-          // Check if table exists
-          const tableExists = await orgDb.fetchOne<{cnt: number}>(
+      const tableExists = await orgDb.fetchOne<{ cnt: number }>(
             `SELECT COUNT(*) as cnt FROM sqlite_master WHERE type='table' AND name=?`,
             [table.name]
-          )
-          
-          if (!tableExists || (tableExists.cnt === 0)) {
-            logger.info(`Creating missing table ${table.name} for org ${orgId}`)
-            await orgDb.execute(table.createStatement)
-            
-            // Create indexes
+      );
+      if (!tableExists || tableExists.cnt === 0) {
+        logger.info(`Creating missing table ${table.name} for org ${orgId}`);
+        await orgDb.execute(table.createStatement);
             for (const indexStatement of table.indexStatements) {
-              await orgDb.execute(indexStatement)
-            }
-          }
-        } catch (e) {
-          logger.error(`Error checking/creating table ${table.name}: ${e}`)
-          // Continue to next table
+          await orgDb.execute(indexStatement);
         }
       }
-    } catch (error) {
-      logger.error(`Error ensuring database schema for org ${orgId}: ${error}`)
-      throw error
     }
   }
 
@@ -8663,11 +9364,22 @@ export class Database {
 
   async execute(sql: string, args: any[] = []) {
     try {
-      const result = await this.client.execute({
-        sql,
-        args
-      })
-      return result
+      if (this.isLocal && this.bunDb) {
+        // For local SQLite
+        const stmt = this.bunDb.prepare(sql)
+        const result = stmt.run(...args)
+        return {
+          rows: Array.isArray(result) ? result : result.changes > 0 ? [result] : [],
+          rowsAffected: result.changes
+        }
+      } else {
+        // For Turso
+        const result = await this.client.execute({
+          sql,
+          args
+        })
+        return result
+      }
     } catch (error) {
       logger.error(`Database execute error: ${error}`)
       throw error
@@ -8676,55 +9388,54 @@ export class Database {
 
   async fetchAll(sql: string, args: any[] = []) {
     try {
-      const result = await this.client.execute({
-        sql,
-        args
-      })
-      return result.rows || []
+      if (this.isLocal && this.bunDb) {
+        // For local SQLite
+        const stmt = this.bunDb.prepare(sql)
+        const rows = stmt.all(...args)
+        return rows || []
+      } else {
+        // For Turso
+        const result = await this.client.execute({
+          sql,
+          args
+        })
+        return result.rows || []
+      }
     } catch (error) {
+      // Check if it's a response too large error
+      if (error instanceof Error && error.message.includes('RESPONSE_TOO_LARGE')) {
+        logger.error('Response too large, try using pagination');
+        throw new Error('Response too large, try using pagination');
+      }
       logger.error(`Database fetchAll error: ${error}`)
       throw error
     }
   }
 
   async fetchOne<T>(sql: string, args: any[] = []): Promise<T | null> {
-    try {
-      const result = await this.client.execute({
-        sql,
-        args
-      })
-      if (!result.rows || result.rows.length === 0) {
-        return null
-      }
-      // Convert array row to object using column names
+    if (this.isLocal && this.bunDb) {
+      // For local SQLite
+      const stmt = this.bunDb.prepare(sql)
+      const row = stmt.get(...args)
+      return row as T || null
+    } else {
+      // For Turso
+      const result = await this.execute(sql, args)
+      if (!result.rows || result.rows.length === 0) return null
       const row = result.rows[0]
       const columns = result.columns || []
       const obj: any = {}
-      columns.forEach((col: string, i: number) => {
-        obj[col] = row[i]
-      })
+      columns.forEach((col: string, i: number) => (obj[col] = row[i]))
       return obj as T
-    } catch (error) {
-      logger.error(`Database fetchOne error: ${error}`)
-      throw error
     }
   }
 
   // Compatibility method for old query interface
   async query<T = any>(sql: string, args: any[] = []): Promise<T[]> {
-    try {
-      const result = await this.client.execute({
-        sql,
-        args
-      })
-      return result.rows || []
-    } catch (error) {
-      logger.error(`Database query error: ${error}`)
-      throw error
-    }
+    return this.fetchAll(sql, args)
   }
 
-  // Transaction support with function overloads
+  // Add transaction support for local SQLite
   async transaction<T>(callback: (tx: Database) => Promise<T>): Promise<T>;
   async transaction<T>(mode: 'read' | 'write', callback: (tx: Database) => Promise<T>): Promise<T>;
   async transaction<T>(
@@ -8745,334 +9456,719 @@ export class Database {
       throw new Error('Transaction callback is required')
     }
 
-    const tx = await this.client.transaction(mode)
-    try {
-      // Create a Database-like wrapper around the transaction
-      const txWrapper = new Database()
-      // Override the client with the transaction
-      txWrapper.client = tx
-      
-      const result = await fn(txWrapper)
-      await tx.commit()
-      return result
-    } catch (error) {
-      await tx.rollback()
-      throw error
+    if (this.isLocal && this.bunDb) {
+      // For local SQLite
+      try {
+        this.bunDb.exec('BEGIN TRANSACTION')
+        const result = await fn(this)
+        this.bunDb.exec('COMMIT')
+        return result
+      } catch (error) {
+        this.bunDb.exec('ROLLBACK')
+        throw error
+      }
+    } else {
+      // For Turso
+      const tx = await this.client.transaction(mode)
+      try {
+        const txWrapper = new Database()
+        txWrapper.client = tx
+        const result = await fn(txWrapper)
+        await tx.commit()
+        return result
+      } catch (error) {
+        await tx.rollback()
+        throw error
+      }
     }
   }
 
   /**
-   * Bulk import contacts using Bun's native SQLite
-   * This method follows a pattern of:
-   * 1. Create a local SQLite database with current data
-   * 2. Process and insert contacts efficiently
-   * 3. Create a new Turso database from the local database
-   * 4. Update organization to use the new database
-   * 5. Clean up resources
+   * Bulk import contacts by merging existing data with new CSV data
+   * Optimized for performance with larger batch sizes, transaction handling,
+   * and reduced network round trips
    */
-  static async bulkImportContacts(orgId: string, contacts: ContactCreate[], overwriteExisting: boolean = false): Promise<void> {
-    let localDb: BunDatabase | null = null;
-    let tmpDir: string | null = null;
-    
+  static async bulkImportContacts(orgId: string, csvFilePath: string, overwriteExisting: boolean = false): Promise<void> {
     try {
-      // Step 1: Set up the local temporary database
-      const mainDb = new Database();
-      const org = await mainDb.fetchOne<{ turso_db_url: string; turso_auth_token: string }>(
-        'SELECT turso_db_url, turso_auth_token FROM organizations WHERE id = ?',
-        [orgId]
-      );
+      logger.info(`Starting bulk import for org ${orgId}`);
       
-      if (!org?.turso_db_url || !org?.turso_auth_token) {
-        throw new Error('Organization database not configured');
+      // Get organization database connection
+      const orgDb = await Database.getOrgDb(orgId);
+      if (!orgDb) {
+        throw new Error('Failed to get organization database connection');
       }
 
-      tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'contacts-import-'));
-      const dbPath = path.join(tmpDir, 'temp.db');
-      logger.info(`Creating temporary SQLite database at ${dbPath}`);
-      localDb = new BunDatabase(dbPath, { create: true });
+      // Enhanced column mapping with more variations
+      const columnMap: Record<string, string> = {
+        // First Name variations
+        first_name: 'first_name',
+        firstName: 'first_name',
+        'first name': 'first_name',
+        'First Name': 'first_name',
+        'FirstName': 'first_name',
+        fname: 'first_name',
+        'first-name': 'first_name',
+        
+        // Last Name variations
+        last_name: 'last_name',
+        lastName: 'last_name',
+        'last name': 'last_name',
+        'Last Name': 'last_name',
+        'LastName': 'last_name',
+        lname: 'last_name',
+        'last-name': 'last_name',
+        
+        // Email variations
+        email: 'email',
+        'Email': 'email',
+        'email_address': 'email',
+        'emailAddress': 'email',
+        'email address': 'email',
+        'Email Address': 'email',
+        
+        // Carrier variations
+        current_carrier: 'current_carrier',
+        currentCarrier: 'current_carrier',
+        'current carrier': 'current_carrier',
+        carrier: 'current_carrier',
+        'Current Carrier': 'current_carrier',
+        'insurance carrier': 'current_carrier',
+        'Insurance Carrier': 'current_carrier',
+        
+        // Plan Type variations
+        plan_type: 'plan_type',
+        planType: 'plan_type',
+        'plan type': 'plan_type',
+        'Plan Type': 'plan_type',
+        'insurance type': 'plan_type',
+        'Insurance Type': 'plan_type',
+        
+        // Effective Date variations
+        effective_date: 'effective_date',
+        effectiveDate: 'effective_date',
+        'effective date': 'effective_date',
+        'Effective Date': 'effective_date',
+        'start date': 'effective_date',
+        'Start Date': 'effective_date',
+        
+        // Birth Date variations
+        birth_date: 'birth_date',
+        birthDate: 'birth_date',
+        'birth date': 'birth_date',
+        'Birth Date': 'birth_date',
+        dob: 'birth_date',
+        'DOB': 'birth_date',
+        'date of birth': 'birth_date',
+        'Date of Birth': 'birth_date',
+        
+        // Tobacco User variations
+        tobacco_user: 'tobacco_user',
+        tobaccoUser: 'tobacco_user',
+        'tobacco user': 'tobacco_user',
+        'Tobacco User': 'tobacco_user',
+        'uses tobacco': 'tobacco_user',
+        'Uses Tobacco': 'tobacco_user',
+        smoker: 'tobacco_user',
+        'Smoker': 'tobacco_user',
+        
+        // Gender variations
+        gender: 'gender',
+        'Gender': 'gender',
+        sex: 'gender',
+        'Sex': 'gender',
+        
+        // State variations
+        state: 'state',
+        'State': 'state',
+        'state code': 'state',
+        'State Code': 'state',
+        
+        // Zip Code variations
+        zip_code: 'zip_code',
+        zipCode: 'zip_code',
+        'zip code': 'zip_code',
+        'Zip Code': 'zip_code',
+        zip: 'zip_code',
+        'ZIP': 'zip_code',
+        postal: 'zip_code',
+        'Postal': 'zip_code',
+        
+        // Phone Number variations
+        phone_number: 'phone_number',
+        phoneNumber: 'phone_number',
+        'phone number': 'phone_number',
+        'Phone Number': 'phone_number',
+        phone: 'phone_number',
+        'Phone': 'phone_number',
+        tel: 'phone_number',
+        'Tel': 'phone_number',
+        
+        // Agent ID variations
+        agent_id: 'agent_id',
+        agentId: 'agent_id',
+        'agent id': 'agent_id',
+        'Agent ID': 'agent_id',
+        'agent number': 'agent_id',
+        'Agent Number': 'agent_id'
+      };
 
-      // Download current database dump and load it
-      const turso = new TursoService();
-      const dumpContent = await turso.downloadDatabaseDump(org.turso_db_url, org.turso_auth_token);
-      localDb.exec(dumpContent);
+      // Helper function to get field value
+      const getValue = (record: any, fieldName: string, defaultValue: string = ''): string => {
+        // Try all possible mappings
+        for (const [key, mappedField] of Object.entries(columnMap)) {
+          if (mappedField === fieldName && record[key] !== undefined) {
+            return record[key] || defaultValue;
+          }
+        }
+        // Try direct field name
+        return record[fieldName] || defaultValue;
+      };
 
-      // Step 2: Process and deduplicate contacts
-      const processedContacts = contacts.reduce((map, contact) => {
-        const email = contact.email.toLowerCase().trim();
-        map.set(email, contact);
-        return map;
-      }, new Map<string, ContactCreate>());
+      // Use streaming to parse CSV, improving memory efficiency
+      logger.info(`Streaming CSV file: ${csvFilePath}`);
+      const emailMap = new Map<string, ContactCreate>();
+      let processed = 0;
+      let skipped = 0;
+      let firstRecord = true;
+      let columnHeaders: string[] = [];
+
+      // Stream and process CSV
+      await pipeline(
+        fs.createReadStream(csvFilePath),
+        parse({ columns: true, skip_empty_lines: true, trim: true }),
+        async function* (source) {
+          for await (const record of source) {
+            processed++;
+            
+            // Log first record for debugging
+            if (firstRecord) {
+              columnHeaders = Object.keys(record);
+              logger.info(`CSV column headers: ${columnHeaders.join(', ')}`);
+              logger.info(`First record raw data: ${JSON.stringify(record)}`);
+              
+              // Log column mapping results
+              const mappedFields = new Set<string>();
+              columnHeaders.forEach(key => {
+                const mappedTo = columnMap[key];
+                if (mappedTo) {
+                  mappedFields.add(mappedTo);
+                  logger.info(`Mapped column '${key}' to '${mappedTo}'`);
+                } else {
+                  logger.warn(`No mapping found for column: '${key}'`);
+                }
+              });
+              
+              // Log missing required fields
+              const requiredFields = ['first_name', 'last_name', 'email', 'effective_date', 'birth_date'];
+              const missingRequired = requiredFields.filter(field => !mappedFields.has(field));
+              if (missingRequired.length > 0) {
+                logger.warn(`Missing required fields in CSV: ${missingRequired.join(', ')}`);
+              }
+              firstRecord = false;
+            }
+            
+            try {
+              const contact: ContactCreate = {
+                first_name: getValue(record, 'first_name'),
+                last_name: getValue(record, 'last_name'),
+                email: getValue(record, 'email'),
+                current_carrier: getValue(record, 'current_carrier'),
+                plan_type: getValue(record, 'plan_type'),
+                effective_date: getValue(record, 'effective_date'),
+                birth_date: getValue(record, 'birth_date'),
+                tobacco_user: !!(getValue(record, 'tobacco_user') === '1' || getValue(record, 'tobacco_user').toLowerCase() === 'true'),
+                gender: getValue(record, 'gender'),
+                state: getValue(record, 'state'),
+                zip_code: getValue(record, 'zip_code'),
+                phone_number: getValue(record, 'phone_number'),
+                agent_id: getValue(record, 'agent_id') ? Number(getValue(record, 'agent_id')) : null,
+              };
+              
+              // Log sample data for the first few records
+              if (processed <= 3) {
+                logger.info(`Sample mapped contact data: ${JSON.stringify(contact)}`);
+              }
+              
+              if (!contact.first_name || !contact.last_name || !contact.email || !contact.effective_date || !contact.birth_date) {
+                logger.warn(`Skipping record due to missing required fields: ${JSON.stringify(contact)}`);
+                skipped++;
+                continue;
+              }
+
+              const email = contact.email.toLowerCase().trim();
+              emailMap.set(email, contact);
+            } catch (error) {
+              logger.warn(`Error processing record: ${error}`);
+              skipped++;
+            }
+          }
+        }
+      );
+
+      const emails = Array.from(emailMap.keys());
+      const contactsToInsert = Array.from(emailMap.values());
+      const totalContacts = contactsToInsert.length;
       
-      const uniqueContacts = Array.from(processedContacts.values());
-      logger.info(`Processing ${contacts.length} contacts (${uniqueContacts.length} unique)`);
+      logger.info(`Processed ${processed} records, valid contacts: ${totalContacts}, skipped: ${skipped}`);
+      
+      // Early exit if no valid contacts
+      if (totalContacts === 0) {
+        logger.info('No valid contacts to import, exiting early');
+        return;
+      }
 
-      // Optimize SQLite for bulk operations
-      localDb.exec('PRAGMA journal_mode = WAL');
-      localDb.exec('PRAGMA synchronous = NORMAL');
-      localDb.exec('DROP INDEX IF EXISTS idx_contacts_email');
+      // Get existing emails from the database
+      logger.info('Fetching existing emails in a single query');
+      const existingEmailsResult = await orgDb.fetchAll(
+        'SELECT LOWER(TRIM(email)) as email FROM contacts'
+      );
+      const existingEmails = new Set<string>();
+      existingEmailsResult.forEach((row: { email: string }) => 
+        existingEmails.add(row.email.toLowerCase().trim())
+      );
+      
+      logger.info(`Found ${existingEmails.size} existing email addresses`);
 
-      // Prepare insert statement
-      const insertStmt = localDb.prepare(`
-        INSERT OR ${overwriteExisting ? 'REPLACE' : 'IGNORE'} INTO contacts (
-          first_name, last_name, email, current_carrier, plan_type, effective_date,
-          birth_date, tobacco_user, gender, state, zip_code, phone_number, agent_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `);
+      // Split contacts for insert and update
+      const newContacts = contactsToInsert.filter(contact => 
+        !existingEmails.has(contact.email.toLowerCase().trim()));
+      const updateContacts = overwriteExisting 
+        ? contactsToInsert.filter(contact => 
+            existingEmails.has(contact.email.toLowerCase().trim())) 
+        : [];
+        
+      logger.info(`Split contacts: ${newContacts.length} new, ${updateContacts.length} updates`);
 
-      // Insert contacts in batches for better performance
-      const batchSize = 1000;
-      for (let i = 0; i < uniqueContacts.length; i += batchSize) {
-        const batch = uniqueContacts.slice(i, i + batchSize);
-        localDb.transaction(() => {
-          for (const contact of batch) {
-            insertStmt.run(
+      // TRULY CONCURRENT APPROACH: Process contacts in chunks with multiple DB connections
+      // Each chunk gets its own transaction and database connection      
+      if (newContacts.length > 0 || updateContacts.length > 0) {
+        // Function to create insert statements for a batch of contacts
+        const createInsertBatch = (contacts: ContactCreate[]) => {
+          const placeholders = contacts.map(() => 
+            '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)'
+          ).join(',');
+          
+          const values = contacts.flatMap(contact => [
+            contact.first_name,
+            contact.last_name,
+            contact.email.toLowerCase().trim(),
+            contact.current_carrier,
+            contact.plan_type,
+            contact.effective_date,
+            contact.birth_date,
+            contact.tobacco_user ? 1 : 0,
+            contact.gender,
+            contact.state,
+            contact.zip_code,
+            contact.phone_number,
+            contact.agent_id === null ? null : Number(contact.agent_id)
+          ]);
+          
+          return {
+            sql: `INSERT INTO contacts (
+              first_name, last_name, email, current_carrier, plan_type, effective_date,
+              birth_date, tobacco_user, gender, state, zip_code, phone_number, agent_id,
+              created_at, updated_at
+            ) VALUES ${placeholders}`,
+            args: values
+          };
+        };
+
+        // Function to create update statements for a batch of contacts
+        const createUpdateBatch = (contacts: ContactCreate[]) => {
+          return contacts.map(contact => ({
+            sql: `UPDATE contacts SET 
+              first_name = ?, last_name = ?, current_carrier = ?, plan_type = ?, effective_date = ?, 
+              birth_date = ?, tobacco_user = ?, gender = ?, state = ?, zip_code = ?, 
+              phone_number = ?, agent_id = ? 
+              WHERE LOWER(TRIM(email)) = ?`,
+            args: [
               contact.first_name,
               contact.last_name,
-              contact.email,
-              contact.current_carrier || null,
-              contact.plan_type || null,
+              contact.current_carrier,
+              contact.plan_type,
               contact.effective_date,
               contact.birth_date,
               contact.tobacco_user ? 1 : 0,
               contact.gender,
               contact.state,
               contact.zip_code,
-              contact.phone_number || '',
-              contact.agent_id || null
-            );
-          }
-        })();
-      }
+              contact.phone_number,
+              contact.agent_id === null ? null : Number(contact.agent_id),
+              contact.email.toLowerCase().trim()
+            ]
+          }));
+        };
 
-      // Recreate indexes
-      localDb.exec('CREATE INDEX idx_contacts_email ON contacts(email COLLATE NOCASE)');
+        // Process batches in parallel
+        const CONCURRENT_TRANSACTIONS = 20; // Number of concurrent transactions/connections
+        const ROWS_PER_INSERT = 1000;
+        const ROWS_PER_UPDATE_BATCH = 2000;
 
-      // Step 3: Generate a reliable database dump
-      // Get all schema definitions
-      const schemaRows = localDb.query(`SELECT sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`).all();
-      const indexRows = localDb.query(`SELECT sql FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_%'`).all();
-
-      // Generate data inserts for all tables
-      const tables = ['contacts', 'contact_events', 'contact_requests', 'eligibility_answers', 'leads', 'scheduled_emails'];
-      const dataInserts: string[] = [];
-      
-      for (const table of tables) {
-        try {
-          const tableExists = localDb.query(`SELECT name FROM sqlite_master WHERE type='table' AND name='${table}'`).all();
-          if (tableExists.length === 0) {
-            logger.info(`Table ${table} does not exist, skipping`);
-            continue;
-          }
+        const tasks: Promise<void>[] = [];
+        
+        // Process inserts concurrently
+        if (newContacts.length > 0) {
+          const totalInsertChunks = Math.ceil(newContacts.length / ROWS_PER_INSERT);
+          logger.info(`Processing ${newContacts.length} inserts concurrently in ${totalInsertChunks} chunks`);
+          let completedInsertChunks = 0;
           
-          const rows = localDb.query(`SELECT * FROM ${table}`).all();
-          if (rows.length === 0) continue;
-
-          const columns = Object.keys(rows[0]);
-          const columnNames = columns.join(', ');
-          
-          for (const row of rows) {
-            const values = columns.map(col => {
-              const value = row[col];
-              if (value === null) return 'NULL';
-              if (typeof value === 'string') return `'${value.replace(/'/g, "''")}'`;
-              return value;
-            }).join(', ');
+          for (let i = 0; i < newContacts.length; i += ROWS_PER_INSERT) {
+            const chunk = newContacts.slice(i, Math.min(i + ROWS_PER_INSERT, newContacts.length));
+            const chunkIndex = Math.floor(i / ROWS_PER_INSERT);
             
-            dataInserts.push(`INSERT INTO ${table} (${columnNames}) VALUES (${values});`);
-          }
-        } catch (e) {
-          logger.warn(`Error processing table ${table}: ${e}`);
-          // Continue with other tables
-        }
-      }
-
-      // Combine schema and data into final dump - make sure tables are created first, then indexes, then data
-      const finalDump = [
-        ...schemaRows.map((row: any) => row.sql + ';'),
-        ...indexRows.map((row: any) => row.sql + ';'),
-        ...dataInserts,
-      ].join('\n');
-      
-      logger.info(`Final dump contains ${schemaRows.length} table statements, ${indexRows.length} index statements, and ${dataInserts.length} data statements`);
-
-      // Step 4: Create new Turso database and swap
-      const timestamp = Date.now();
-      const newDbName = `org-${orgId}-${timestamp}`;
-      logger.info(`Creating new database: ${newDbName}`);
-      
-      // Validate dump before proceeding
-      try {
-        logger.info('Validating dump in memory database');
-        const testDb = new BunDatabase(':memory:', { create: true });
-        
-        // Execute schema and index statements first
-        for (const row of schemaRows) {
-          try {
-            testDb.exec(row.sql + ';');
-          } catch (error) {
-            logger.error(`Error executing schema statement: ${error}`);
-            logger.error(`Problematic statement: ${row.sql}`);
-            throw error;
-          }
-        }
-        
-        for (const row of indexRows) {
-          try {
-            testDb.exec(row.sql + ';');
-          } catch (error) {
-            logger.error(`Error executing index statement: ${error}`);
-            logger.error(`Problematic statement: ${row.sql}`);
-            throw error;
-          }
-        }
-        
-        // Then test a sample of data statements
-        const sampleSize = Math.min(100, dataInserts.length);
-        for (let i = 0; i < sampleSize; i++) {
-          try {
-            testDb.exec(dataInserts[i]);
-          } catch (error) {
-            logger.error(`Error executing data statement: ${error}`);
-            logger.error(`Problematic statement: ${dataInserts[i].substring(0, 200)}...`);
-            throw error;
+            // Create a new task for this chunk
+            const task = (async () => {
+              let chunkDb: Database | null = null;
+              try {
+                // Get a fresh database connection for each chunk
+                chunkDb = await Database.getOrgDb(orgId);
+                
+                // Start transaction explicitly for Turso client
+                if (!chunkDb.isLocal) {
+                  await chunkDb.client.execute({ sql: 'BEGIN' });
+                }
+                
+                const insertStmt = createInsertBatch(chunk);
+                logger.info(`[${chunkIndex + 1}/${totalInsertChunks}] Executing insert chunk with ${chunk.length} contacts`);
+                await chunkDb.execute(insertStmt.sql, insertStmt.args);
+                
+                // Commit transaction explicitly for Turso client
+                if (!chunkDb.isLocal) {
+                  await chunkDb.client.execute({ sql: 'COMMIT' });
+                }
+                
+                completedInsertChunks++;
+                logger.info(`✓ [${chunkIndex + 1}/${totalInsertChunks}] Completed insert chunk (${completedInsertChunks}/${totalInsertChunks} chunks done)`);
+              } catch (error) {
+                // Rollback transaction explicitly for Turso client
+                if (chunkDb && !chunkDb.isLocal) {
+                  try {
+                    await chunkDb.client.execute({ sql: 'ROLLBACK' });
+                  } catch (rollbackError) {
+                    logger.error(`Error rolling back transaction: ${rollbackError}`);
+                  }
+                }
+                logger.error(`✗ [${chunkIndex + 1}/${totalInsertChunks}] Error in insert chunk: ${error}`);
+                throw error;
+              }
+            })();
+            
+            tasks.push(task);
+            
+            // Limit concurrent operations
+            if (tasks.length >= CONCURRENT_TRANSACTIONS) {
+              await Promise.race(tasks.map(task => 
+                task.then(() => {
+                  const index = tasks.indexOf(task);
+                  if (index > -1) {
+                    tasks.splice(index, 1);
+                  }
+                })
+              ));
+            }
           }
         }
         
-        testDb.close();
-        logger.info('Dump validation successful');
-      } catch (error) {
-        logger.error(`Invalid dump: ${error}`);
-        throw new Error(`Failed to validate database dump: ${error}`);
-      }
-      
-      // Create new database with validated dump - pass timestamp suffix to avoid name conflicts
-      const { url: newUrl, token: newToken } = await turso.createDatabaseFromDump(
-        orgId,
-        timestamp.toString(),
-        finalDump
-      );
-
-      // Verify new database has data and correct schema
-      logger.info(`Verifying new database at ${newUrl}`);
-      const verifyClient = createClient({
-        url: newUrl,
-        authToken: newToken
-      });
-      
-      try {
-        // Check if contacts table exists
-        const tablesResult = await verifyClient.execute(`
-          SELECT name FROM sqlite_master WHERE type='table' AND name='contacts'
-        `);
-        
-        if (!tablesResult.rows || tablesResult.rows.length === 0) {
-          throw new Error('Contacts table not found in new database');
+        // Ensure all insert tasks are completed
+        if (tasks.length > 0) {
+          await Promise.all(tasks);
+          tasks.length = 0;
+          logger.info(`✓ All insert operations completed successfully`);
         }
         
-        // Verify contact count
-        const verifyResult = await verifyClient.execute('SELECT COUNT(*) as count FROM contacts');
-        const contactCount = verifyResult.rows?.[0]?.[0];
-        logger.info(`Verified new database has ${contactCount} contacts`);
-
-        if (!contactCount || contactCount === 0) {
-          throw new Error('New database appears to be empty');
-        }
-        
-        // Verify a random contact to ensure data integrity
-        const sampleResult = await verifyClient.execute('SELECT * FROM contacts LIMIT 1');
-        if (!sampleResult.rows || sampleResult.rows.length === 0) {
-          throw new Error('Could not retrieve sample contact from database');
-        }
-        
-        logger.info('New database verification completed successfully');
-      } catch (error) {
-        logger.error(`Database verification failed: ${error}`);
-        
-        // Attempt to delete the problematic database before throwing
-        try {
-          const newDbName = newUrl.split('/').pop()?.split('.')[0];
-          if (newDbName) {
-            await turso.deleteOrganizationDatabase(newDbName);
-            logger.info(`Deleted problematic database: ${newDbName}`);
+        // Process updates concurrently
+        if (updateContacts.length > 0) {
+          const totalUpdateChunks = Math.ceil(updateContacts.length / ROWS_PER_UPDATE_BATCH);
+          logger.info(`Processing ${updateContacts.length} updates concurrently in ${totalUpdateChunks} chunks`);
+          let completedUpdateChunks = 0;
+          
+          for (let i = 0; i < updateContacts.length; i += ROWS_PER_UPDATE_BATCH) {
+            const chunk = updateContacts.slice(i, Math.min(i + ROWS_PER_UPDATE_BATCH, updateContacts.length));
+            const chunkIndex = Math.floor(i / ROWS_PER_UPDATE_BATCH);
+            
+            // Create a new task for this chunk
+            const task = (async () => {
+              let chunkDb: Database | null = null;
+              try {
+                // Get a fresh database connection for each chunk
+                chunkDb = await Database.getOrgDb(orgId);
+                
+                // Start transaction explicitly for Turso client
+                if (!chunkDb.isLocal) {
+                  await chunkDb.client.execute({ sql: 'BEGIN' });
+                }
+                
+                const updateStatements = createUpdateBatch(chunk);
+                logger.info(`[${chunkIndex + 1}/${totalUpdateChunks}] Executing update chunk with ${chunk.length} contacts`);
+                
+                // Execute updates sequentially within the transaction
+                for (const stmt of updateStatements) {
+                  await chunkDb.execute(stmt.sql, stmt.args);
+                }
+                
+                // Commit transaction explicitly for Turso client
+                if (!chunkDb.isLocal) {
+                  await chunkDb.client.execute({ sql: 'COMMIT' });
+                }
+                
+                completedUpdateChunks++;
+                logger.info(`✓ [${chunkIndex + 1}/${totalUpdateChunks}] Completed update chunk (${completedUpdateChunks}/${totalUpdateChunks} chunks done)`);
+              } catch (error) {
+                // Rollback transaction explicitly for Turso client
+                if (chunkDb && !chunkDb.isLocal) {
+                  try {
+                    await chunkDb.client.execute({ sql: 'ROLLBACK' });
+                  } catch (rollbackError) {
+                    logger.error(`Error rolling back transaction: ${rollbackError}`);
+                  }
+                }
+                logger.error(`✗ [${chunkIndex + 1}/${totalUpdateChunks}] Error in update chunk: ${error}`);
+                throw error;
+              }
+            })();
+            
+            tasks.push(task);
+            
+            // Limit concurrent operations
+            if (tasks.length >= CONCURRENT_TRANSACTIONS) {
+              await Promise.race(tasks.map(task => 
+                task.then(() => {
+                  const index = tasks.indexOf(task);
+                  if (index > -1) {
+                    tasks.splice(index, 1);
+                  }
+                })
+              ));
+            }
           }
-        } catch (cleanupError) {
-          logger.warn(`Failed to delete problematic database: ${cleanupError}`);
         }
         
-        throw new Error(`Database verification failed: ${error}`);
-      }
-
-      // Update organization to use new database
-      logger.info(`Updating organization ${orgId} to use new database URL: ${newUrl}`);
-      await mainDb.execute(
-        'UPDATE organizations SET turso_db_url = ?, turso_auth_token = ? WHERE id = ?',
-        [newUrl, newToken, orgId]
-      );
-      
-      // Verify the update
-      const verifyOrg = await mainDb.fetchOne<{ turso_db_url: string, turso_auth_token: string }>(
-        'SELECT turso_db_url, turso_auth_token FROM organizations WHERE id = ?',
-        [orgId]
-      );
-      
-      if (!verifyOrg || verifyOrg.turso_db_url !== newUrl) {
-        logger.error(`Failed to update organization ${orgId} database URL. Current URL: ${verifyOrg?.turso_db_url}`);
-        throw new Error('Failed to update organization database URL');
-      }
-      
-      logger.info(`Successfully updated organization ${orgId} to use new database URL`);
-
-      // Step 5: Clean up old database
-      let oldDbName: string | undefined;
-      
-      try {
-        // Extract database name from URL using the hostname pattern
-        // Format is typically https://org-1-pyrex41.aws-us-east-1.turso.io or similar
-        const oldUrlParts = org.turso_db_url.split('.');
-        if (oldUrlParts.length >= 2) {
-          // Get the first part which should be like 'https://org-1-pyrex41'
-          const firstPart = oldUrlParts[0];
-          // Extract just the database name
-          oldDbName = firstPart.split('/').pop();
-          logger.info(`Extracted old database name: ${oldDbName}`);
-        } else {
-          logger.warn(`Could not parse old database URL: ${org.turso_db_url}`);
+        // Ensure all remaining tasks are completed
+        if (tasks.length > 0) {
+          await Promise.all(tasks);
+          logger.info(`✓ All update operations completed successfully`);
         }
-      } catch (e) {
-        logger.warn(`Error parsing old database URL: ${e}`);
+        
+        logger.info(`✓ Import Summary:
+• Total contacts processed: ${processed}
+• Valid contacts: ${contactsToInsert.length}
+• New contacts inserted: ${newContacts.length}
+• Existing contacts updated: ${updateContacts.length}
+• Skipped contacts: ${skipped}`);
       }
       
-      if (oldDbName) {
-        try {
-          logger.info(`Attempting to delete old database: ${oldDbName}`);
-          await turso.deleteOrganizationDatabase(oldDbName);
-          logger.info(`Successfully deleted old database: ${oldDbName}`);
-        } catch (deleteError) {
-          // Log but don't fail if old database cleanup fails
-          logger.warn(`Failed to delete old database ${oldDbName}: ${deleteError}`);
-        }
-      } else {
-        logger.warn(`Could not determine old database name from URL: ${org.turso_db_url}`);
-      }
+      logger.info(`Bulk import completed successfully: ${processed} processed, ${contactsToInsert.length} valid contacts, ${skipped} skipped`);
 
-      // Clean up local resources
-      if (localDb) localDb.close();
-      if (tmpDir) await fs.promises.rm(tmpDir, { recursive: true });
-
-      logger.info(`Successfully imported ${uniqueContacts.length} contacts for org ${orgId}`);
     } catch (error) {
-      logger.error(`Bulk import failed for org ${orgId}: ${error}`);
-      
-      // Clean up resources even if operation fails
-      if (localDb) localDb.close();
-      if (tmpDir) {
-        try {
-          await fs.promises.rm(tmpDir, { recursive: true });
-        } catch (cleanupError) {
-          logger.warn(`Failed to clean up temporary directory: ${cleanupError}`);
-        }
+      logger.error(`Bulk import failed: ${error}`);
+      throw error;
+    }
+  }
+
+  static getUserFromSession = getUserFromSession;
+  static getOrganizationById = getOrganizationById;
+
+  static async ensureOrgSchema(orgDb: Database): Promise<void> {
+    try {
+      // Check if contacts table exists
+      const tableExists = await orgDb.fetchOne(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='contacts'"
+      );
+
+      if (!tableExists) {
+        logger.info('Creating contacts table schema');
+        // Create contacts table
+        await orgDb.execute(`
+          CREATE TABLE IF NOT EXISTS contacts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            first_name TEXT NOT NULL,
+            last_name TEXT NOT NULL,
+            email TEXT NOT NULL,
+            current_carrier TEXT NOT NULL,
+            plan_type TEXT NOT NULL,
+            effective_date TEXT NOT NULL,
+            birth_date TEXT NOT NULL,
+            tobacco_user INTEGER NOT NULL,
+            gender TEXT NOT NULL,
+            state TEXT NOT NULL,
+            zip_code TEXT NOT NULL,
+            agent_id INTEGER,
+            last_emailed DATETIME,
+            phone_number TEXT NOT NULL DEFAULT '',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          )
+        `);
+
+        // Create indexes for contacts table
+        await orgDb.execute(`CREATE INDEX IF NOT EXISTS idx_contacts_email ON contacts(email)`);
+        await orgDb.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_email_unique ON contacts(LOWER(TRIM(email)))`);
       }
-      
+
+      // Check if contact_events table exists
+      const eventsTableExists = await orgDb.fetchOne(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='contact_events'"
+      );
+
+      if (!eventsTableExists) {
+        logger.info('Creating contact_events table schema');
+        // Create contact_events table
+        await orgDb.execute(`
+          CREATE TABLE IF NOT EXISTS contact_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            contact_id INTEGER,
+            lead_id INTEGER,
+            event_type TEXT NOT NULL,
+            metadata TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (contact_id) REFERENCES contacts(id),
+            FOREIGN KEY (lead_id) REFERENCES leads(id)
+          )
+        `);
+
+        // Create indexes for contact_events table
+        await orgDb.execute(`CREATE INDEX IF NOT EXISTS idx_contact_events_contact_id ON contact_events(contact_id)`);
+        await orgDb.execute(`CREATE INDEX IF NOT EXISTS idx_contact_events_lead_id ON contact_events(lead_id)`);
+        await orgDb.execute(`CREATE INDEX IF NOT EXISTS idx_contact_events_type ON contact_events(event_type)`);
+      }
+
+      // Check if leads table exists
+      const leadsTableExists = await orgDb.fetchOne(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='leads'"
+      );
+
+      if (!leadsTableExists) {
+        logger.info('Creating leads table schema');
+        // Create leads table
+        await orgDb.execute(`
+          CREATE TABLE IF NOT EXISTS leads (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            email TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(email)
+          )
+        `);
+
+        // Create index for leads table
+        await orgDb.execute(`CREATE INDEX IF NOT EXISTS idx_leads_email ON leads(email)`);
+      }
+
+      // Check if eligibility_answers table exists
+      const eligibilityTableExists = await orgDb.fetchOne(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='eligibility_answers'"
+      );
+
+      if (!eligibilityTableExists) {
+        logger.info('Creating eligibility_answers table schema');
+        // Create eligibility_answers table
+        await orgDb.execute(`
+          CREATE TABLE IF NOT EXISTS eligibility_answers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            contact_id INTEGER NOT NULL,
+            quote_id TEXT NOT NULL,
+            answers TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (contact_id) REFERENCES contacts(id)
+          )
+        `);
+
+        // Create index for eligibility_answers table
+        await orgDb.execute(`CREATE INDEX IF NOT EXISTS idx_eligibility_answers_contact_id ON eligibility_answers(contact_id)`);
+      }
+    } catch (error) {
+      logger.error(`Error ensuring org schema: ${error}`);
+      throw error;
+    }
+  }
+
+  close() {
+    if (this.isLocal && this.bunDb) {
+      this.bunDb.close()
+    }
+  }
+
+  /**
+   * Get paginated contacts with total count
+   */
+  async getPaginatedContacts(page: number = 1, limit: number = 100, filters: any = {}): Promise<{ contacts: any[], total: number }> {
+    try {
+      // Build the base query
+      let query = 'SELECT * FROM contacts';
+      let countQuery = 'SELECT COUNT(*) as total FROM contacts';
+      const queryParams: any[] = [];
+      const conditions: string[] = [];
+
+      // Add filter conditions
+      if (filters.search) {
+        conditions.push('(LOWER(first_name) LIKE ? OR LOWER(last_name) LIKE ? OR LOWER(email) LIKE ?)');
+        const searchTerm = `%${filters.search.toLowerCase()}%`;
+        queryParams.push(searchTerm, searchTerm, searchTerm);
+      }
+
+      if (filters.states && filters.states.length > 0) {
+        conditions.push(`state IN (${filters.states.map(() => '?').join(',')})`);
+        queryParams.push(...filters.states);
+      }
+
+      if (filters.carriers && filters.carriers.length > 0) {
+        conditions.push(`current_carrier IN (${filters.carriers.map(() => '?').join(',')})`);
+        queryParams.push(...filters.carriers);
+      }
+
+      if (filters.agents && filters.agents.length > 0) {
+        conditions.push(`agent_id IN (${filters.agents.map(() => '?').join(',')})`);
+        queryParams.push(...filters.agents);
+      }
+
+      // Add WHERE clause if there are conditions
+      if (conditions.length > 0) {
+        const whereClause = ` WHERE ${conditions.join(' AND ')}`;
+        query += whereClause;
+        countQuery += whereClause;
+      }
+
+      // Add pagination
+      const offset = (page - 1) * limit;
+      query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
+      queryParams.push(limit, offset);
+
+      // Get total count
+      const totalResult = await this.fetchOne<{ total: number }>(countQuery, queryParams.slice(0, -2));
+      const total = totalResult?.total || 0;
+
+      // Get paginated results
+      const contacts = await this.fetchAll(query, queryParams);
+
+      return {
+        contacts,
+        total
+      };
+    } catch (error) {
+      logger.error(`Error getting paginated contacts: ${error}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Get available filter options
+   */
+  async getFilterOptions(): Promise<{ carriers: string[], states: string[] }> {
+    try {
+      const carriers = await this.fetchAll(
+        'SELECT DISTINCT current_carrier FROM contacts WHERE current_carrier IS NOT NULL'
+      );
+      const states = await this.fetchAll(
+        'SELECT DISTINCT state FROM contacts WHERE state IS NOT NULL'
+      );
+
+      return {
+        carriers: carriers.map((row: { current_carrier: string }) => row.current_carrier).filter(Boolean),
+        states: states.map((row: { state: string }) => row.state).filter(Boolean)
+      };
+    } catch (error) {
+      logger.error(`Error getting filter options: ${error}`);
       throw error;
     }
   }
@@ -9083,14 +10179,31 @@ export const db = new Database()
 /**
  * Get user from session cookie
  */
-export async function getUserFromSession(request: Request): Promise<any> {
+export async function getUserFromSession(request: any): Promise<any> {
   try {
     const db = new Database();
-    const sessionCookie = request.headers.get('cookie')?.split(';')
-      .find(c => c.trim().startsWith('session='))
+    let sessionCookie: string | undefined;
+
+    // Handle different request header formats
+    if (request.headers) {
+      if (typeof request.headers.get === 'function') {
+        // Standard Request object
+        sessionCookie = request.headers.get('cookie')?.split(';')
+          .find((c: string) => c.trim().startsWith('session='))
+          ?.split('=')[1];
+      } else if (typeof request.headers === 'object') {
+        // Raw headers object or Express request
+        const cookieHeader = request.headers.cookie || request.headers['cookie'] || request.headers['Cookie'];
+        if (typeof cookieHeader === 'string') {
+          sessionCookie = cookieHeader.split(';')
+            .find((c: string) => c.trim().startsWith('session='))
       ?.split('=')[1];
+        }
+      }
+    }
 
     if (!sessionCookie) {
+      logger.info('No session cookie found');
       return null;
     }
 
@@ -9100,9 +10213,9 @@ export async function getUserFromSession(request: Request): Promise<any> {
     );
 
     if (!user || user.length === 0) {
+      logger.info('No valid user session found');
       return null;
     }
-
     return user[0];
   } catch (error) {
     logger.error(`Error getting user from session: ${error}`);
@@ -9116,25 +10229,14 @@ export async function getUserFromSession(request: Request): Promise<any> {
 export async function getOrganizationById(orgId: number): Promise<any> {
   try {
     const db = new Database();
-    const org = await db.query(
-      'SELECT * FROM organizations WHERE id = ?',
-      [orgId]
-    );
-
-    if (!org || org.length === 0) {
-      return null;
-    }
-
+    const org = await db.query('SELECT * FROM organizations WHERE id = ?', [orgId]);
+    if (!org || org.length === 0) return null;
     return org[0];
   } catch (error) {
     logger.error(`Error getting organization: ${error}`);
     return null;
   }
 }
-
-// Add these methods to the Database class
-Database.getUserFromSession = getUserFromSession;
-Database.getOrganizationById = getOrganizationById;
 
 ================
 File: src/errors.ts
@@ -9197,6 +10299,10 @@ import { eligibilityRoutes } from './routes/eligibility'
 import { generateQuoteId } from './utils/quoteId'
 import { createSelfServiceRoutes } from './routes/self-service'
 import { scheduleRoutes } from './routes/schedule'
+import { contactsRoutes } from './routes/contacts'
+import * as fs from 'fs/promises'
+import * as path from 'path'
+import * as os from 'os'
 
 // At the top of the file, add interface for ZIP data
 interface ZipInfo {
@@ -9207,7 +10313,7 @@ interface ZipInfo {
 // Update ZIP_DATA declaration
 let ZIP_DATA: Record<string, ZipInfo> = {}
 try {
-  ZIP_DATA = JSON.parse(readFileSync('../zipData.json', 'utf-8'))
+  ZIP_DATA = JSON.parse(readFileSync(path.join(__dirname, '..', 'zipData.json'), 'utf-8'))
 } catch (e) {
   logger.error(`Error loading ZIP data: ${e}`)
 }
@@ -9375,17 +10481,17 @@ const validateRow = async (row: any, rowNum: number, carrierMap: Map<string, str
 
     // Required fields check with detailed logging
     const requiredFields = [
-      'First Name',
-      'Last Name', 
-      'Email',
-      'Current Carrier',
-      'Plan Type',
-      'Effective Date',
-      'Birth Date',
-      'Tobacco User',
-      'Gender',
-      'ZIP Code',
-      'Phone Number'
+      'First Name', 'firstName',
+      'Last Name', 'lastName', 
+      'Email', 'email',
+      'Current Carrier', 'currentCarrier',
+      'Plan Type', 'planType',
+      'Effective Date', 'effectiveDate',
+      'Birth Date', 'birthDate',
+      'Tobacco User', 'tobaccoUser',
+      'Gender', 'gender',
+      'ZIP Code', 'zipCode',
+      'Phone Number', 'phoneNumber'
     ]
 
     logger.info(`Checking required fields: ${requiredFields.join(', ')}`)
@@ -9398,50 +10504,81 @@ const validateRow = async (row: any, rowNum: number, carrierMap: Map<string, str
       return isMissing
     })
 
-    if (missingValues.length > 0) {
-      logger.warn(`Row ${rowNum} missing required fields: ${missingValues.join(', ')}`)
+    // Group the missing fields by their base name (e.g. both "First Name" and "firstName" count as one missing field)
+    const missingFieldGroups = new Set<string>()
+    for (let i = 0; i < missingValues.length; i += 2) {
+      if (missingValues[i] && missingValues[i+1]) {
+        missingFieldGroups.add(missingValues[i])
+      }
+    }
+
+    if (missingFieldGroups.size > 0) {
+      logger.warn(`Row ${rowNum} missing required fields: ${Array.from(missingFieldGroups).join(', ')}`)
       return {
         isValid: false,
-        error: `Missing values for: ${missingValues.join(', ')}`
+        error: `Missing values for: ${Array.from(missingFieldGroups).join(', ')}`
       }
     }
 
     // Email validation with logging
-    const email = row['Email'].trim().toLowerCase()
+    const email = (row['Email'] || row['email'] || '').trim().toLowerCase()
     logger.info(`Validating email: "${email}"`)
     if (!validateEmail(email)) {
       logger.warn(`Row ${rowNum} has invalid email format: ${email}`)
       return {
         isValid: false,
-        error: `Invalid email format: ${row['Email']}`
+        error: `Invalid email format: ${email}`
       }
     }
 
     // Phone validation with logging
-    logger.info(`Validating phone number: "${row['Phone Number']}"`)
-    const phoneResult = standardizePhoneNumber(row['Phone Number'])
+    logger.info(`Validating phone number: "${row['Phone Number'] || row['phoneNumber']}"`)
+    const phoneResult = standardizePhoneNumber(row['Phone Number'] || row['phoneNumber'])
     if (!phoneResult.isValid) {
-      logger.warn(`Row ${rowNum} has invalid phone number: ${row['Phone Number']}`)
+      logger.warn(`Row ${rowNum} has invalid phone number: ${row['Phone Number'] || row['phoneNumber']}`)
       return {
         isValid: false,
-        error: `Invalid phone number: ${row['Phone Number']}. Must be exactly 10 digits.`
+        error: `Invalid phone number: ${row['Phone Number'] || row['phoneNumber']}. Must be exactly 10 digits.`
       }
     }
 
     // ZIP validation with logging
-    const zipCode = row['ZIP Code'].trim()
+    const zipCode = (row['ZIP Code'] || row['zipCode'] || '').trim()
     logger.info(`Validating ZIP code: "${zipCode}"`)
-    const zipInfo = ZIP_DATA[zipCode]
-    if (!zipInfo) {
-      logger.warn(`Row ${rowNum} has invalid ZIP code: ${zipCode}`)
+
+    // First check if ZIP code exists and has the right format
+    if (!zipCode) {
+      logger.warn(`Row ${rowNum} is missing ZIP code`)
       return {
         isValid: false,
-        error: `Invalid ZIP code: ${zipCode}`
+        error: `Missing ZIP code. This field is required for determining state coverage and eligibility.`
       }
     }
 
+    // Check if ZIP code is in the correct format (5 digits)
+    if (!/^\d{5}$/.test(zipCode)) {
+      logger.warn(`Row ${rowNum} has invalid ZIP code format: ${zipCode}`)
+      return {
+        isValid: false,
+        error: `Invalid ZIP code format: ${zipCode}. Must be exactly 5 digits.`
+      }
+    }
+
+    // Check if ZIP code exists in our database
+    const zipInfo = ZIP_DATA[zipCode]
+    if (!zipInfo) {
+      logger.warn(`Row ${rowNum} has invalid ZIP code: ${zipCode} (not found in database)`)
+      return {
+        isValid: false,
+        error: `Invalid ZIP code: ${zipCode}. This ZIP code is not recognized in our database.`
+      }
+    }
+
+    // If we get here, we have a valid ZIP code with state information
+    logger.info(`Valid ZIP code ${zipCode} maps to state: ${zipInfo.state}`)
+
     // Gender validation with logging
-    const gender = row['Gender'].trim().toUpperCase()
+    const gender = (row['Gender'] || row['gender'] || '').trim().toUpperCase()
     logger.info(`Validating gender: "${gender}"`)
     if (!['M', 'F'].includes(gender)) {
       logger.warn(`Row ${rowNum} has invalid gender: ${gender}`)
@@ -9452,7 +10589,7 @@ const validateRow = async (row: any, rowNum: number, carrierMap: Map<string, str
     }
 
     // Carrier validation with logging
-    const carrierInput = row['Current Carrier'].trim().toLowerCase()
+    const carrierInput = (row['Current Carrier'] || row['currentCarrier'] || '').trim().toLowerCase()
     logger.info(`Validating carrier: "${carrierInput}"`)
     const standardizedCarrier = carrierMap.get(carrierInput) || carrierInput
     const wasCarrierConverted = !carrierMap.has(carrierInput)
@@ -9461,23 +10598,23 @@ const validateRow = async (row: any, rowNum: number, carrierMap: Map<string, str
     }
 
     // Date validations with logging
-    logger.info(`Validating effective date: "${row['Effective Date']}"`)
-    const effectiveDateResult = validateISODate(row['Effective Date'], true)
+    logger.info(`Validating effective date: "${row['Effective Date'] || row['effectiveDate']}"`)
+    const effectiveDateResult = validateISODate(row['Effective Date'] || row['effectiveDate'], true)
     if (!effectiveDateResult.isValid) {
-      logger.warn(`Row ${rowNum} has invalid effective date: ${row['Effective Date']}`)
+      logger.warn(`Row ${rowNum} has invalid effective date: ${row['Effective Date'] || row['effectiveDate']}`)
       return {
         isValid: false,
-        error: `Invalid effective date format: ${row['Effective Date']}. Please use YYYY-MM-DD or MM-DD-YYYY format.`
+        error: `Invalid effective date format: ${row['Effective Date'] || row['effectiveDate']}. Please use YYYY-MM-DD or MM-DD-YYYY format.`
       }
     }
 
-    logger.info(`Validating birth date: "${row['Birth Date']}"`)
-    const birthDateResult = validateISODate(row['Birth Date'])
+    logger.info(`Validating birth date: "${row['Birth Date'] || row['birthDate']}"`)
+    const birthDateResult = validateISODate(row['Birth Date'] || row['birthDate'])
     if (!birthDateResult.isValid) {
-      logger.warn(`Row ${rowNum} has invalid birth date: ${row['Birth Date']}`)
+      logger.warn(`Row ${rowNum} has invalid birth date: ${row['Birth Date'] || row['birthDate']}`)
       return {
         isValid: false,
-        error: `Invalid birth date format: ${row['Birth Date']}. Please use YYYY-MM-DD or MM-DD-YYYY format.`
+        error: `Invalid birth date format: ${row['Birth Date'] || row['birthDate']}. Please use YYYY-MM-DD or MM-DD-YYYY format.`
       }
     }
 
@@ -9487,14 +10624,14 @@ const validateRow = async (row: any, rowNum: number, carrierMap: Map<string, str
       isValid: true,
       value: {
         data: [
-          row['First Name'].trim(),
-          row['Last Name'].trim(),
+          (row['First Name'] || row['firstName'] || '').trim(),
+          (row['Last Name'] || row['lastName'] || '').trim(),
           email,
           standardizedCarrier,
-          row['Plan Type'].trim(),
+          (row['Plan Type'] || row['planType'] || '').trim(),
           effectiveDateResult.isoDate,
           birthDateResult.isoDate,
-          ['yes', 'true', '1', 'y'].includes(row['Tobacco User'].trim().toLowerCase()),
+          ['yes', 'true', '1', 'y'].includes((row['Tobacco User'] || row['tobaccoUser'] || '').trim().toLowerCase()),
           gender,
           zipInfo.state,
           zipCode,
@@ -9504,7 +10641,7 @@ const validateRow = async (row: any, rowNum: number, carrierMap: Map<string, str
         carrierConverted: wasCarrierConverted ? {
           Row: rowNum,
           ...row,
-          OriginalCarrier: row['Current Carrier']
+          OriginalCarrier: row['Current Carrier'] || row['currentCarrier']
         } : null
       }
     }
@@ -9607,119 +10744,57 @@ const startServer = async () => {
 
           logger.info(`GET /api/contacts - Attempting to fetch contacts for org ${user.organization_id}`)
           
-          // Get org-specific database, initializing it if needed
-          const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString())
-          
-          // First get all unique carriers and states for filter options
-          const [carrierResults, stateResults] = await Promise.all([
-            orgDb.fetchAll('SELECT DISTINCT current_carrier FROM contacts WHERE current_carrier IS NOT NULL ORDER BY current_carrier'),
-            orgDb.fetchAll('SELECT DISTINCT state FROM contacts WHERE state IS NOT NULL ORDER BY state')
-          ])
+          // Get org-specific database
+          const orgDb = await Database.getOrgDb(user.organization_id.toString())
 
-          const allCarriers = carrierResults.map((row: any[]) => row[0])
-          const allStates = stateResults.map((row: any[]) => row[0])
-          
-          // Get search query and filters from URL params
+          // Get pagination params from URL
           const url = new URL(request.url)
-          const searchQuery = url.searchParams.get('search') || ''
-          const carriers = (url.searchParams.get('carriers') || '').split(',').filter(Boolean)
-          const states = (url.searchParams.get('states') || '').split(',').filter(Boolean)
-          const agents = (url.searchParams.get('agents') || '').split(',').filter(Boolean)
+          const page = parseInt(url.searchParams.get('page') || '1', 10)
+          const limit = parseInt(url.searchParams.get('limit') || '100', 10)
           
-          // Build the SQL query with search and filter conditions
-          let conditions = []
-          let params = []
-
-          // Add search condition if search query exists
-          if (searchQuery) {
-            conditions.push(`(
-              LOWER(first_name) LIKE ? OR 
-              LOWER(last_name) LIKE ? OR 
-              LOWER(email) LIKE ? OR
-              LOWER(current_carrier) LIKE ? OR
-              LOWER(state) LIKE ?
-            )`)
-            const searchTerm = `%${searchQuery.toLowerCase()}%`
-            params.push(searchTerm, searchTerm, searchTerm, searchTerm, searchTerm)
+          // Get search and filter params
+          const filters = {
+            search: url.searchParams.get('search') || '',
+            carriers: (url.searchParams.get('carriers') || '').split(',').filter(Boolean),
+            states: (url.searchParams.get('states') || '').split(',').filter(Boolean),
+            agents: (url.searchParams.get('agents') || '').split(',')
+              .filter(Boolean)
+              .map(id => parseInt(id, 10))
           }
 
-          // Add carrier filter if carriers are specified
-          if (carriers.length > 0) {
-            conditions.push(`current_carrier IN (${carriers.map(() => '?').join(',')})`)
-            params.push(...carriers)
-          }
+          // Get paginated contacts
+          const { contacts, total } = await orgDb.getPaginatedContacts(page, limit, filters)
 
-          // Add state filter if states are specified
-          if (states.length > 0) {
-            conditions.push(`state IN (${states.map(() => '?').join(',')})`)
-            params.push(...states)
-          }
+          // Get filter options
+          const filterOptions = await orgDb.getFilterOptions()
 
-          // Add agent filter if agents are specified
-          if (agents.length > 0) {
-            // Handle special case: if agent list includes '0', include NULL agent_id values too
-            if (agents.includes('0')) {
-              const nonZeroAgents = agents.filter(id => id !== '0')
-              if (nonZeroAgents.length > 0) {
-                conditions.push(`(agent_id IN (${nonZeroAgents.map(() => '?').join(',')}) OR agent_id IS NULL)`)
-                params.push(...nonZeroAgents.map(Number))
-              } else {
-                conditions.push(`agent_id IS NULL`)
-              }
-            } else {
-              conditions.push(`agent_id IN (${agents.map(() => '?').join(',')})`)
-              params.push(...agents.map(Number))
-            }
-          }
-
-          // Construct the final query
-          const query = `
-            SELECT * FROM contacts 
-            ${conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : ''}
-            ORDER BY id DESC
-          `
-          
-          // Execute query with params
-          const contacts = await orgDb.fetchAll(query, params)
-
-          if (!contacts || !Array.isArray(contacts)) {
-            logger.warn('GET /api/contacts - No contacts found or invalid response')
-            return {
-              contacts: [],
-              filterOptions: {
-                carriers: allCarriers,
-                states: allStates
-              }
-            }
-          }
-
-          logger.info(`GET /api/contacts - Successfully fetched ${contacts.length} contacts from org database`)
-
+          // Map contacts to the expected format
           const mappedContacts = contacts.map(contact => ({
-            id: contact[0],
-            first_name: contact[1],
-            last_name: contact[2],
-            email: contact[3],
-            current_carrier: contact[4],
-            plan_type: contact[5],
-            effective_date: contact[6],
-            birth_date: contact[7],
-            tobacco_user: Boolean(contact[8]),
-            gender: contact[9],
-            state: contact[10],
-            zip_code: contact[11],
-            agent_id: contact[12],
-            last_emailed: contact[13],
-            phone_number: contact[14] || ''
+            id: contact.id,
+            first_name: contact.first_name,
+            last_name: contact.last_name,
+            email: contact.email,
+            current_carrier: contact.current_carrier,
+            plan_type: contact.plan_type,
+            effective_date: contact.effective_date,
+            birth_date: contact.birth_date,
+            tobacco_user: Boolean(contact.tobacco_user),
+            gender: contact.gender,
+            state: contact.state,
+            zip_code: contact.zip_code,
+            agent_id: contact.agent_id,
+            last_emailed: contact.last_emailed,
+            phone_number: contact.phone_number || ''
           }))
 
-          logger.info(`GET /api/contacts - Returning ${mappedContacts.length} contacts with ${allCarriers.length} carriers and ${allStates.length} states`)
+          logger.info(`GET /api/contacts - Returning ${mappedContacts.length} contacts (page ${page} of ${Math.ceil(total / limit)})`)
+          
           return {
             contacts: mappedContacts,
-            filterOptions: {
-              carriers: allCarriers,
-              states: allStates
-            }
+            filterOptions,
+            total,
+            page,
+            limit
           }
         } catch (e) {
           logger.error(`Error in GET /api/contacts: ${e}`)
@@ -10083,258 +11158,36 @@ const startServer = async () => {
 
           logger.info(`Processing ${file.name} with overwriteDuplicates=${overwriteDuplicates}`)
 
-          // For large datasets, use bulk import with local SQLite
-          const fileContents = await file.text()
-          const records = csvParse(fileContents, {
-            columns: true,
-            skip_empty_lines: true
-          })
+          // Save file to temp directory
+          const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'import-'));
+          const tempFilePath = path.join(tempDir, 'contacts.csv');
+          await fs.writeFile(tempFilePath, Buffer.from(await file.arrayBuffer()));
 
-          // Process records in parallel with batched validation
-          const VALIDATION_BATCH_SIZE = 100
-          const validRows: any[] = []
-          const errorRows: any[] = []
-          const paramsList: any[] = []
+          logger.info(`CSV file saved to ${tempFilePath}, starting import`);
 
-          // Get list of supported carriers once at the start
-          const carrierDb = new Database()
-          const carriersResult = await carrierDb.execute(
-            'SELECT name, aliases FROM carriers ORDER BY name'
-          )
+          // Start bulk import process
+          const importPromise = Database.bulkImportContacts(
+            user.organization_id.toString(),
+            tempFilePath,
+            overwriteDuplicates
+          );
 
-          interface Carrier {
-            name: string
-            aliases: string[]
-          }
-
-          const supportedCarriers = carriersResult.rows.map((row: any) => ({
-            name: row.name,
-            aliases: row.aliases ? JSON.parse(row.aliases) : []
-          })) as Carrier[]
-
-          // Create carrier validation map for O(1) lookups
-          const carrierMap = new Map<string, string>()
-          supportedCarriers.forEach((carrier: Carrier) => {
-            carrierMap.set(carrier.name.toLowerCase(), carrier.name)
-            if (carrier.aliases) {
-              carrier.aliases.forEach((alias: string) => {
-                carrierMap.set(alias.toLowerCase(), carrier.name)
-              })
-            }
-          })
-
-          // Process validation in batches
-          for (let i = 0; i < records.length; i += VALIDATION_BATCH_SIZE) {
-            const batch = records.slice(i, i + VALIDATION_BATCH_SIZE)
-            const validationPromises = batch.map((row, index) => 
-              validateRow(row, i + index + 2, carrierMap)
-            )
-
-            const validationResults = await Promise.all(validationPromises)
-            validationResults.forEach((result, index) => {
-              const rowNum = i + index + 2
-              const row = batch[index]
-
-              if (result.isValid && result.value) {
-                paramsList.push(result.value.data)
-                validRows.push(row)
-              } else {
-              errorRows.push({
-                Row: rowNum,
-                ...row,
-                  Error: result.error
-                })
-              }
-            })
-          }
-
-          if (errorRows.length > 0) {
-            return {
-              success: false,
-              message: `Found ${errorRows.length} rows with errors`,
-              errors: errorRows.map(row => `Row ${row.Row}: ${row.Error}`)
-            }
-          }
-
-          logger.info(`Processing ${paramsList.length} valid rows with overwriteDuplicates=${overwriteDuplicates}`)
-
-          // For large datasets, use bulk import
-          const BULK_IMPORT_THRESHOLD = 1000
-          if (paramsList.length >= BULK_IMPORT_THRESHOLD) {
-            logger.info(`Large dataset detected (${paramsList.length} rows). Using bulk import.`)
-            
-            try {
-              logger.info('Mapping contacts with the following fields:')
-              const sampleRow = paramsList[0]
-              logger.info(`Sample row data: ${JSON.stringify(sampleRow)}`)
-              
-              const contacts = paramsList.map(row => {
-                const contact = {
-                  firstName: row[0],
-                  lastName: row[1],
-                  email: row[2],
-                  currentCarrier: row[3],
-                  planType: row[4],
-                  effectiveDate: row[5],
-                  birthDate: row[6],
-                  tobaccoUser: typeof row[7] === 'string' 
-                    ? ['yes', 'true', '1', 'y'].includes(row[7].toLowerCase())
-                    : Boolean(row[7]),
-                  gender: row[8],
-                  state: row[9],
-                  zipCode: row[10],
-                  phoneNumber: row[11] || '',
-                  agentId: row[12] ? parseInt(row[12]) : null
-                };
-                
-                logger.info(`Mapped contact: ${JSON.stringify(contact)}`)
-                return contact;
-              });
-
-              await Database.bulkImportContacts(user.organization_id.toString(), contacts);
-
-              return {
-                success: true,
-                message: `Successfully imported ${paramsList.length} contacts`,
-                errors: []
-              };
-            } catch (error) {
-              logger.error(`Error during bulk import: ${error}`);
-              throw error;
-            }
-          }
-
-          // For smaller datasets, use regular batch processing
-          logger.info(`Using regular batch processing for ${paramsList.length} rows`)
-          const orgDb = await Database.getOrgDb(user.organization_id.toString())
-          let insertedCount = 0
-          let updatedCount = 0
-
-          // Process in smaller batches
-          const BATCH_SIZE = 50
-          for (let i = 0; i < paramsList.length; i += BATCH_SIZE) {
-            const batch = paramsList.slice(i, i + BATCH_SIZE)
-            
-            await orgDb.transaction(async (tx) => {
-              // Check for existing emails
-              const emails = batch.map(row => row[2]) // email is at index 2
-              const existingEmails = await tx.fetchAll(
-                `SELECT LOWER(TRIM(email)) as email FROM contacts WHERE LOWER(TRIM(email)) IN (${emails.map(() => '?').join(',')})`,
-                emails.map(email => email.toLowerCase().trim())
-              )
-              
-              const existingEmailSet = new Set(existingEmails.map(row => row.email))
-              
-              // Split batch into updates and inserts
-              const updates = []
-              const inserts = []
-              
-              for (const row of batch) {
-                const email = row[2].toLowerCase().trim()
-                if (existingEmailSet.has(email)) {
-                  if (overwriteDuplicates) {
-                    updates.push(row)
-                  }
-                } else {
-                  inserts.push(row)
-                }
-              }
-
-              // Process updates if any
-              if (updates.length > 0 && overwriteDuplicates) {
-                const updatePlaceholders = updates.map(() => 
-                  '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-                ).join(',')
-                
-                const updateQuery = `
-                  WITH v(first_name, last_name, carrier, plan_type, effective_date, birth_date, 
-                        tobacco_user, gender, state, zip_code, phone, agent_id) AS (
-                    VALUES ${updatePlaceholders}
-                  )
-                UPDATE contacts SET 
-                    first_name = v.first_name,
-                    last_name = v.last_name,
-                    current_carrier = v.carrier,
-                    plan_type = v.plan_type,
-                    effective_date = v.effective_date,
-                    birth_date = v.birth_date,
-                    tobacco_user = v.tobacco_user,
-                    gender = v.gender,
-                    state = v.state,
-                    zip_code = v.zip_code,
-                    phone_number = v.phone,
-                    agent_id = COALESCE(v.agent_id, contacts.agent_id)
-                  FROM v
-                  WHERE LOWER(TRIM(contacts.email)) = LOWER(TRIM(?))
-                `
-                
-                const flatUpdateParams = updates.flatMap(params => [
-                    params[0], // first_name
-                    params[1], // last_name
-                  params[3], // carrier
-                    params[4], // plan_type
-                    params[5], // effective_date
-                    params[6], // birth_date
-                  params[7] === '1' || params[7]?.toLowerCase() === 'true' ? 1 : 0, // tobacco_user
-                    params[8], // gender
-                    params[9], // state
-                    params[10], // zip_code
-                  params[11], // phone
-                  params[12] ? parseInt(params[12]) : null, // agent_id
-                  params[2]  // email for WHERE clause
-                ])
-                
-                await tx.execute(updateQuery, flatUpdateParams)
-                updatedCount += updates.length
-                logger.info(`Updated ${updates.length} existing contacts in batch ${i / BATCH_SIZE + 1}`)
-              }
-
-              // Process inserts if any
-              if (inserts.length > 0) {
-                const insertPlaceholders = inserts.map(() => 
-                  '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-                ).join(',')
-                
-                const insertQuery = `
-                  INSERT INTO contacts (
-                      first_name, last_name, email, current_carrier, plan_type,
-                      effective_date, birth_date, tobacco_user, gender,
-                      state, zip_code, phone_number, agent_id
-                  ) VALUES ${insertPlaceholders}
-                `
-                
-                const flatParams = inserts.flatMap(params => [
-                  params[0], // first_name
-                  params[1], // last_name
-                  params[2], // email
-                  params[3], // current_carrier
-                  params[4], // plan_type
-                  params[5], // effective_date
-                  params[6], // birth_date
-                  params[7] === '1' || params[7]?.toLowerCase() === 'true' ? 1 : 0, // tobacco_user
-                  params[8], // gender
-                  params[9], // state
-                  params[10], // zip_code
-                  params[11] || '', // phone_number
-                  params[12] ? parseInt(params[12]) : null // agent_id
-                ])
-                
-                await tx.execute(insertQuery, flatParams)
-                insertedCount += inserts.length
-                logger.info(`Inserted ${inserts.length} new contacts in batch ${i / BATCH_SIZE + 1}`)
-              }
-            })
-          }
+          importPromise
+            .then(() => fs.rm(tempDir, { recursive: true, force: true }))
+            .catch((error: Error) => {
+              logger.error(`Background import failed: ${error}`);
+              fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+            });
 
           return {
             success: true,
-            message: `Successfully processed ${paramsList.length} contacts (${insertedCount} inserted, ${updatedCount} updated)`,
+            message: 'Started import of contacts',
             errors: []
-          }
-
+          };
         } catch (error) {
-          logger.error(`Error processing CSV upload: ${error}`)
-          throw error
+          const err = error as Error;
+          logger.error(`Error processing CSV upload: ${err}`);
+          throw err;
         }
       })
       // Add error handler
@@ -10362,6 +11215,13 @@ const startServer = async () => {
       .use(createSelfServiceRoutes())
       // Add schedule routes
       .use(scheduleRoutes)
+      // Add contacts routes
+      .use(contactsRoutes)
+      // Serve backend static files from public directory
+      .use(staticPlugin({
+        assets: './public', 
+        prefix: '/'
+      }))
       // In production, serve the frontend static files
       .use(process.env.NODE_ENV === 'production' 
         ? async (app) => {

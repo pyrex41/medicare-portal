@@ -58,29 +58,57 @@ export const contactsRoutes = new Elysia({ prefix: '/api/contacts' })
 
           logger.info(`CSV file saved to ${tempFilePath}, starting import`);
 
-          const importPromise = Database.bulkImportContacts(
-            user.organization_id.toString(), 
-            tempFilePath, 
-            body.overwriteExisting || false
-          );
+          try {
+            await Database.bulkImportContacts(
+              user.organization_id.toString(), 
+              tempFilePath, 
+              body.overwriteExisting || false
+            );
 
-          importPromise
-            .then(() => fs.rm(tempDir, { recursive: true, force: true }))
-            .catch((error: Error) => {
-              logger.error(`Background import failed: ${error}`);
-              fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
-            });
+            await fs.rm(tempDir, { recursive: true, force: true });
 
-          return { 
-            success: true, 
-            message: 'Started import of contacts',
-            organizationId: user.organization_id
-          };
+            return { 
+              success: true, 
+              message: 'Contacts imported successfully',
+              error_csv: null,
+              converted_carriers_csv: null,
+              total_rows: 0,
+              error_rows: 0,
+              valid_rows: 0,
+              converted_carrier_rows: 0,
+              supported_carriers: []
+            };
+          } catch (error) {
+            await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+            throw error;
+          }
         } catch (error) {
           const err = error as Error;
           logger.error(`Error in bulk import: ${err}`);
           set.status = 500;
           return { error: 'Failed to process import: ' + err.message };
+        }
+      }
+    )
+    
+    // Add route to delete all contacts
+    .delete('/all',
+      async ({ store, set }: Context) => {
+        const user = store.user;
+        if (!user || !user.organization_id || !user.is_admin) {
+          set.status = 401;
+          return { error: 'Not authorized to delete all contacts' };
+        }
+
+        try {
+          const orgDb = await Database.getOrgDb(user.organization_id.toString());
+          await orgDb.execute('DELETE FROM contacts');
+          return { success: true, message: 'All contacts deleted successfully' };
+        } catch (error) {
+          const err = error as Error;
+          logger.error(`Error deleting all contacts: ${err}`);
+          set.status = 500;
+          return { error: 'Failed to delete contacts: ' + err.message };
         }
       }
     )

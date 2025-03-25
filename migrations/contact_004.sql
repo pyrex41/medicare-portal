@@ -31,4 +31,41 @@ CREATE TABLE contact_events (
 -- Add indexes for contact_events table
 CREATE INDEX IF NOT EXISTS idx_contact_events_contact_id ON contact_events(contact_id);
 CREATE INDEX IF NOT EXISTS idx_contact_events_lead_id ON contact_events(lead_id);
-CREATE INDEX IF NOT EXISTS idx_contact_events_type ON contact_events(event_type); 
+CREATE INDEX IF NOT EXISTS idx_contact_events_type ON contact_events(event_type);
+
+-- Create eligibility_answers table if it doesn't exist
+CREATE TABLE IF NOT EXISTS eligibility_answers (
+    id INTEGER PRIMARY KEY,
+    contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+    quote_id TEXT,
+    answers TEXT NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Create index for faster lookups by contact if it doesn't exist
+CREATE INDEX IF NOT EXISTS eligibility_answers_contact_id_idx ON eligibility_answers(contact_id);
+
+-- Create a new temporary table without the quote_id column
+CREATE TABLE IF NOT EXISTS eligibility_answers_new (
+    id INTEGER PRIMARY KEY,
+    contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+    answers TEXT NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Copy data from the old table to the new one, excluding quote_id
+INSERT INTO eligibility_answers_new (id, contact_id, answers, created_at)
+SELECT id, contact_id, answers, created_at 
+FROM eligibility_answers;
+
+-- Drop the old table
+DROP TABLE eligibility_answers;
+
+-- Rename the new table to the original name
+ALTER TABLE eligibility_answers_new RENAME TO eligibility_answers;
+
+-- Add the quote_id column as nullable
+ALTER TABLE eligibility_answers ADD COLUMN quote_id TEXT;
+
+-- Recreate the index
+CREATE INDEX IF NOT EXISTS eligibility_answers_contact_id_idx ON eligibility_answers(contact_id); 

@@ -1270,7 +1270,7 @@ viewPlanCard model planTypeCode plan =
                 ( "text-[#363F72]", "bg-[#F8F9FC]" )
 
             else
-                ( "text-[#F8F9FC]", "bg-[#363F72]" )
+                ( "text-[#363F72]", "bg-[#F8F9FC]" )
 
         borderClass =
             if isSelected then
@@ -1323,20 +1323,25 @@ viewPlanCard model planTypeCode plan =
                     ]
                 ]
             ]
-        , if isSelected then
-            div [ class "block sm:hidden" ]
-                [ div [ class "w-[calc(100vw-72px)] bg-white mt-6 mb-2 flex justify-center transition-all duration-300 ease-in-out" ]
-                    [ button
-                        [ class "w-[200px] bg-[#03045E] text-white text-sm font-medium px-4 py-4 rounded-lg hover:bg-[#02034D] transition-colors"
-                        , onClick (SelectPlan plan)
-                        ]
-                        [ text "See if I Qualify" ]
-                    ]
-                , div [ class "w-[calc(100vw-60px)] h-[1px] bg-[#DCE2E5] mt-4" ] []
-                ]
+        , div
+            [ class
+                ("overflow-hidden transition-all duration-300 ease-in-out "
+                    ++ (if isSelected then
+                            "max-h-[100px] opacity-100 mt-8 mb-8"
 
-          else
-            text ""
+                        else
+                            "max-h-0 opacity-0 mt-0 mb-0"
+                       )
+                )
+            ]
+            [ div [ class "flex justify-center" ]
+                [ button
+                    [ class "w-[200px] bg-[#03045E] text-white text-sm font-medium px-4 py-4 rounded-lg hover:bg-[#02034D] transition-colors"
+                    , onClick (SelectPlan plan)
+                    ]
+                    [ text "See if I Qualify" ]
+                ]
+            ]
         ]
 
 
@@ -1349,12 +1354,6 @@ viewPlansSection model =
                 [ h2 [ class "text-2xl font-extrabold -tracking-[0.04em] text-[#101828] leading-[1.2]" ] [ text "Recommended Plans for You" ]
                 , p [ class "text-[16px] font-medium text-[#667085] -tracking-[0.04em] leading-[1.2] pb-[2px]" ] [ text "Select one to see if you qualify" ]
                 ]
-            , button
-                [ class "bg-[#03045E] text-white text-sm font-medium px-6 py-2 rounded disabled:bg-zinc-400 disabled:text-gray-100 disabled:cursor-not-allowed"
-                , onClick (SelectPlan (Maybe.withDefault (Plan 0 0 Nothing 0 "" "" 0 "" "" "" "" "" "" 0 False "" False []) model.selectedPlan))
-                , disabled (model.selectedPlan == Nothing)
-                ]
-                [ text "See if I Qualify" ]
             ]
 
         -- Mobile header

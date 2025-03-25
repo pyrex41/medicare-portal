@@ -110,6 +110,7 @@ type alias Model =
     , agents : List User
     , key : Nav.Key
     , limitBanner : LimitBanner.Model
+    , pagination : PaginationState -- Add this field
     }
 
 
@@ -221,6 +222,17 @@ type alias AvailableFilters =
 type alias ContactsResponse =
     { contacts : List Contact
     , filterOptions : AvailableFilters
+    , total : Int
+    , page : Int
+    , limit : Int
+    }
+
+
+type alias PaginationState =
+    { currentPage : Int
+    , totalPages : Int
+    , totalItems : Int
+    , itemsPerPage : Int
     }
 
 
@@ -264,6 +276,13 @@ init key maybeUser =
         ( limitBannerModel, limitBannerCmd ) =
             LimitBanner.init
 
+        initialPagination =
+            { currentPage = 1
+            , totalPages = 1
+            , totalItems = 0
+            , itemsPerPage = 100
+            }
+
         initialModel =
             { contacts = []
             , selectedContacts = []
@@ -292,6 +311,7 @@ init key maybeUser =
             , agents = []
             , key = key
             , limitBanner = limitBannerModel
+            , pagination = initialPagination
             }
     in
     ( initialModel
@@ -443,6 +463,8 @@ type Msg
     | ReassignSelectedContacts
     | ContactsReassigned (Result Http.Error ReassignResponse)
     | LimitBannerMsg LimitBanner.Msg
+    | ChangePage Int
+    | ChangeItemsPerPage Int
 
 
 type ContactFormField
@@ -739,6 +761,12 @@ update msg model =
                 | contacts = response.contacts
                 , isLoadingContacts = False
                 , availableFilters = response.filterOptions
+                , pagination =
+                    { currentPage = response.page
+                    , totalItems = response.total
+                    , itemsPerPage = response.limit
+                    , totalPages = ceiling (toFloat response.total / toFloat response.limit)
+                    }
               }
             , Cmd.none
             )
@@ -1090,15 +1118,7 @@ update msg model =
             let
                 errorMessage =
                     if response.success then
-                        "CSV uploaded successfully with "
-                            ++ String.fromInt response.validRows
-                            ++ " contacts."
-                            ++ (if response.errorRows > 0 then
-                                    " There were " ++ String.fromInt response.errorRows ++ " errors."
-
-                                else
-                                    ""
-                               )
+                        "Contacts imported successfully!"
 
                     else if String.startsWith "Missing required columns:" response.message then
                         let
@@ -1341,6 +1361,34 @@ update msg model =
             , Cmd.map LimitBannerMsg limitBannerCmd
             )
 
+        ChangePage page ->
+            let
+                updatedModel =
+                    { model
+                        | pagination =
+                            model.pagination
+                                |> (\p -> { p | currentPage = page })
+                        , isLoadingContacts = True
+                    }
+            in
+            ( updatedModel
+            , fetchContacts updatedModel
+            )
+
+        ChangeItemsPerPage limit ->
+            let
+                updatedModel =
+                    { model
+                        | pagination =
+                            model.pagination
+                                |> (\p -> { p | itemsPerPage = limit, currentPage = 1 })
+                        , isLoadingContacts = True
+                    }
+            in
+            ( updatedModel
+            , fetchContacts updatedModel
+            )
+
 
 
 -- TODO: Handle error
@@ -1357,7 +1405,7 @@ view model =
                 |> Html.map LimitBannerMsg
             , -- Stats Section - Make more compact with reduced margins
               div [ class "grid grid-cols-4 gap-2 mb-3" ]
-                [ statsCard "Total Contacts" (String.fromInt (List.length model.contacts))
+                [ statsCard "Total Contacts" (String.fromInt model.pagination.totalItems)
                 , statsCard "Emails Sent" "1824"
                 , statsCard "Emails Clicked" "425"
                 , statsCard "Quotes Created" "385"
@@ -1371,7 +1419,7 @@ view model =
                         [ div [ class "flex items-center gap-2" ]
                             [ h1 [ class "text-base font-semibold" ] [ text "Contacts " ]
                             , span [ class "text-sm text-gray-500" ]
-                                [ text ("(" ++ String.fromInt (List.length model.contacts) ++ ")") ]
+                                [ text ("(" ++ String.fromInt model.pagination.totalItems ++ ")") ]
                             ]
                         , div [ class "flex items-center gap-2" ]
                             [ -- Only show Agent filter for admins
@@ -1517,6 +1565,7 @@ view model =
 
           else
             text ""
+        , viewPaginationControls model -- Add pagination controls
         ]
 
 
@@ -1787,6 +1836,9 @@ contactsDecoder =
     Decode.succeed ContactsResponse
         |> Pipeline.required "contacts" (Decode.list contactDecoder)
         |> Pipeline.required "filterOptions" filterOptionsDecoder
+        |> Pipeline.required "total" Decode.int
+        |> Pipeline.required "page" Decode.int
+        |> Pipeline.required "limit" Decode.int
 
 
 filterOptionsDecoder : Decode.Decoder AvailableFilters
@@ -3048,6 +3100,8 @@ fetchContacts model =
                     |> List.map String.fromInt
                     |> String.join ","
               )
+            , ( "page", String.fromInt model.pagination.currentPage )
+            , ( "limit", String.fromInt model.pagination.itemsPerPage )
             ]
                 |> List.filter (\( _, value ) -> not (String.isEmpty value))
                 |> List.map (\( key, value ) -> Url.string key value)
@@ -3515,3 +3569,107 @@ filterByAgents agentIds contacts =
 
 
 -- Replace the old contact limit banner functions with this more streamlined one
+
+
+viewPaginationControls : Model -> Html Msg
+viewPaginationControls model =
+    let
+        totalPages =
+            model.pagination.totalPages
+
+        currentPage =
+            model.pagination.currentPage
+
+        itemsPerPage =
+            model.pagination.itemsPerPage
+
+        totalItems =
+            model.pagination.totalItems
+
+        -- Calculate range of items being displayed
+        startItem =
+            (currentPage - 1) * itemsPerPage + 1
+
+        endItem =
+            min (currentPage * itemsPerPage) totalItems
+
+        -- Create a list of page numbers to show
+        pageNumbers =
+            if totalPages <= 7 then
+                List.range 1 totalPages
+
+            else if currentPage <= 4 then
+                List.range 1 5 ++ [ -1, totalPages ]
+
+            else if currentPage >= totalPages - 3 then
+                1 :: -1 :: List.range (totalPages - 4) totalPages
+
+            else
+                1 :: -1 :: List.range (currentPage - 1) (currentPage + 1) ++ [ -1, totalPages ]
+
+        -- Helper function to render a page button
+        pageButton page =
+            if page == -1 then
+                -- Render ellipsis for skipped pages
+                span [ class "px-3 py-2 text-gray-400" ] [ text "..." ]
+
+            else
+                button
+                    [ class
+                        ("px-3 py-2 text-sm font-medium rounded-md transition-colors "
+                            ++ (if page == currentPage then
+                                    "bg-purple-50 text-purple-600 border-purple-500"
+
+                                else
+                                    "text-gray-500 hover:bg-gray-50 hover:text-gray-700"
+                               )
+                        )
+                    , onClick (ChangePage page)
+                    ]
+                    [ text (String.fromInt page) ]
+    in
+    div [ class "mt-4 flex items-center justify-between border-t border-gray-200 bg-white px-4 py-3 sm:px-6" ]
+        [ div [ class "flex flex-1 justify-between sm:hidden" ]
+            [ button
+                [ class "relative inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                , onClick (ChangePage (currentPage - 1))
+                , Html.Attributes.disabled (currentPage == 1)
+                ]
+                [ text "Previous" ]
+            , button
+                [ class "relative ml-3 inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                , onClick (ChangePage (currentPage + 1))
+                , Html.Attributes.disabled (currentPage == totalPages)
+                ]
+                [ text "Next" ]
+            ]
+        , div [ class "hidden sm:flex sm:flex-1 sm:items-center sm:justify-between" ]
+            [ div [ class "text-sm text-gray-700" ]
+                [ span [] [ text "Showing " ]
+                , span [ class "font-medium" ] [ text (String.fromInt startItem) ]
+                , span [] [ text " to " ]
+                , span [ class "font-medium" ] [ text (String.fromInt endItem) ]
+                , span [] [ text " of " ]
+                , span [ class "font-medium" ] [ text (String.fromInt totalItems) ]
+                , span [] [ text " results" ]
+                ]
+            , div [ class "flex items-center space-x-4" ]
+                [ div [ class "relative" ]
+                    [ select
+                        [ class "block w-full rounded-md border-gray-300 py-1.5 pl-3 pr-10 text-base focus:border-purple-500 focus:outline-none focus:ring-purple-500 sm:text-sm"
+                        , onInput (\val -> ChangeItemsPerPage (Maybe.withDefault 100 (String.toInt val)))
+                        , value (String.fromInt itemsPerPage)
+                        ]
+                        [ option [ value "50" ] [ text "50 per page" ]
+                        , option [ value "100" ] [ text "100 per page" ]
+                        , option [ value "250" ] [ text "250 per page" ]
+                        ]
+                    ]
+                , nav
+                    [ class "isolate inline-flex -space-x-px rounded-md shadow-sm"
+                    , Html.Attributes.attribute "aria-label" "Pagination"
+                    ]
+                    (List.map pageButton pageNumbers)
+                ]
+            ]
+        ]

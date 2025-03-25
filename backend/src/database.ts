@@ -64,6 +64,8 @@ export class Database {
       this.client = createClient({
         url: normalizedUrl,
         authToken: token,
+        // Set high concurrency for parallel operations
+        concurrency: 100
       })
     }
     
@@ -307,6 +309,11 @@ export class Database {
         return result.rows || []
       }
     } catch (error) {
+      // Check if it's a response too large error
+      if (error instanceof Error && error.message.includes('RESPONSE_TOO_LARGE')) {
+        logger.error('Response too large, try using pagination');
+        throw new Error('Response too large, try using pagination');
+      }
       logger.error(`Database fetchAll error: ${error}`)
       throw error
     }
@@ -385,155 +392,19 @@ export class Database {
 
   /**
    * Bulk import contacts by merging existing data with new CSV data
+   * Optimized for performance with larger batch sizes, transaction handling,
+   * and reduced network round trips
    */
   static async bulkImportContacts(orgId: string, csvFilePath: string, overwriteExisting: boolean = false): Promise<void> {
-    const timestamp = Date.now();
-    const backupDir = path.join(process.cwd(), 'backups');
-    const dumpPath = path.join(backupDir, `org-${orgId}-${timestamp}.sql`);
-    
-    let localDb: BunDatabase | null = null;
     try {
-      await fs.promises.mkdir(backupDir, { recursive: true });
       logger.info(`Starting bulk import for org ${orgId}`);
       
-      // Step 1: Get existing database credentials and dump
-      const mainDb = new Database();
-      const org = await mainDb.fetchOne<{ turso_db_url: string; turso_auth_token: string }>(
-        'SELECT turso_db_url, turso_auth_token FROM organizations WHERE id = ?',
-        [orgId]
-      );
-      if (!org?.turso_db_url || !org?.turso_auth_token) throw new Error('Organization database not configured');
-
-      const turso = new TursoService();
-      logger.info(`Downloading existing dump from ${org.turso_db_url}`);
-      const existingDump = await turso.downloadDatabaseDump(org.turso_db_url, org.turso_auth_token);
-
-      // Step 2: Initialize in-memory SQLite with existing data
-      localDb = new BunDatabase(':memory:', { create: true });
-      logger.info('Loading existing dump into in-memory SQLite');
-      
-      // If the dump is empty or doesn't contain the contacts table, initialize the schema
-      if (!existingDump || !existingDump.includes('CREATE TABLE contacts')) {
-        logger.info('No existing schema found, initializing new schema');
-        // Create contacts table
-        localDb.exec(`
-          CREATE TABLE IF NOT EXISTS contacts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            first_name TEXT NOT NULL,
-            last_name TEXT NOT NULL,
-            email TEXT NOT NULL,
-            current_carrier TEXT NOT NULL,
-            plan_type TEXT NOT NULL,
-            effective_date TEXT NOT NULL,
-            birth_date TEXT NOT NULL,
-            tobacco_user INTEGER NOT NULL,
-            gender TEXT NOT NULL,
-            state TEXT NOT NULL,
-            zip_code TEXT NOT NULL,
-            agent_id INTEGER,
-            last_emailed DATETIME,
-            phone_number TEXT NOT NULL DEFAULT '',
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-          );
-
-          CREATE INDEX IF NOT EXISTS idx_contacts_email ON contacts(email);
-          CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_email_unique ON contacts(LOWER(TRIM(email)));
-        `);
-      } else {
-        localDb.exec(existingDump);
+      // Get organization database connection
+      const orgDb = await Database.getOrgDb(orgId);
+      if (!orgDb) {
+        throw new Error('Failed to get organization database connection');
       }
 
-      // Get the original schema but remove the unique index
-      const origTableSchema = localDb.query("SELECT sql FROM sqlite_master WHERE type='table' AND name='contacts'").get() as { sql: string };
-      if (!origTableSchema) throw new Error("Contacts table not found");
-      
-      // Save all contacts
-      const allContacts = localDb.query("SELECT * FROM contacts").all();
-      
-      // Completely drop and recreate contacts table without unique constraints
-      localDb.exec("DROP TABLE contacts");
-      localDb.exec(origTableSchema.sql);
-      
-      // Reinsert existing contacts
-      if (allContacts.length > 0) {
-        // Create a list of column names dynamically from the first contact
-        const columnsObj = allContacts[0] as Record<string, any>;
-        const columns = Object.keys(columnsObj).filter(col => col !== 'updated_at'); // Exclude updated_at
-        
-        const insertStmt = localDb.prepare(`
-          INSERT INTO contacts (${columns.join(', ')})
-          VALUES (${columns.map(() => '?').join(', ')})
-        `);
-        
-        for (const contact of allContacts) {
-          const contactObj = contact as Record<string, any>;
-          const values = columns.map(col => contactObj[col]);
-          insertStmt.run(...values);
-        }
-      }
-      
-      const initialCount = localDb.query('SELECT COUNT(*) as count FROM contacts').get() as { count: number };
-      logger.info(`Initial contact count: ${initialCount.count}`);
-      
-      // Optimize for bulk inserts
-      localDb.exec('PRAGMA journal_mode = WAL');
-      localDb.exec('PRAGMA synchronous = NORMAL');
-      
-      // Parse CSV
-      logger.info(`Reading CSV file: ${csvFilePath}`);
-      const csvContent = await fs.promises.readFile(csvFilePath, 'utf-8');
-      
-      // Parse the CSV content synchronously using the callback API
-      const records: any[] = [];
-      await new Promise<void>((resolve, reject) => {
-        parse(csvContent, {
-          columns: true,
-          skip_empty_lines: true,
-          trim: true
-        }, (err, output) => {
-          if (err) reject(err);
-          else {
-            records.push(...output);
-            resolve();
-          }
-        });
-      });
-      
-      // Log the first record and its keys to help debug column mapping
-      if (records.length > 0) {
-        const firstRecord = records[0];
-        logger.info(`CSV column headers: ${Object.keys(firstRecord).join(', ')}`);
-        logger.info(`First record raw data: ${JSON.stringify(firstRecord)}`);
-      }
-      
-      // Create a map of all emails for faster lookup
-      const emailMap = new Map<string, boolean>();
-      if (allContacts.length > 0) {
-        for (const contact of allContacts) {
-          const contactObj = contact as Record<string, any>;
-          const email = String(contactObj.email).toLowerCase().trim();
-          emailMap.set(email, true);
-        }
-      }
-      
-      logger.info(`Processing ${records.length} records from CSV`);
-      let processed = 0;
-      let skipped = 0;
-      let added = 0;
-      
-      // Begin transaction
-      localDb.exec('BEGIN TRANSACTION');
-      
-      // Prepare statement outside the loop
-      const insertStmt = localDb.prepare(`
-        INSERT INTO contacts (
-          first_name, last_name, email, current_carrier, plan_type, effective_date,
-          birth_date, tobacco_user, gender, state, zip_code, phone_number, agent_id,
-          created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-      `);
-      
       // Enhanced column mapping with more variations
       const columnMap: Record<string, string> = {
         // First Name variations
@@ -647,97 +518,177 @@ export class Database {
         'agent number': 'agent_id',
         'Agent Number': 'agent_id'
       };
-      
-      // Check column names in the first record and log mapping results
-      if (records.length > 0) {
-        const firstRecord = records[0];
-        const recordKeys = Object.keys(firstRecord);
-        logger.info(`CSV columns found: ${recordKeys.join(', ')}`);
-        
-        // Log which columns were mapped and which weren't
-        const mappedFields = new Set<string>();
-        recordKeys.forEach(key => {
-          const mappedTo = columnMap[key];
-          if (mappedTo) {
-            mappedFields.add(mappedTo);
-            logger.info(`Mapped column '${key}' to '${mappedTo}'`);
-          } else {
-            logger.warn(`No mapping found for column: '${key}'`);
+
+      // Helper function to get field value
+      const getValue = (record: any, fieldName: string, defaultValue: string = ''): string => {
+        // Try all possible mappings
+        for (const [key, mappedField] of Object.entries(columnMap)) {
+          if (mappedField === fieldName && record[key] !== undefined) {
+            return record[key] || defaultValue;
           }
-        });
-        
-        // Log missing required fields
-        const requiredFields = ['first_name', 'last_name', 'email', 'effective_date', 'birth_date'];
-        const missingRequired = requiredFields.filter(field => !mappedFields.has(field));
-        if (missingRequired.length > 0) {
-          logger.warn(`Missing required fields in CSV: ${missingRequired.join(', ')}`);
         }
-      }
-      
-      for (const record of records) {
-        processed++;
-        
-        try {
-          // Get normalized field values using the column map
-          const getValue = (fieldName: string, defaultValue: string = ''): string => {
-            // Try all possible mappings
-            for (const [key, mappedField] of Object.entries(columnMap)) {
-              if (mappedField === fieldName && record[key] !== undefined) {
-                return record[key] || defaultValue;
+        // Try direct field name
+        return record[fieldName] || defaultValue;
+      };
+
+      // Use streaming to parse CSV, improving memory efficiency
+      logger.info(`Streaming CSV file: ${csvFilePath}`);
+      const emailMap = new Map<string, ContactCreate>();
+      let processed = 0;
+      let skipped = 0;
+      let firstRecord = true;
+      let columnHeaders: string[] = [];
+
+      // Stream and process CSV
+      await pipeline(
+        fs.createReadStream(csvFilePath),
+        parse({ columns: true, skip_empty_lines: true, trim: true }),
+        async function* (source) {
+          for await (const record of source) {
+            processed++;
+            
+            // Log first record for debugging
+            if (firstRecord) {
+              columnHeaders = Object.keys(record);
+              logger.info(`CSV column headers: ${columnHeaders.join(', ')}`);
+              logger.info(`First record raw data: ${JSON.stringify(record)}`);
+              
+              // Log column mapping results
+              const mappedFields = new Set<string>();
+              columnHeaders.forEach(key => {
+                const mappedTo = columnMap[key];
+                if (mappedTo) {
+                  mappedFields.add(mappedTo);
+                  logger.info(`Mapped column '${key}' to '${mappedTo}'`);
+                } else {
+                  logger.warn(`No mapping found for column: '${key}'`);
+                }
+              });
+              
+              // Log missing required fields
+              const requiredFields = ['first_name', 'last_name', 'email', 'effective_date', 'birth_date'];
+              const missingRequired = requiredFields.filter(field => !mappedFields.has(field));
+              if (missingRequired.length > 0) {
+                logger.warn(`Missing required fields in CSV: ${missingRequired.join(', ')}`);
               }
+              firstRecord = false;
             }
-            // Try direct field name
-            return record[fieldName] || defaultValue;
-          };
-          
-          const contact: ContactCreate = {
-            first_name: getValue('first_name'),
-            last_name: getValue('last_name'),
-            email: getValue('email'),
-            current_carrier: getValue('current_carrier'),
-            plan_type: getValue('plan_type'),
-            effective_date: getValue('effective_date'),
-            birth_date: getValue('birth_date'),
-            tobacco_user: !!(getValue('tobacco_user') === '1' || getValue('tobacco_user').toLowerCase() === 'true'),
-            gender: getValue('gender'),
-            state: getValue('state'),
-            zip_code: getValue('zip_code'),
-            phone_number: getValue('phone_number'),
-            agent_id: getValue('agent_id') ? Number(getValue('agent_id')) : null,
-          };
-          
-          // Log the mapped contact data for the first few records
-          if (processed <= 3) {
-            logger.info(`Sample mapped contact data: ${JSON.stringify(contact)}`);
-          }
-          
-          if (!contact.first_name || !contact.last_name || !contact.email || !contact.effective_date || !contact.birth_date) {
-            logger.warn(`Skipping record due to missing required fields: ${JSON.stringify(contact)}`);
-            skipped++;
-            continue;
-          }
-          
-          const email = contact.email.toLowerCase().trim();
-          
-          // Check if email exists
-          if (emailMap.has(email)) {
-            if (overwriteExisting) {
-              // Delete existing contact
-              localDb.prepare('DELETE FROM contacts WHERE LOWER(TRIM(email)) = ?').run(email);
-              // Don't increment skipped as we'll add a new record
-            } else {
+            
+            try {
+              const contact: ContactCreate = {
+                first_name: getValue(record, 'first_name'),
+                last_name: getValue(record, 'last_name'),
+                email: getValue(record, 'email'),
+                current_carrier: getValue(record, 'current_carrier'),
+                plan_type: getValue(record, 'plan_type'),
+                effective_date: getValue(record, 'effective_date'),
+                birth_date: getValue(record, 'birth_date'),
+                tobacco_user: !!(getValue(record, 'tobacco_user') === '1' || getValue(record, 'tobacco_user').toLowerCase() === 'true'),
+                gender: getValue(record, 'gender'),
+                state: getValue(record, 'state'),
+                zip_code: getValue(record, 'zip_code'),
+                phone_number: getValue(record, 'phone_number'),
+                agent_id: getValue(record, 'agent_id') ? Number(getValue(record, 'agent_id')) : null,
+              };
+              
+              // Log sample data for the first few records
+              if (processed <= 3) {
+                logger.info(`Sample mapped contact data: ${JSON.stringify(contact)}`);
+              }
+              
+              if (!contact.first_name || !contact.last_name || !contact.email || !contact.effective_date || !contact.birth_date) {
+                logger.warn(`Skipping record due to missing required fields: ${JSON.stringify(contact)}`);
+                skipped++;
+                continue;
+              }
+
+              const email = contact.email.toLowerCase().trim();
+              emailMap.set(email, contact);
+            } catch (error) {
+              logger.warn(`Error processing record: ${error}`);
               skipped++;
-              continue;
             }
           }
-          
-          // Add to email map to prevent duplicates within the import itself
-          emailMap.set(email, true);
-          
-          const params = [
+        }
+      );
+
+      const emails = Array.from(emailMap.keys());
+      const contactsToInsert = Array.from(emailMap.values());
+      const totalContacts = contactsToInsert.length;
+      
+      logger.info(`Processed ${processed} records, valid contacts: ${totalContacts}, skipped: ${skipped}`);
+      
+      // Early exit if no valid contacts
+      if (totalContacts === 0) {
+        logger.info('No valid contacts to import, exiting early');
+        return;
+      }
+
+      // Get existing emails from the database
+      logger.info('Fetching existing emails in a single query');
+      const existingEmailsResult = await orgDb.fetchAll(
+        'SELECT LOWER(TRIM(email)) as email FROM contacts'
+      );
+      const existingEmails = new Set<string>();
+      existingEmailsResult.forEach((row: { email: string }) => 
+        existingEmails.add(row.email.toLowerCase().trim())
+      );
+      
+      logger.info(`Found ${existingEmails.size} existing email addresses`);
+
+      // Split contacts for insert and update
+      const newContacts = contactsToInsert.filter(contact => 
+        !existingEmails.has(contact.email.toLowerCase().trim()));
+      const updateContacts = overwriteExisting 
+        ? contactsToInsert.filter(contact => 
+            existingEmails.has(contact.email.toLowerCase().trim())) 
+        : [];
+        
+      logger.info(`Split contacts: ${newContacts.length} new, ${updateContacts.length} updates`);
+
+      // Function to create insert statements for a batch of contacts
+      const createInsertBatch = (contacts: ContactCreate[]) => {
+        const placeholders = contacts.map(() => 
+          '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)'
+        ).join(',');
+        
+        const values = contacts.flatMap(contact => [
+          contact.first_name,
+          contact.last_name,
+          contact.email.toLowerCase().trim(),
+          contact.current_carrier,
+          contact.plan_type,
+          contact.effective_date,
+          contact.birth_date,
+          contact.tobacco_user ? 1 : 0,
+          contact.gender,
+          contact.state,
+          contact.zip_code,
+          contact.phone_number,
+          contact.agent_id === null ? null : Number(contact.agent_id)
+        ]);
+        
+        return {
+          sql: `INSERT INTO contacts (
+            first_name, last_name, email, current_carrier, plan_type, effective_date,
+            birth_date, tobacco_user, gender, state, zip_code, phone_number, agent_id,
+            created_at, updated_at
+          ) VALUES ${placeholders}`,
+          args: values
+        };
+      };
+
+      // Function to create update statements for a batch of contacts
+      const createUpdateBatch = (contacts: ContactCreate[]) => {
+        return contacts.map(contact => ({
+          sql: `UPDATE contacts SET 
+            first_name = ?, last_name = ?, current_carrier = ?, plan_type = ?, effective_date = ?, 
+            birth_date = ?, tobacco_user = ?, gender = ?, state = ?, zip_code = ?, 
+            phone_number = ?, agent_id = ? 
+            WHERE LOWER(TRIM(email)) = ?`,
+          args: [
             contact.first_name,
             contact.last_name,
-            email,
             contact.current_carrier,
             contact.plan_type,
             contact.effective_date,
@@ -747,213 +698,308 @@ export class Database {
             contact.state,
             contact.zip_code,
             contact.phone_number,
-            contact.agent_id === null ? null : Number(contact.agent_id)
-          ];
+            contact.agent_id === null ? null : Number(contact.agent_id),
+            contact.email.toLowerCase().trim()
+          ]
+        }));
+      };
+      
+      // IMPROVED TRANSACTION HANDLING: Process a single chunk with proper transaction handling
+      const processInsertChunk = async (chunk: ContactCreate[], chunkIndex: number, totalChunks: number): Promise<boolean> => {
+        let retryCount = 0;
+        const MAX_RETRIES = 3;
+        const RETRY_DELAY = 1000; // ms
+        
+        while (retryCount < MAX_RETRIES) {
+          let db = null;
+          let tx = null;
           
-          insertStmt.run(...params);
-          added++;
-        } catch (error) {
-          logger.warn(`Error processing record: ${error}`);
-          skipped++;
+          try {
+            // Get fresh DB connection
+            db = await Database.getOrgDb(orgId);
+            
+            if (db.isLocal && db.bunDb) {
+              // Local SQLite uses standard transaction approach
+              db.bunDb.exec('BEGIN TRANSACTION');
+              const insertStmt = createInsertBatch(chunk);
+              await db.execute(insertStmt.sql, insertStmt.args);
+              db.bunDb.exec('COMMIT');
+            } else {
+              // Turso - use transaction API instead of manual BEGIN/COMMIT
+              tx = await db.client.transaction('write');
+              
+              const insertStmt = createInsertBatch(chunk);
+              await tx.execute(insertStmt);
+              await tx.commit();
+            }
+            
+            logger.info(`✓ [${chunkIndex + 1}/${totalChunks}] Completed insert chunk with ${chunk.length} contacts`);
+            return true;
+          } catch (error) {
+            retryCount++;
+            
+            // Proper transaction rollback
+            if (tx) {
+              try {
+                await tx.rollback();
+              } catch (rollbackError) {
+                logger.warn(`Warning: Rollback failed: ${rollbackError}`);
+              }
+            } else if (db?.isLocal && db.bunDb) {
+              try {
+                db.bunDb.exec('ROLLBACK');
+              } catch (rollbackError) {
+                logger.warn(`Warning: Local rollback failed: ${rollbackError}`);
+              }
+            }
+
+            // Check for unique constraint violations
+            const errorMsg = error instanceof Error ? error.message : String(error);
+            if (errorMsg.includes('UNIQUE constraint failed')) {
+              logger.warn(`Unique constraint violation in chunk ${chunkIndex + 1}, skipping after ${retryCount} attempts`);
+              return false;
+            }
+
+            if (retryCount < MAX_RETRIES) {
+              const delay = RETRY_DELAY * Math.pow(2, retryCount - 1); // Exponential backoff
+              logger.warn(`Retrying chunk ${chunkIndex + 1} after error (attempt ${retryCount}): ${error}`);
+              await new Promise(resolve => setTimeout(resolve, delay));
+            } else {
+              logger.error(`✗ [${chunkIndex + 1}/${totalChunks}] Error in insert chunk after ${MAX_RETRIES} attempts: ${error}`);
+              throw error;
+            }
+          } finally {
+            // Clean up resources
+            if (db && !db.isLocal) {
+              try {
+                if (typeof db.client.close === 'function') {
+                  await db.client.close();
+                }
+              } catch (closeError) {
+                logger.warn(`Warning: Error closing database connection: ${closeError}`);
+              }
+            }
+          }
         }
-      }
-      
-      localDb.exec('COMMIT');
-      
-      const finalCount = localDb.query('SELECT COUNT(*) as count FROM contacts').get() as { count: number };
-      logger.info(`Processed ${processed} CSV records: ${added} added, ${skipped} skipped. Final count: ${finalCount.count}`);
-      
-      // Step 4: Save in-memory database to a SQL dump file
-      const tempDumpPath = path.join(backupDir, `org-${orgId}-${timestamp}.sql`);
-      logger.info(`Creating SQL dump file: ${tempDumpPath}`);
-      
-      // Create SQL dump from the in-memory database
-      const dump = [];
-      
-      // Add table schema
-      const tables = localDb.query("SELECT sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all();
-      for (const table of tables) {
-        dump.push((table as { sql: string }).sql + ';');
-      }
-      
-      // Add indexes
-      const indexes = localDb.query("SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name='contacts'").all();
-      for (const index of indexes) {
-        dump.push((index as { sql: string }).sql + ';');
-      }
-      
-      // Add data
-      type Contact = {
-        id: number;
-        first_name: string;
-        last_name: string;
-        email: string;
-        current_carrier: string;
-        plan_type: string;
-        effective_date: string;
-        birth_date: string;
-        tobacco_user: number;
-        gender: string;
-        state: string;
-        zip_code: string;
-        phone_number: string;
-        agent_id: number | null;
-        last_emailed: string | null;
-        created_at: string;
+        
+        return false;
       };
 
-      const contacts = localDb.query('SELECT * FROM contacts').all() as Contact[];
-      for (const contact of contacts) {
-        const values = [
-          `'${contact.first_name.replace(/'/g, "''")}'`,
-          `'${contact.last_name.replace(/'/g, "''")}'`,
-          `'${contact.email.replace(/'/g, "''")}'`,
-          `'${contact.current_carrier.replace(/'/g, "''")}'`,
-          `'${contact.plan_type.replace(/'/g, "''")}'`,
-          `'${contact.effective_date.replace(/'/g, "''")}'`,
-          `'${contact.birth_date.replace(/'/g, "''")}'`,
-          contact.tobacco_user,
-          `'${contact.gender.replace(/'/g, "''")}'`,
-          `'${contact.state.replace(/'/g, "''")}'`,
-          `'${contact.zip_code.replace(/'/g, "''")}'`,
-          `'${contact.phone_number.replace(/'/g, "''")}'`,
-          contact.agent_id === null ? 'NULL' : contact.agent_id,
-          contact.last_emailed === null ? 'NULL' : `'${contact.last_emailed}'`,
-          `'${contact.created_at}'`
-        ];
+      // Similar function for update operations
+      const processUpdateChunk = async (statements: any[], chunkIndex: number, totalChunks: number): Promise<boolean> => {
+        let retryCount = 0;
+        const MAX_RETRIES = 3;
+        const RETRY_DELAY = 1000; // ms
         
-        dump.push(`INSERT INTO contacts (
-          first_name, last_name, email, current_carrier, plan_type, effective_date,
-          birth_date, tobacco_user, gender, state, zip_code, phone_number, agent_id,
-          last_emailed, created_at
-        ) VALUES (${values.join(', ')});`);
-      }
-      
-      // Write the SQL dump to file
-      await fs.promises.writeFile(tempDumpPath, dump.join('\n'));
-      logger.info(`SQL dump saved to ${tempDumpPath}`);
+        while (retryCount < MAX_RETRIES) {
+          let db = null;
+          let tx = null;
+          
+          try {
+            db = await Database.getOrgDb(orgId);
+            
+            if (db.isLocal && db.bunDb) {
+              // Local SQLite
+              db.bunDb.exec('BEGIN TRANSACTION');
+              
+              for (const stmt of statements) {
+                await db.execute(stmt.sql, stmt.args);
+              }
+              
+              db.bunDb.exec('COMMIT');
+            } else {
+              // Turso - use transaction API
+              tx = await db.client.transaction('write');
+              
+              for (const stmt of statements) {
+                await tx.execute(stmt);
+              }
+              
+              await tx.commit();
+            }
+            
+            logger.info(`✓ [${chunkIndex + 1}/${totalChunks}] Completed update chunk with ${statements.length} contacts`);
+            return true;
+          } catch (error) {
+            retryCount++;
+            
+            // Handle rollback
+            if (tx) {
+              try {
+                await tx.rollback();
+              } catch (rollbackError) {
+                logger.warn(`Warning: Rollback failed: ${rollbackError}`);
+              }
+            } else if (db?.isLocal && db.bunDb) {
+              try {
+                db.bunDb.exec('ROLLBACK');
+              } catch (rollbackError) {
+                logger.warn(`Warning: Local rollback failed: ${rollbackError}`);
+              }
+            }
 
-      // Step 5: Create new Turso database using the SQL dump
-      const newDbName = `org-${orgId}-${timestamp}`;
-      logger.info(`Creating new database: ${newDbName}`);
-
-      // First upload the SQL dump file
-      logger.info('Uploading SQL dump file');
-      const formData = new FormData();
-      formData.append('file', new Blob([await fs.promises.readFile(tempDumpPath)], { type: 'text/plain' }), 'dump.sql');
-
-      const uploadResponse = await fetch(`https://api.turso.tech/v1/organizations/${config.TURSO_ORG_SLUG}/databases/dumps`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${config.TURSO_API_TOKEN}`,
-        },
-        body: formData
-      });
-
-      if (!uploadResponse.ok) {
-        const errorText = await uploadResponse.text();
-        logger.error(`Failed to upload SQL dump: ${errorText}`);
-        throw new Error(`Failed to upload SQL dump: ${errorText}`);
-      }
-
-      const { dump_url } = await uploadResponse.json() as { dump_url: string };
-      logger.info(`SQL dump uploaded successfully to ${dump_url}, creating database`);
-
-      // Now create the database using the uploaded dump
-      const createResponse = await fetch(`https://api.turso.tech/v1/organizations/${config.TURSO_ORG_SLUG}/databases`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${config.TURSO_API_TOKEN}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          name: newDbName,
-          group: config.TURSO_ORG_GROUP,
-          seed: {
-            type: 'dump',
-            url: dump_url
+            if (retryCount < MAX_RETRIES) {
+              const delay = RETRY_DELAY * Math.pow(2, retryCount - 1);
+              logger.warn(`Retrying update chunk ${chunkIndex + 1} after error (attempt ${retryCount}): ${error}`);
+              await new Promise(resolve => setTimeout(resolve, delay));
+            } else {
+              logger.error(`✗ [${chunkIndex + 1}/${totalChunks}] Error in update chunk after ${MAX_RETRIES} attempts: ${error}`);
+              throw error;
+            }
+          } finally {
+            // Clean up resources
+            if (db && !db.isLocal) {
+              try {
+                if (typeof db.client.close === 'function') {
+                  await db.client.close();
+                }
+              } catch (closeError) {
+                logger.warn(`Warning: Error closing database connection: ${closeError}`);
+              }
+            }
           }
-        })
-      });
+        }
+        
+        return false;
+      };
 
-      if (!createResponse.ok) {
-        const errorText = await createResponse.text();
-        logger.error(`Failed to create database: ${errorText}`);
-        throw new Error(`Failed to create database: ${errorText}`);
-      }
+      if (newContacts.length > 0 || updateContacts.length > 0) {
+        // Process batch operations with concurrent tasks
 
-      const response = await createResponse.json() as { database: { Hostname: string } };
-      // Store database URL in libsql:// format for database connections
-      const actualNewUrl = `libsql://${response.database.Hostname}`;
-      logger.info(`Database created with URL: ${actualNewUrl}`);
-
-      // Step 6: Get new auth token for the database
-      logger.info('Getting new auth token for the database');
-      const newTokenResponse = await fetch(`https://api.turso.tech/v1/organizations/${config.TURSO_ORG_SLUG}/databases/${newDbName}/auth/tokens`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${config.TURSO_API_TOKEN}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          expiration: 'never',
-        }),
-      });
-
-      if (!newTokenResponse.ok) {
-        const errorText = await newTokenResponse.text();
-        logger.error(`Failed to create new token: ${errorText}`);
-        throw new Error(`Failed to create new token: ${errorText}`);
-      }
-
-      const newTokenData = await newTokenResponse.json() as { jwt: string };
-      if (!newTokenData.jwt) {
-        logger.error('Failed to get new auth token - missing jwt in response');
-        throw new Error('Failed to get new auth token');
-      }
-
-      const newToken = newTokenData.jwt;
-      logger.info(`Got new auth token (length: ${newToken.length})`);
-
-      // Step 7: Update organization with new URL and token
-      await mainDb.execute(
-        'UPDATE organizations SET turso_db_url = ?, turso_auth_token = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-        [actualNewUrl, newToken, orgId]
-      );
-
-      // Verify the update
-      const updatedOrg = await mainDb.fetchOne<{ turso_db_url: string, turso_auth_token: string }>(
-        'SELECT turso_db_url, turso_auth_token FROM organizations WHERE id = ?',
-        [orgId]
-      );
-      if (!updatedOrg) {
-        logger.error('Failed to fetch updated organization after credential update');
-        throw new Error('Failed to update organization credentials');
-      }
-      if (updatedOrg.turso_db_url !== actualNewUrl || updatedOrg.turso_auth_token !== newToken) {
-        logger.error('Organization credentials mismatch after update');
-        logger.error(`Expected URL: ${actualNewUrl}, got: ${updatedOrg.turso_db_url}`);
-        logger.error(`Expected token length: ${newToken.length}, got: ${updatedOrg.turso_auth_token.length}`);
-        throw new Error('Organization credentials mismatch after update');
-      }
-
-      logger.info(`Successfully updated organization ${orgId} with new database URL and token`);
-
-      // Step 8: Delete old database
-      const oldDbName = org.turso_db_url.split('/').pop()?.split('.')[0];
-      if (oldDbName) {
-        // Extract just the database name without the org slug
-        const baseDbName = oldDbName.split('-').slice(0, -1).join('-');
-        logger.info(`Deleting old database: ${baseDbName}`);
-        await turso.deleteOrganizationDatabase(baseDbName).catch(err => logger.warn(`Failed to delete old DB: ${err}`));
+        // Process inserts with proper transaction handling
+        if (newContacts.length > 0) {
+          const CONCURRENT_TRANSACTIONS = 20; // Keep high concurrency as requested
+          const ROWS_PER_INSERT = 1000;
+          const totalInsertChunks = Math.ceil(newContacts.length / ROWS_PER_INSERT);
+          
+          logger.info(`Processing ${newContacts.length} inserts concurrently in ${totalInsertChunks} chunks`);
+          
+          const tasks: Promise<boolean>[] = [];
+          const results = { success: 0, failed: 0 };
+          
+          for (let i = 0; i < newContacts.length; i += ROWS_PER_INSERT) {
+            const chunk = newContacts.slice(i, Math.min(i + ROWS_PER_INSERT, newContacts.length));
+            const chunkIndex = Math.floor(i / ROWS_PER_INSERT);
+            
+            // Create task for this chunk with proper completion handling
+            const task = processInsertChunk(chunk, chunkIndex, totalInsertChunks)
+              .then(success => {
+                if (success) results.success++;
+                else results.failed++;
+                
+                // Remove this task from active tasks when done
+                const index = tasks.indexOf(task);
+                if (index > -1) tasks.splice(index, 1);
+                
+                return success;
+              })
+              .catch(error => {
+                results.failed++;
+                logger.error(`Insert chunk ${chunkIndex + 1} failed: ${error}`);
+                
+                // Remove this task from active tasks when done
+                const index = tasks.indexOf(task);
+                if (index > -1) tasks.splice(index, 1);
+                
+                return false;
+              });
+            
+            tasks.push(task);
+            
+            // Wait if we've hit concurrency limit
+            if (tasks.length >= CONCURRENT_TRANSACTIONS) {
+              await Promise.race(tasks);
+            }
+          }
+          
+          // Wait for all remaining tasks to complete
+          if (tasks.length > 0) {
+            await Promise.all(tasks);
+          }
+          
+          logger.info(`Insert operations completed: ${results.success} chunks successful, ${results.failed} chunks failed`);
+        }
+        
+        // Process updates with proper transaction handling
+        if (updateContacts.length > 0) {
+          const CONCURRENT_TRANSACTIONS = 20;
+          const ROWS_PER_UPDATE_BATCH = 2000;
+          const totalUpdateChunks = Math.ceil(updateContacts.length / ROWS_PER_UPDATE_BATCH);
+          
+          logger.info(`Processing ${updateContacts.length} updates concurrently in ${totalUpdateChunks} chunks`);
+          
+          const tasks: Promise<boolean>[] = [];
+          const results = { success: 0, failed: 0 };
+          
+          for (let i = 0; i < updateContacts.length; i += ROWS_PER_UPDATE_BATCH) {
+            const chunk = updateContacts.slice(i, Math.min(i + ROWS_PER_UPDATE_BATCH, updateContacts.length));
+            const chunkIndex = Math.floor(i / ROWS_PER_UPDATE_BATCH);
+            
+            // Create update statements for this chunk
+            const updateStatements = createUpdateBatch(chunk);
+            
+            // Create task for this chunk with proper completion handling
+            const task = processUpdateChunk(updateStatements, chunkIndex, totalUpdateChunks)
+              .then(success => {
+                if (success) results.success++;
+                else results.failed++;
+                
+                // Remove this task from active tasks when done
+                const index = tasks.indexOf(task);
+                if (index > -1) tasks.splice(index, 1);
+                
+                return success;
+              })
+              .catch(error => {
+                results.failed++;
+                logger.error(`Update chunk ${chunkIndex + 1} failed: ${error}`);
+                
+                // Remove this task from active tasks when done
+                const index = tasks.indexOf(task);
+                if (index > -1) tasks.splice(index, 1);
+                
+                return false;
+              });
+            
+            tasks.push(task);
+            
+            // Wait if we've hit concurrency limit
+            if (tasks.length >= CONCURRENT_TRANSACTIONS) {
+              await Promise.race(tasks);
+            }
+          }
+          
+          // Wait for all remaining tasks to complete
+          if (tasks.length > 0) {
+            await Promise.all(tasks);
+          }
+          
+          logger.info(`Update operations completed: ${results.success} chunks successful, ${results.failed} chunks failed`);
+        }
+        
+        // Verify final counts
+        try {
+          const countResult = await orgDb.fetchOne<{ count: number }>(
+            'SELECT COUNT(*) as count FROM contacts'
+          );
+          logger.info(`Final contact count in database: ${countResult?.count || 0}`);
+        } catch (error) {
+          logger.warn(`Could not verify final contact count: ${error}`);
+        }
+        
+        logger.info(`✓ Import Summary:
+• Total contacts processed: ${processed}
+• Valid contacts: ${contactsToInsert.length}
+• New contacts inserted: ${newContacts.length}
+• Existing contacts updated: ${updateContacts.length}
+• Skipped contacts: ${skipped}`);
       }
       
-      logger.info(`Bulk import completed: ${finalCount.count} contacts in new database`);
+      logger.info(`Bulk import completed successfully: ${processed} processed, ${contactsToInsert.length} valid contacts, ${skipped} skipped`);
+
     } catch (error) {
       logger.error(`Bulk import failed: ${error}`);
       throw error;
-    } finally {
-      if (localDb) localDb.close();
     }
   }
 
@@ -1077,6 +1123,90 @@ export class Database {
   close() {
     if (this.isLocal && this.bunDb) {
       this.bunDb.close()
+    }
+  }
+
+  /**
+   * Get paginated contacts with total count
+   */
+  async getPaginatedContacts(page: number = 1, limit: number = 100, filters: any = {}): Promise<{ contacts: any[], total: number }> {
+    try {
+      // Build the base query
+      let query = 'SELECT * FROM contacts';
+      let countQuery = 'SELECT COUNT(*) as total FROM contacts';
+      const queryParams: any[] = [];
+      const conditions: string[] = [];
+
+      // Add filter conditions
+      if (filters.search) {
+        conditions.push('(LOWER(first_name) LIKE ? OR LOWER(last_name) LIKE ? OR LOWER(email) LIKE ?)');
+        const searchTerm = `%${filters.search.toLowerCase()}%`;
+        queryParams.push(searchTerm, searchTerm, searchTerm);
+      }
+
+      if (filters.states && filters.states.length > 0) {
+        conditions.push(`state IN (${filters.states.map(() => '?').join(',')})`);
+        queryParams.push(...filters.states);
+      }
+
+      if (filters.carriers && filters.carriers.length > 0) {
+        conditions.push(`current_carrier IN (${filters.carriers.map(() => '?').join(',')})`);
+        queryParams.push(...filters.carriers);
+      }
+
+      if (filters.agents && filters.agents.length > 0) {
+        conditions.push(`agent_id IN (${filters.agents.map(() => '?').join(',')})`);
+        queryParams.push(...filters.agents);
+      }
+
+      // Add WHERE clause if there are conditions
+      if (conditions.length > 0) {
+        const whereClause = ` WHERE ${conditions.join(' AND ')}`;
+        query += whereClause;
+        countQuery += whereClause;
+      }
+
+      // Add pagination
+      const offset = (page - 1) * limit;
+      query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
+      queryParams.push(limit, offset);
+
+      // Get total count
+      const totalResult = await this.fetchOne<{ total: number }>(countQuery, queryParams.slice(0, -2));
+      const total = totalResult?.total || 0;
+
+      // Get paginated results
+      const contacts = await this.fetchAll(query, queryParams);
+
+      return {
+        contacts,
+        total
+      };
+    } catch (error) {
+      logger.error(`Error getting paginated contacts: ${error}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Get available filter options
+   */
+  async getFilterOptions(): Promise<{ carriers: string[], states: string[] }> {
+    try {
+      const carriers = await this.fetchAll(
+        'SELECT DISTINCT current_carrier FROM contacts WHERE current_carrier IS NOT NULL'
+      );
+      const states = await this.fetchAll(
+        'SELECT DISTINCT state FROM contacts WHERE state IS NOT NULL'
+      );
+
+      return {
+        carriers: carriers.map((row: { current_carrier: string }) => row.current_carrier).filter(Boolean),
+        states: states.map((row: { state: string }) => row.state).filter(Boolean)
+      };
+    } catch (error) {
+      logger.error(`Error getting filter options: ${error}`);
+      throw error;
     }
   }
 }

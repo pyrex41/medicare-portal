@@ -981,7 +981,7 @@ update msg model =
 
             else
                 ( { model | error = Nothing }
-                , Nav.pushUrl model.key "/agents"
+                , Nav.pushUrl model.key "/add-agents"
                 )
 
         AgentSaved (Err _) ->

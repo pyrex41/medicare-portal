@@ -271,14 +271,37 @@ const validateRow = async (row: any, rowNum: number, carrierMap: Map<string, str
     // ZIP validation with logging
     const zipCode = (row['ZIP Code'] || row['zipCode'] || '').trim()
     logger.info(`Validating ZIP code: "${zipCode}"`)
-    const zipInfo = ZIP_DATA[zipCode]
-    if (!zipInfo) {
-      logger.warn(`Row ${rowNum} has invalid ZIP code: ${zipCode}`)
+
+    // First check if ZIP code exists and has the right format
+    if (!zipCode) {
+      logger.warn(`Row ${rowNum} is missing ZIP code`)
       return {
         isValid: false,
-        error: `Invalid ZIP code: ${zipCode}`
+        error: `Missing ZIP code. This field is required for determining state coverage and eligibility.`
       }
     }
+
+    // Check if ZIP code is in the correct format (5 digits)
+    if (!/^\d{5}$/.test(zipCode)) {
+      logger.warn(`Row ${rowNum} has invalid ZIP code format: ${zipCode}`)
+      return {
+        isValid: false,
+        error: `Invalid ZIP code format: ${zipCode}. Must be exactly 5 digits.`
+      }
+    }
+
+    // Check if ZIP code exists in our database
+    const zipInfo = ZIP_DATA[zipCode]
+    if (!zipInfo) {
+      logger.warn(`Row ${rowNum} has invalid ZIP code: ${zipCode} (not found in database)`)
+      return {
+        isValid: false,
+        error: `Invalid ZIP code: ${zipCode}. This ZIP code is not recognized in our database.`
+      }
+    }
+
+    // If we get here, we have a valid ZIP code with state information
+    logger.info(`Valid ZIP code ${zipCode} maps to state: ${zipInfo.state}`)
 
     // Gender validation with logging
     const gender = (row['Gender'] || row['gender'] || '').trim().toUpperCase()
@@ -447,119 +470,57 @@ const startServer = async () => {
 
           logger.info(`GET /api/contacts - Attempting to fetch contacts for org ${user.organization_id}`)
           
-          // Get org-specific database, initializing it if needed
-          const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString())
-          
-          // First get all unique carriers and states for filter options
-          const [carrierResults, stateResults] = await Promise.all([
-            orgDb.fetchAll('SELECT DISTINCT current_carrier FROM contacts WHERE current_carrier IS NOT NULL ORDER BY current_carrier'),
-            orgDb.fetchAll('SELECT DISTINCT state FROM contacts WHERE state IS NOT NULL ORDER BY state')
-          ])
+          // Get org-specific database
+          const orgDb = await Database.getOrgDb(user.organization_id.toString())
 
-          const allCarriers = carrierResults.map((row: any[]) => row[0])
-          const allStates = stateResults.map((row: any[]) => row[0])
-          
-          // Get search query and filters from URL params
+          // Get pagination params from URL
           const url = new URL(request.url)
-          const searchQuery = url.searchParams.get('search') || ''
-          const carriers = (url.searchParams.get('carriers') || '').split(',').filter(Boolean)
-          const states = (url.searchParams.get('states') || '').split(',').filter(Boolean)
-          const agents = (url.searchParams.get('agents') || '').split(',').filter(Boolean)
+          const page = parseInt(url.searchParams.get('page') || '1', 10)
+          const limit = parseInt(url.searchParams.get('limit') || '100', 10)
           
-          // Build the SQL query with search and filter conditions
-          let conditions = []
-          let params = []
-
-          // Add search condition if search query exists
-          if (searchQuery) {
-            conditions.push(`(
-              LOWER(first_name) LIKE ? OR 
-              LOWER(last_name) LIKE ? OR 
-              LOWER(email) LIKE ? OR
-              LOWER(current_carrier) LIKE ? OR
-              LOWER(state) LIKE ?
-            )`)
-            const searchTerm = `%${searchQuery.toLowerCase()}%`
-            params.push(searchTerm, searchTerm, searchTerm, searchTerm, searchTerm)
+          // Get search and filter params
+          const filters = {
+            search: url.searchParams.get('search') || '',
+            carriers: (url.searchParams.get('carriers') || '').split(',').filter(Boolean),
+            states: (url.searchParams.get('states') || '').split(',').filter(Boolean),
+            agents: (url.searchParams.get('agents') || '').split(',')
+              .filter(Boolean)
+              .map(id => parseInt(id, 10))
           }
 
-          // Add carrier filter if carriers are specified
-          if (carriers.length > 0) {
-            conditions.push(`current_carrier IN (${carriers.map(() => '?').join(',')})`)
-            params.push(...carriers)
-          }
+          // Get paginated contacts
+          const { contacts, total } = await orgDb.getPaginatedContacts(page, limit, filters)
 
-          // Add state filter if states are specified
-          if (states.length > 0) {
-            conditions.push(`state IN (${states.map(() => '?').join(',')})`)
-            params.push(...states)
-          }
+          // Get filter options
+          const filterOptions = await orgDb.getFilterOptions()
 
-          // Add agent filter if agents are specified
-          if (agents.length > 0) {
-            // Handle special case: if agent list includes '0', include NULL agent_id values too
-            if (agents.includes('0')) {
-              const nonZeroAgents = agents.filter(id => id !== '0')
-              if (nonZeroAgents.length > 0) {
-                conditions.push(`(agent_id IN (${nonZeroAgents.map(() => '?').join(',')}) OR agent_id IS NULL)`)
-                params.push(...nonZeroAgents.map(Number))
-              } else {
-                conditions.push(`agent_id IS NULL`)
-              }
-            } else {
-              conditions.push(`agent_id IN (${agents.map(() => '?').join(',')})`)
-              params.push(...agents.map(Number))
-            }
-          }
-
-          // Construct the final query
-          const query = `
-            SELECT * FROM contacts 
-            ${conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : ''}
-            ORDER BY id DESC
-          `
-          
-          // Execute query with params
-          const contacts = await orgDb.fetchAll(query, params)
-
-          if (!contacts || !Array.isArray(contacts)) {
-            logger.warn('GET /api/contacts - No contacts found or invalid response')
-            return {
-              contacts: [],
-              filterOptions: {
-                carriers: allCarriers,
-                states: allStates
-              }
-            }
-          }
-
-          logger.info(`GET /api/contacts - Successfully fetched ${contacts.length} contacts from org database`)
-
+          // Map contacts to the expected format
           const mappedContacts = contacts.map(contact => ({
-            id: contact[0],
-            first_name: contact[1],
-            last_name: contact[2],
-            email: contact[3],
-            current_carrier: contact[4],
-            plan_type: contact[5],
-            effective_date: contact[6],
-            birth_date: contact[7],
-            tobacco_user: Boolean(contact[8]),
-            gender: contact[9],
-            state: contact[10],
-            zip_code: contact[11],
-            agent_id: contact[12],
-            last_emailed: contact[13],
-            phone_number: contact[14] || ''
+            id: contact.id,
+            first_name: contact.first_name,
+            last_name: contact.last_name,
+            email: contact.email,
+            current_carrier: contact.current_carrier,
+            plan_type: contact.plan_type,
+            effective_date: contact.effective_date,
+            birth_date: contact.birth_date,
+            tobacco_user: Boolean(contact.tobacco_user),
+            gender: contact.gender,
+            state: contact.state,
+            zip_code: contact.zip_code,
+            agent_id: contact.agent_id,
+            last_emailed: contact.last_emailed,
+            phone_number: contact.phone_number || ''
           }))
 
-          logger.info(`GET /api/contacts - Returning ${mappedContacts.length} contacts with ${allCarriers.length} carriers and ${allStates.length} states`)
+          logger.info(`GET /api/contacts - Returning ${mappedContacts.length} contacts (page ${page} of ${Math.ceil(total / limit)})`)
+          
           return {
             contacts: mappedContacts,
-            filterOptions: {
-              carriers: allCarriers,
-              states: allStates
-            }
+            filterOptions,
+            total,
+            page,
+            limit
           }
         } catch (e) {
           logger.error(`Error in GET /api/contacts: ${e}`)
