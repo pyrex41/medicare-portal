@@ -30,6 +30,14 @@
             "args": [
                 "@agentdeskai/browser-tools-mcp@1.2.0"
             ]
+        },
+        "claude-code": {
+            "command": "claude",
+            "args": [
+                "mcp",
+                "serve"
+            ],
+            "env": {}
         }
     }
 }

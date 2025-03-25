@@ -676,29 +676,26 @@ export class Database {
       const finalCount = localDb.query('SELECT COUNT(*) as count FROM contacts').get() as { count: number };
       logger.info(`Processed ${processed} CSV records: ${added} added, ${skipped} skipped. Final count: ${finalCount.count}`);
       
-      // Step 4: Save in-memory database to a local SQLite file
-      const tempDbPath = path.join(backupDir, `org-${orgId}-${timestamp}.db`);
-      logger.info(`Saving database to temporary file: ${tempDbPath}`);
+      // Step 4: Save in-memory database to a SQL dump file
+      const tempDumpPath = path.join(backupDir, `org-${orgId}-${timestamp}.sql`);
+      logger.info(`Creating SQL dump file: ${tempDumpPath}`);
       
-      // Create a new SQLite file and copy the in-memory database to it
-      const tempDb = new BunDatabase(tempDbPath, { create: true });
+      // Create SQL dump from the in-memory database
+      const dump = [];
       
-      // Copy schema
+      // Add table schema
       const tables = localDb.query("SELECT sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all();
       for (const table of tables) {
-        tempDb.exec((table as { sql: string }).sql);
+        dump.push((table as { sql: string }).sql + ';');
       }
       
-      // Copy indexes
-      const indexes = localDb.query("SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name='contacts' AND name != 'idx_contacts_email_unique'").all();
+      // Add indexes
+      const indexes = localDb.query("SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name='contacts'").all();
       for (const index of indexes) {
-        tempDb.exec((index as { sql: string }).sql);
+        dump.push((index as { sql: string }).sql + ';');
       }
       
-      // Add unique email index
-      tempDb.exec("CREATE UNIQUE INDEX idx_contacts_email_unique ON contacts(LOWER(TRIM(email)));");
-      
-      // Copy data in chunks
+      // Add data
       type Contact = {
         id: number;
         first_name: string;
@@ -719,101 +716,93 @@ export class Database {
       };
 
       const contacts = localDb.query('SELECT * FROM contacts').all() as Contact[];
-      const CHUNK_SIZE = 500;
-      
-      tempDb.exec('BEGIN TRANSACTION');
-      
-      const tempInsertStmt = tempDb.prepare(`
-        INSERT INTO contacts (
+      for (const contact of contacts) {
+        const values = [
+          `'${contact.first_name.replace(/'/g, "''")}'`,
+          `'${contact.last_name.replace(/'/g, "''")}'`,
+          `'${contact.email.replace(/'/g, "''")}'`,
+          `'${contact.current_carrier.replace(/'/g, "''")}'`,
+          `'${contact.plan_type.replace(/'/g, "''")}'`,
+          `'${contact.effective_date.replace(/'/g, "''")}'`,
+          `'${contact.birth_date.replace(/'/g, "''")}'`,
+          contact.tobacco_user,
+          `'${contact.gender.replace(/'/g, "''")}'`,
+          `'${contact.state.replace(/'/g, "''")}'`,
+          `'${contact.zip_code.replace(/'/g, "''")}'`,
+          `'${contact.phone_number.replace(/'/g, "''")}'`,
+          contact.agent_id === null ? 'NULL' : contact.agent_id,
+          contact.last_emailed === null ? 'NULL' : `'${contact.last_emailed}'`,
+          `'${contact.created_at}'`
+        ];
+        
+        dump.push(`INSERT INTO contacts (
           first_name, last_name, email, current_carrier, plan_type, effective_date,
           birth_date, tobacco_user, gender, state, zip_code, phone_number, agent_id,
           last_emailed, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `);
-      
-      for (const contact of contacts) {
-        tempInsertStmt.run(
-          contact.first_name,
-          contact.last_name,
-          contact.email,
-          contact.current_carrier,
-          contact.plan_type,
-          contact.effective_date,
-          contact.birth_date,
-          contact.tobacco_user,
-          contact.gender,
-          contact.state,
-          contact.zip_code,
-          contact.phone_number,
-          contact.agent_id,
-          contact.last_emailed,
-          contact.created_at
-        );
+        ) VALUES (${values.join(', ')});`);
       }
       
-      tempDb.exec('COMMIT');
-      tempDb.close();
-      
-      logger.info(`Database saved to ${tempDbPath}`);
-      
-      // Step 5: Upload database file to Turso
-      logger.info('Uploading database to Turso');
-      const dbContent = await fs.promises.readFile(tempDbPath);
+      // Write the SQL dump to file
+      await fs.promises.writeFile(tempDumpPath, dump.join('\n'));
+      logger.info(`SQL dump saved to ${tempDumpPath}`);
+
+      // Step 5: Create new Turso database using the SQL dump
+      const newDbName = `org-${orgId}-${timestamp}`;
+      logger.info(`Creating new database: ${newDbName}`);
+
+      // First upload the SQL dump file
+      logger.info('Uploading SQL dump file');
       const formData = new FormData();
-      formData.append('file', new Blob([dbContent], { type: 'application/x-sqlite3' }), 'database.db');
-      
-      const uploadResponse = await fetch(`https://api.turso.tech/v1/organizations/${config.TURSO_ORG_SLUG}/databases/uploads`, {
+      formData.append('file', new Blob([await fs.promises.readFile(tempDumpPath)], { type: 'text/plain' }), 'dump.sql');
+
+      const uploadResponse = await fetch(`https://api.turso.tech/v1/organizations/${config.TURSO_ORG_SLUG}/databases/dumps`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${config.TURSO_API_TOKEN}`,
         },
         body: formData
       });
-      
+
       if (!uploadResponse.ok) {
         const errorText = await uploadResponse.text();
-        logger.error(`Failed to upload database: ${errorText}`);
-        throw new Error(`Failed to upload database: ${errorText}`);
+        logger.error(`Failed to upload SQL dump: ${errorText}`);
+        throw new Error(`Failed to upload SQL dump: ${errorText}`);
       }
-      
-      const { upload_url } = await uploadResponse.json() as { upload_url: string };
-      logger.info(`Database uploaded successfully: ${upload_url}`);
 
-      // Step 6: Create new Turso database using the uploaded database
-      const newDbName = `org-${orgId}-${timestamp}`;
-      logger.info(`Creating new database: ${newDbName}`);
+      const { dump_url } = await uploadResponse.json() as { dump_url: string };
+      logger.info(`SQL dump uploaded successfully to ${dump_url}, creating database`);
 
-      const apiResponse = await fetch(`https://api.turso.tech/v1/organizations/${config.TURSO_ORG_SLUG}/databases`, {
+      // Now create the database using the uploaded dump
+      const createResponse = await fetch(`https://api.turso.tech/v1/organizations/${config.TURSO_ORG_SLUG}/databases`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${config.TURSO_API_TOKEN}`,
-          'Content-Type': 'application/json',
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({
           name: newDbName,
           group: config.TURSO_ORG_GROUP,
           seed: {
-            type: 'database_upload',
-            url: upload_url
+            type: 'dump',
+            url: dump_url
           }
-        }),
+        })
       });
 
-      if (!apiResponse.ok) {
-        const errorText = await apiResponse.text();
+      if (!createResponse.ok) {
+        const errorText = await createResponse.text();
         logger.error(`Failed to create database: ${errorText}`);
         throw new Error(`Failed to create database: ${errorText}`);
       }
 
-      const response = await apiResponse.json() as { database: { Hostname: string } };
-      const actualNewUrl = `https://${response.database.Hostname}`;
+      const response = await createResponse.json() as { database: { Hostname: string } };
+      // Store database URL in libsql:// format for database connections
+      const actualNewUrl = `libsql://${response.database.Hostname}`;
+      logger.info(`Database created with URL: ${actualNewUrl}`);
 
-      // Step 7: Update main database with new credentials
-      logger.info(`Updating org ${orgId} to use ${actualNewUrl}`);
-
-      // Get new auth token for the database
+      // Step 6: Get new auth token for the database
       logger.info('Getting new auth token for the database');
-      const newTokenResponse = await fetch(`https://api.turso.tech/v1/databases/${newDbName}/auth/tokens`, {
+      const newTokenResponse = await fetch(`https://api.turso.tech/v1/organizations/${config.TURSO_ORG_SLUG}/databases/${newDbName}/auth/tokens`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${config.TURSO_API_TOKEN}`,
@@ -839,7 +828,7 @@ export class Database {
       const newToken = newTokenData.jwt;
       logger.info(`Got new auth token (length: ${newToken.length})`);
 
-      // Update organization with new URL and new token
+      // Step 7: Update organization with new URL and token
       await mainDb.execute(
         'UPDATE organizations SET turso_db_url = ?, turso_auth_token = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
         [actualNewUrl, newToken, orgId]

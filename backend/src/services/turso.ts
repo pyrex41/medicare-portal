@@ -177,32 +177,28 @@ export class TursoService {
     }
   }
 
-  async downloadDatabaseDump(url: string, token: string): Promise<string> {
+  async downloadDatabaseDump(dbUrl: string, authToken: string): Promise<string> {
     try {
-      // Extract base URL (remove https:// if present)
-      const baseUrl = url.replace(/^https?:\/\//, '')
-      const apiUrl = `https://${baseUrl}/dump`
-      logger.info(`Downloading database dump from ${apiUrl}`)
+      // Convert libsql:// URL to https:// for API calls
+      const apiUrl = dbUrl.replace('libsql://', '');
+      logger.info(`Downloading database dump from https://${apiUrl}/dump`);
       
-      const response = await fetch(apiUrl, {
+      const response = await fetch(`https://${apiUrl}/dump`, {
         method: 'GET',
         headers: {
-          'Authorization': `Bearer ${token}`,
+          'Authorization': `Bearer ${authToken}`,
         },
-      })
+      });
 
       if (!response.ok) {
-        const errorText = await response.text()
-        logger.error(`Failed to download database dump: ${errorText}`)
-        throw new Error(`Failed to download database dump: ${errorText}`)
+        const errorText = await response.text();
+        throw new Error(`Failed to download dump: ${errorText}`);
       }
 
-      const dumpData = await response.text()
-      logger.info(`Successfully downloaded database dump: ${Math.round(dumpData.length / 1024)} KB`)
-      return dumpData
+      return await response.text();
     } catch (error) {
-      logger.error(`Error downloading database dump: ${error}`)
-      throw error
+      logger.error(`Error downloading database dump: ${error}`);
+      throw error;
     }
   }
 
