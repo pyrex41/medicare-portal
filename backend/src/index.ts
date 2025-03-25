@@ -39,7 +39,7 @@ interface ZipInfo {
 // Update ZIP_DATA declaration
 let ZIP_DATA: Record<string, ZipInfo> = {}
 try {
-  ZIP_DATA = JSON.parse(readFileSync('../zipData.json', 'utf-8'))
+  ZIP_DATA = JSON.parse(readFileSync(path.join(__dirname, '..', 'zipData.json'), 'utf-8'))
 } catch (e) {
   logger.error(`Error loading ZIP data: ${e}`)
 }

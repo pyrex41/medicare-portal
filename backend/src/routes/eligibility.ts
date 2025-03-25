@@ -242,14 +242,14 @@ export const eligibilityRoutes = (app: Elysia) => {
                 if (existingAnswers) {
                     // Update existing answers
                     await orgDb.execute(
-                        'UPDATE eligibility_answers SET answers = ?, created_at = CURRENT_TIMESTAMP WHERE contact_id = ?',
-                        [answersJson, contactId]
+                        'UPDATE eligibility_answers SET answers = ?, quote_id = ?, created_at = CURRENT_TIMESTAMP WHERE contact_id = ?',
+                        [answersJson, data.quote_id || null, contactId]
                     );
                 } else {
                     // Insert new answers
                     await orgDb.execute(
-                        'INSERT INTO eligibility_answers (contact_id, answers) VALUES (?, ?)',
-                        [contactId, answersJson]
+                        'INSERT INTO eligibility_answers (contact_id, quote_id, answers) VALUES (?, ?, ?)',
+                        [contactId, data.quote_id || null, answersJson]
                     );
                 }
                 

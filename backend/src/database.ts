@@ -13,14 +13,18 @@ import type { ContactCreate } from './types'
 export class Database {
   private client: any
   private url: string
+  private isLocal: boolean
+  private bunDb: BunDatabase | null = null
 
-  private static normalizeDbUrl(url: string): { hostname: string, apiUrl: string, dbUrl: string } {
+  public static normalizeDbUrl(url: string): { hostname: string, apiUrl: string, dbUrl: string, dbName: string } {
     // Strip any protocol prefix
     const hostname = url.replace(/(^https?:\/\/)|(^libsql:\/\/)/, '');
+    const dbName = hostname.split('/').pop()?.split('.')[0] || '';
     return {
       hostname,  // Raw hostname without protocol
       apiUrl: `https://${hostname}`,  // For API calls
-      dbUrl: `libsql://${hostname}`   // For database connections
+      dbUrl: `libsql://${hostname}`,   // For database connections
+      dbName // For local SQLite files
     };
   }
 
@@ -28,33 +32,67 @@ export class Database {
     const url = dbUrl || config.TURSO_DATABASE_URL
     const token = authToken || config.TURSO_AUTH_TOKEN
 
-    if (!url || !token) {
-      logger.error('Missing database credentials')
-      throw new Error('Missing database credentials')
+    if (!url) {
+      logger.error('Missing database URL')
+      throw new Error('Missing database URL')
     }
 
-    const { dbUrl: normalizedUrl } = Database.normalizeDbUrl(url)
+    const { dbUrl: normalizedUrl, dbName } = Database.normalizeDbUrl(url)
     this.url = normalizedUrl
-    this.client = createClient({
-      url: normalizedUrl,
-      authToken: token,
-    })
+    this.isLocal = config.USE_LOCAL_SQLITE
+
+    if (this.isLocal) {
+      const dbPath = path.join(process.cwd(), config.LOCAL_DB_PATH, `${dbName}.sqlite`)
+      logger.info(`Using local SQLite database at: ${dbPath}`)
+      
+      // Create directory if it doesn't exist
+      const dbDir = path.dirname(dbPath)
+      if (!fs.existsSync(dbDir)) {
+        fs.mkdirSync(dbDir, { recursive: true })
+      }
+      
+      this.bunDb = new BunDatabase(dbPath)
+      this.client = this.bunDb
+      
+      // Enable foreign keys
+      this.bunDb.exec('PRAGMA foreign_keys = ON;')
+    } else {
+      if (!token) {
+        logger.error('Missing database token')
+        throw new Error('Missing database token')
+      }
+      this.client = createClient({
+        url: normalizedUrl,
+        authToken: token,
+      })
+    }
     
-    logger.info(`Database connected to: ${this.url}`)
+    logger.info(`Database connected to: ${this.isLocal ? dbName : this.url}`)
   }
 
   static async getOrgDb(orgId: string): Promise<Database> {
-      const mainDb = new Database()
+    const mainDb = new Database()
     const org = await mainDb.fetchOne<{ turso_db_url: string; turso_auth_token: string }>(
-        'SELECT turso_db_url, turso_auth_token FROM organizations WHERE id = ?',
-        [orgId]
-      )
-      if (!org?.turso_db_url || !org?.turso_auth_token) {
-        logger.error(`No Turso credentials found for org ${orgId}`)
+      'SELECT turso_db_url, turso_auth_token FROM organizations WHERE id = ?',
+      [orgId]
+    )
+    if (!org?.turso_db_url) {
+      logger.error(`No database URL found for org ${orgId}`)
+      throw new Error('Organization database not configured')
+    }
+    
+    // If using local SQLite, we don't need the auth token
+    if (config.USE_LOCAL_SQLITE) {
+      logger.info(`Creating local SQLite client for org ${orgId}`)
+      return new Database(org.turso_db_url)
+    } else {
+      if (!org.turso_auth_token) {
+        logger.error(`No auth token found for org ${orgId}`)
         throw new Error('Organization database not configured')
       }
-      logger.info(`Creating client for org ${orgId} database: ${org.turso_db_url}`)
+      logger.info(`Creating Turso client for org ${orgId}`)
       return new Database(org.turso_db_url, org.turso_auth_token)
+    }
   }
 
   /**
@@ -231,11 +269,22 @@ export class Database {
 
   async execute(sql: string, args: any[] = []) {
     try {
-      const result = await this.client.execute({
-        sql,
-        args
-      })
-      return result
+      if (this.isLocal && this.bunDb) {
+        // For local SQLite
+        const stmt = this.bunDb.prepare(sql)
+        const result = stmt.run(...args)
+        return {
+          rows: Array.isArray(result) ? result : result.changes > 0 ? [result] : [],
+          rowsAffected: result.changes
+        }
+      } else {
+        // For Turso
+        const result = await this.client.execute({
+          sql,
+          args
+        })
+        return result
+      }
     } catch (error) {
       logger.error(`Database execute error: ${error}`)
       throw error
@@ -244,11 +293,19 @@ export class Database {
 
   async fetchAll(sql: string, args: any[] = []) {
     try {
-      const result = await this.client.execute({
-        sql,
-        args
-      })
-      return result.rows || []
+      if (this.isLocal && this.bunDb) {
+        // For local SQLite
+        const stmt = this.bunDb.prepare(sql)
+        const rows = stmt.all(...args)
+        return rows || []
+      } else {
+        // For Turso
+        const result = await this.client.execute({
+          sql,
+          args
+        })
+        return result.rows || []
+      }
     } catch (error) {
       logger.error(`Database fetchAll error: ${error}`)
       throw error
@@ -256,13 +313,21 @@ export class Database {
   }
 
   async fetchOne<T>(sql: string, args: any[] = []): Promise<T | null> {
-    const result = await this.execute(sql, args)
-    if (!result.rows || result.rows.length === 0) return null
+    if (this.isLocal && this.bunDb) {
+      // For local SQLite
+      const stmt = this.bunDb.prepare(sql)
+      const row = stmt.get(...args)
+      return row as T || null
+    } else {
+      // For Turso
+      const result = await this.execute(sql, args)
+      if (!result.rows || result.rows.length === 0) return null
       const row = result.rows[0]
       const columns = result.columns || []
       const obj: any = {}
-    columns.forEach((col: string, i: number) => (obj[col] = row[i]))
+      columns.forEach((col: string, i: number) => (obj[col] = row[i]))
       return obj as T
+    }
   }
 
   // Compatibility method for old query interface
@@ -270,7 +335,7 @@ export class Database {
     return this.fetchAll(sql, args)
   }
 
-  // Transaction support with function overloads
+  // Add transaction support for local SQLite
   async transaction<T>(callback: (tx: Database) => Promise<T>): Promise<T>;
   async transaction<T>(mode: 'read' | 'write', callback: (tx: Database) => Promise<T>): Promise<T>;
   async transaction<T>(
@@ -291,19 +356,30 @@ export class Database {
       throw new Error('Transaction callback is required')
     }
 
-    const tx = await this.client.transaction(mode)
-    try {
-      // Create a Database-like wrapper around the transaction
-      const txWrapper = new Database()
-      // Override the client with the transaction
-      txWrapper.client = tx
-      
-      const result = await fn(txWrapper)
-      await tx.commit()
-      return result
-    } catch (error) {
-      await tx.rollback()
-      throw error
+    if (this.isLocal && this.bunDb) {
+      // For local SQLite
+      try {
+        this.bunDb.exec('BEGIN TRANSACTION')
+        const result = await fn(this)
+        this.bunDb.exec('COMMIT')
+        return result
+      } catch (error) {
+        this.bunDb.exec('ROLLBACK')
+        throw error
+      }
+    } else {
+      // For Turso
+      const tx = await this.client.transaction(mode)
+      try {
+        const txWrapper = new Database()
+        txWrapper.client = tx
+        const result = await fn(txWrapper)
+        await tx.commit()
+        return result
+      } catch (error) {
+        await tx.rollback()
+        throw error
+      }
     }
   }
 
@@ -995,6 +1071,12 @@ export class Database {
     } catch (error) {
       logger.error(`Error ensuring org schema: ${error}`);
       throw error;
+    }
+  }
+
+  close() {
+    if (this.isLocal && this.bunDb) {
+      this.bunDb.close()
     }
   }
 }
