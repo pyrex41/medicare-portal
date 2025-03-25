@@ -14,6 +14,16 @@ export class Database {
   private client: any
   private url: string
 
+  private static normalizeDbUrl(url: string): { hostname: string, apiUrl: string, dbUrl: string } {
+    // Strip any protocol prefix
+    const hostname = url.replace(/(^https?:\/\/)|(^libsql:\/\/)/, '');
+    return {
+      hostname,  // Raw hostname without protocol
+      apiUrl: `https://${hostname}`,  // For API calls
+      dbUrl: `libsql://${hostname}`   // For database connections
+    };
+  }
+
   constructor(dbUrl?: string, authToken?: string) {
     const url = dbUrl || config.TURSO_DATABASE_URL
     const token = authToken || config.TURSO_AUTH_TOKEN
@@ -23,9 +33,10 @@ export class Database {
       throw new Error('Missing database credentials')
     }
 
-    this.url = url
+    const { dbUrl: normalizedUrl } = Database.normalizeDbUrl(url)
+    this.url = normalizedUrl
     this.client = createClient({
-      url: url,
+      url: normalizedUrl,
       authToken: token,
     })
     

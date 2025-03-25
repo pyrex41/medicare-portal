@@ -177,13 +177,23 @@ export class TursoService {
     }
   }
 
+  // Helper function to normalize database URLs
+  private normalizeDbUrl(url: string): { hostname: string, apiUrl: string, dbUrl: string } {
+    // Strip any protocol prefix
+    const hostname = url.replace(/(^https?:\/\/)|(^libsql:\/\/)/, '');
+    return {
+      hostname,  // Raw hostname without protocol
+      apiUrl: `https://${hostname}`,  // For API calls
+      dbUrl: `libsql://${hostname}`   // For database connections
+    };
+  }
+
   async downloadDatabaseDump(dbUrl: string, authToken: string): Promise<string> {
     try {
-      // Convert libsql:// URL to https:// for API calls
-      const apiUrl = dbUrl.replace('libsql://', '');
-      logger.info(`Downloading database dump from https://${apiUrl}/dump`);
+      const { apiUrl } = this.normalizeDbUrl(dbUrl);
+      logger.info(`Downloading database dump from ${apiUrl}/dump`);
       
-      const response = await fetch(`https://${apiUrl}/dump`, {
+      const response = await fetch(`${apiUrl}/dump`, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${authToken}`,
@@ -229,8 +239,9 @@ export class TursoService {
         throw new Error(`Failed to create database: ${errorText}`);
       }
 
-      const dbData = await createDbResponse.json();
-      logger.info(`Database created: ${JSON.stringify(dbData.database || {})}`);
+      const dbData = await createDbResponse.json() as { database: { Hostname: string } };
+      const { dbUrl, apiUrl } = this.normalizeDbUrl(dbData.database.Hostname);
+      logger.info(`Database created: ${dbUrl}`);
       
       // Step 2: Generate an auth token for the database
       logger.info(`Generating auth token for database ${dbName}`);
@@ -256,211 +267,193 @@ export class TursoService {
         throw new Error(`Failed to create auth token: ${errorText}`);
       }
 
-      const tokenData = await tokenResponse.json();
-      const url = `https://${dbData.database.Hostname}`;
+      const tokenData = await tokenResponse.json() as { jwt: string };
       const token = tokenData.jwt;
       
       logger.info(`Successfully created database ${dbName} with auth token`);
       
-      // Step 3: Import the SQL dump using the libSQL client
-      try {
-        logger.info(`Uploading SQL dump (${Math.round(dumpContent.length / 1024)} KB) to new database`);
-        
-        // Create client for the new database
-        const client = createClient({
-          url,
-          authToken: token
-        });
-        
-        // Split dump into logical statement groups for more reliable execution
-        const statements = dumpContent
-          .split(';')
-          .map(stmt => stmt.trim())
-          .filter(stmt => stmt.length > 0);
-        
-        logger.info(`Split SQL dump into ${statements.length} statements`);
-        
-        // Execute statements in phases - first schema statements, then data statements
-        // Parse and categorize statements
-        const schemaStatements = statements.filter(stmt => 
-          stmt.toUpperCase().startsWith('CREATE TABLE')
-        );
-        
-        const indexStatements = statements.filter(stmt => 
-          stmt.toUpperCase().startsWith('CREATE INDEX') || 
-          stmt.toUpperCase().startsWith('CREATE UNIQUE INDEX')
-        );
-        
-        const insertStatements = statements.filter(stmt => 
-          stmt.toUpperCase().startsWith('INSERT')
-        );
-        
-        const otherStatements = statements.filter(stmt => 
-          !schemaStatements.includes(stmt) && 
-          !indexStatements.includes(stmt) && 
-          !insertStatements.includes(stmt)
-        );
-        
-        logger.info(`Processing ${schemaStatements.length} tables, ${indexStatements.length} indexes, ${insertStatements.length} data inserts, and ${otherStatements.length} other statements`);
-        
-        // Phase 1: Create tables
-        for (const tableStatement of schemaStatements) {
-          try {
-            logger.info(`Creating table: ${tableStatement.substring(0, 60)}...`);
-            await client.execute(tableStatement);
-          } catch (error) {
-            // If there's an error with the contacts table missing updated_at, add it
-            if (tableStatement.includes('contacts') && 
-                error.toString().includes('no column named updated_at')) {
-              logger.warn('Error creating contacts table, attempting to fix missing updated_at column');
-              
-              // Add the updated_at column if it's missing
-              try {
-                // First create the table without the updated_at column
-                await client.execute(tableStatement);
-                
-                // Then add the updated_at column
-                await client.execute(`
-                  ALTER TABLE contacts
-                  ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-                `);
-                
-                logger.info('Successfully added missing updated_at column to contacts table');
-              } catch (altError) {
-                logger.error(`Failed to fix contacts table: ${altError}`);
-                throw altError;
-              }
-            } else {
-              // For other errors, just throw them
-              throw error;
-            }
-          }
-        }
-        
-        // Phase 2: Execute other statements (drops, alters, etc)
-        for (const statement of otherStatements) {
-          await client.execute(statement);
-        }
-        
-        // Phase 3: Insert data
-        logger.info(`Inserting data (${insertStatements.length} statements)...`);
-        let successCount = 0;
-        let errorCount = 0;
-        
-        // Check if we've already detected updated_at missing
-        let updatedAtMissing = false;
-        let checkedUpdatedAt = false;
-        
-        for (const insertStatement of insertStatements) {
-          try {
-            // Skip if we know the statement will fail due to updated_at missing
-            if (updatedAtMissing && insertStatement.includes('updated_at')) {
-              // Try to fix the insert statement by removing the updated_at column
-              const fixedInsert = insertStatement
-                .replace(/updated_at\s*,/i, '')  // Remove updated_at from column list
-                .replace(/(\w+\s*,\s*)CURRENT_TIMESTAMP(\s*\))/gi, '$1$2')  // Remove corresponding value in VALUES
-                .replace(/,\s*\)/g, ')');  // Fix any trailing commas
-              
-              try {
-                await client.execute(fixedInsert);
-                successCount++;
-                
-                // Log progress periodically
-                if (successCount % 50 === 0) {
-                  logger.info(`Imported ${successCount}/${insertStatements.length} data statements (with fixes)`);
-                }
-              } catch (fixError) {
-                errorCount++;
-                logger.error(`Error executing fixed INSERT: ${fixError}`);
-                // Continue with next statement
-              }
-              continue;
-            }
-            
-            // Try the original statement
-            await client.execute(insertStatement);
-            successCount++;
-            
-            // Log progress periodically
-            if (successCount % 50 === 0) {
-              logger.info(`Imported ${successCount}/${insertStatements.length} data statements`);
-            }
-          } catch (error) {
-            // Check if this is the updated_at missing error
-            if (!checkedUpdatedAt && error.toString().includes('no column named updated_at')) {
-              updatedAtMissing = true;
-              checkedUpdatedAt = true;
-              logger.warn('Detected missing updated_at column in contacts table, will attempt to fix INSERT statements');
-              
-              // Try to add the column if it's missing
-              try {
-                await client.execute(`
-                  ALTER TABLE contacts
-                  ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-                `);
-                logger.info('Added missing updated_at column to contacts table');
-                
-                // Now we have the column, try the statement again
-                try {
-                  await client.execute(insertStatement);
-                  successCount++;
-                  logger.info('Successfully executed INSERT after adding updated_at column');
-                  
-                  // We fixed the table, so we don't need to modify statements anymore
-                  updatedAtMissing = false;
-                } catch (retryError) {
-                  errorCount++;
-                  logger.error(`Error retrying INSERT after adding column: ${retryError}`);
-                }
-              } catch (alterError) {
-                logger.warn(`Could not add updated_at column: ${alterError}`);
-                // Still mark as missing so we can fix the statements
-              }
-            } else {
-              errorCount++;
-              logger.error(`Error executing INSERT: ${error}`);
-              // Continue with next statement - don't fail everything for one bad insert
-            }
-          }
-        }
-        
-        // Phase 4: Create indexes (do this last for better performance)
-        logger.info(`Creating ${indexStatements.length} indexes...`);
-        for (const indexStatement of indexStatements) {
-          try {
-            await client.execute(indexStatement);
-          } catch (error) {
-            logger.warn(`Error creating index: ${error}`);
-            // Continue with next index - not fatal
-          }
-        }
-        
-        // Log summary
-        logger.info(`Database import complete: ${successCount} successful inserts, ${errorCount} errors`);
-        
-        // Verify the database
+      // Create client for the new database using libsql:// URL
+      const client = createClient({
+        url: dbUrl,
+        authToken: token
+      });
+      
+      // Split dump into logical statement groups for more reliable execution
+      const statements = dumpContent
+        .split(';')
+        .map(stmt => stmt.trim())
+        .filter(stmt => stmt.length > 0);
+      
+      logger.info(`Split SQL dump into ${statements.length} statements`);
+      
+      // Execute statements in phases - first schema statements, then data statements
+      // Parse and categorize statements
+      const schemaStatements = statements.filter(stmt => 
+        stmt.toUpperCase().startsWith('CREATE TABLE')
+      );
+      
+      const indexStatements = statements.filter(stmt => 
+        stmt.toUpperCase().startsWith('CREATE INDEX') || 
+        stmt.toUpperCase().startsWith('CREATE UNIQUE INDEX')
+      );
+      
+      const insertStatements = statements.filter(stmt => 
+        stmt.toUpperCase().startsWith('INSERT')
+      );
+      
+      const otherStatements = statements.filter(stmt => 
+        !schemaStatements.includes(stmt) && 
+        !indexStatements.includes(stmt) && 
+        !insertStatements.includes(stmt)
+      );
+      
+      logger.info(`Processing ${schemaStatements.length} tables, ${indexStatements.length} indexes, ${insertStatements.length} data inserts, and ${otherStatements.length} other statements`);
+      
+      // Phase 1: Create tables
+      for (const tableStatement of schemaStatements) {
         try {
-          const result = await client.execute('SELECT COUNT(*) as count FROM contacts');
-          const count = result.rows?.[0]?.[0];
-          logger.info(`Database verification: ${count} contacts found`);
+          logger.info(`Creating table: ${tableStatement.substring(0, 60)}...`);
+          await client.execute(tableStatement);
         } catch (error) {
-          logger.warn(`Error verifying database: ${error}`);
+          // If there's an error with the contacts table missing updated_at, add it
+          if (tableStatement.includes('contacts') && 
+              error.toString().includes('no column named updated_at')) {
+            logger.warn('Error creating contacts table, attempting to fix missing updated_at column');
+            
+            // Add the updated_at column if it's missing
+            try {
+              // First create the table without the updated_at column
+              await client.execute(tableStatement);
+              
+              // Then add the updated_at column
+              await client.execute(`
+                ALTER TABLE contacts
+                ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+              `);
+              
+              logger.info('Successfully added missing updated_at column to contacts table');
+            } catch (altError) {
+              logger.error(`Failed to fix contacts table: ${altError}`);
+              throw altError;
+            }
+          } else {
+            // For other errors, just throw them
+            throw error;
+          }
         }
-        
-        return { url, token };
-      } catch (importError) {
-        logger.error(`Error importing SQL dump: ${importError}`);
-        
-        // Try to clean up the database
-        try {
-          await this.deleteOrganizationDatabase(dbName);
-          logger.info(`Cleaned up database ${dbName} after import error`);
-        } catch (cleanupError) {
-          logger.warn(`Failed to clean up database: ${cleanupError}`);
-        }
-        
-        throw importError;
       }
+      
+      // Phase 2: Execute other statements (drops, alters, etc)
+      for (const statement of otherStatements) {
+        await client.execute(statement);
+      }
+      
+      // Phase 3: Insert data
+      logger.info(`Inserting data (${insertStatements.length} statements)...`);
+      let successCount = 0;
+      let errorCount = 0;
+      
+      // Check if we've already detected updated_at missing
+      let updatedAtMissing = false;
+      let checkedUpdatedAt = false;
+      
+      for (const insertStatement of insertStatements) {
+        try {
+          // Skip if we know the statement will fail due to updated_at missing
+          if (updatedAtMissing && insertStatement.includes('updated_at')) {
+            // Try to fix the insert statement by removing the updated_at column
+            const fixedInsert = insertStatement
+              .replace(/updated_at\s*,/i, '')  // Remove updated_at from column list
+              .replace(/(\w+\s*,\s*)CURRENT_TIMESTAMP(\s*\))/gi, '$1$2')  // Remove corresponding value in VALUES
+              .replace(/,\s*\)/g, ')');  // Fix any trailing commas
+            
+            try {
+              await client.execute(fixedInsert);
+              successCount++;
+              
+              // Log progress periodically
+              if (successCount % 50 === 0) {
+                logger.info(`Imported ${successCount}/${insertStatements.length} data statements (with fixes)`);
+              }
+            } catch (fixError) {
+              errorCount++;
+              logger.error(`Error executing fixed INSERT: ${fixError}`);
+              // Continue with next statement
+            }
+            continue;
+          }
+          
+          // Try the original statement
+          await client.execute(insertStatement);
+          successCount++;
+          
+          // Log progress periodically
+          if (successCount % 50 === 0) {
+            logger.info(`Imported ${successCount}/${insertStatements.length} data statements`);
+          }
+        } catch (error) {
+          // Check if this is the updated_at missing error
+          if (!checkedUpdatedAt && error.toString().includes('no column named updated_at')) {
+            updatedAtMissing = true;
+            checkedUpdatedAt = true;
+            logger.warn('Detected missing updated_at column in contacts table, will attempt to fix INSERT statements');
+            
+            // Try to add the column if it's missing
+            try {
+              await client.execute(`
+                ALTER TABLE contacts
+                ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+              `);
+              logger.info('Added missing updated_at column to contacts table');
+              
+              // Now we have the column, try the statement again
+              try {
+                await client.execute(insertStatement);
+                successCount++;
+                logger.info('Successfully executed INSERT after adding updated_at column');
+                
+                // We fixed the table, so we don't need to modify statements anymore
+                updatedAtMissing = false;
+              } catch (retryError) {
+                errorCount++;
+                logger.error(`Error retrying INSERT after adding column: ${retryError}`);
+              }
+            } catch (alterError) {
+              logger.warn(`Could not add updated_at column: ${alterError}`);
+              // Still mark as missing so we can fix the statements
+            }
+          } else {
+            errorCount++;
+            logger.error(`Error executing INSERT: ${error}`);
+            // Continue with next statement - don't fail everything for one bad insert
+          }
+        }
+      }
+      
+      // Phase 4: Create indexes (do this last for better performance)
+      logger.info(`Creating ${indexStatements.length} indexes...`);
+      for (const indexStatement of indexStatements) {
+        try {
+          await client.execute(indexStatement);
+        } catch (error) {
+          logger.warn(`Error creating index: ${error}`);
+          // Continue with next index - not fatal
+        }
+      }
+      
+      // Log summary
+      logger.info(`Database import complete: ${successCount} successful inserts, ${errorCount} errors`);
+      
+      // Verify the database
+      try {
+        const result = await client.execute('SELECT COUNT(*) as count FROM contacts');
+        const count = result.rows?.[0]?.[0];
+        logger.info(`Database verification: ${count} contacts found`);
+      } catch (error) {
+        logger.warn(`Error verifying database: ${error}`);
+      }
+      
+      return { url: dbUrl, token };
     } catch (error) {
       logger.error(`Error creating database from dump: ${error}`);
       throw error;
