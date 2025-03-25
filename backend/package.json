@@ -7,6 +7,8 @@
     "add-agent": "bun run scripts/add-agent.ts",
     "manage-recommendations": "bun run scripts/manage-recommendations.ts",
     "manage-turso": "bun run scripts/manage-turso.ts",
+    "test-import": "bun run scripts/test-bulk-import.ts",
+    "generate-data": "bun run scripts/generate-test-data.ts",
     "start": "NODE_ENV=production bun run --no-env-file src/index.ts"
   },
   "dependencies": {
@@ -20,11 +22,13 @@
     "@types/jsonwebtoken": "^9.0.9",
     "chalk": "^5.4.1",
     "csv-parse": "^5.6.0",
+    "csv-stringify": "^6.5.2",
     "dotenv": "^16.3.1",
     "elysia": "^0.8.9",
     "jsonwebtoken": "^9.0.2",
     "node-cron": "^3.0.3",
     "prompts": "^2.4.2",
+    "sqlite3": "^5.1.7",
     "stripe": "^17.7.0",
     "zod": "^3.24.1"
   },

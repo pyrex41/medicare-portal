@@ -1,0 +1,11 @@
+first_name,last_name,email,current_carrier,plan_type,effective_date,birth_date,tobacco_user,gender,state,zip_code,phone_number
+John,Doe,john.doe@example.com,Aetna,F,2023-01-01,1955-08-21,0,Male,FL,33101,123-456-7890
+Jane,Smith,jane.smith@example.com,Humana,G,2023-02-15,1953-04-12,0,Female,TX,75001,214-555-1234
+Robert,Johnson,robert.j@example.com,UnitedHealthcare,N,2022-12-01,1949-11-30,1,Male,CA,90210,310-555-9876
+Susan,Williams,susan.w@example.com,Cigna,G,2023-03-20,1960-02-28,0,Female,NY,10001,212-555-4321
+Michael,Brown,michael.b@example.com,Aetna,F,2023-01-15,1952-07-14,0,Male,IL,60601,312-555-7890
+Patricia,Davis,patricia.d@example.com,Humana,G,2022-11-10,1958-09-17,0,Female,GA,30301,404-555-3456
+James,Miller,james.m@example.com,UnitedHealthcare,N,2023-02-01,1950-12-05,1,Male,AZ,85001,480-555-6789
+Linda,Wilson,linda.w@example.com,Cigna,F,2023-03-01,1956-05-22,0,Female,PA,19101,215-555-2345
+William,Moore,william.m@example.com,Aetna,G,2022-10-15,1947-03-08,1,Male,OH,44101,216-555-7890
+Jennifer,Taylor,jennifer.t@example.com,Humana,F,2023-01-20,1962-08-11,0,Female,MI,48201,313-555-4567

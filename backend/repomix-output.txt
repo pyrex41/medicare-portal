@@ -70,6 +70,7 @@ src/
     onboarding.ts
     organizations.ts
     quotes.ts
+    schedule.ts
     self-service.ts
     settings.ts
     stripe.ts
@@ -1625,6 +1626,86 @@ interface EligibilityAnswers {
 
 export const eligibilityRoutes = (app: Elysia) => {
     app
+        // Get organization details
+        .get('/api/org/:orgId/details', async ({ params }) => {
+            try {
+                const orgId = params.orgId;
+                if (!orgId) {
+                    return {
+                        success: false,
+                        error: 'Missing organization ID'
+                    };
+                }
+
+                // Get organization details from main database
+                const mainDb = new Database();
+                const orgDetails = await mainDb.fetchOne<{ name: string, logo_data: string | null }>(
+                    'SELECT name, logo_data FROM organizations WHERE id = ?',
+                    [orgId]
+                );
+
+                if (!orgDetails) {
+                    return {
+                        success: false,
+                        error: 'Organization not found'
+                    };
+                }
+
+                return {
+                    name: orgDetails.name,
+                    logo_data: orgDetails.logo_data
+                };
+            } catch (error) {
+                logger.error(`Error getting organization details: ${error}`);
+                throw new Error('Failed to get organization details');
+            }
+        })
+
+        // Get existing eligibility answers for a contact
+        .get('/api/org/:orgId/eligibility-answers/:contactId', async ({ params }) => {
+            try {
+                const { orgId, contactId } = params;
+                if (!orgId || !contactId) {
+                    return {
+                        success: false,
+                        error: 'Missing required parameters'
+                    };
+                }
+
+                // Get org-specific database
+                const orgDb = await Database.getOrInitOrgDb(orgId);
+
+                // Get the most recent answers for this contact
+                const result = await orgDb.fetchOne<{ answers: string }>(
+                    'SELECT answers FROM eligibility_answers WHERE contact_id = ? ORDER BY created_at DESC LIMIT 1',
+                    [contactId]
+                );
+
+                if (!result) {
+                    return {
+                        success: false,
+                        error: 'No answers found'
+                    };
+                }
+
+                // Get organization details from main database
+                const mainDb = new Database();
+                const orgDetails = await mainDb.fetchOne<{ name: string, logo_data: string | null }>(
+                    'SELECT name, logo_data FROM organizations WHERE id = ?',
+                    [orgId]
+                );
+
+                return {
+                    answers: JSON.parse(result.answers),
+                    orgName: orgDetails?.name || 'Medicare Max',
+                    orgLogo: orgDetails?.logo_data || null
+                };
+            } catch (error) {
+                logger.error(`Error getting eligibility answers: ${error}`);
+                throw new Error('Failed to get eligibility answers');
+            }
+        })
+
         // Create a temporary contact for collecting eligibility answers
         .post('/api/org/:orgId/temp-contact', async ({ params }) => {
             try {
@@ -1751,6 +1832,13 @@ export const eligibilityRoutes = (app: Elysia) => {
                         error: 'Contact not found'
                     };
                 }
+
+                // Get organization details from main database
+                const mainDb = new Database();
+                const orgDetails = await mainDb.fetchOne<{ name: string, logo_data: string | null }>(
+                    'SELECT name, logo_data FROM organizations WHERE id = ?',
+                    [orgId]
+                );
                 
                 // Store the eligibility answers
                 const answersJson = JSON.stringify(data.answers);
@@ -1799,7 +1887,11 @@ export const eligibilityRoutes = (app: Elysia) => {
                     ]
                 );
                 
-                return contactId;
+                return {
+                    contactId,
+                    orgName: orgDetails?.name || 'Medicare Max',
+                    orgLogo: orgDetails?.logo_data || null
+                };
             } catch (error) {
                 logger.error(`Error saving eligibility answers: ${error}`);
                 throw new Error('Failed to save eligibility answers');
@@ -4956,8 +5048,8 @@ export const quotesRoutes = (app: Elysia) => {
             
             const mainDb = new Database();
             logger.info(`Fetching organization details for orgId: ${decoded.orgId}`);
-            const result = await mainDb.fetchOne<{ slug: string, org_settings: string }>(
-                'SELECT slug, org_settings FROM organizations WHERE id = ?',
+            const result = await mainDb.fetchOne<{ slug: string, org_settings: string, name: string, logo_data: string }>(
+                'SELECT slug, org_settings, name, logo_data FROM organizations WHERE id = ?',
                 [decoded.orgId]
             );
 
@@ -5042,6 +5134,8 @@ export const quotesRoutes = (app: Elysia) => {
                 success: true,
                 orgId: decoded.orgId.toString(),
                 orgSlug: orgSlug || null,
+                orgName: result.name,
+                orgLogo: result.logo_data || null,
                 carrierContracts: carrierContracts || null,
                 agent: {
                     firstName: agent.first_name,
@@ -5325,6 +5419,284 @@ export const quotesRoutes = (app: Elysia) => {
             return {
                 success: false,
                 error: String(e)
+            };
+        }
+    });
+
+    return app;
+};
+
+================
+File: src/routes/schedule.ts
+================
+import { Elysia } from 'elysia';import { Elysia } from 'elysia';
+import { Database } from '../database';
+import { logger } from '../logger';
+import { decodeQuoteId } from '../utils/quoteId';
+
+export const scheduleRoutes = (app: Elysia) => {
+    app.get('/api/schedule/info/:quoteId', async ({ params, set }) => {
+        try {
+            const { quoteId } = params;
+            
+            // Decode quote ID to get org ID and contact ID
+            const decoded = decodeQuoteId(quoteId);
+            if (!decoded) {
+                set.status = 400;
+                return {
+                    success: false,
+                    error: 'Invalid quote ID'
+                };
+            }
+
+            const { orgId, contactId } = decoded;
+            
+            // Get main database instance
+            const mainDb = new Database();
+            
+            // Get organization info including slug
+            const orgResult = await mainDb.fetchOne<{ name: string, logo_data: string | null, slug: string }>(
+                'SELECT name, logo_data, slug FROM organizations WHERE id = ?',
+                [orgId]
+            );
+
+            if (!orgResult) {
+                set.status = 404;
+                return {
+                    success: false,
+                    error: 'Organization not found'
+                };
+            }
+
+            // Get org-specific database
+            const orgDb = await Database.getOrInitOrgDb(orgId.toString());
+
+            // Get contact information and agent_id in a single query
+            const contact = await orgDb.fetchOne<{ 
+                first_name: string, 
+                last_name: string, 
+                email: string, 
+                phone_number: string, 
+                agent_id: number | null 
+            }>(
+                'SELECT first_name, last_name, email, phone_number, agent_id FROM contacts WHERE id = ?',
+                [contactId]
+            );
+
+            if (!contact) {
+                set.status = 404;
+                return {
+                    success: false,
+                    error: 'Contact not found'
+                };
+            }
+
+            // Get agent info - first try assigned agent, then fall back to first user
+            const agent = contact.agent_id 
+                ? await mainDb.fetchOne<{ first_name: string, last_name: string, phone: string }>(
+                    'SELECT first_name, last_name, phone FROM users WHERE id = ? AND is_active = 1',
+                    [contact.agent_id]
+                  )
+                : await mainDb.fetchOne<{ first_name: string, last_name: string, phone: string }>(
+                    'SELECT first_name, last_name, phone FROM users WHERE organization_id = ? AND is_active = 1 ORDER BY id ASC LIMIT 1',
+                    [orgId]
+                  );
+
+            if (!agent) {
+                set.status = 404;
+                return {
+                    success: false,
+                    error: 'No active agents found for organization'
+                };
+            }
+
+            // Return all information in a single response
+            return {
+                success: true,
+                contact: {
+                    firstName: contact.first_name,
+                    lastName: contact.last_name,
+                    email: contact.email,
+                    phoneNumber: contact.phone_number
+                },
+                organization: {
+                    name: orgResult.name,
+                    logo: orgResult.logo_data,
+                    slug: orgResult.slug
+                },
+                agent: {
+                    name: `${agent.first_name} ${agent.last_name}`,
+                    firstName: agent.first_name,
+                    phone: agent.phone || ""
+                }
+            };
+
+        } catch (error) {
+            logger.error(`Error getting schedule info: ${error}`);
+            set.status = 500;
+            return {
+                success: false,
+                error: 'Internal server error'
+            };
+        }
+    });
+
+    // Keep the original endpoint for backward compatibility
+    app.get('/api/schedule/org-info/:quoteId', async ({ params, set }) => {
+        try {
+            const { quoteId } = params;
+            
+            // Decode quote ID to get org ID and contact ID
+            const decoded = decodeQuoteId(quoteId);
+            if (!decoded) {
+                set.status = 400;
+                return {
+                    success: false,
+                    error: 'Invalid quote ID'
+                };
+            }
+
+            const { orgId, contactId } = decoded;
+            
+            // Get main database instance
+            const mainDb = new Database();
+            
+            // Get organization info
+            const orgResult = await mainDb.fetchOne<{ name: string, logo_data: string | null }>(
+                'SELECT name, logo_data FROM organizations WHERE id = ?',
+                [orgId]
+            );
+
+            if (!orgResult) {
+                set.status = 404;
+                return {
+                    success: false,
+                    error: 'Organization not found'
+                };
+            }
+
+            // Get org-specific database
+            const orgDb = await Database.getOrInitOrgDb(orgId.toString());
+
+            // Try to get the assigned agent from the contact
+            const contact = await orgDb.fetchOne<{ agent_id: number | null }>(
+                'SELECT agent_id FROM contacts WHERE id = ?',
+                [contactId]
+            );
+
+            // Get agent info - first try assigned agent, then fall back to first user
+            const agent = contact?.agent_id 
+                ? await mainDb.fetchOne<{ first_name: string, last_name: string, phone: string }>(
+                    'SELECT first_name, last_name, phone FROM users WHERE id = ? AND is_active = 1',
+                    [contact.agent_id]
+                  )
+                : await mainDb.fetchOne<{ first_name: string, last_name: string, phone: string }>(
+                    'SELECT first_name, last_name, phone FROM users WHERE organization_id = ? AND is_active = 1 ORDER BY id ASC LIMIT 1',
+                    [orgId]
+                  );
+
+            if (!agent) {
+                set.status = 404;
+                return {
+                    success: false,
+                    error: 'No active agents found for organization'
+                };
+            }
+
+            return {
+                success: true,
+                orgName: orgResult.name,
+                orgLogo: orgResult.logo_data,
+                agentName: `${agent.first_name} ${agent.last_name}`,
+                agentPhone: agent.phone || ""
+            };
+
+        } catch (error) {
+            logger.error(`Error getting schedule org info: ${error}`);
+            set.status = 500;
+            return {
+                success: false,
+                error: 'Internal server error'
+            };
+        }
+    });
+
+    app.post('/api/schedule/aep-request/:quoteId', async ({ params, set }) => {
+        try {
+            const { quoteId } = params;
+            
+            // Decode quote ID to get org ID and contact ID
+            const decoded = decodeQuoteId(quoteId);
+            if (!decoded) {
+                set.status = 400;
+                return {
+                    success: false,
+                    error: 'Invalid quote ID'
+                };
+            }
+
+            const { orgId, contactId } = decoded;
+            
+            // Get org-specific database
+            const orgDb = await Database.getOrInitOrgDb(orgId.toString());
+
+            // Update the contact with AEP request
+            await orgDb.execute(
+                'UPDATE contacts SET aep_request = TRUE, aep_request_date = CURRENT_TIMESTAMP WHERE id = ?',
+                [contactId]
+            );
+
+            return {
+                success: true,
+                message: 'AEP request recorded successfully'
+            };
+
+        } catch (error) {
+            logger.error(`Error recording AEP request: ${error}`);
+            set.status = 500;
+            return {
+                success: false,
+                error: 'Internal server error'
+            };
+        }
+    });
+
+    app.post('/api/schedule/request-follow-up/:quoteId', async ({ params, set }) => {
+        try {
+            const { quoteId } = params;
+            
+            // Decode quote ID to get org ID and contact ID
+            const decoded = decodeQuoteId(quoteId);
+            if (!decoded) {
+                set.status = 400;
+                return {
+                    success: false,
+                    error: 'Invalid quote ID'
+                };
+            }
+
+            const { orgId, contactId } = decoded;
+            
+            // Get org-specific database
+            const orgDb = await Database.getOrInitOrgDb(orgId.toString());
+
+            // Update the contact status to requested_follow_up
+            await orgDb.execute(
+                'UPDATE contacts SET status = ? WHERE id = ?',
+                ['requested_follow_up', contactId]
+            );
+
+            return {
+                success: true,
+                message: 'Follow-up request recorded successfully'
+            };
+
+        } catch (error) {
+            logger.error(`Error recording follow-up request: ${error}`);
+            set.status = 500;
+            return {
+                success: false,
+                error: 'Internal server error'
             };
         }
     });
@@ -5751,7 +6123,7 @@ export function createSelfServiceRoutes() {
         // Regular slug lookup
         const db = new Database();
         const result = await db.query(
-          'SELECT id, logo_data FROM organizations WHERE slug = ?',
+          'SELECT id, name, logo_data FROM organizations WHERE slug = ?',
           [orgSlug]
         );
 
@@ -5763,14 +6135,15 @@ export function createSelfServiceRoutes() {
         const orgId = result[0].id;
         const orgIdStr = orgId.toString();
         const logo = result[0].logo_data;
-        
+        const orgName = result[0].name;
         // Create response object with organization info
         const response = {
           success: true,
           orgId: orgIdStr,
           orgSlug,
           selfOnboardingUrl: `${config.PUBLIC_URL}/self-onboarding/${orgSlug}`,
-          logo
+          logo,
+          orgName
         };
         
         // Try to find contact information if email or quoteId provided
@@ -7701,6 +8074,7 @@ File: src/services/turso.ts
 ================
 import { createClient } from '@libsql/client';
 import { TURSO_CONFIG } from '../config/turso';
+import { logger } from '../logger';
 
 export class TursoService {
   private headers = {
@@ -7843,6 +8217,96 @@ export class TursoService {
       throw new Error(`Failed to delete database: ${await response.text()}`);
     }
   }
+
+  async downloadDatabaseDump(dbUrl: string, authToken: string): Promise<string> {
+    const response = await fetch(
+      dbUrl.replace('libsql://', 'https://') + '/dump',
+      {
+        headers: {
+          'Authorization': `Bearer ${authToken}`
+        }
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`Failed to download database dump: ${await response.text()}`);
+    }
+
+    return await response.text();
+  }
+
+  async createDatabaseFromDump(orgId: string, suffix: string, dumpContent: string): Promise<{url: string, token: string}> {
+    const dbName = `org-${orgId}-${suffix}`;
+
+    // Create new database with the timestamped name
+    const createDbResponse = await fetch(
+      `${TURSO_CONFIG.API_URL}/organizations/${TURSO_CONFIG.ORG_SLUG}/databases`, 
+      {
+        method: 'POST',
+        headers: this.headers,
+        body: JSON.stringify({
+          name: dbName,
+          group: TURSO_CONFIG.GROUP_NAME
+        })
+      }
+    );
+
+    if (!createDbResponse.ok) {
+      throw new Error(`Failed to create database: ${await createDbResponse.text()}`);
+    }
+
+    const dbData = await createDbResponse.json();
+    
+    // Generate auth token for the database
+    const tokenResponse = await fetch(
+      `${TURSO_CONFIG.API_URL}/organizations/${TURSO_CONFIG.ORG_SLUG}/databases/${dbName}/auth/tokens`,
+      {
+        method: 'POST',
+        headers: this.headers
+      }
+    );
+
+    if (!tokenResponse.ok) {
+      throw new Error(`Failed to create auth token: ${await tokenResponse.text()}`);
+    }
+
+    const tokenData = await tokenResponse.json();
+    const url = `https://${dbData.database.Hostname}`;
+    const token = tokenData.jwt;
+    
+    // Initialize database with dump
+    const client = createClient({
+      url: url,
+      authToken: token
+    });
+
+    // Split dump into statements and execute each one
+    const statements = dumpContent
+      .split(';')
+      .map(stmt => stmt.trim())
+      .filter(stmt => stmt.length > 0);
+
+    for (const statement of statements) {
+      try {
+        await client.execute(statement + ';');
+      } catch (error) {
+        logger.error(`Error executing statement: ${error}`);
+        logger.error(`Problematic statement: ${statement.substring(0, 200)}...`);
+        
+        // Try to cleanup the newly created database on error
+        try {
+          await this.deleteOrganizationDatabase(dbName);
+          logger.info(`Cleaned up database ${dbName} after error`);
+        } catch (cleanupError) {
+          logger.warn(`Failed to clean up database ${dbName} after error: ${cleanupError}`);
+        }
+        
+        throw error;
+      }
+    }
+
+    return { url, token };
+  }
 }
 
 ================
@@ -7967,6 +8431,12 @@ import { createClient } from '@libsql/client'
 import { config } from './config'
 import { logger } from './logger'
 import { TursoService } from './services/turso'
+import sqlite3 from 'sqlite3'
+import fs from 'fs'
+import path from 'path'
+import os from 'os'
+import { Database as BunDatabase } from 'bun:sqlite'
+import { ContactCreate } from './types'
 
 export class Database {
   private client: any
@@ -8080,6 +8550,38 @@ export class Database {
       // Check for existence of each table and create if missing
       const tables = [
         {
+          name: 'contacts',
+          createStatement: `
+            CREATE TABLE IF NOT EXISTS contacts (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              first_name TEXT NOT NULL,
+              last_name TEXT NOT NULL,
+              email TEXT NOT NULL,
+              current_carrier TEXT NOT NULL,
+              plan_type TEXT NOT NULL,
+              effective_date TEXT NOT NULL,
+              birth_date TEXT NOT NULL,
+              tobacco_user INTEGER NOT NULL,
+              gender TEXT NOT NULL,
+              state TEXT NOT NULL,
+              zip_code TEXT NOT NULL,
+              agent_id INTEGER,
+              last_emailed DATETIME,
+              phone_number TEXT NOT NULL DEFAULT '',
+              created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+              updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+          `,
+          indexStatements: [
+            `CREATE INDEX IF NOT EXISTS idx_contacts_email ON contacts(email)`,
+            `CREATE INDEX IF NOT EXISTS idx_contacts_agent_id ON contacts(agent_id)`,
+            `CREATE INDEX IF NOT EXISTS idx_contacts_state ON contacts(state)`,
+            `CREATE INDEX IF NOT EXISTS idx_contacts_current_carrier ON contacts(current_carrier)`,
+            `CREATE INDEX IF NOT EXISTS idx_contacts_effective_date ON contacts(effective_date)`,
+            `CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_email_unique ON contacts(LOWER(TRIM(email)))`
+          ]
+        },
+        {
           name: 'eligibility_answers',
           createStatement: `CREATE TABLE IF NOT EXISTS eligibility_answers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -8092,8 +8594,38 @@ export class Database {
           indexStatements: [
             `CREATE INDEX IF NOT EXISTS idx_eligibility_answers_contact_id ON eligibility_answers(contact_id)`
           ]
+        },
+        {
+          name: 'contact_events',
+          createStatement: `CREATE TABLE IF NOT EXISTS contact_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            contact_id INTEGER,
+            lead_id INTEGER,
+            event_type TEXT NOT NULL,
+            metadata TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (contact_id) REFERENCES contacts(id),
+            FOREIGN KEY (lead_id) REFERENCES leads(id)
+          )`,
+          indexStatements: [
+            `CREATE INDEX IF NOT EXISTS idx_contact_events_contact_id ON contact_events(contact_id)`,
+            `CREATE INDEX IF NOT EXISTS idx_contact_events_lead_id ON contact_events(lead_id)`,
+            `CREATE INDEX IF NOT EXISTS idx_contact_events_type ON contact_events(event_type)`
+          ]
+        },
+        {
+          name: 'leads',
+          createStatement: `CREATE TABLE IF NOT EXISTS leads (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            email TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(email)
+          )`,
+          indexStatements: [
+            `CREATE INDEX IF NOT EXISTS idx_leads_email ON leads(email)`
+          ]
         }
-        // Add more tables here as needed
       ]
       
       // Execute each table creation statement
@@ -8228,6 +8760,322 @@ export class Database {
       throw error
     }
   }
+
+  /**
+   * Bulk import contacts using Bun's native SQLite
+   * This method follows a pattern of:
+   * 1. Create a local SQLite database with current data
+   * 2. Process and insert contacts efficiently
+   * 3. Create a new Turso database from the local database
+   * 4. Update organization to use the new database
+   * 5. Clean up resources
+   */
+  static async bulkImportContacts(orgId: string, contacts: ContactCreate[], overwriteExisting: boolean = false): Promise<void> {
+    let localDb: BunDatabase | null = null;
+    let tmpDir: string | null = null;
+    
+    try {
+      // Step 1: Set up the local temporary database
+      const mainDb = new Database();
+      const org = await mainDb.fetchOne<{ turso_db_url: string; turso_auth_token: string }>(
+        'SELECT turso_db_url, turso_auth_token FROM organizations WHERE id = ?',
+        [orgId]
+      );
+      
+      if (!org?.turso_db_url || !org?.turso_auth_token) {
+        throw new Error('Organization database not configured');
+      }
+
+      tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'contacts-import-'));
+      const dbPath = path.join(tmpDir, 'temp.db');
+      logger.info(`Creating temporary SQLite database at ${dbPath}`);
+      localDb = new BunDatabase(dbPath, { create: true });
+
+      // Download current database dump and load it
+      const turso = new TursoService();
+      const dumpContent = await turso.downloadDatabaseDump(org.turso_db_url, org.turso_auth_token);
+      localDb.exec(dumpContent);
+
+      // Step 2: Process and deduplicate contacts
+      const processedContacts = contacts.reduce((map, contact) => {
+        const email = contact.email.toLowerCase().trim();
+        map.set(email, contact);
+        return map;
+      }, new Map<string, ContactCreate>());
+      
+      const uniqueContacts = Array.from(processedContacts.values());
+      logger.info(`Processing ${contacts.length} contacts (${uniqueContacts.length} unique)`);
+
+      // Optimize SQLite for bulk operations
+      localDb.exec('PRAGMA journal_mode = WAL');
+      localDb.exec('PRAGMA synchronous = NORMAL');
+      localDb.exec('DROP INDEX IF EXISTS idx_contacts_email');
+
+      // Prepare insert statement
+      const insertStmt = localDb.prepare(`
+        INSERT OR ${overwriteExisting ? 'REPLACE' : 'IGNORE'} INTO contacts (
+          first_name, last_name, email, current_carrier, plan_type, effective_date,
+          birth_date, tobacco_user, gender, state, zip_code, phone_number, agent_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+
+      // Insert contacts in batches for better performance
+      const batchSize = 1000;
+      for (let i = 0; i < uniqueContacts.length; i += batchSize) {
+        const batch = uniqueContacts.slice(i, i + batchSize);
+        localDb.transaction(() => {
+          for (const contact of batch) {
+            insertStmt.run(
+              contact.first_name,
+              contact.last_name,
+              contact.email,
+              contact.current_carrier || null,
+              contact.plan_type || null,
+              contact.effective_date,
+              contact.birth_date,
+              contact.tobacco_user ? 1 : 0,
+              contact.gender,
+              contact.state,
+              contact.zip_code,
+              contact.phone_number || '',
+              contact.agent_id || null
+            );
+          }
+        })();
+      }
+
+      // Recreate indexes
+      localDb.exec('CREATE INDEX idx_contacts_email ON contacts(email COLLATE NOCASE)');
+
+      // Step 3: Generate a reliable database dump
+      // Get all schema definitions
+      const schemaRows = localDb.query(`SELECT sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`).all();
+      const indexRows = localDb.query(`SELECT sql FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_%'`).all();
+
+      // Generate data inserts for all tables
+      const tables = ['contacts', 'contact_events', 'contact_requests', 'eligibility_answers', 'leads', 'scheduled_emails'];
+      const dataInserts: string[] = [];
+      
+      for (const table of tables) {
+        try {
+          const tableExists = localDb.query(`SELECT name FROM sqlite_master WHERE type='table' AND name='${table}'`).all();
+          if (tableExists.length === 0) {
+            logger.info(`Table ${table} does not exist, skipping`);
+            continue;
+          }
+          
+          const rows = localDb.query(`SELECT * FROM ${table}`).all();
+          if (rows.length === 0) continue;
+
+          const columns = Object.keys(rows[0]);
+          const columnNames = columns.join(', ');
+          
+          for (const row of rows) {
+            const values = columns.map(col => {
+              const value = row[col];
+              if (value === null) return 'NULL';
+              if (typeof value === 'string') return `'${value.replace(/'/g, "''")}'`;
+              return value;
+            }).join(', ');
+            
+            dataInserts.push(`INSERT INTO ${table} (${columnNames}) VALUES (${values});`);
+          }
+        } catch (e) {
+          logger.warn(`Error processing table ${table}: ${e}`);
+          // Continue with other tables
+        }
+      }
+
+      // Combine schema and data into final dump - make sure tables are created first, then indexes, then data
+      const finalDump = [
+        ...schemaRows.map((row: any) => row.sql + ';'),
+        ...indexRows.map((row: any) => row.sql + ';'),
+        ...dataInserts,
+      ].join('\n');
+      
+      logger.info(`Final dump contains ${schemaRows.length} table statements, ${indexRows.length} index statements, and ${dataInserts.length} data statements`);
+
+      // Step 4: Create new Turso database and swap
+      const timestamp = Date.now();
+      const newDbName = `org-${orgId}-${timestamp}`;
+      logger.info(`Creating new database: ${newDbName}`);
+      
+      // Validate dump before proceeding
+      try {
+        logger.info('Validating dump in memory database');
+        const testDb = new BunDatabase(':memory:', { create: true });
+        
+        // Execute schema and index statements first
+        for (const row of schemaRows) {
+          try {
+            testDb.exec(row.sql + ';');
+          } catch (error) {
+            logger.error(`Error executing schema statement: ${error}`);
+            logger.error(`Problematic statement: ${row.sql}`);
+            throw error;
+          }
+        }
+        
+        for (const row of indexRows) {
+          try {
+            testDb.exec(row.sql + ';');
+          } catch (error) {
+            logger.error(`Error executing index statement: ${error}`);
+            logger.error(`Problematic statement: ${row.sql}`);
+            throw error;
+          }
+        }
+        
+        // Then test a sample of data statements
+        const sampleSize = Math.min(100, dataInserts.length);
+        for (let i = 0; i < sampleSize; i++) {
+          try {
+            testDb.exec(dataInserts[i]);
+          } catch (error) {
+            logger.error(`Error executing data statement: ${error}`);
+            logger.error(`Problematic statement: ${dataInserts[i].substring(0, 200)}...`);
+            throw error;
+          }
+        }
+        
+        testDb.close();
+        logger.info('Dump validation successful');
+      } catch (error) {
+        logger.error(`Invalid dump: ${error}`);
+        throw new Error(`Failed to validate database dump: ${error}`);
+      }
+      
+      // Create new database with validated dump - pass timestamp suffix to avoid name conflicts
+      const { url: newUrl, token: newToken } = await turso.createDatabaseFromDump(
+        orgId,
+        timestamp.toString(),
+        finalDump
+      );
+
+      // Verify new database has data and correct schema
+      logger.info(`Verifying new database at ${newUrl}`);
+      const verifyClient = createClient({
+        url: newUrl,
+        authToken: newToken
+      });
+      
+      try {
+        // Check if contacts table exists
+        const tablesResult = await verifyClient.execute(`
+          SELECT name FROM sqlite_master WHERE type='table' AND name='contacts'
+        `);
+        
+        if (!tablesResult.rows || tablesResult.rows.length === 0) {
+          throw new Error('Contacts table not found in new database');
+        }
+        
+        // Verify contact count
+        const verifyResult = await verifyClient.execute('SELECT COUNT(*) as count FROM contacts');
+        const contactCount = verifyResult.rows?.[0]?.[0];
+        logger.info(`Verified new database has ${contactCount} contacts`);
+
+        if (!contactCount || contactCount === 0) {
+          throw new Error('New database appears to be empty');
+        }
+        
+        // Verify a random contact to ensure data integrity
+        const sampleResult = await verifyClient.execute('SELECT * FROM contacts LIMIT 1');
+        if (!sampleResult.rows || sampleResult.rows.length === 0) {
+          throw new Error('Could not retrieve sample contact from database');
+        }
+        
+        logger.info('New database verification completed successfully');
+      } catch (error) {
+        logger.error(`Database verification failed: ${error}`);
+        
+        // Attempt to delete the problematic database before throwing
+        try {
+          const newDbName = newUrl.split('/').pop()?.split('.')[0];
+          if (newDbName) {
+            await turso.deleteOrganizationDatabase(newDbName);
+            logger.info(`Deleted problematic database: ${newDbName}`);
+          }
+        } catch (cleanupError) {
+          logger.warn(`Failed to delete problematic database: ${cleanupError}`);
+        }
+        
+        throw new Error(`Database verification failed: ${error}`);
+      }
+
+      // Update organization to use new database
+      logger.info(`Updating organization ${orgId} to use new database URL: ${newUrl}`);
+      await mainDb.execute(
+        'UPDATE organizations SET turso_db_url = ?, turso_auth_token = ? WHERE id = ?',
+        [newUrl, newToken, orgId]
+      );
+      
+      // Verify the update
+      const verifyOrg = await mainDb.fetchOne<{ turso_db_url: string, turso_auth_token: string }>(
+        'SELECT turso_db_url, turso_auth_token FROM organizations WHERE id = ?',
+        [orgId]
+      );
+      
+      if (!verifyOrg || verifyOrg.turso_db_url !== newUrl) {
+        logger.error(`Failed to update organization ${orgId} database URL. Current URL: ${verifyOrg?.turso_db_url}`);
+        throw new Error('Failed to update organization database URL');
+      }
+      
+      logger.info(`Successfully updated organization ${orgId} to use new database URL`);
+
+      // Step 5: Clean up old database
+      let oldDbName: string | undefined;
+      
+      try {
+        // Extract database name from URL using the hostname pattern
+        // Format is typically https://org-1-pyrex41.aws-us-east-1.turso.io or similar
+        const oldUrlParts = org.turso_db_url.split('.');
+        if (oldUrlParts.length >= 2) {
+          // Get the first part which should be like 'https://org-1-pyrex41'
+          const firstPart = oldUrlParts[0];
+          // Extract just the database name
+          oldDbName = firstPart.split('/').pop();
+          logger.info(`Extracted old database name: ${oldDbName}`);
+        } else {
+          logger.warn(`Could not parse old database URL: ${org.turso_db_url}`);
+        }
+      } catch (e) {
+        logger.warn(`Error parsing old database URL: ${e}`);
+      }
+      
+      if (oldDbName) {
+        try {
+          logger.info(`Attempting to delete old database: ${oldDbName}`);
+          await turso.deleteOrganizationDatabase(oldDbName);
+          logger.info(`Successfully deleted old database: ${oldDbName}`);
+        } catch (deleteError) {
+          // Log but don't fail if old database cleanup fails
+          logger.warn(`Failed to delete old database ${oldDbName}: ${deleteError}`);
+        }
+      } else {
+        logger.warn(`Could not determine old database name from URL: ${org.turso_db_url}`);
+      }
+
+      // Clean up local resources
+      if (localDb) localDb.close();
+      if (tmpDir) await fs.promises.rm(tmpDir, { recursive: true });
+
+      logger.info(`Successfully imported ${uniqueContacts.length} contacts for org ${orgId}`);
+    } catch (error) {
+      logger.error(`Bulk import failed for org ${orgId}: ${error}`);
+      
+      // Clean up resources even if operation fails
+      if (localDb) localDb.close();
+      if (tmpDir) {
+        try {
+          await fs.promises.rm(tmpDir, { recursive: true });
+        } catch (cleanupError) {
+          logger.warn(`Failed to clean up temporary directory: ${cleanupError}`);
+        }
+      }
+      
+      throw error;
+    }
+  }
 }
 
 export const db = new Database() 
@@ -8348,6 +9196,7 @@ import * as cron from 'node-cron'
 import { eligibilityRoutes } from './routes/eligibility'
 import { generateQuoteId } from './utils/quoteId'
 import { createSelfServiceRoutes } from './routes/self-service'
+import { scheduleRoutes } from './routes/schedule'
 
 // At the top of the file, add interface for ZIP data
 interface ZipInfo {
@@ -8438,7 +9287,7 @@ function validateEmail(email: string): boolean {
 }
 
 // Add this helper function near the other validation functions
-function validateISODate(dateStr: string): { isValid: boolean; isoDate: string | null } {
+function validateISODate(dateStr: string, allowFuture: boolean = false): { isValid: boolean; isoDate: string | null } {
   try {
     const trimmed = dateStr.trim();
     
@@ -8453,8 +9302,8 @@ function validateISODate(dateStr: string): { isValid: boolean; isoDate: string |
     // Convert to ISO format (YYYY-MM-DD)
     const isoDate = date.toISOString().split('T')[0];
     
-    // Verify the date is not in the future
-    if (date > new Date()) {
+    // Verify the date is not in the future (unless allowed)
+    if (!allowFuture && date > new Date()) {
       return { isValid: false, isoDate: null };
     }
     
@@ -8510,6 +9359,169 @@ async function validateCarrier(carrier: string, db: Database): Promise<{ isValid
     return { isValid: true, standardizedName: carrier.trim(), wasConverted: true };
   }
 }
+
+// Interface for validation result
+interface ValidationResult {
+  isValid: boolean;
+  error?: string;
+  value?: any;
+}
+
+// Validation functions
+const validateRow = async (row: any, rowNum: number, carrierMap: Map<string, string>): Promise<ValidationResult> => {
+  try {
+    logger.info(`Starting validation for row ${rowNum}:`)
+    logger.info(`Row data: ${JSON.stringify(row)}`)
+
+    // Required fields check with detailed logging
+    const requiredFields = [
+      'First Name',
+      'Last Name', 
+      'Email',
+      'Current Carrier',
+      'Plan Type',
+      'Effective Date',
+      'Birth Date',
+      'Tobacco User',
+      'Gender',
+      'ZIP Code',
+      'Phone Number'
+    ]
+
+    logger.info(`Checking required fields: ${requiredFields.join(', ')}`)
+    const missingValues = requiredFields.filter(field => {
+      const value = row[field]?.trim()
+      const isMissing = !value
+      if (isMissing) {
+        logger.warn(`Missing required field "${field}" in row ${rowNum}`)
+      }
+      return isMissing
+    })
+
+    if (missingValues.length > 0) {
+      logger.warn(`Row ${rowNum} missing required fields: ${missingValues.join(', ')}`)
+      return {
+        isValid: false,
+        error: `Missing values for: ${missingValues.join(', ')}`
+      }
+    }
+
+    // Email validation with logging
+    const email = row['Email'].trim().toLowerCase()
+    logger.info(`Validating email: "${email}"`)
+    if (!validateEmail(email)) {
+      logger.warn(`Row ${rowNum} has invalid email format: ${email}`)
+      return {
+        isValid: false,
+        error: `Invalid email format: ${row['Email']}`
+      }
+    }
+
+    // Phone validation with logging
+    logger.info(`Validating phone number: "${row['Phone Number']}"`)
+    const phoneResult = standardizePhoneNumber(row['Phone Number'])
+    if (!phoneResult.isValid) {
+      logger.warn(`Row ${rowNum} has invalid phone number: ${row['Phone Number']}`)
+      return {
+        isValid: false,
+        error: `Invalid phone number: ${row['Phone Number']}. Must be exactly 10 digits.`
+      }
+    }
+
+    // ZIP validation with logging
+    const zipCode = row['ZIP Code'].trim()
+    logger.info(`Validating ZIP code: "${zipCode}"`)
+    const zipInfo = ZIP_DATA[zipCode]
+    if (!zipInfo) {
+      logger.warn(`Row ${rowNum} has invalid ZIP code: ${zipCode}`)
+      return {
+        isValid: false,
+        error: `Invalid ZIP code: ${zipCode}`
+      }
+    }
+
+    // Gender validation with logging
+    const gender = row['Gender'].trim().toUpperCase()
+    logger.info(`Validating gender: "${gender}"`)
+    if (!['M', 'F'].includes(gender)) {
+      logger.warn(`Row ${rowNum} has invalid gender: ${gender}`)
+      return {
+        isValid: false,
+        error: `Invalid gender: ${gender}. Must be 'M' or 'F'`
+      }
+    }
+
+    // Carrier validation with logging
+    const carrierInput = row['Current Carrier'].trim().toLowerCase()
+    logger.info(`Validating carrier: "${carrierInput}"`)
+    const standardizedCarrier = carrierMap.get(carrierInput) || carrierInput
+    const wasCarrierConverted = !carrierMap.has(carrierInput)
+    if (wasCarrierConverted) {
+      logger.warn(`Row ${rowNum} has non-standard carrier: ${carrierInput} (will be kept as-is)`)
+    }
+
+    // Date validations with logging
+    logger.info(`Validating effective date: "${row['Effective Date']}"`)
+    const effectiveDateResult = validateISODate(row['Effective Date'], true)
+    if (!effectiveDateResult.isValid) {
+      logger.warn(`Row ${rowNum} has invalid effective date: ${row['Effective Date']}`)
+      return {
+        isValid: false,
+        error: `Invalid effective date format: ${row['Effective Date']}. Please use YYYY-MM-DD or MM-DD-YYYY format.`
+      }
+    }
+
+    logger.info(`Validating birth date: "${row['Birth Date']}"`)
+    const birthDateResult = validateISODate(row['Birth Date'])
+    if (!birthDateResult.isValid) {
+      logger.warn(`Row ${rowNum} has invalid birth date: ${row['Birth Date']}`)
+      return {
+        isValid: false,
+        error: `Invalid birth date format: ${row['Birth Date']}. Please use YYYY-MM-DD or MM-DD-YYYY format.`
+      }
+    }
+
+    // If all validations pass, return processed data
+    logger.info(`Row ${rowNum} passed all validations successfully`)
+    return {
+      isValid: true,
+      value: {
+        data: [
+          row['First Name'].trim(),
+          row['Last Name'].trim(),
+          email,
+          standardizedCarrier,
+          row['Plan Type'].trim(),
+          effectiveDateResult.isoDate,
+          birthDateResult.isoDate,
+          ['yes', 'true', '1', 'y'].includes(row['Tobacco User'].trim().toLowerCase()),
+          gender,
+          zipInfo.state,
+          zipCode,
+          phoneResult.standardized,
+          null // agentId - will be set later
+        ],
+        carrierConverted: wasCarrierConverted ? {
+          Row: rowNum,
+          ...row,
+          OriginalCarrier: row['Current Carrier']
+        } : null
+      }
+    }
+  } catch (e) {
+    // Log the full error details
+    logger.error(`Unexpected error in row ${rowNum}:`)
+    logger.error(`Error message: ${e instanceof Error ? e.message : String(e)}`)
+    logger.error(`Row data: ${JSON.stringify(row)}`)
+    if (e instanceof Error && e.stack) {
+      logger.error(`Stack trace: ${e.stack}`)
+    }
+    return {
+      isValid: false,
+      error: `Unexpected error processing row ${rowNum}. Please check all fields are in the correct format. Error: ${e instanceof Error ? e.message : String(e)}`
+    }
+  }
+};
 
 const startServer = async () => {
   try {
@@ -9048,23 +10060,16 @@ const startServer = async () => {
         }
       })
       // Add file upload endpoint
-      .post('/api/contacts/upload', async ({ request, body }: { request: Request, body: { contacts: any[], file_type?: string, sheet_name?: string } }) => {
+      .post('/api/contacts/upload', async ({ request, body, set }: { request: Request, body: { file: File, overwrite_duplicates?: boolean | string, duplicateStrategy?: string, agent_id?: string }, set: any }) => {
         try {
           const user = await getUserFromSession(request)
           if (!user?.organization_id) {
             throw new Error('No organization ID found in session')
           }
 
-          // Get org-specific database
-          const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString())
-
           // Extract file and overwrite flag from form data
-          const formData = body as { file: File, overwrite_duplicates: boolean | string, duplicateStrategy: string, agent_id?: string }
+          const formData = body
           const file = formData.file
-          
-          // Get agent_id from form data or use current user's ID if they're an agent
-          const agentId = formData.agent_id ? parseInt(formData.agent_id, 10) : (user.is_agent ? user.id : null)
-          logger.info(`Using agent_id: ${agentId} for contact upload (from form: ${formData.agent_id}, user is agent: ${user.is_agent}, user id: ${user.id})`)
           
           // Support both naming conventions - overwrite_duplicates (old) and duplicateStrategy (new)
           let overwriteDuplicates = false
@@ -9076,403 +10081,260 @@ const startServer = async () => {
             overwriteDuplicates = formData.duplicateStrategy === 'overwrite'
           }
 
-          logger.info(`Initial overwriteDuplicates value: ${overwriteDuplicates}, type: ${typeof overwriteDuplicates}, raw overwrite_duplicates: ${formData.overwrite_duplicates}, raw duplicateStrategy: ${formData.duplicateStrategy}`)
+          logger.info(`Processing ${file.name} with overwriteDuplicates=${overwriteDuplicates}`)
 
-          logger.info(`POST /api/contacts/upload - Processing CSV upload with overwriteDuplicates=${overwriteDuplicates}`)
-
-          // Read file contents
+          // For large datasets, use bulk import with local SQLite
           const fileContents = await file.text()
-          
-          // Parse CSV
           const records = csvParse(fileContents, {
             columns: true,
             skip_empty_lines: true
           })
 
-          // Required fields in desired order
-          const requiredFields = [
-            'First Name',
-            'Last Name',
-            'Email',
-            'Current Carrier',
-            'Plan Type',
-            'Effective Date',
-            'Birth Date',
-            'Tobacco User',
-            'Gender',
-            'ZIP Code',
-            'Phone Number'
-          ]
-
-          // Validate headers
-          const headers = Object.keys(records[0] || {})
-          const missingFields = requiredFields.filter(field => !headers.includes(field))
-
-          // Add this: Get the email column index from headers
-          const emailColumnIndex = headers.indexOf('Email')
-
-          if (missingFields.length > 0) {
-            return {
-              success: false,
-              message: `Missing required columns: ${missingFields.join(', ')}`,
-              error_csv: null,
-              converted_carriers_csv: null,
-              total_rows: 0,
-              error_rows: 0,
-              valid_rows: 0,
-              converted_carrier_rows: 0,
-              supported_carriers: []
-            }
-          }
-
+          // Process records in parallel with batched validation
+          const VALIDATION_BATCH_SIZE = 100
           const validRows: any[] = []
           const errorRows: any[] = []
           const paramsList: any[] = []
-          const convertedCarrierRows: any[] = []
 
-          // Get existing emails for duplicate checking
-          let existingEmails = new Set<string>()
-          const emailResults = await orgDb.fetchAll("SELECT email FROM contacts")
-          existingEmails = new Set(emailResults.map((row: any) => row[0]?.trim().toLowerCase()))
-
-          logger.info(`Found ${existingEmails.size} existing emails in database`)
-
-          // Validate each row
-          for (const [index, row] of records.entries()) {
-            const rowNum = index + 2 // Account for header row and 0-based index
-            
-            // Check for missing values
-            const missingValues = requiredFields.filter(field => !row[field]?.trim())
-            if (missingValues.length > 0) {
-              errorRows.push({
-                Row: rowNum,
-                ...row,
-                Error: `Missing values for: ${missingValues.join(', ')}`
-              })
-              continue
-            }
-
-            // Validate email format
-            const email = row['Email'].trim().toLowerCase()
-            if (!validateEmail(email)) {
-              errorRows.push({
-                Row: rowNum,
-                ...row,
-                Error: `Invalid email format: ${row['Email']}`
-              })
-              continue
-            }
-
-            // Validate phone number
-            const phoneResult = standardizePhoneNumber(row['Phone Number']);
-            if (!phoneResult.isValid) {
-              errorRows.push({
-                Row: rowNum,
-                ...row,
-                Error: `Invalid phone number: ${row['Phone Number']}. Must be exactly 10 digits.`
-              })
-              continue
-            }
-
-            // Validate ZIP code
-            const zipCode = row['ZIP Code'].trim()
-            const zipInfo = ZIP_DATA[zipCode]
-            if (!zipInfo) {
-              errorRows.push({
-                Row: rowNum,
-                ...row,
-                Error: `Invalid ZIP code: ${zipCode}`
-              })
-              continue
-            }
-
-            // Validate gender
-            const gender = row['Gender'].trim().toUpperCase()
-            if (!['M', 'F'].includes(gender)) {
-              errorRows.push({
-                Row: rowNum,
-                ...row,
-                Error: `Invalid gender: ${gender}. Must be 'M' or 'F'`
-              })
-              continue
-            }
-
-            // Check for duplicate email
-            logger.info(`Checking row ${rowNum} email: ${email}`)
-            logger.info(`Overwrite duplicates is set to: ${overwriteDuplicates}`)
-            if (existingEmails.has(email)) {
-              logger.info(`Found duplicate email: ${email}`)
-              const notOverwrite = !overwriteDuplicates
-              logger.info(`Debug - overwriteDuplicates: ${overwriteDuplicates}, !overwriteDuplicates: ${notOverwrite}`)
-              if (!overwriteDuplicates) {
-                logger.info(`Adding duplicate email to error rows since overwrite is disabled`)
-                errorRows.push({
-                  Row: rowNum,
-                  ...row,
-                  Error: `Email already exists: ${row['Email']}`
-                })
-                logger.info('Skipping duplicate email')
-                continue
-              }
-              logger.info(`Allowing duplicate email since overwrite is enabled`)
-            }
-
-            // Add carrier validation
-            const carrierResult = await validateCarrier(row['Current Carrier'], orgDb);
-            let carrierNote = null;
-            if (carrierResult.wasConverted) {
-              carrierNote = {
-                Row: rowNum,
-                ...row,
-                OriginalCarrier: row['Current Carrier']
-              };
-            }
-
-            try {
-              // Validate dates with better error messages
-              const effectiveDateResult = validateISODate(row['Effective Date']);
-              if (!effectiveDateResult.isValid) {
-                errorRows.push({
-                  Row: rowNum,
-                  ...row,
-                  Error: `Invalid effective date format: ${row['Effective Date']}. Please use YYYY-MM-DD or MM-DD-YYYY format.`
-                });
-                continue;
-              }
-
-              const birthDateResult = validateISODate(row['Birth Date']);
-              if (!birthDateResult.isValid) {
-                errorRows.push({
-                  Row: rowNum,
-                  ...row,
-                  Error: `Invalid birth date format: ${row['Birth Date']}. Please use YYYY-MM-DD or MM-DD-YYYY format.`
-                });
-                continue;
-              }
-
-              const tobaccoUser = ['yes', 'true', '1', 'y'].includes(row['Tobacco User'].trim().toLowerCase())
-
-              paramsList.push([
-                row['First Name'].trim(),
-                row['Last Name'].trim(),
-                email,
-                carrierResult.standardizedName,
-                row['Plan Type'].trim(),
-                effectiveDateResult.isoDate,
-                birthDateResult.isoDate,
-                tobaccoUser,
-                gender,
-                zipInfo.state,
-                zipCode,
-                phoneResult.standardized,
-                agentId  // Add agentId parameter
-              ])
-              validRows.push(row)
-              
-              // If this row had a carrier conversion, track it
-              if (carrierNote) {
-                convertedCarrierRows.push(carrierNote)
-              }
-            } catch (e) {
-              errorRows.push({
-                Row: rowNum,
-                ...row,
-                Error: 'Unexpected error processing dates. Please ensure dates are in YYYY-MM-DD format.'
-              })
-            }
-          }
-
-          // Insert valid rows
-          let insertedCount = 0
-          if (paramsList.length > 0) {
-            logger.info(`Processing ${paramsList.length} valid rows with overwriteDuplicates=${overwriteDuplicates}`)
-            logger.info(`Debug - overwriteDuplicates value type: ${typeof overwriteDuplicates}`)
-            if (overwriteDuplicates) {
-              logger.info('Using update/insert logic for duplicates')
-              // First update existing records
-              const updateQuery = /* sql */ `
-                UPDATE contacts SET 
-                  first_name = ?,
-                  last_name = ?,
-                  current_carrier = ?,
-                  plan_type = ?,
-                  effective_date = ?,
-                  birth_date = ?,
-                  tobacco_user = ?,
-                  gender = ?,
-                  state = ?,
-                  zip_code = ?,
-                  phone_number = ?,
-                  agent_id = ?
-                WHERE LOWER(email) = ?
-              `
-              
-              for (const params of paramsList) {
-                const email = params[2].toLowerCase()
-                logger.info(`Processing row with email: ${email}`)
-                
-                // Check if email exists
-                const existingContact = await orgDb.fetchAll(
-                  'SELECT 1 FROM contacts WHERE LOWER(email) = ?',
-                  [email]
-                )
-                
-                if (existingContact.length > 0) {
-                  logger.info(`Updating existing contact with email: ${email}`)
-                  // Update existing contact
-                  const updateParams = [
-                    params[0], // first_name
-                    params[1], // last_name
-                    params[3], // current_carrier
-                    params[4], // plan_type
-                    params[5], // effective_date
-                    params[6], // birth_date
-                    params[7], // tobacco_user
-                    params[8], // gender
-                    params[9], // state
-                    params[10], // zip_code
-                    params[11], // phone_number
-                    params[12], // agent_id
-                    email     // for WHERE clause
-                  ]
-                  logger.info(`Update params: ${JSON.stringify(updateParams)}`)
-                  await orgDb.execute(updateQuery, updateParams)
-                  logger.info(`Successfully updated contact with email: ${email}`)
-                } else {
-                  logger.info(`Inserting new contact with email: ${email}`)
-                  // Insert new contact
-                  await orgDb.execute(
-                    `INSERT INTO contacts (
-                      first_name, last_name, email, current_carrier, plan_type,
-                      effective_date, birth_date, tobacco_user, gender,
-                      state, zip_code, phone_number, agent_id
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                    params
-                  )
-                  logger.info(`Successfully inserted new contact with email: ${email}`)
-                }
-              }
-              insertedCount = paramsList.length
-            } else {
-              logger.info('Using insert-only logic for non-duplicates')
-              // If not overwriting duplicates, only insert non-duplicate rows
-              for (const params of paramsList) {
-                const email = params[2].toLowerCase()
-                // Check if email exists
-                const existingContact = await orgDb.fetchAll(
-                  'SELECT 1 FROM contacts WHERE LOWER(email) = ?',
-                  [email]
-                )
-
-                if (existingContact.length === 0) {
-                  // Only insert if email doesn't exist
-                  await orgDb.execute(
-                    `INSERT INTO contacts (
-                      first_name, last_name, email, current_carrier, plan_type,
-                      effective_date, birth_date, tobacco_user, gender,
-                      state, zip_code, phone_number, agent_id
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                    params
-                  )
-                  insertedCount++
-                }
-              }
-            }
-          }
-
-          // Generate error CSV if needed
-          let errorCsv = null
-          if (errorRows.length > 0) {
-            errorCsv = [
-              ['Row', ...requiredFields, 'Error'].join(','),
-              ...errorRows.map(row => {
-                return [
-                  row.Row,
-                  ...requiredFields.map(field => `"${row[field] || ''}"`),
-                  `"${row.Error}"`
-                ].join(',')
-              })
-            ].join('\n')
-          }
-
-          // Generate converted carriers CSV if needed
-          let convertedCarriersCsv = null;
-          if (convertedCarrierRows.length > 0) {
-            convertedCarriersCsv = [
-              ['Row', ...requiredFields, 'Original Carrier'].join(','),
-              ...convertedCarrierRows.map((row: { Row: number; [key: string]: any }) => {
-                return [
-                  row.Row,
-                  ...requiredFields.map(field => `"${row[field] || ''}"`),
-                  `"${row.OriginalCarrier}"`
-                ].join(',')
-              })
-            ].join('\n');
-          }
-
-          // Get list of supported carriers and their aliases
-          const centralDb = new Database();
-          const carriersResult = await centralDb.execute(
+          // Get list of supported carriers once at the start
+          const carrierDb = new Database()
+          const carriersResult = await carrierDb.execute(
             'SELECT name, aliases FROM carriers ORDER BY name'
-          );
-          
+          )
+
+          interface Carrier {
+            name: string
+            aliases: string[]
+          }
+
           const supportedCarriers = carriersResult.rows.map((row: any) => ({
             name: row.name,
             aliases: row.aliases ? JSON.parse(row.aliases) : []
-          }));
+          })) as Carrier[]
 
-          // Create carrier info message
-          const carrierInfoMessage = `Supported carriers: ${supportedCarriers.map((c: { name: string; aliases: string[] }) => 
-            `${c.name}${c.aliases.length > 0 ? ` (also accepts: ${c.aliases.join(', ')})` : ''}`
-          ).join(', ')}`;
+          // Create carrier validation map for O(1) lookups
+          const carrierMap = new Map<string, string>()
+          supportedCarriers.forEach((carrier: Carrier) => {
+            carrierMap.set(carrier.name.toLowerCase(), carrier.name)
+            if (carrier.aliases) {
+              carrier.aliases.forEach((alias: string) => {
+                carrierMap.set(alias.toLowerCase(), carrier.name)
+              })
+            }
+          })
 
-          // Create messages array for different types of feedback
-          const messages = [];
-          
-          // Add error message if there are errors
+          // Process validation in batches
+          for (let i = 0; i < records.length; i += VALIDATION_BATCH_SIZE) {
+            const batch = records.slice(i, i + VALIDATION_BATCH_SIZE)
+            const validationPromises = batch.map((row, index) => 
+              validateRow(row, i + index + 2, carrierMap)
+            )
+
+            const validationResults = await Promise.all(validationPromises)
+            validationResults.forEach((result, index) => {
+              const rowNum = i + index + 2
+              const row = batch[index]
+
+              if (result.isValid && result.value) {
+                paramsList.push(result.value.data)
+                validRows.push(row)
+              } else {
+              errorRows.push({
+                Row: rowNum,
+                ...row,
+                  Error: result.error
+                })
+              }
+            })
+          }
+
           if (errorRows.length > 0) {
-            messages.push(`Found ${errorRows.length} rows with errors. Successfully imported ${insertedCount} rows.`);
-          } else {
-            messages.push(`Successfully imported ${insertedCount} rows.`);
+            return {
+              success: false,
+              message: `Found ${errorRows.length} rows with errors`,
+              errors: errorRows.map(row => `Row ${row.Row}: ${row.Error}`)
+            }
           }
 
-          // Add carrier conversion message if there were conversions
-          if (convertedCarrierRows.length > 0) {
-            messages.push(
-              `${convertedCarrierRows.length} rows had unrecognized carriers and were marked as "Other". ` +
-              `This is normal if these are carriers we don't support. However, please review the carrier conversion CSV ` +
-              `to ensure there are no typos or misspellings of supported carriers.`
-            );
+          logger.info(`Processing ${paramsList.length} valid rows with overwriteDuplicates=${overwriteDuplicates}`)
+
+          // For large datasets, use bulk import
+          const BULK_IMPORT_THRESHOLD = 1000
+          if (paramsList.length >= BULK_IMPORT_THRESHOLD) {
+            logger.info(`Large dataset detected (${paramsList.length} rows). Using bulk import.`)
+            
+            try {
+              logger.info('Mapping contacts with the following fields:')
+              const sampleRow = paramsList[0]
+              logger.info(`Sample row data: ${JSON.stringify(sampleRow)}`)
+              
+              const contacts = paramsList.map(row => {
+                const contact = {
+                  firstName: row[0],
+                  lastName: row[1],
+                  email: row[2],
+                  currentCarrier: row[3],
+                  planType: row[4],
+                  effectiveDate: row[5],
+                  birthDate: row[6],
+                  tobaccoUser: typeof row[7] === 'string' 
+                    ? ['yes', 'true', '1', 'y'].includes(row[7].toLowerCase())
+                    : Boolean(row[7]),
+                  gender: row[8],
+                  state: row[9],
+                  zipCode: row[10],
+                  phoneNumber: row[11] || '',
+                  agentId: row[12] ? parseInt(row[12]) : null
+                };
+                
+                logger.info(`Mapped contact: ${JSON.stringify(contact)}`)
+                return contact;
+              });
+
+              await Database.bulkImportContacts(user.organization_id.toString(), contacts);
+
+              return {
+                success: true,
+                message: `Successfully imported ${paramsList.length} contacts`,
+                errors: []
+              };
+            } catch (error) {
+              logger.error(`Error during bulk import: ${error}`);
+              throw error;
+            }
           }
 
-          // Add supported carriers message
-          messages.push(carrierInfoMessage);
+          // For smaller datasets, use regular batch processing
+          logger.info(`Using regular batch processing for ${paramsList.length} rows`)
+          const orgDb = await Database.getOrgDb(user.organization_id.toString())
+          let insertedCount = 0
+          let updatedCount = 0
+
+          // Process in smaller batches
+          const BATCH_SIZE = 50
+          for (let i = 0; i < paramsList.length; i += BATCH_SIZE) {
+            const batch = paramsList.slice(i, i + BATCH_SIZE)
+            
+            await orgDb.transaction(async (tx) => {
+              // Check for existing emails
+              const emails = batch.map(row => row[2]) // email is at index 2
+              const existingEmails = await tx.fetchAll(
+                `SELECT LOWER(TRIM(email)) as email FROM contacts WHERE LOWER(TRIM(email)) IN (${emails.map(() => '?').join(',')})`,
+                emails.map(email => email.toLowerCase().trim())
+              )
+              
+              const existingEmailSet = new Set(existingEmails.map(row => row.email))
+              
+              // Split batch into updates and inserts
+              const updates = []
+              const inserts = []
+              
+              for (const row of batch) {
+                const email = row[2].toLowerCase().trim()
+                if (existingEmailSet.has(email)) {
+                  if (overwriteDuplicates) {
+                    updates.push(row)
+                  }
+                } else {
+                  inserts.push(row)
+                }
+              }
+
+              // Process updates if any
+              if (updates.length > 0 && overwriteDuplicates) {
+                const updatePlaceholders = updates.map(() => 
+                  '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                ).join(',')
+                
+                const updateQuery = `
+                  WITH v(first_name, last_name, carrier, plan_type, effective_date, birth_date, 
+                        tobacco_user, gender, state, zip_code, phone, agent_id) AS (
+                    VALUES ${updatePlaceholders}
+                  )
+                UPDATE contacts SET 
+                    first_name = v.first_name,
+                    last_name = v.last_name,
+                    current_carrier = v.carrier,
+                    plan_type = v.plan_type,
+                    effective_date = v.effective_date,
+                    birth_date = v.birth_date,
+                    tobacco_user = v.tobacco_user,
+                    gender = v.gender,
+                    state = v.state,
+                    zip_code = v.zip_code,
+                    phone_number = v.phone,
+                    agent_id = COALESCE(v.agent_id, contacts.agent_id)
+                  FROM v
+                  WHERE LOWER(TRIM(contacts.email)) = LOWER(TRIM(?))
+                `
+                
+                const flatUpdateParams = updates.flatMap(params => [
+                    params[0], // first_name
+                    params[1], // last_name
+                  params[3], // carrier
+                    params[4], // plan_type
+                    params[5], // effective_date
+                    params[6], // birth_date
+                  params[7] === '1' || params[7]?.toLowerCase() === 'true' ? 1 : 0, // tobacco_user
+                    params[8], // gender
+                    params[9], // state
+                    params[10], // zip_code
+                  params[11], // phone
+                  params[12] ? parseInt(params[12]) : null, // agent_id
+                  params[2]  // email for WHERE clause
+                ])
+                
+                await tx.execute(updateQuery, flatUpdateParams)
+                updatedCount += updates.length
+                logger.info(`Updated ${updates.length} existing contacts in batch ${i / BATCH_SIZE + 1}`)
+              }
+
+              // Process inserts if any
+              if (inserts.length > 0) {
+                const insertPlaceholders = inserts.map(() => 
+                  '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                ).join(',')
+                
+                const insertQuery = `
+                  INSERT INTO contacts (
+                      first_name, last_name, email, current_carrier, plan_type,
+                      effective_date, birth_date, tobacco_user, gender,
+                      state, zip_code, phone_number, agent_id
+                  ) VALUES ${insertPlaceholders}
+                `
+                
+                const flatParams = inserts.flatMap(params => [
+                  params[0], // first_name
+                  params[1], // last_name
+                  params[2], // email
+                  params[3], // current_carrier
+                  params[4], // plan_type
+                  params[5], // effective_date
+                  params[6], // birth_date
+                  params[7] === '1' || params[7]?.toLowerCase() === 'true' ? 1 : 0, // tobacco_user
+                  params[8], // gender
+                  params[9], // state
+                  params[10], // zip_code
+                  params[11] || '', // phone_number
+                  params[12] ? parseInt(params[12]) : null // agent_id
+                ])
+                
+                await tx.execute(insertQuery, flatParams)
+                insertedCount += inserts.length
+                logger.info(`Inserted ${inserts.length} new contacts in batch ${i / BATCH_SIZE + 1}`)
+              }
+            })
+          }
 
           return {
             success: true,
-            message: messages.join('\n\n'),
-            error_csv: errorCsv,
-            converted_carriers_csv: convertedCarriersCsv,
-            total_rows: validRows.length + errorRows.length,
-            error_rows: errorRows.length,
-            valid_rows: insertedCount,
-            converted_carrier_rows: convertedCarrierRows.length,
-            supported_carriers: supportedCarriers
+            message: `Successfully processed ${paramsList.length} contacts (${insertedCount} inserted, ${updatedCount} updated)`,
+            errors: []
           }
 
-        } catch (e) {
-          logger.error(`Error processing CSV upload: ${e.stack || e}`)
-          return {
-            success: false,
-            message: String(e),
-            error_csv: null,
-            converted_carriers_csv: null,
-            total_rows: 0,
-            error_rows: 0,
-            valid_rows: 0,
-            converted_carrier_rows: 0,
-            supported_carriers: []
-          }
+        } catch (error) {
+          logger.error(`Error processing CSV upload: ${error}`)
+          throw error
         }
       })
       // Add error handler
@@ -9498,6 +10360,8 @@ const startServer = async () => {
       .use(eligibilityRoutes)
       // Add self-service routes
       .use(createSelfServiceRoutes())
+      // Add schedule routes
+      .use(scheduleRoutes)
       // In production, serve the frontend static files
       .use(process.env.NODE_ENV === 'production' 
         ? async (app) => {
@@ -10518,7 +11382,7 @@ const startServer = async () => {
         }
       })
       
-      .post('/api/contact-request', async ({ body }: { body: { name: string; email: string; type: string; quoteId?: string } }) => {
+      .post('/api/contact-request', async ({ body, request }: { body: { name: string; email: string; type: string; quoteId?: string }, request: Request }) => {
         try {
           const user = await getUserFromSession(request)
           if (!user?.organization_id) {
@@ -10580,9 +11444,9 @@ const startServer = async () => {
             message: 'Contact request recorded successfully'
           }
 
-        } catch (e) {
-          logger.error(`Error processing contact request: ${e}`)
-          throw new Error(String(e))
+        } catch (e: unknown) {
+          logger.error(`Error processing contact request: ${e instanceof Error ? e.message : String(e)}`)
+          throw new Error(e instanceof Error ? e.message : String(e))
         }
       })
       .get('/api/contacts/:id/eligibility', async ({ params: { id }, request }) => {
@@ -10743,7 +11607,23 @@ const startServer = async () => {
           logger.info(`GET /api/agents/${params.id}/contacts - Found ${result.length} contacts`)
           
           // Map the database results to the expected format with camelCase field names
-          const contacts = result.map(contact => ({
+          const contacts = result.map((contact: { 
+            id: number;
+            first_name: string;
+            last_name: string;
+            email: string;
+            current_carrier: string;
+            plan_type: string;
+            effective_date: string;
+            birth_date: string;
+            tobacco_user: number;
+            gender: string;
+            state: string;
+            zip_code: string;
+            agent_id: number | null;
+            last_emailed: string | null;
+            phone_number: string;
+          }) => ({
             id: contact.id,
             first_name: contact.first_name,
             last_name: contact.last_name,
@@ -10765,8 +11645,8 @@ const startServer = async () => {
             success: true,
             contacts: contacts
           }
-        } catch (e) {
-          logger.error(`Error fetching contacts for agent ${params.id}: ${e}`)
+        } catch (e: unknown) {
+          logger.error(`Error fetching contacts for agent ${params.id}: ${e instanceof Error ? e.message : String(e)}`)
           return {
             success: false,
             error: String(e)

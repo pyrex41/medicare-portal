@@ -25,6 +25,10 @@ import { eligibilityRoutes } from './routes/eligibility'
 import { generateQuoteId } from './utils/quoteId'
 import { createSelfServiceRoutes } from './routes/self-service'
 import { scheduleRoutes } from './routes/schedule'
+import { contactsRoutes } from './routes/contacts'
+import * as fs from 'fs/promises'
+import * as path from 'path'
+import * as os from 'os'
 
 // At the top of the file, add interface for ZIP data
 interface ZipInfo {
@@ -115,7 +119,7 @@ function validateEmail(email: string): boolean {
 }
 
 // Add this helper function near the other validation functions
-function validateISODate(dateStr: string): { isValid: boolean; isoDate: string | null } {
+function validateISODate(dateStr: string, allowFuture: boolean = false): { isValid: boolean; isoDate: string | null } {
   try {
     const trimmed = dateStr.trim();
     
@@ -130,8 +134,8 @@ function validateISODate(dateStr: string): { isValid: boolean; isoDate: string |
     // Convert to ISO format (YYYY-MM-DD)
     const isoDate = date.toISOString().split('T')[0];
     
-    // Verify the date is not in the future
-    if (date > new Date()) {
+    // Verify the date is not in the future (unless allowed)
+    if (!allowFuture && date > new Date()) {
       return { isValid: false, isoDate: null };
     }
     
@@ -187,6 +191,177 @@ async function validateCarrier(carrier: string, db: Database): Promise<{ isValid
     return { isValid: true, standardizedName: carrier.trim(), wasConverted: true };
   }
 }
+
+// Interface for validation result
+interface ValidationResult {
+  isValid: boolean;
+  error?: string;
+  value?: any;
+}
+
+// Validation functions
+const validateRow = async (row: any, rowNum: number, carrierMap: Map<string, string>): Promise<ValidationResult> => {
+  try {
+    logger.info(`Starting validation for row ${rowNum}:`)
+    logger.info(`Row data: ${JSON.stringify(row)}`)
+
+    // Required fields check with detailed logging
+    const requiredFields = [
+      'First Name', 'firstName',
+      'Last Name', 'lastName', 
+      'Email', 'email',
+      'Current Carrier', 'currentCarrier',
+      'Plan Type', 'planType',
+      'Effective Date', 'effectiveDate',
+      'Birth Date', 'birthDate',
+      'Tobacco User', 'tobaccoUser',
+      'Gender', 'gender',
+      'ZIP Code', 'zipCode',
+      'Phone Number', 'phoneNumber'
+    ]
+
+    logger.info(`Checking required fields: ${requiredFields.join(', ')}`)
+    const missingValues = requiredFields.filter(field => {
+      const value = row[field]?.trim()
+      const isMissing = !value
+      if (isMissing) {
+        logger.warn(`Missing required field "${field}" in row ${rowNum}`)
+      }
+      return isMissing
+    })
+
+    // Group the missing fields by their base name (e.g. both "First Name" and "firstName" count as one missing field)
+    const missingFieldGroups = new Set<string>()
+    for (let i = 0; i < missingValues.length; i += 2) {
+      if (missingValues[i] && missingValues[i+1]) {
+        missingFieldGroups.add(missingValues[i])
+      }
+    }
+
+    if (missingFieldGroups.size > 0) {
+      logger.warn(`Row ${rowNum} missing required fields: ${Array.from(missingFieldGroups).join(', ')}`)
+      return {
+        isValid: false,
+        error: `Missing values for: ${Array.from(missingFieldGroups).join(', ')}`
+      }
+    }
+
+    // Email validation with logging
+    const email = (row['Email'] || row['email'] || '').trim().toLowerCase()
+    logger.info(`Validating email: "${email}"`)
+    if (!validateEmail(email)) {
+      logger.warn(`Row ${rowNum} has invalid email format: ${email}`)
+      return {
+        isValid: false,
+        error: `Invalid email format: ${email}`
+      }
+    }
+
+    // Phone validation with logging
+    logger.info(`Validating phone number: "${row['Phone Number'] || row['phoneNumber']}"`)
+    const phoneResult = standardizePhoneNumber(row['Phone Number'] || row['phoneNumber'])
+    if (!phoneResult.isValid) {
+      logger.warn(`Row ${rowNum} has invalid phone number: ${row['Phone Number'] || row['phoneNumber']}`)
+      return {
+        isValid: false,
+        error: `Invalid phone number: ${row['Phone Number'] || row['phoneNumber']}. Must be exactly 10 digits.`
+      }
+    }
+
+    // ZIP validation with logging
+    const zipCode = (row['ZIP Code'] || row['zipCode'] || '').trim()
+    logger.info(`Validating ZIP code: "${zipCode}"`)
+    const zipInfo = ZIP_DATA[zipCode]
+    if (!zipInfo) {
+      logger.warn(`Row ${rowNum} has invalid ZIP code: ${zipCode}`)
+      return {
+        isValid: false,
+        error: `Invalid ZIP code: ${zipCode}`
+      }
+    }
+
+    // Gender validation with logging
+    const gender = (row['Gender'] || row['gender'] || '').trim().toUpperCase()
+    logger.info(`Validating gender: "${gender}"`)
+    if (!['M', 'F'].includes(gender)) {
+      logger.warn(`Row ${rowNum} has invalid gender: ${gender}`)
+      return {
+        isValid: false,
+        error: `Invalid gender: ${gender}. Must be 'M' or 'F'`
+      }
+    }
+
+    // Carrier validation with logging
+    const carrierInput = (row['Current Carrier'] || row['currentCarrier'] || '').trim().toLowerCase()
+    logger.info(`Validating carrier: "${carrierInput}"`)
+    const standardizedCarrier = carrierMap.get(carrierInput) || carrierInput
+    const wasCarrierConverted = !carrierMap.has(carrierInput)
+    if (wasCarrierConverted) {
+      logger.warn(`Row ${rowNum} has non-standard carrier: ${carrierInput} (will be kept as-is)`)
+    }
+
+    // Date validations with logging
+    logger.info(`Validating effective date: "${row['Effective Date'] || row['effectiveDate']}"`)
+    const effectiveDateResult = validateISODate(row['Effective Date'] || row['effectiveDate'], true)
+    if (!effectiveDateResult.isValid) {
+      logger.warn(`Row ${rowNum} has invalid effective date: ${row['Effective Date'] || row['effectiveDate']}`)
+      return {
+        isValid: false,
+        error: `Invalid effective date format: ${row['Effective Date'] || row['effectiveDate']}. Please use YYYY-MM-DD or MM-DD-YYYY format.`
+      }
+    }
+
+    logger.info(`Validating birth date: "${row['Birth Date'] || row['birthDate']}"`)
+    const birthDateResult = validateISODate(row['Birth Date'] || row['birthDate'])
+    if (!birthDateResult.isValid) {
+      logger.warn(`Row ${rowNum} has invalid birth date: ${row['Birth Date'] || row['birthDate']}`)
+      return {
+        isValid: false,
+        error: `Invalid birth date format: ${row['Birth Date'] || row['birthDate']}. Please use YYYY-MM-DD or MM-DD-YYYY format.`
+      }
+    }
+
+    // If all validations pass, return processed data
+    logger.info(`Row ${rowNum} passed all validations successfully`)
+    return {
+      isValid: true,
+      value: {
+        data: [
+          (row['First Name'] || row['firstName'] || '').trim(),
+          (row['Last Name'] || row['lastName'] || '').trim(),
+          email,
+          standardizedCarrier,
+          (row['Plan Type'] || row['planType'] || '').trim(),
+          effectiveDateResult.isoDate,
+          birthDateResult.isoDate,
+          ['yes', 'true', '1', 'y'].includes((row['Tobacco User'] || row['tobaccoUser'] || '').trim().toLowerCase()),
+          gender,
+          zipInfo.state,
+          zipCode,
+          phoneResult.standardized,
+          null // agentId - will be set later
+        ],
+        carrierConverted: wasCarrierConverted ? {
+          Row: rowNum,
+          ...row,
+          OriginalCarrier: row['Current Carrier'] || row['currentCarrier']
+        } : null
+      }
+    }
+  } catch (e) {
+    // Log the full error details
+    logger.error(`Unexpected error in row ${rowNum}:`)
+    logger.error(`Error message: ${e instanceof Error ? e.message : String(e)}`)
+    logger.error(`Row data: ${JSON.stringify(row)}`)
+    if (e instanceof Error && e.stack) {
+      logger.error(`Stack trace: ${e.stack}`)
+    }
+    return {
+      isValid: false,
+      error: `Unexpected error processing row ${rowNum}. Please check all fields are in the correct format. Error: ${e instanceof Error ? e.message : String(e)}`
+    }
+  }
+};
 
 const startServer = async () => {
   try {
@@ -725,23 +900,16 @@ const startServer = async () => {
         }
       })
       // Add file upload endpoint
-      .post('/api/contacts/upload', async ({ request, body }: { request: Request, body: { contacts: any[], file_type?: string, sheet_name?: string } }) => {
+      .post('/api/contacts/upload', async ({ request, body, set }: { request: Request, body: { file: File, overwrite_duplicates?: boolean | string, duplicateStrategy?: string, agent_id?: string }, set: any }) => {
         try {
           const user = await getUserFromSession(request)
           if (!user?.organization_id) {
             throw new Error('No organization ID found in session')
           }
 
-          // Get org-specific database
-          const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString())
-
           // Extract file and overwrite flag from form data
-          const formData = body as { file: File, overwrite_duplicates: boolean | string, duplicateStrategy: string, agent_id?: string }
+          const formData = body
           const file = formData.file
-          
-          // Get agent_id from form data or use current user's ID if they're an agent
-          const agentId = formData.agent_id ? parseInt(formData.agent_id, 10) : (user.is_agent ? user.id : null)
-          logger.info(`Using agent_id: ${agentId} for contact upload (from form: ${formData.agent_id}, user is agent: ${user.is_agent}, user id: ${user.id})`)
           
           // Support both naming conventions - overwrite_duplicates (old) and duplicateStrategy (new)
           let overwriteDuplicates = false
@@ -753,403 +921,38 @@ const startServer = async () => {
             overwriteDuplicates = formData.duplicateStrategy === 'overwrite'
           }
 
-          logger.info(`Initial overwriteDuplicates value: ${overwriteDuplicates}, type: ${typeof overwriteDuplicates}, raw overwrite_duplicates: ${formData.overwrite_duplicates}, raw duplicateStrategy: ${formData.duplicateStrategy}`)
+          logger.info(`Processing ${file.name} with overwriteDuplicates=${overwriteDuplicates}`)
 
-          logger.info(`POST /api/contacts/upload - Processing CSV upload with overwriteDuplicates=${overwriteDuplicates}`)
+          // Save file to temp directory
+          const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'import-'));
+          const tempFilePath = path.join(tempDir, 'contacts.csv');
+          await fs.writeFile(tempFilePath, Buffer.from(await file.arrayBuffer()));
 
-          // Read file contents
-          const fileContents = await file.text()
-          
-          // Parse CSV
-          const records = csvParse(fileContents, {
-            columns: true,
-            skip_empty_lines: true
-          })
+          logger.info(`CSV file saved to ${tempFilePath}, starting import`);
 
-          // Required fields in desired order
-          const requiredFields = [
-            'First Name',
-            'Last Name',
-            'Email',
-            'Current Carrier',
-            'Plan Type',
-            'Effective Date',
-            'Birth Date',
-            'Tobacco User',
-            'Gender',
-            'ZIP Code',
-            'Phone Number'
-          ]
-
-          // Validate headers
-          const headers = Object.keys(records[0] || {})
-          const missingFields = requiredFields.filter(field => !headers.includes(field))
-
-          // Add this: Get the email column index from headers
-          const emailColumnIndex = headers.indexOf('Email')
-
-          if (missingFields.length > 0) {
-            return {
-              success: false,
-              message: `Missing required columns: ${missingFields.join(', ')}`,
-              error_csv: null,
-              converted_carriers_csv: null,
-              total_rows: 0,
-              error_rows: 0,
-              valid_rows: 0,
-              converted_carrier_rows: 0,
-              supported_carriers: []
-            }
-          }
-
-          const validRows: any[] = []
-          const errorRows: any[] = []
-          const paramsList: any[] = []
-          const convertedCarrierRows: any[] = []
-
-          // Get existing emails for duplicate checking
-          let existingEmails = new Set<string>()
-          const emailResults = await orgDb.fetchAll("SELECT email FROM contacts")
-          existingEmails = new Set(emailResults.map((row: any) => row[0]?.trim().toLowerCase()))
-
-          logger.info(`Found ${existingEmails.size} existing emails in database`)
-
-          // Validate each row
-          for (const [index, row] of records.entries()) {
-            const rowNum = index + 2 // Account for header row and 0-based index
-            
-            // Check for missing values
-            const missingValues = requiredFields.filter(field => !row[field]?.trim())
-            if (missingValues.length > 0) {
-              errorRows.push({
-                Row: rowNum,
-                ...row,
-                Error: `Missing values for: ${missingValues.join(', ')}`
-              })
-              continue
-            }
-
-            // Validate email format
-            const email = row['Email'].trim().toLowerCase()
-            if (!validateEmail(email)) {
-              errorRows.push({
-                Row: rowNum,
-                ...row,
-                Error: `Invalid email format: ${row['Email']}`
-              })
-              continue
-            }
-
-            // Validate phone number
-            const phoneResult = standardizePhoneNumber(row['Phone Number']);
-            if (!phoneResult.isValid) {
-              errorRows.push({
-                Row: rowNum,
-                ...row,
-                Error: `Invalid phone number: ${row['Phone Number']}. Must be exactly 10 digits.`
-              })
-              continue
-            }
-
-            // Validate ZIP code
-            const zipCode = row['ZIP Code'].trim()
-            const zipInfo = ZIP_DATA[zipCode]
-            if (!zipInfo) {
-              errorRows.push({
-                Row: rowNum,
-                ...row,
-                Error: `Invalid ZIP code: ${zipCode}`
-              })
-              continue
-            }
-
-            // Validate gender
-            const gender = row['Gender'].trim().toUpperCase()
-            if (!['M', 'F'].includes(gender)) {
-              errorRows.push({
-                Row: rowNum,
-                ...row,
-                Error: `Invalid gender: ${gender}. Must be 'M' or 'F'`
-              })
-              continue
-            }
-
-            // Check for duplicate email
-            logger.info(`Checking row ${rowNum} email: ${email}`)
-            logger.info(`Overwrite duplicates is set to: ${overwriteDuplicates}`)
-            if (existingEmails.has(email)) {
-              logger.info(`Found duplicate email: ${email}`)
-              const notOverwrite = !overwriteDuplicates
-              logger.info(`Debug - overwriteDuplicates: ${overwriteDuplicates}, !overwriteDuplicates: ${notOverwrite}`)
-              if (!overwriteDuplicates) {
-                logger.info(`Adding duplicate email to error rows since overwrite is disabled`)
-                errorRows.push({
-                  Row: rowNum,
-                  ...row,
-                  Error: `Email already exists: ${row['Email']}`
-                })
-                logger.info('Skipping duplicate email')
-                continue
-              }
-              logger.info(`Allowing duplicate email since overwrite is enabled`)
-            }
-
-            // Add carrier validation
-            const carrierResult = await validateCarrier(row['Current Carrier'], orgDb);
-            let carrierNote = null;
-            if (carrierResult.wasConverted) {
-              carrierNote = {
-                Row: rowNum,
-                ...row,
-                OriginalCarrier: row['Current Carrier']
-              };
-            }
-
-            try {
-              // Validate dates with better error messages
-              const effectiveDateResult = validateISODate(row['Effective Date']);
-              if (!effectiveDateResult.isValid) {
-                errorRows.push({
-                  Row: rowNum,
-                  ...row,
-                  Error: `Invalid effective date format: ${row['Effective Date']}. Please use YYYY-MM-DD or MM-DD-YYYY format.`
-                });
-                continue;
-              }
-
-              const birthDateResult = validateISODate(row['Birth Date']);
-              if (!birthDateResult.isValid) {
-                errorRows.push({
-                  Row: rowNum,
-                  ...row,
-                  Error: `Invalid birth date format: ${row['Birth Date']}. Please use YYYY-MM-DD or MM-DD-YYYY format.`
-                });
-                continue;
-              }
-
-              const tobaccoUser = ['yes', 'true', '1', 'y'].includes(row['Tobacco User'].trim().toLowerCase())
-
-              paramsList.push([
-                row['First Name'].trim(),
-                row['Last Name'].trim(),
-                email,
-                carrierResult.standardizedName,
-                row['Plan Type'].trim(),
-                effectiveDateResult.isoDate,
-                birthDateResult.isoDate,
-                tobaccoUser,
-                gender,
-                zipInfo.state,
-                zipCode,
-                phoneResult.standardized,
-                agentId  // Add agentId parameter
-              ])
-              validRows.push(row)
-              
-              // If this row had a carrier conversion, track it
-              if (carrierNote) {
-                convertedCarrierRows.push(carrierNote)
-              }
-            } catch (e) {
-              errorRows.push({
-                Row: rowNum,
-                ...row,
-                Error: 'Unexpected error processing dates. Please ensure dates are in YYYY-MM-DD format.'
-              })
-            }
-          }
-
-          // Insert valid rows
-          let insertedCount = 0
-          if (paramsList.length > 0) {
-            logger.info(`Processing ${paramsList.length} valid rows with overwriteDuplicates=${overwriteDuplicates}`)
-            logger.info(`Debug - overwriteDuplicates value type: ${typeof overwriteDuplicates}`)
-            if (overwriteDuplicates) {
-              logger.info('Using update/insert logic for duplicates')
-              // First update existing records
-              const updateQuery = /* sql */ `
-                UPDATE contacts SET 
-                  first_name = ?,
-                  last_name = ?,
-                  current_carrier = ?,
-                  plan_type = ?,
-                  effective_date = ?,
-                  birth_date = ?,
-                  tobacco_user = ?,
-                  gender = ?,
-                  state = ?,
-                  zip_code = ?,
-                  phone_number = ?,
-                  agent_id = ?
-                WHERE LOWER(email) = ?
-              `
-              
-              for (const params of paramsList) {
-                const email = params[2].toLowerCase()
-                logger.info(`Processing row with email: ${email}`)
-                
-                // Check if email exists
-                const existingContact = await orgDb.fetchAll(
-                  'SELECT 1 FROM contacts WHERE LOWER(email) = ?',
-                  [email]
-                )
-                
-                if (existingContact.length > 0) {
-                  logger.info(`Updating existing contact with email: ${email}`)
-                  // Update existing contact
-                  const updateParams = [
-                    params[0], // first_name
-                    params[1], // last_name
-                    params[3], // current_carrier
-                    params[4], // plan_type
-                    params[5], // effective_date
-                    params[6], // birth_date
-                    params[7], // tobacco_user
-                    params[8], // gender
-                    params[9], // state
-                    params[10], // zip_code
-                    params[11], // phone_number
-                    params[12], // agent_id
-                    email     // for WHERE clause
-                  ]
-                  logger.info(`Update params: ${JSON.stringify(updateParams)}`)
-                  await orgDb.execute(updateQuery, updateParams)
-                  logger.info(`Successfully updated contact with email: ${email}`)
-                } else {
-                  logger.info(`Inserting new contact with email: ${email}`)
-                  // Insert new contact
-                  await orgDb.execute(
-                    `INSERT INTO contacts (
-                      first_name, last_name, email, current_carrier, plan_type,
-                      effective_date, birth_date, tobacco_user, gender,
-                      state, zip_code, phone_number, agent_id
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                    params
-                  )
-                  logger.info(`Successfully inserted new contact with email: ${email}`)
-                }
-              }
-              insertedCount = paramsList.length
-            } else {
-              logger.info('Using insert-only logic for non-duplicates')
-              // If not overwriting duplicates, only insert non-duplicate rows
-              for (const params of paramsList) {
-                const email = params[2].toLowerCase()
-                // Check if email exists
-                const existingContact = await orgDb.fetchAll(
-                  'SELECT 1 FROM contacts WHERE LOWER(email) = ?',
-                  [email]
-                )
-
-                if (existingContact.length === 0) {
-                  // Only insert if email doesn't exist
-                  await orgDb.execute(
-                    `INSERT INTO contacts (
-                      first_name, last_name, email, current_carrier, plan_type,
-                      effective_date, birth_date, tobacco_user, gender,
-                      state, zip_code, phone_number, agent_id
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                    params
-                  )
-                  insertedCount++
-                }
-              }
-            }
-          }
-
-          // Generate error CSV if needed
-          let errorCsv = null
-          if (errorRows.length > 0) {
-            errorCsv = [
-              ['Row', ...requiredFields, 'Error'].join(','),
-              ...errorRows.map(row => {
-                return [
-                  row.Row,
-                  ...requiredFields.map(field => `"${row[field] || ''}"`),
-                  `"${row.Error}"`
-                ].join(',')
-              })
-            ].join('\n')
-          }
-
-          // Generate converted carriers CSV if needed
-          let convertedCarriersCsv = null;
-          if (convertedCarrierRows.length > 0) {
-            convertedCarriersCsv = [
-              ['Row', ...requiredFields, 'Original Carrier'].join(','),
-              ...convertedCarrierRows.map((row: { Row: number; [key: string]: any }) => {
-                return [
-                  row.Row,
-                  ...requiredFields.map(field => `"${row[field] || ''}"`),
-                  `"${row.OriginalCarrier}"`
-                ].join(',')
-              })
-            ].join('\n');
-          }
-
-          // Get list of supported carriers and their aliases
-          const centralDb = new Database();
-          const carriersResult = await centralDb.execute(
-            'SELECT name, aliases FROM carriers ORDER BY name'
+          // Start bulk import process
+          const importPromise = Database.bulkImportContacts(
+            user.organization_id.toString(),
+            tempFilePath,
+            overwriteDuplicates
           );
-          
-          const supportedCarriers = carriersResult.rows.map((row: any) => ({
-            name: row.name,
-            aliases: row.aliases ? JSON.parse(row.aliases) : []
-          }));
 
-          // Create carrier info message
-          const carrierInfoMessage = `Supported carriers: ${supportedCarriers.map((c: { name: string; aliases: string[] }) => 
-            `${c.name}${c.aliases.length > 0 ? ` (also accepts: ${c.aliases.join(', ')})` : ''}`
-          ).join(', ')}`;
-
-          // Create messages array for different types of feedback
-          const messages = [];
-          
-          // Add error message if there are errors
-          if (errorRows.length > 0) {
-            messages.push(`Found ${errorRows.length} rows with errors. Successfully imported ${insertedCount} rows.`);
-          } else {
-            messages.push(`Successfully imported ${insertedCount} rows.`);
-          }
-
-          // Add carrier conversion message if there were conversions
-          if (convertedCarrierRows.length > 0) {
-            messages.push(
-              `${convertedCarrierRows.length} rows had unrecognized carriers and were marked as "Other". ` +
-              `This is normal if these are carriers we don't support. However, please review the carrier conversion CSV ` +
-              `to ensure there are no typos or misspellings of supported carriers.`
-            );
-          }
-
-          // Add supported carriers message
-          messages.push(carrierInfoMessage);
+          importPromise
+            .then(() => fs.rm(tempDir, { recursive: true, force: true }))
+            .catch((error: Error) => {
+              logger.error(`Background import failed: ${error}`);
+              fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+            });
 
           return {
             success: true,
-            message: messages.join('\n\n'),
-            error_csv: errorCsv,
-            converted_carriers_csv: convertedCarriersCsv,
-            total_rows: validRows.length + errorRows.length,
-            error_rows: errorRows.length,
-            valid_rows: insertedCount,
-            converted_carrier_rows: convertedCarrierRows.length,
-            supported_carriers: supportedCarriers
-          }
-
-        } catch (e) {
-          logger.error(`Error processing CSV upload: ${e.stack || e}`)
-          return {
-            success: false,
-            message: String(e),
-            error_csv: null,
-            converted_carriers_csv: null,
-            total_rows: 0,
-            error_rows: 0,
-            valid_rows: 0,
-            converted_carrier_rows: 0,
-            supported_carriers: []
-          }
+            message: 'Started import of contacts',
+            errors: []
+          };
+        } catch (error) {
+          const err = error as Error;
+          logger.error(`Error processing CSV upload: ${err}`);
+          throw err;
         }
       })
       // Add error handler
@@ -1177,6 +980,13 @@ const startServer = async () => {
       .use(createSelfServiceRoutes())
       // Add schedule routes
       .use(scheduleRoutes)
+      // Add contacts routes
+      .use(contactsRoutes)
+      // Serve backend static files from public directory
+      .use(staticPlugin({
+        assets: './public', 
+        prefix: '/'
+      }))
       // In production, serve the frontend static files
       .use(process.env.NODE_ENV === 'production' 
         ? async (app) => {
@@ -2197,7 +2007,7 @@ const startServer = async () => {
         }
       })
       
-      .post('/api/contact-request', async ({ body }: { body: { name: string; email: string; type: string; quoteId?: string } }) => {
+      .post('/api/contact-request', async ({ body, request }: { body: { name: string; email: string; type: string; quoteId?: string }, request: Request }) => {
         try {
           const user = await getUserFromSession(request)
           if (!user?.organization_id) {
@@ -2259,9 +2069,9 @@ const startServer = async () => {
             message: 'Contact request recorded successfully'
           }
 
-        } catch (e) {
-          logger.error(`Error processing contact request: ${e}`)
-          throw new Error(String(e))
+        } catch (e: unknown) {
+          logger.error(`Error processing contact request: ${e instanceof Error ? e.message : String(e)}`)
+          throw new Error(e instanceof Error ? e.message : String(e))
         }
       })
       .get('/api/contacts/:id/eligibility', async ({ params: { id }, request }) => {
@@ -2422,7 +2232,23 @@ const startServer = async () => {
           logger.info(`GET /api/agents/${params.id}/contacts - Found ${result.length} contacts`)
           
           // Map the database results to the expected format with camelCase field names
-          const contacts = result.map(contact => ({
+          const contacts = result.map((contact: { 
+            id: number;
+            first_name: string;
+            last_name: string;
+            email: string;
+            current_carrier: string;
+            plan_type: string;
+            effective_date: string;
+            birth_date: string;
+            tobacco_user: number;
+            gender: string;
+            state: string;
+            zip_code: string;
+            agent_id: number | null;
+            last_emailed: string | null;
+            phone_number: string;
+          }) => ({
             id: contact.id,
             first_name: contact.first_name,
             last_name: contact.last_name,
@@ -2444,8 +2270,8 @@ const startServer = async () => {
             success: true,
             contacts: contacts
           }
-        } catch (e) {
-          logger.error(`Error fetching contacts for agent ${params.id}: ${e}`)
+        } catch (e: unknown) {
+          logger.error(`Error fetching contacts for agent ${params.id}: ${e instanceof Error ? e.message : String(e)}`)
           return {
             success: false,
             error: String(e)

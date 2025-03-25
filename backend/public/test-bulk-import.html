@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bulk Contact Import Test</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+      line-height: 1.6;
+    }
+    h1 {
+      color: #2c3e50;
+      margin-bottom: 20px;
+    }
+    form {
+      background-color: #f9f9f9;
+      padding: 20px;
+      border-radius: 8px;
+      border: 1px solid #ddd;
+      margin-bottom: 20px;
+    }
+    label {
+      display: block;
+      margin-bottom: 8px;
+      font-weight: bold;
+    }
+    input[type="file"] {
+      display: block;
+      margin-bottom: 15px;
+    }
+    .checkbox-group {
+      margin-bottom: 15px;
+    }
+    button {
+      background-color: #3498db;
+      color: white;
+      border: none;
+      padding: 10px 15px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 16px;
+    }
+    button:hover {
+      background-color: #2980b9;
+    }
+    .result {
+      background-color: #f0f7ff;
+      padding: 15px;
+      border-radius: 8px;
+      border: 1px solid #d0e3ff;
+      margin-top: 20px;
+      white-space: pre-wrap;
+      overflow-x: auto;
+    }
+    .info {
+      background-color: #e8f4f8;
+      padding: 15px;
+      border-radius: 8px;
+      border-left: 4px solid #3498db;
+      margin-bottom: 20px;
+    }
+    .info h2 {
+      margin-top: 0;
+      margin-bottom: 10px;
+      color: #2c3e50;
+    }
+  </style>
+</head>
+<body>
+  <h1>Bulk Contact Import Test</h1>
+  
+  <div class="info">
+    <h2>About This Tool</h2>
+    <p>This is a test page for the bulk contact import feature. Use this to test importing CSV files with contact data.</p>
+    <p>Make sure you're logged in as an admin user before testing, as the endpoint requires admin privileges.</p>
+  </div>
+
+  <form id="uploadForm">
+    <label for="csvFile">Select CSV File:</label>
+    <input type="file" id="csvFile" name="file" accept=".csv" required>
+    
+    <div class="checkbox-group">
+      <label>
+        <input type="checkbox" id="overwriteExisting"> Overwrite existing contacts
+      </label>
+    </div>
+    
+    <div class="form-row">
+      <button type="submit">Import Contacts</button>
+    </div>
+  </form>
+  
+  <div id="result" class="result" style="display: none;"></div>
+  
+  <div style="margin-top: 30px;">
+    <h2>Check Import Status</h2>
+    <form id="statusForm">
+      <div class="form-row">
+        <label for="orgId">Organization ID:</label>
+        <input type="text" id="orgId" name="orgId" required>
+      </div>
+      <button type="submit">Check Status</button>
+    </form>
+    
+    <div id="statusResult" class="result" style="display: none;"></div>
+  </div>
+
+  <script>
+    document.getElementById('uploadForm').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      
+      const resultDiv = document.getElementById('result');
+      resultDiv.textContent = 'Processing...';
+      resultDiv.style.display = 'block';
+      
+      try {
+        const formData = new FormData();
+        const csvFile = document.getElementById('csvFile').files[0];
+        const overwriteExisting = document.getElementById('overwriteExisting').checked;
+        
+        formData.append('file', csvFile);
+        formData.append('overwriteExisting', overwriteExisting);
+        
+        // Send request to the API
+        const response = await fetch('/api/contacts/bulk-import', {
+          method: 'POST',
+          body: formData,
+          credentials: 'include' // Important for the session cookie
+        });
+        
+        const data = await response.json();
+        
+        // Display the result
+        resultDiv.textContent = JSON.stringify(data, null, 2);
+        
+        // Update the org ID field with the organization ID from the response
+        if (data.success && data.organizationId) {
+          document.getElementById('orgId').value = data.organizationId;
+        }
+      } catch (error) {
+        resultDiv.textContent = `Error: ${error.message}`;
+      }
+    });
+    
+    document.getElementById('statusForm').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      
+      const statusResultDiv = document.getElementById('statusResult');
+      statusResultDiv.textContent = 'Checking status...';
+      statusResultDiv.style.display = 'block';
+      
+      try {
+        const orgId = document.getElementById('orgId').value.trim();
+        
+        if (!orgId) {
+          statusResultDiv.textContent = 'Please enter an organization ID';
+          return;
+        }
+        
+        // Send request to check the import status
+        const response = await fetch(`/api/contacts/import-status/${orgId}`, {
+          method: 'GET',
+          credentials: 'include' // Important for the session cookie
+        });
+        
+        const data = await response.json();
+        
+        // Display the status result
+        statusResultDiv.textContent = JSON.stringify(data, null, 2);
+        
+        // If the import is still in progress, poll the status every 10 seconds
+        if (data.status === 'in progress') {
+          let pollCount = 0;
+          const maxPolls = 30; // Maximum 5 minutes of polling
+          
+          const pollInterval = setInterval(async () => {
+            pollCount++;
+            
+            if (pollCount > maxPolls) {
+              clearInterval(pollInterval);
+              statusResultDiv.textContent += '\n\nPolling stopped after 5 minutes.';
+              return;
+            }
+            
+            try {
+              const pollResponse = await fetch(`/api/contacts/import-status/${orgId}`, {
+                method: 'GET',
+                credentials: 'include'
+              });
+              
+              const pollData = await pollResponse.json();
+              statusResultDiv.textContent = JSON.stringify(pollData, null, 2);
+              
+              if (pollData.status !== 'in progress') {
+                clearInterval(pollInterval);
+                statusResultDiv.textContent += '\n\nImport completed!';
+              }
+            } catch (pollError) {
+              statusResultDiv.textContent += `\n\nError polling status: ${pollError.message}`;
+              clearInterval(pollInterval);
+            }
+          }, 10000); // Poll every 10 seconds
+        }
+      } catch (error) {
+        statusResultDiv.textContent = `Error: ${error.message}`;
+      }
+    });
+  </script>
+</body>
+</html>
