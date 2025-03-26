@@ -37,6 +37,7 @@ import TempLanding
 import Url exposing (Url)
 import Url.Parser as Parser exposing ((</>), (<?>), Parser, map, oneOf, s, string, top)
 import Url.Parser.Query as Query
+import Waitlist
 import Walkthrough
 
 
@@ -190,6 +191,7 @@ type Page
     | OnboardingPage Onboarding.Model
     | WalkthroughPage Walkthrough.Model
     | SelfOnboardingPage SelfServiceOnboarding.Model
+    | WaitlistPage Waitlist.Model
 
 
 type Msg
@@ -231,6 +233,7 @@ type Msg
     | PerformRedirect String
     | DirectPageUpdate
     | SelfOnboardingMsg SelfServiceOnboarding.Msg
+    | WaitlistMsg Waitlist.Msg
 
 
 type alias Flags =
@@ -415,6 +418,7 @@ type PublicPage
     | EligibilityRoute ( Maybe String, Maybe String, Maybe String ) -- Change from String to Maybe String
     | ScheduleRoute ( Maybe String, Maybe String, Maybe String )
     | SelfOnboardingRoute String
+    | WaitlistRoute
 
 
 type ProtectedPage
@@ -483,6 +487,7 @@ routeParser : Parser (Route -> a) a
 routeParser =
     oneOf
         [ map (PublicRoute HomeRoute) top
+        , map (PublicRoute WaitlistRoute) (s "waitlist")
         , map (PublicRoute LoginRoute) (s "login")
         , map (PublicRoute SignupRoute) (s "signup")
         , map (PublicRoute (OnboardingRoute PlanStep)) (s "onboarding" </> s "plan")
@@ -910,6 +915,20 @@ update msg model =
                 _ ->
                     ( model, Cmd.none )
 
+        WaitlistMsg subMsg ->
+            case model.page of
+                WaitlistPage pageModel ->
+                    let
+                        ( newPageModel, newCmd ) =
+                            Waitlist.update subMsg pageModel
+                    in
+                    ( { model | page = WaitlistPage newPageModel }
+                    , Cmd.map WaitlistMsg newCmd
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
+
         GotCurrentUser result ->
             case result of
                 Ok response ->
@@ -1107,6 +1126,15 @@ view model =
             case model.page of
                 NotFoundPage ->
                     viewNotFound
+
+                WaitlistPage waitlistModel ->
+                    let
+                        waitlistView =
+                            Waitlist.view waitlistModel
+                    in
+                    { title = waitlistView.title
+                    , body = [ viewWithNav model (Html.map WaitlistMsg (div [] waitlistView.body)) ]
+                    }
 
                 LoginPage loginModel ->
                     let
@@ -1336,6 +1364,10 @@ viewNavHeader model =
                 SelfOnboardingPage _ ->
                     True
 
+                WaitlistPage _ ->
+                    -- not quote flow, but should have simplified header
+                    True
+
                 _ ->
                     False
     in
@@ -1537,6 +1569,9 @@ subscriptions model =
             case model.page of
                 LoadingPage ->
                     Sub.none
+
+                WaitlistPage pageModel ->
+                    Sub.map WaitlistMsg (Waitlist.subscriptions pageModel)
 
                 LoginPage pageModel ->
                     Sub.map LoginMsg (Login.subscriptions pageModel)
@@ -1907,6 +1942,15 @@ updatePage url ( model, cmd ) =
                                         in
                                         ( { modelWithUpdatedSetup | page = HomePage homeModel }
                                         , Cmd.map HomeMsg homeCmd
+                                        )
+
+                                    PublicRoute WaitlistRoute ->
+                                        let
+                                            ( waitlistModel, waitlistCmd ) =
+                                                Waitlist.init
+                                        in
+                                        ( { modelWithUpdatedSetup | page = WaitlistPage waitlistModel }
+                                        , Cmd.map WaitlistMsg waitlistCmd
                                         )
 
                                     PublicRoute LoginRoute ->
@@ -2567,235 +2611,190 @@ updatePageForcePublic : Url -> ( Model, Cmd Msg ) -> ( Model, Cmd Msg )
 updatePageForcePublic url ( model, cmd ) =
     case Parser.parse routeParser url of
         Just route ->
-            case routeAccessType route of
-                Public ->
-                    -- For public routes, directly initialize the appropriate page
-                    -- without waiting for session checks
-                    case route of
-                        PublicRoute HomeRoute ->
+            case route of
+                PublicRoute HomeRoute ->
+                    let
+                        ( homeModel, homeCmd ) =
+                            Home.init model.key
+                    in
+                    ( { model | page = HomePage homeModel }
+                    , Cmd.map HomeMsg homeCmd
+                    )
+
+                PublicRoute WaitlistRoute ->
+                    let
+                        ( waitlistModel, waitlistCmd ) =
+                            Waitlist.init
+                    in
+                    ( { model | page = WaitlistPage waitlistModel }
+                    , Cmd.map WaitlistMsg waitlistCmd
+                    )
+
+                PublicRoute LoginRoute ->
+                    let
+                        ( loginModel, loginCmd ) =
+                            Login.init model.key False url
+                    in
+                    ( { model | page = LoginPage loginModel }
+                    , Cmd.map LoginMsg loginCmd
+                    )
+
+                PublicRoute SignupRoute ->
+                    let
+                        ( signupModel, signupCmd ) =
+                            Signup.init model.key
+                    in
+                    ( { model | page = Signup signupModel }
+                    , Cmd.map SignupMsg signupCmd
+                    )
+
+                PublicRoute (OnboardingRoute step) ->
+                    case model.page of
+                        OnboardingPage existingModel ->
                             let
-                                ( homeModel, homeCmd ) =
-                                    Home.init model.key
+                                newStep =
+                                    onboardingStepToStep step
+
+                                updatedModel =
+                                    { existingModel | step = newStep }
                             in
-                            ( { model | page = HomePage homeModel }
-                            , Cmd.map HomeMsg homeCmd
+                            ( { model | page = OnboardingPage updatedModel }
+                            , Cmd.map OnboardingMsg (Task.perform (\_ -> Onboarding.InitializeCurrentStep) (Task.succeed ()))
                             )
 
-                        PublicRoute LoginRoute ->
-                            let
-                                ( loginModel, loginCmd ) =
-                                    Login.init model.key False url
-                            in
-                            ( { model | page = LoginPage loginModel }
-                            , Cmd.map LoginMsg loginCmd
-                            )
-
-                        PublicRoute SignupRoute ->
-                            let
-                                ( signupModel, signupCmd ) =
-                                    Signup.init model.key
-                            in
-                            ( { model | page = Signup signupModel }
-                            , Cmd.map SignupMsg signupCmd
-                            )
-
-                        PublicRoute (OnboardingRoute step) ->
-                            -- Check if we already have an onboarding page
-                            case model.page of
-                                OnboardingPage existingModel ->
-                                    -- We already have an onboarding model, update the step and reset initialization flags
-                                    let
-                                        newStep =
-                                            onboardingStepToStep step
-
-                                        updatedModel =
-                                            { existingModel
-                                                | step = newStep
-
-                                                -- Reset initialization flags based on the new step
-                                                , userDetailsInitialized =
-                                                    if newStep == Onboarding.UserDetailsStep then
-                                                        False
-
-                                                    else
-                                                        existingModel.userDetailsInitialized
-                                                , companyDetailsInitialized =
-                                                    if newStep == Onboarding.CompanyDetailsStep then
-                                                        False
-
-                                                    else
-                                                        existingModel.companyDetailsInitialized
-                                                , licensingSettingsInitialized =
-                                                    if newStep == Onboarding.LicensingSettingsStep then
-                                                        False
-
-                                                    else
-                                                        existingModel.licensingSettingsInitialized
-                                                , addAgentsInitialized =
-                                                    if newStep == Onboarding.AddAgentsStep then
-                                                        False
-
-                                                    else
-                                                        existingModel.addAgentsInitialized
-                                                , paymentInitialized =
-                                                    if newStep == Onboarding.PaymentStep then
-                                                        False
-
-                                                    else
-                                                        existingModel.paymentInitialized
-                                                , enterpriseFormInitialized =
-                                                    if newStep == Onboarding.EnterpriseFormStep then
-                                                        False
-
-                                                    else
-                                                        existingModel.enterpriseFormInitialized
-                                            }
-                                    in
-                                    ( { model | page = OnboardingPage updatedModel }
-                                    , Cmd.map OnboardingMsg (Task.perform (\_ -> Onboarding.InitializeCurrentStep) (Task.succeed ()))
-                                    )
-
-                                _ ->
-                                    -- Initialize onboarding without authenticated calls for new users
-                                    let
-                                        ( onboardingModel, onboardingCmd ) =
-                                            Onboarding.init
-                                                model.key
-                                                (model.currentUser
-                                                    |> Maybe.map .organizationSlug
-                                                    |> Maybe.withDefault ""
-                                                )
-                                                (extractSession model.session)
-                                                (onboardingStepToStep step)
-                                    in
-                                    ( { model | page = OnboardingPage onboardingModel }
-                                    , Cmd.map OnboardingMsg onboardingCmd
-                                    )
-
-                        PublicRoute (CompareRoute params) ->
-                            case params.quoteId of
-                                Just quoteId ->
-                                    -- We have a quote ID, which is what we prefer
-                                    let
-                                        ( compareModel, compareCmd ) =
-                                            Compare.init model.key (Just params)
-                                    in
-                                    ( { model | page = ComparePage compareModel }
-                                    , Cmd.map CompareMsg compareCmd
-                                    )
-
-                                Nothing ->
-                                    -- No quote ID, check if we have a valid orgId
-                                    if isValidOrgId params.orgId then
-                                        -- We have a valid orgId but no quoteId, so use the params
-                                        let
-                                            ( compareModel, compareCmd ) =
-                                                Compare.init model.key (Just params)
-                                        in
-                                        ( { model | page = ComparePage compareModel }
-                                        , Cmd.map CompareMsg compareCmd
-                                        )
-
-                                    else
-                                        -- No valid orgId either, redirect to 404
-                                        ( { model | page = NotFoundPage }
-                                        , Nav.pushUrl model.key "/404"
-                                        )
-
-                        PublicRoute (QuoteRoute params) ->
-                            -- First check if there's a valid quoteId
-                            if isValidQuoteId params.quoteId then
-                                let
-                                    initialValues =
-                                        { zipCode = Nothing
-                                        , dateOfBirth = Nothing
-                                        , tobacco = Nothing
-                                        , gender = Nothing
-                                        , quoteId = params.quoteId
-                                        , planType = params.planType
-                                        , orgId = params.orgId -- Pass orgId even if it's Nothing
-                                        }
-
-                                    ( quoteModel, quoteCmd ) =
-                                        Quote.init model.key initialValues
-                                in
-                                ( { model | page = QuotePage quoteModel }
-                                , Cmd.map QuoteMsg quoteCmd
-                                )
-                                -- If there's no valid quoteId, show error
-
-                            else
-                                -- Redirect to an error page or show an error
-                                ( { model | page = NotFoundPage }
-                                , Nav.pushUrl model.key "/error?message=Missing%20or%20invalid%20quote%20ID"
-                                )
-
-                        PublicRoute (EligibilityRoute params) ->
-                            let
-                                ( quoteId, _, orgIdStr ) =
-                                    params
-                            in
-                            if isValidOrgId orgIdStr then
-                                let
-                                    ( eligibilityModel, eligibilityCmd ) =
-                                        Eligibility.init model.key { quoteId = quoteId, orgId = orgIdStr }
-                                in
-                                ( { model | page = EligibilityPage eligibilityModel }
-                                , Cmd.map EligibilityMsg eligibilityCmd
-                                )
-
-                            else
-                                -- Redirect to an error page or show an error
-                                ( { model | page = NotFoundPage }
-                                , Nav.pushUrl model.key "/error?message=Missing%20or%20invalid%20organization%20ID"
-                                )
-
-                        PublicRoute (ScheduleRoute params) ->
-                            let
-                                ( scheduleModel, scheduleCmd ) =
-                                    Schedule.init model.key
-                                        ((\( id, _, _ ) -> id) params)
-                                        ((\( _, status, _ ) -> status) params)
-                            in
-                            ( { model | page = SchedulePage scheduleModel }
-                            , Cmd.map ScheduleMsg scheduleCmd
-                            )
-
-                        PublicRoute (SelfOnboardingRoute orgSlug) ->
-                            let
-                                ( selfOnboardingModel, selfOnboardingCmd ) =
-                                    SelfServiceOnboarding.init model.key url
-                            in
-                            ( { model | page = SelfOnboardingPage selfOnboardingModel }
-                            , Cmd.map SelfOnboardingMsg selfOnboardingCmd
-                            )
-
-                        PublicRoute (VerifyRoute params) ->
-                            -- For verification, we need to make an API call
-                            let
-                                verifyUrl =
-                                    case params of
-                                        VerifyParams orgSlug token ->
-                                            "/api/auth/verify/" ++ orgSlug ++ "/" ++ token
-
-                                verifyCmd =
-                                    Http.get
-                                        { url = verifyUrl
-                                        , expect = Http.expectJson GotVerification verificationDecoder
-                                        }
-                            in
-                            ( model, verifyCmd )
-
-                        -- For any other routes, use the standard updatePage
                         _ ->
-                            updatePage url ( model, cmd )
+                            let
+                                ( onboardingModel, onboardingCmd ) =
+                                    Onboarding.init
+                                        model.key
+                                        (model.currentUser
+                                            |> Maybe.map .organizationSlug
+                                            |> Maybe.withDefault ""
+                                        )
+                                        (extractSession model.session)
+                                        (onboardingStepToStep step)
+                            in
+                            ( { model | page = OnboardingPage onboardingModel }
+                            , Cmd.map OnboardingMsg onboardingCmd
+                            )
 
-                _ ->
-                    -- For protected routes, use the standard updatePage
+                PublicRoute (VerifyRoute params) ->
+                    let
+                        verifyUrl =
+                            case params of
+                                VerifyParams orgSlug token ->
+                                    "/api/auth/verify/" ++ orgSlug ++ "/" ++ token
+                    in
+                    ( model
+                    , Http.get
+                        { url = verifyUrl
+                        , expect = Http.expectJson GotVerification verificationDecoder
+                        }
+                    )
+
+                PublicRoute (CompareRoute params) ->
+                    case params.quoteId of
+                        Just quoteId ->
+                            let
+                                ( compareModel, compareCmd ) =
+                                    Compare.init model.key (Just params)
+                            in
+                            ( { model | page = ComparePage compareModel }
+                            , Cmd.map CompareMsg compareCmd
+                            )
+
+                        Nothing ->
+                            if isValidOrgId params.orgId then
+                                let
+                                    ( compareModel, compareCmd ) =
+                                        Compare.init model.key (Just params)
+                                in
+                                ( { model | page = ComparePage compareModel }
+                                , Cmd.map CompareMsg compareCmd
+                                )
+
+                            else
+                                ( { model | page = NotFoundPage }
+                                , Nav.pushUrl model.key "/404"
+                                )
+
+                PublicRoute (QuoteRoute params) ->
+                    if isValidQuoteId params.quoteId then
+                        let
+                            initialValues =
+                                { zipCode = Nothing
+                                , dateOfBirth = Nothing
+                                , tobacco = Nothing
+                                , gender = Nothing
+                                , quoteId = params.quoteId
+                                , planType = params.planType
+                                , orgId = params.orgId
+                                }
+
+                            ( quoteModel, quoteCmd ) =
+                                Quote.init model.key initialValues
+                        in
+                        ( { model | page = QuotePage quoteModel }
+                        , Cmd.map QuoteMsg quoteCmd
+                        )
+
+                    else
+                        ( { model | page = NotFoundPage }
+                        , Nav.pushUrl model.key "/error?message=Missing%20or%20invalid%20quote%20ID"
+                        )
+
+                PublicRoute (EligibilityRoute params) ->
+                    let
+                        ( quoteId, _, orgIdStr ) =
+                            params
+                    in
+                    if isValidOrgId orgIdStr then
+                        let
+                            ( eligibilityModel, eligibilityCmd ) =
+                                Eligibility.init model.key { quoteId = quoteId, orgId = orgIdStr }
+                        in
+                        ( { model | page = EligibilityPage eligibilityModel }
+                        , Cmd.map EligibilityMsg eligibilityCmd
+                        )
+
+                    else
+                        ( { model | page = NotFoundPage }
+                        , Nav.pushUrl model.key "/error?message=Missing%20or%20invalid%20organization%20ID"
+                        )
+
+                PublicRoute (ScheduleRoute params) ->
+                    let
+                        ( scheduleModel, scheduleCmd ) =
+                            Schedule.init model.key
+                                ((\( id, _, _ ) -> id) params)
+                                ((\( _, status, _ ) -> status) params)
+                    in
+                    ( { model | page = SchedulePage scheduleModel }
+                    , Cmd.map ScheduleMsg scheduleCmd
+                    )
+
+                PublicRoute (SelfOnboardingRoute orgSlug) ->
+                    let
+                        ( selfOnboardingModel, selfOnboardingCmd ) =
+                            SelfServiceOnboarding.init model.key url
+                    in
+                    ( { model | page = SelfOnboardingPage selfOnboardingModel }
+                    , Cmd.map SelfOnboardingMsg selfOnboardingCmd
+                    )
+
+                ProtectedRoute _ ->
                     updatePage url ( model, cmd )
 
+                AdminRoute _ ->
+                    updatePage url ( model, cmd )
+
+                SetupRoute _ ->
+                    updatePage url ( model, cmd )
+
+                NotFound ->
+                    ( { model | page = NotFoundPage }, cmd )
+
         Nothing ->
-            -- For invalid routes, show the not found page
             ( { model | page = NotFoundPage }
             , cmd
             )

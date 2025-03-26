@@ -43,7 +43,6 @@ type ExperienceTab
 type Msg
     = CheckSession
     | GotSessionResponse (Result Http.Error SessionResponse)
-    | NavigateTo String
     | NavigateSignup
     | SetExperienceTab ExperienceTab
     | StartCarousel
@@ -114,20 +113,9 @@ update msg model =
                     , Cmd.none
                     )
 
-        NavigateTo path ->
-            case ( path, model.sessionState ) of
-                ( "/login", Valid ) ->
-                    -- If trying to go to login but already logged in, go to dashboard
-                    ( model, Nav.pushUrl model.key "/dashboard" )
-
-                _ ->
-                    -- Otherwise go to requested path
-                    ( model, Nav.pushUrl model.key path )
-
         NavigateSignup ->
-            -- Direct navigation to onboarding plan
             ( model
-            , Nav.pushUrl model.key "/onboarding/plan"
+            , Nav.pushUrl model.key "/waitlist"
             )
 
         SetExperienceTab tab ->
@@ -201,17 +189,12 @@ view model =
                             ]
                             []
                         ]
-                    , div [ class "flex items-center space-x-2 sm:space-x-4" ]
+                    , div [ class "flex items-center" ]
                         [ button
-                            [ onClick (NavigateTo "/login")
-                            , class "text-gray-600 hover:text-gray-900 px-3 sm:px-4 py-2 text-sm font-medium"
-                            ]
-                            [ text "Log in" ]
-                        , button
                             [ onClick NavigateSignup
-                            , class "bg-[#03045E] text-white px-3 sm:px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#1a1f5f] transition-colors duration-200"
+                            , class "bg-[#03045E] text-white px-4 sm:px-6 py-2 rounded-lg text-sm font-medium hover:bg-[#1a1f5f] transition-colors duration-200"
                             ]
-                            [ text "Sign up" ]
+                            [ text "Join the Waitlist" ]
                         ]
                     ]
                 ]

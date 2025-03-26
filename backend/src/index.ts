@@ -15,6 +15,7 @@ import { createBrandRoutes } from './routes/brand'
 import { quotesRoutes } from './routes/quotes'
 import { createStripeRoutes } from './routes/stripe'
 import { createOnboardingRoutes, cleanupOldOrganizations } from './routes/onboarding'
+import { createWaitlistRoutes } from './routes/waitlist'
 import { errorHandler } from './middleware/error'
 import { getUserFromSession } from './services/auth'
 import { join } from 'path'
@@ -878,6 +879,8 @@ const startServer = async () => {
       .use(scheduleRoutes)
       // Add contacts routes
       .use(contactsRoutes)
+      // Add waitlist routes
+      .use(createWaitlistRoutes())  // Waitlist routes use their own database connection
       // Serve backend static files from public directory
       .use(staticPlugin({
         assets: './public', 
