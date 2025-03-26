@@ -64,8 +64,7 @@ export class Database {
       this.client = createClient({
         url: normalizedUrl,
         authToken: token,
-        // Set high concurrency for parallel operations
-        concurrency: 100
+        concurrency: 50 // Increase concurrency for higher throughput
       })
     }
     
@@ -175,93 +174,122 @@ export class Database {
    */
   static async ensureDatabaseSchema(orgId: string): Promise<void> {
     const orgDb = await Database.getOrgDb(orgId);
-      const tables = [
-        {
-          name: 'contacts',
-          createStatement: `
-            CREATE TABLE IF NOT EXISTS contacts (
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              first_name TEXT NOT NULL,
-              last_name TEXT NOT NULL,
-              email TEXT NOT NULL,
-              current_carrier TEXT NOT NULL,
-              plan_type TEXT NOT NULL,
-              effective_date TEXT NOT NULL,
-              birth_date TEXT NOT NULL,
-              tobacco_user INTEGER NOT NULL,
-              gender TEXT NOT NULL,
-              state TEXT NOT NULL,
-              zip_code TEXT NOT NULL,
-              agent_id INTEGER,
-              last_emailed DATETIME,
-              phone_number TEXT NOT NULL DEFAULT '',
-              created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-              updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-          )`,
-          indexStatements: [
-            `CREATE INDEX IF NOT EXISTS idx_contacts_email ON contacts(email)`,
+    
+    // Define tables and their schema
+    const tables = [
+      {
+        name: 'contacts',
+        createStatement: `
+          CREATE TABLE IF NOT EXISTS contacts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            first_name TEXT NOT NULL,
+            last_name TEXT NOT NULL,
+            email TEXT NOT NULL,
+            current_carrier TEXT NOT NULL,
+            plan_type TEXT NOT NULL,
+            effective_date TEXT NOT NULL,
+            birth_date TEXT NOT NULL,
+            tobacco_user INTEGER NOT NULL,
+            gender TEXT NOT NULL,
+            state TEXT NOT NULL,
+            zip_code TEXT NOT NULL,
+            agent_id INTEGER,
+            last_emailed DATETIME,
+            phone_number TEXT NOT NULL DEFAULT '',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`,
+        indexStatements: [
+          `CREATE INDEX IF NOT EXISTS idx_contacts_email ON contacts(email)`,
           `CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_email_unique ON contacts(LOWER(TRIM(email)))`,
         ],
-        },
-        {
-          name: 'eligibility_answers',
-          createStatement: `CREATE TABLE IF NOT EXISTS eligibility_answers (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            contact_id INTEGER NOT NULL,
-            quote_id TEXT NOT NULL,
-            answers TEXT NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (contact_id) REFERENCES contacts(id)
-          )`,
-          indexStatements: [
-            `CREATE INDEX IF NOT EXISTS idx_eligibility_answers_contact_id ON eligibility_answers(contact_id)`
-          ]
-        },
-        {
-          name: 'contact_events',
-          createStatement: `CREATE TABLE IF NOT EXISTS contact_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            contact_id INTEGER,
-            lead_id INTEGER,
-            event_type TEXT NOT NULL,
-            metadata TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (contact_id) REFERENCES contacts(id),
-            FOREIGN KEY (lead_id) REFERENCES leads(id)
-          )`,
-          indexStatements: [
-            `CREATE INDEX IF NOT EXISTS idx_contact_events_contact_id ON contact_events(contact_id)`,
-            `CREATE INDEX IF NOT EXISTS idx_contact_events_lead_id ON contact_events(lead_id)`,
-            `CREATE INDEX IF NOT EXISTS idx_contact_events_type ON contact_events(event_type)`
-          ]
-        },
-        {
-          name: 'leads',
-          createStatement: `CREATE TABLE IF NOT EXISTS leads (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            email TEXT NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(email)
-          )`,
-          indexStatements: [
-            `CREATE INDEX IF NOT EXISTS idx_leads_email ON leads(email)`
-          ]
-        }
+      },
+      {
+        name: 'eligibility_answers',
+        createStatement: `CREATE TABLE IF NOT EXISTS eligibility_answers (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          contact_id INTEGER NOT NULL,
+          quote_id TEXT NOT NULL,
+          answers TEXT NOT NULL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (contact_id) REFERENCES contacts(id)
+        )`,
+        indexStatements: [
+          `CREATE INDEX IF NOT EXISTS idx_eligibility_answers_contact_id ON eligibility_answers(contact_id)`
+        ]
+      },
+      {
+        name: 'contact_events',
+        createStatement: `CREATE TABLE IF NOT EXISTS contact_events (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          contact_id INTEGER,
+          lead_id INTEGER,
+          event_type TEXT NOT NULL,
+          metadata TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (contact_id) REFERENCES contacts(id),
+          FOREIGN KEY (lead_id) REFERENCES leads(id)
+        )`,
+        indexStatements: [
+          `CREATE INDEX IF NOT EXISTS idx_contact_events_contact_id ON contact_events(contact_id)`,
+          `CREATE INDEX IF NOT EXISTS idx_contact_events_lead_id ON contact_events(lead_id)`,
+          `CREATE INDEX IF NOT EXISTS idx_contact_events_type ON contact_events(event_type)`
+        ]
+      },
+      {
+        name: 'leads',
+        createStatement: `CREATE TABLE IF NOT EXISTS leads (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          email TEXT NOT NULL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(email)
+        )`,
+        indexStatements: [
+          `CREATE INDEX IF NOT EXISTS idx_leads_email ON leads(email)`
+        ]
+      }
     ];
-      
-      for (const table of tables) {
-      const tableExists = await orgDb.fetchOne<{ cnt: number }>(
-            `SELECT COUNT(*) as cnt FROM sqlite_master WHERE type='table' AND name=?`,
-            [table.name]
-      );
-      if (!tableExists || tableExists.cnt === 0) {
-        logger.info(`Creating missing table ${table.name} for org ${orgId}`);
-        await orgDb.execute(table.createStatement);
-            for (const indexStatement of table.indexStatements) {
-          await orgDb.execute(indexStatement);
+    
+    // Get all existing tables in one query for efficiency
+    const existingTables = await orgDb.fetchAll(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name IN (${tables.map(t => `'${t.name}'`).join(', ')})`
+    );
+    
+    // Create a set of existing table names for faster lookup
+    const tableSet = new Set(existingTables.map((row: any) => row.name || row[0]));
+    
+    // Prepare batch operations
+    const batchOperations = [];
+    
+    // Add table creation and index statements for missing tables
+    for (const table of tables) {
+      if (!tableSet.has(table.name)) {
+        logger.info(`Adding schema operations for missing table ${table.name} for org ${orgId}`);
+        
+        // Add create table statement
+        batchOperations.push({
+          sql: table.createStatement,
+          args: []
+        });
+        
+        // Add index statements
+        for (const indexStatement of table.indexStatements) {
+          batchOperations.push({
+            sql: indexStatement,
+            args: []
+          });
         }
       }
+    }
+    
+    // Execute all schema operations in a single batch if there are any
+    if (batchOperations.length > 0) {
+      logger.info(`Executing ${batchOperations.length} schema operations in batch for org ${orgId}`);
+      await orgDb.batch(batchOperations, 'write');
+      logger.info(`Schema setup completed successfully for org ${orgId}`);
+    } else {
+      logger.info(`All required tables already exist for org ${orgId}, no schema changes needed`);
     }
   }
 
@@ -292,6 +320,50 @@ export class Database {
       throw error
     }
   }
+  
+  /**
+   * Execute a batch of SQL statements in an implicit transaction
+   * @param statements Array of SQL statements with args
+   * @param mode Transaction mode (read or write)
+   * @returns Result of the batch operation
+   */
+  async batch(statements: { sql: string, args: any[] }[], mode: 'read' | 'write' = 'write') {
+    try {
+      if (this.isLocal && this.bunDb) {
+        // For local SQLite, implement batch manually with transaction
+        this.bunDb.exec('BEGIN TRANSACTION');
+        const results = [];
+        
+        try {
+          for (const { sql, args } of statements) {
+            const stmt = this.bunDb.prepare(sql);
+            const result = stmt.run(...args);
+            results.push({
+              rows: Array.isArray(result) ? result : result.changes > 0 ? [result] : [],
+              rowsAffected: result.changes
+            });
+          }
+          
+          this.bunDb.exec('COMMIT');
+          return results;
+        } catch (error) {
+          this.bunDb.exec('ROLLBACK');
+          throw error;
+        }
+      } else {
+        // For Turso, use native batch support
+        const batchStatements = statements.map(({ sql, args }) => ({
+          sql,
+          args: args || []
+        }));
+        
+        return await this.client.batch(batchStatements, mode);
+      }
+    } catch (error) {
+      logger.error(`Database batch error: ${error}`);
+      throw error;
+    }
+  }
 
   async fetchAll(sql: string, args: any[] = []) {
     try {
@@ -309,11 +381,6 @@ export class Database {
         return result.rows || []
       }
     } catch (error) {
-      // Check if it's a response too large error
-      if (error instanceof Error && error.message.includes('RESPONSE_TOO_LARGE')) {
-        logger.error('Response too large, try using pagination');
-        throw new Error('Response too large, try using pagination');
-      }
       logger.error(`Database fetchAll error: ${error}`)
       throw error
     }
@@ -391,21 +458,58 @@ export class Database {
   }
 
   /**
-   * Bulk import contacts by merging existing data with new CSV data
-   * Optimized for performance with larger batch sizes, transaction handling,
-   * and reduced network round trips
+   * Bulk import contacts from CSV directly into the database with high concurrency
    */
   static async bulkImportContacts(orgId: string, csvFilePath: string, overwriteExisting: boolean = false): Promise<void> {
     try {
       logger.info(`Starting bulk import for org ${orgId}`);
       
-      // Get organization database connection
-      const orgDb = await Database.getOrgDb(orgId);
-      if (!orgDb) {
-        throw new Error('Failed to get organization database connection');
+      // Get database credentials
+      const mainDb = new Database();
+      const org = await mainDb.fetchOne<{ turso_db_url: string; turso_auth_token: string }>(
+        'SELECT turso_db_url, turso_auth_token FROM organizations WHERE id = ?',
+        [orgId]
+      );
+      
+      if (!org?.turso_db_url || !org?.turso_auth_token) {
+        throw new Error('Organization database not configured');
       }
-
-      // Enhanced column mapping with more variations
+      
+      // Connect to the organization's database 
+      const orgDb = new Database(org.turso_db_url, org.turso_auth_token);
+      logger.info(`Connected to organization database: ${org.turso_db_url}`);
+      
+      // Parse CSV data
+      logger.info(`Reading CSV file: ${csvFilePath}`);
+      const csvContent = await fs.promises.readFile(csvFilePath, 'utf-8');
+      
+      // Parse the CSV content
+      const records: any[] = [];
+      await new Promise<void>((resolve, reject) => {
+        parse(csvContent, {
+          columns: true,
+          skip_empty_lines: true,
+          trim: true
+        }, (err, output) => {
+          if (err) reject(err);
+          else {
+            records.push(...output);
+            resolve();
+          }
+        });
+      });
+      
+      if (records.length === 0) {
+        logger.info('No records found in CSV file, import completed');
+        return;
+      }
+      
+      // Log the first record and its keys to help debug column mapping
+      const firstRecord = records[0];
+      logger.info(`CSV column headers: ${Object.keys(firstRecord).join(', ')}`);
+      logger.info(`First record raw data: ${JSON.stringify(firstRecord)}`);
+      
+      // Column mapping with variations
       const columnMap: Record<string, string> = {
         // First Name variations
         first_name: 'first_name',
@@ -518,8 +622,33 @@ export class Database {
         'agent number': 'agent_id',
         'Agent Number': 'agent_id'
       };
-
-      // Helper function to get field value
+      
+      // Log column mapping analysis
+      const recordKeys = Object.keys(firstRecord);
+      logger.info(`CSV columns found: ${recordKeys.join(', ')}`);
+      
+      const mappedFields = new Set<string>();
+      recordKeys.forEach(key => {
+        const mappedTo = columnMap[key];
+        if (mappedTo) {
+          mappedFields.add(mappedTo);
+          logger.info(`Mapped column '${key}' to '${mappedTo}'`);
+        } else {
+          logger.warn(`No mapping found for column: '${key}'`);
+        }
+      });
+      
+      // Check for missing required fields
+      const requiredFields = ['first_name', 'last_name', 'email', 'effective_date', 'birth_date'];
+      const missingRequired = requiredFields.filter(field => !mappedFields.has(field));
+      if (missingRequired.length > 0) {
+        logger.warn(`Missing required fields in CSV: ${missingRequired.join(', ')}`);
+        if (missingRequired.length >= 3) {
+          throw new Error(`Too many required fields missing from CSV: ${missingRequired.join(', ')}`);
+        }
+      }
+      
+      // Helper function for normalized field value extraction
       const getValue = (record: any, fieldName: string, defaultValue: string = ''): string => {
         // Try all possible mappings
         for (const [key, mappedField] of Object.entries(columnMap)) {
@@ -530,473 +659,173 @@ export class Database {
         // Try direct field name
         return record[fieldName] || defaultValue;
       };
-
-      // Use streaming to parse CSV, improving memory efficiency
-      logger.info(`Streaming CSV file: ${csvFilePath}`);
-      const emailMap = new Map<string, ContactCreate>();
-      let processed = 0;
-      let skipped = 0;
-      let firstRecord = true;
-      let columnHeaders: string[] = [];
-
-      // Stream and process CSV
-      await pipeline(
-        fs.createReadStream(csvFilePath),
-        parse({ columns: true, skip_empty_lines: true, trim: true }),
-        async function* (source) {
-          for await (const record of source) {
-            processed++;
-            
-            // Log first record for debugging
-            if (firstRecord) {
-              columnHeaders = Object.keys(record);
-              logger.info(`CSV column headers: ${columnHeaders.join(', ')}`);
-              logger.info(`First record raw data: ${JSON.stringify(record)}`);
-              
-              // Log column mapping results
-              const mappedFields = new Set<string>();
-              columnHeaders.forEach(key => {
-                const mappedTo = columnMap[key];
-                if (mappedTo) {
-                  mappedFields.add(mappedTo);
-                  logger.info(`Mapped column '${key}' to '${mappedTo}'`);
-                } else {
-                  logger.warn(`No mapping found for column: '${key}'`);
-                }
-              });
-              
-              // Log missing required fields
-              const requiredFields = ['first_name', 'last_name', 'email', 'effective_date', 'birth_date'];
-              const missingRequired = requiredFields.filter(field => !mappedFields.has(field));
-              if (missingRequired.length > 0) {
-                logger.warn(`Missing required fields in CSV: ${missingRequired.join(', ')}`);
-              }
-              firstRecord = false;
-            }
-            
-            try {
-              const contact: ContactCreate = {
-                first_name: getValue(record, 'first_name'),
-                last_name: getValue(record, 'last_name'),
-                email: getValue(record, 'email'),
-                current_carrier: getValue(record, 'current_carrier'),
-                plan_type: getValue(record, 'plan_type'),
-                effective_date: getValue(record, 'effective_date'),
-                birth_date: getValue(record, 'birth_date'),
-                tobacco_user: !!(getValue(record, 'tobacco_user') === '1' || getValue(record, 'tobacco_user').toLowerCase() === 'true'),
-                gender: getValue(record, 'gender'),
-                state: getValue(record, 'state'),
-                zip_code: getValue(record, 'zip_code'),
-                phone_number: getValue(record, 'phone_number'),
-                agent_id: getValue(record, 'agent_id') ? Number(getValue(record, 'agent_id')) : null,
-              };
-              
-              // Log sample data for the first few records
-              if (processed <= 3) {
-                logger.info(`Sample mapped contact data: ${JSON.stringify(contact)}`);
-              }
-              
-              if (!contact.first_name || !contact.last_name || !contact.email || !contact.effective_date || !contact.birth_date) {
-                logger.warn(`Skipping record due to missing required fields: ${JSON.stringify(contact)}`);
-                skipped++;
-                continue;
-              }
-
-              const email = contact.email.toLowerCase().trim();
-              emailMap.set(email, contact);
-            } catch (error) {
-              logger.warn(`Error processing record: ${error}`);
-              skipped++;
-            }
-          }
-        }
-      );
-
-      const emails = Array.from(emailMap.keys());
-      const contactsToInsert = Array.from(emailMap.values());
-      const totalContacts = contactsToInsert.length;
       
-      logger.info(`Processed ${processed} records, valid contacts: ${totalContacts}, skipped: ${skipped}`);
-      
-      // Early exit if no valid contacts
-      if (totalContacts === 0) {
-        logger.info('No valid contacts to import, exiting early');
-        return;
-      }
-
-      // Get existing emails from the database
-      logger.info('Fetching existing emails in a single query');
-      const existingEmailsResult = await orgDb.fetchAll(
-        'SELECT LOWER(TRIM(email)) as email FROM contacts'
-      );
-      const existingEmails = new Set<string>();
-      existingEmailsResult.forEach((row: { email: string }) => 
-        existingEmails.add(row.email.toLowerCase().trim())
-      );
-      
-      logger.info(`Found ${existingEmails.size} existing email addresses`);
-
-      // Split contacts for insert and update
-      const newContacts = contactsToInsert.filter(contact => 
-        !existingEmails.has(contact.email.toLowerCase().trim()));
-      const updateContacts = overwriteExisting 
-        ? contactsToInsert.filter(contact => 
-            existingEmails.has(contact.email.toLowerCase().trim())) 
-        : [];
-        
-      logger.info(`Split contacts: ${newContacts.length} new, ${updateContacts.length} updates`);
-
-      // Function to create insert statements for a batch of contacts
-      const createInsertBatch = (contacts: ContactCreate[]) => {
-        const placeholders = contacts.map(() => 
-          '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)'
-        ).join(',');
-        
-        const values = contacts.flatMap(contact => [
-          contact.first_name,
-          contact.last_name,
-          contact.email.toLowerCase().trim(),
-          contact.current_carrier,
-          contact.plan_type,
-          contact.effective_date,
-          contact.birth_date,
-          contact.tobacco_user ? 1 : 0,
-          contact.gender,
-          contact.state,
-          contact.zip_code,
-          contact.phone_number,
-          contact.agent_id === null ? null : Number(contact.agent_id)
-        ]);
-        
-        return {
-          sql: `INSERT INTO contacts (
-            first_name, last_name, email, current_carrier, plan_type, effective_date,
-            birth_date, tobacco_user, gender, state, zip_code, phone_number, agent_id,
-            created_at, updated_at
-          ) VALUES ${placeholders}`,
-          args: values
-        };
-      };
-
-      // Function to create update statements for a batch of contacts
-      const createUpdateBatch = (contacts: ContactCreate[]) => {
-        return contacts.map(contact => ({
-          sql: `UPDATE contacts SET 
-            first_name = ?, last_name = ?, current_carrier = ?, plan_type = ?, effective_date = ?, 
-            birth_date = ?, tobacco_user = ?, gender = ?, state = ?, zip_code = ?, 
-            phone_number = ?, agent_id = ? 
-            WHERE LOWER(TRIM(email)) = ?`,
-          args: [
-            contact.first_name,
-            contact.last_name,
-            contact.current_carrier,
-            contact.plan_type,
-            contact.effective_date,
-            contact.birth_date,
-            contact.tobacco_user ? 1 : 0,
-            contact.gender,
-            contact.state,
-            contact.zip_code,
-            contact.phone_number,
-            contact.agent_id === null ? null : Number(contact.agent_id),
-            contact.email.toLowerCase().trim()
-          ]
-        }));
-      };
-      
-      // IMPROVED TRANSACTION HANDLING: Process a single chunk with proper transaction handling
-      const processInsertChunk = async (chunk: ContactCreate[], chunkIndex: number, totalChunks: number): Promise<boolean> => {
-        let retryCount = 0;
-        const MAX_RETRIES = 3;
-        const RETRY_DELAY = 1000; // ms
-        
-        while (retryCount < MAX_RETRIES) {
-          let db = null;
-          let tx = null;
-          
-          try {
-            // Get fresh DB connection
-            db = await Database.getOrgDb(orgId);
-            
-            if (db.isLocal && db.bunDb) {
-              // Local SQLite uses standard transaction approach
-              db.bunDb.exec('BEGIN TRANSACTION');
-              const insertStmt = createInsertBatch(chunk);
-              await db.execute(insertStmt.sql, insertStmt.args);
-              db.bunDb.exec('COMMIT');
-            } else {
-              // Turso - use transaction API instead of manual BEGIN/COMMIT
-              tx = await db.client.transaction('write');
-              
-              const insertStmt = createInsertBatch(chunk);
-              await tx.execute(insertStmt);
-              await tx.commit();
-            }
-            
-            logger.info(`✓ [${chunkIndex + 1}/${totalChunks}] Completed insert chunk with ${chunk.length} contacts`);
-            return true;
-          } catch (error) {
-            retryCount++;
-            
-            // Proper transaction rollback
-            if (tx) {
-              try {
-                await tx.rollback();
-              } catch (rollbackError) {
-                logger.warn(`Warning: Rollback failed: ${rollbackError}`);
-              }
-            } else if (db?.isLocal && db.bunDb) {
-              try {
-                db.bunDb.exec('ROLLBACK');
-              } catch (rollbackError) {
-                logger.warn(`Warning: Local rollback failed: ${rollbackError}`);
-              }
-            }
-
-            // Check for unique constraint violations
-            const errorMsg = error instanceof Error ? error.message : String(error);
-            if (errorMsg.includes('UNIQUE constraint failed')) {
-              logger.warn(`Unique constraint violation in chunk ${chunkIndex + 1}, skipping after ${retryCount} attempts`);
-              return false;
-            }
-
-            if (retryCount < MAX_RETRIES) {
-              const delay = RETRY_DELAY * Math.pow(2, retryCount - 1); // Exponential backoff
-              logger.warn(`Retrying chunk ${chunkIndex + 1} after error (attempt ${retryCount}): ${error}`);
-              await new Promise(resolve => setTimeout(resolve, delay));
-            } else {
-              logger.error(`✗ [${chunkIndex + 1}/${totalChunks}] Error in insert chunk after ${MAX_RETRIES} attempts: ${error}`);
-              throw error;
-            }
-          } finally {
-            // Clean up resources
-            if (db && !db.isLocal) {
-              try {
-                if (typeof db.client.close === 'function') {
-                  await db.client.close();
-                }
-              } catch (closeError) {
-                logger.warn(`Warning: Error closing database connection: ${closeError}`);
-              }
-            }
-          }
-        }
-        
-        return false;
-      };
-
-      // Similar function for update operations
-      const processUpdateChunk = async (statements: any[], chunkIndex: number, totalChunks: number): Promise<boolean> => {
-        let retryCount = 0;
-        const MAX_RETRIES = 3;
-        const RETRY_DELAY = 1000; // ms
-        
-        while (retryCount < MAX_RETRIES) {
-          let db = null;
-          let tx = null;
-          
-          try {
-            db = await Database.getOrgDb(orgId);
-            
-            if (db.isLocal && db.bunDb) {
-              // Local SQLite
-              db.bunDb.exec('BEGIN TRANSACTION');
-              
-              for (const stmt of statements) {
-                await db.execute(stmt.sql, stmt.args);
-              }
-              
-              db.bunDb.exec('COMMIT');
-            } else {
-              // Turso - use transaction API
-              tx = await db.client.transaction('write');
-              
-              for (const stmt of statements) {
-                await tx.execute(stmt);
-              }
-              
-              await tx.commit();
-            }
-            
-            logger.info(`✓ [${chunkIndex + 1}/${totalChunks}] Completed update chunk with ${statements.length} contacts`);
-            return true;
-          } catch (error) {
-            retryCount++;
-            
-            // Handle rollback
-            if (tx) {
-              try {
-                await tx.rollback();
-              } catch (rollbackError) {
-                logger.warn(`Warning: Rollback failed: ${rollbackError}`);
-              }
-            } else if (db?.isLocal && db.bunDb) {
-              try {
-                db.bunDb.exec('ROLLBACK');
-              } catch (rollbackError) {
-                logger.warn(`Warning: Local rollback failed: ${rollbackError}`);
-              }
-            }
-
-            if (retryCount < MAX_RETRIES) {
-              const delay = RETRY_DELAY * Math.pow(2, retryCount - 1);
-              logger.warn(`Retrying update chunk ${chunkIndex + 1} after error (attempt ${retryCount}): ${error}`);
-              await new Promise(resolve => setTimeout(resolve, delay));
-            } else {
-              logger.error(`✗ [${chunkIndex + 1}/${totalChunks}] Error in update chunk after ${MAX_RETRIES} attempts: ${error}`);
-              throw error;
-            }
-          } finally {
-            // Clean up resources
-            if (db && !db.isLocal) {
-              try {
-                if (typeof db.client.close === 'function') {
-                  await db.client.close();
-                }
-              } catch (closeError) {
-                logger.warn(`Warning: Error closing database connection: ${closeError}`);
-              }
-            }
-          }
-        }
-        
-        return false;
-      };
-
-      if (newContacts.length > 0 || updateContacts.length > 0) {
-        // Process batch operations with concurrent tasks
-
-        // Process inserts with proper transaction handling
-        if (newContacts.length > 0) {
-          const CONCURRENT_TRANSACTIONS = 20; // Keep high concurrency as requested
-          const ROWS_PER_INSERT = 1000;
-          const totalInsertChunks = Math.ceil(newContacts.length / ROWS_PER_INSERT);
-          
-          logger.info(`Processing ${newContacts.length} inserts concurrently in ${totalInsertChunks} chunks`);
-          
-          const tasks: Promise<boolean>[] = [];
-          const results = { success: 0, failed: 0 };
-          
-          for (let i = 0; i < newContacts.length; i += ROWS_PER_INSERT) {
-            const chunk = newContacts.slice(i, Math.min(i + ROWS_PER_INSERT, newContacts.length));
-            const chunkIndex = Math.floor(i / ROWS_PER_INSERT);
-            
-            // Create task for this chunk with proper completion handling
-            const task = processInsertChunk(chunk, chunkIndex, totalInsertChunks)
-              .then(success => {
-                if (success) results.success++;
-                else results.failed++;
-                
-                // Remove this task from active tasks when done
-                const index = tasks.indexOf(task);
-                if (index > -1) tasks.splice(index, 1);
-                
-                return success;
-              })
-              .catch(error => {
-                results.failed++;
-                logger.error(`Insert chunk ${chunkIndex + 1} failed: ${error}`);
-                
-                // Remove this task from active tasks when done
-                const index = tasks.indexOf(task);
-                if (index > -1) tasks.splice(index, 1);
-                
-                return false;
-              });
-            
-            tasks.push(task);
-            
-            // Wait if we've hit concurrency limit
-            if (tasks.length >= CONCURRENT_TRANSACTIONS) {
-              await Promise.race(tasks);
-            }
-          }
-          
-          // Wait for all remaining tasks to complete
-          if (tasks.length > 0) {
-            await Promise.all(tasks);
-          }
-          
-          logger.info(`Insert operations completed: ${results.success} chunks successful, ${results.failed} chunks failed`);
-        }
-        
-        // Process updates with proper transaction handling
-        if (updateContacts.length > 0) {
-          const CONCURRENT_TRANSACTIONS = 20;
-          const ROWS_PER_UPDATE_BATCH = 2000;
-          const totalUpdateChunks = Math.ceil(updateContacts.length / ROWS_PER_UPDATE_BATCH);
-          
-          logger.info(`Processing ${updateContacts.length} updates concurrently in ${totalUpdateChunks} chunks`);
-          
-          const tasks: Promise<boolean>[] = [];
-          const results = { success: 0, failed: 0 };
-          
-          for (let i = 0; i < updateContacts.length; i += ROWS_PER_UPDATE_BATCH) {
-            const chunk = updateContacts.slice(i, Math.min(i + ROWS_PER_UPDATE_BATCH, updateContacts.length));
-            const chunkIndex = Math.floor(i / ROWS_PER_UPDATE_BATCH);
-            
-            // Create update statements for this chunk
-            const updateStatements = createUpdateBatch(chunk);
-            
-            // Create task for this chunk with proper completion handling
-            const task = processUpdateChunk(updateStatements, chunkIndex, totalUpdateChunks)
-              .then(success => {
-                if (success) results.success++;
-                else results.failed++;
-                
-                // Remove this task from active tasks when done
-                const index = tasks.indexOf(task);
-                if (index > -1) tasks.splice(index, 1);
-                
-                return success;
-              })
-              .catch(error => {
-                results.failed++;
-                logger.error(`Update chunk ${chunkIndex + 1} failed: ${error}`);
-                
-                // Remove this task from active tasks when done
-                const index = tasks.indexOf(task);
-                if (index > -1) tasks.splice(index, 1);
-                
-                return false;
-              });
-            
-            tasks.push(task);
-            
-            // Wait if we've hit concurrency limit
-            if (tasks.length >= CONCURRENT_TRANSACTIONS) {
-              await Promise.race(tasks);
-            }
-          }
-          
-          // Wait for all remaining tasks to complete
-          if (tasks.length > 0) {
-            await Promise.all(tasks);
-          }
-          
-          logger.info(`Update operations completed: ${results.success} chunks successful, ${results.failed} chunks failed`);
-        }
-        
-        // Verify final counts
-        try {
-          const countResult = await orgDb.fetchOne<{ count: number }>(
-            'SELECT COUNT(*) as count FROM contacts'
-          );
-          logger.info(`Final contact count in database: ${countResult?.count || 0}`);
-        } catch (error) {
-          logger.warn(`Could not verify final contact count: ${error}`);
-        }
-        
-        logger.info(`✓ Import Summary:
-• Total contacts processed: ${processed}
-• Valid contacts: ${contactsToInsert.length}
-• New contacts inserted: ${newContacts.length}
-• Existing contacts updated: ${updateContacts.length}
-• Skipped contacts: ${skipped}`);
+      // Get all existing emails if we need to check for duplicates
+      let existingEmails = new Set<string>();
+      if (!overwriteExisting) {
+        logger.info('Fetching existing contacts to check for duplicates');
+        const rows = await orgDb.fetchAll('SELECT LOWER(TRIM(email)) as email FROM contacts');
+        existingEmails = new Set(rows.map((row: any) => row.email || row[0]));
+        logger.info(`Found ${existingEmails.size} existing contacts`);
       }
       
-      logger.info(`Bulk import completed successfully: ${processed} processed, ${contactsToInsert.length} valid contacts, ${skipped} skipped`);
-
+      // Process in larger batches and execute them concurrently
+      const BATCH_SIZE = 1000; // Larger batch size for better throughput
+      const totalBatches = Math.ceil(records.length / BATCH_SIZE);
+      
+      logger.info(`Processing ${records.length} records in ${totalBatches} concurrent batches of up to ${BATCH_SIZE} records each`);
+      
+      // Prepare batch function to be called concurrently
+      const processBatch = async (batchIndex: number): Promise<{added: number, skipped: number}> => {
+        const startIdx = batchIndex * BATCH_SIZE;
+        const endIdx = Math.min(startIdx + BATCH_SIZE, records.length);
+        const batchRecords = records.slice(startIdx, endIdx);
+        
+        let batchAdded = 0;
+        let batchSkipped = 0;
+        
+        // Prepare batch operations
+        const batchOperations: { sql: string, args: any[] }[] = [];
+        
+        for (const record of batchRecords) {
+          try {
+            const contact: ContactCreate = {
+              first_name: getValue(record, 'first_name'),
+              last_name: getValue(record, 'last_name'),
+              email: getValue(record, 'email'),
+              current_carrier: getValue(record, 'current_carrier'),
+              plan_type: getValue(record, 'plan_type'),
+              effective_date: getValue(record, 'effective_date'),
+              birth_date: getValue(record, 'birth_date'),
+              tobacco_user: !!(getValue(record, 'tobacco_user') === '1' || getValue(record, 'tobacco_user').toLowerCase() === 'true'),
+              gender: getValue(record, 'gender'),
+              state: getValue(record, 'state'),
+              zip_code: getValue(record, 'zip_code'),
+              phone_number: getValue(record, 'phone_number'),
+              agent_id: getValue(record, 'agent_id') ? Number(getValue(record, 'agent_id')) : null,
+            };
+            
+            // Log sample data for first few records
+            if (startIdx + batchAdded + batchSkipped < 3) {
+              logger.info(`Sample mapped contact data: ${JSON.stringify(contact)}`);
+            }
+            
+            if (!contact.first_name || !contact.last_name || !contact.email || !contact.effective_date || !contact.birth_date) {
+              batchSkipped++;
+              continue;
+            }
+            
+            const email = contact.email.toLowerCase().trim();
+            
+            // Check if email exists (no synchronization needed since Set is thread-safe for reads)
+            let emailExists = existingEmails.has(email);
+            
+            // Skip if email exists and we're not overwriting
+            if (emailExists && !overwriteExisting) {
+              batchSkipped++;
+              continue;
+            }
+            
+            // Add email to the set to prevent duplicates
+            existingEmails.add(email);
+            
+            // If overwriting is enabled, add delete operation for existing contacts
+            if (overwriteExisting && emailExists) {
+              batchOperations.push({
+                sql: 'DELETE FROM contacts WHERE LOWER(TRIM(email)) = ?',
+                args: [email]
+              });
+            }
+            
+            // Add insert operation
+            batchOperations.push({
+              sql: `
+                INSERT INTO contacts (
+                  first_name, last_name, email, current_carrier, plan_type, effective_date,
+                  birth_date, tobacco_user, gender, state, zip_code, phone_number, agent_id,
+                  created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+              `,
+              args: [
+                contact.first_name,
+                contact.last_name,
+                email,
+                contact.current_carrier,
+                contact.plan_type,
+                contact.effective_date,
+                contact.birth_date,
+                contact.tobacco_user ? 1 : 0,
+                contact.gender,
+                contact.state,
+                contact.zip_code,
+                contact.phone_number,
+                contact.agent_id === null ? null : Number(contact.agent_id)
+              ]
+            });
+            
+            batchAdded++;
+          } catch (error) {
+            batchSkipped++;
+          }
+        }
+        
+        // Execute batch operations with transaction support
+        if (batchOperations.length > 0) {
+          logger.info(`Executing batch ${batchIndex + 1}/${totalBatches} with ${batchOperations.length} operations`);
+          try {
+            await orgDb.batch(batchOperations, 'write');
+            logger.info(`Batch ${batchIndex + 1}/${totalBatches} completed successfully: added ${batchAdded}, skipped ${batchSkipped}`);
+            return { added: batchAdded, skipped: batchSkipped };
+          } catch (error) {
+            logger.error(`Error executing batch ${batchIndex + 1}/${totalBatches}: ${error}`);
+            // Continue with the next batch even if this one failed
+            return { added: 0, skipped: batchRecords.length };
+          }
+        } else {
+          logger.info(`Batch ${batchIndex + 1}/${totalBatches} had no operations to execute`);
+          return { added: 0, skipped: batchRecords.length };
+        }
+      };
+      
+      // Launch all batches concurrently
+      const batchPromises: Promise<{added: number, skipped: number}>[] = [];
+      for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
+        batchPromises.push(processBatch(batchIndex));
+      }
+      
+      // Wait for all batches to complete
+      logger.info(`Launched ${batchPromises.length} concurrent batch operations`);
+      const results = await Promise.allSettled(batchPromises);
+      
+      // Compute total results
+      let totalAdded = 0;
+      let totalSkipped = 0;
+      let totalProcessed = 0;
+      
+      results.forEach((result, index) => {
+        if (result.status === 'fulfilled') {
+          totalAdded += result.value.added;
+          totalSkipped += result.value.skipped;
+        } else {
+          logger.error(`Batch ${index + 1} failed: ${result.reason}`);
+          // Assume all records in this batch were skipped
+          const batchSize = Math.min(BATCH_SIZE, records.length - (index * BATCH_SIZE));
+          totalSkipped += batchSize;
+        }
+      });
+      
+      totalProcessed = totalAdded + totalSkipped;
+      
+      // Update the organization's last update timestamp
+      await mainDb.execute(
+        'UPDATE organizations SET updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+        [orgId]
+      );
+      
+      // Get final count
+      const finalCount = await orgDb.fetchOne<{ count: number }>('SELECT COUNT(*) as count FROM contacts');
+      logger.info(`Bulk import completed for org ${orgId}: processed ${totalProcessed}, added ${totalAdded}, skipped ${totalSkipped}, final count: ${finalCount?.count || 'unknown'}`);
+      
     } catch (error) {
       logger.error(`Bulk import failed: ${error}`);
       throw error;
@@ -1008,111 +837,147 @@ export class Database {
 
   static async ensureOrgSchema(orgDb: Database): Promise<void> {
     try {
-      // Check if contacts table exists
-      const tableExists = await orgDb.fetchOne(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='contacts'"
+      // Get all existing tables at once
+      const existingTables = await orgDb.fetchAll(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('contacts', 'contact_events', 'leads', 'eligibility_answers')"
       );
 
-      if (!tableExists) {
+      // Create a set of existing table names for faster lookup
+      const tableSet = new Set(existingTables.map((row: any) => row.name || row[0]));
+      
+      // Prepare all schema creation statements
+      const schemaOperations = [];
+      
+      // Contacts table
+      if (!tableSet.has('contacts')) {
         logger.info('Creating contacts table schema');
-        // Create contacts table
-        await orgDb.execute(`
-          CREATE TABLE IF NOT EXISTS contacts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            first_name TEXT NOT NULL,
-            last_name TEXT NOT NULL,
-            email TEXT NOT NULL,
-            current_carrier TEXT NOT NULL,
-            plan_type TEXT NOT NULL,
-            effective_date TEXT NOT NULL,
-            birth_date TEXT NOT NULL,
-            tobacco_user INTEGER NOT NULL,
-            gender TEXT NOT NULL,
-            state TEXT NOT NULL,
-            zip_code TEXT NOT NULL,
-            agent_id INTEGER,
-            last_emailed DATETIME,
-            phone_number TEXT NOT NULL DEFAULT '',
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-          )
-        `);
-
-        // Create indexes for contacts table
-        await orgDb.execute(`CREATE INDEX IF NOT EXISTS idx_contacts_email ON contacts(email)`);
-        await orgDb.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_email_unique ON contacts(LOWER(TRIM(email)))`);
+        schemaOperations.push({
+          sql: `
+            CREATE TABLE IF NOT EXISTS contacts (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              first_name TEXT NOT NULL,
+              last_name TEXT NOT NULL,
+              email TEXT NOT NULL,
+              current_carrier TEXT NOT NULL,
+              plan_type TEXT NOT NULL,
+              effective_date TEXT NOT NULL,
+              birth_date TEXT NOT NULL,
+              tobacco_user INTEGER NOT NULL,
+              gender TEXT NOT NULL,
+              state TEXT NOT NULL,
+              zip_code TEXT NOT NULL,
+              agent_id INTEGER,
+              last_emailed DATETIME,
+              phone_number TEXT NOT NULL DEFAULT '',
+              created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+              updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+          `,
+          args: []
+        });
+        
+        // Indexes for contacts table
+        schemaOperations.push({
+          sql: `CREATE INDEX IF NOT EXISTS idx_contacts_email ON contacts(email)`,
+          args: []
+        });
+        
+        schemaOperations.push({
+          sql: `CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_email_unique ON contacts(LOWER(TRIM(email)))`,
+          args: []
+        });
       }
-
-      // Check if contact_events table exists
-      const eventsTableExists = await orgDb.fetchOne(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='contact_events'"
-      );
-
-      if (!eventsTableExists) {
+      
+      // Contact events table
+      if (!tableSet.has('contact_events')) {
         logger.info('Creating contact_events table schema');
-        // Create contact_events table
-        await orgDb.execute(`
-          CREATE TABLE IF NOT EXISTS contact_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            contact_id INTEGER,
-            lead_id INTEGER,
-            event_type TEXT NOT NULL,
-            metadata TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (contact_id) REFERENCES contacts(id),
-            FOREIGN KEY (lead_id) REFERENCES leads(id)
-          )
-        `);
-
-        // Create indexes for contact_events table
-        await orgDb.execute(`CREATE INDEX IF NOT EXISTS idx_contact_events_contact_id ON contact_events(contact_id)`);
-        await orgDb.execute(`CREATE INDEX IF NOT EXISTS idx_contact_events_lead_id ON contact_events(lead_id)`);
-        await orgDb.execute(`CREATE INDEX IF NOT EXISTS idx_contact_events_type ON contact_events(event_type)`);
+        schemaOperations.push({
+          sql: `
+            CREATE TABLE IF NOT EXISTS contact_events (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              contact_id INTEGER,
+              lead_id INTEGER,
+              event_type TEXT NOT NULL,
+              metadata TEXT,
+              created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+              FOREIGN KEY (contact_id) REFERENCES contacts(id),
+              FOREIGN KEY (lead_id) REFERENCES leads(id)
+            )
+          `,
+          args: []
+        });
+        
+        // Indexes for contact_events table
+        schemaOperations.push({
+          sql: `CREATE INDEX IF NOT EXISTS idx_contact_events_contact_id ON contact_events(contact_id)`,
+          args: []
+        });
+        
+        schemaOperations.push({
+          sql: `CREATE INDEX IF NOT EXISTS idx_contact_events_lead_id ON contact_events(lead_id)`,
+          args: []
+        });
+        
+        schemaOperations.push({
+          sql: `CREATE INDEX IF NOT EXISTS idx_contact_events_type ON contact_events(event_type)`,
+          args: []
+        });
       }
-
-      // Check if leads table exists
-      const leadsTableExists = await orgDb.fetchOne(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='leads'"
-      );
-
-      if (!leadsTableExists) {
+      
+      // Leads table
+      if (!tableSet.has('leads')) {
         logger.info('Creating leads table schema');
-        // Create leads table
-        await orgDb.execute(`
-          CREATE TABLE IF NOT EXISTS leads (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            email TEXT NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(email)
-          )
-        `);
-
-        // Create index for leads table
-        await orgDb.execute(`CREATE INDEX IF NOT EXISTS idx_leads_email ON leads(email)`);
+        schemaOperations.push({
+          sql: `
+            CREATE TABLE IF NOT EXISTS leads (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              name TEXT NOT NULL,
+              email TEXT NOT NULL,
+              created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+              UNIQUE(email)
+            )
+          `,
+          args: []
+        });
+        
+        // Index for leads table
+        schemaOperations.push({
+          sql: `CREATE INDEX IF NOT EXISTS idx_leads_email ON leads(email)`,
+          args: []
+        });
       }
-
-      // Check if eligibility_answers table exists
-      const eligibilityTableExists = await orgDb.fetchOne(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='eligibility_answers'"
-      );
-
-      if (!eligibilityTableExists) {
+      
+      // Eligibility answers table
+      if (!tableSet.has('eligibility_answers')) {
         logger.info('Creating eligibility_answers table schema');
-        // Create eligibility_answers table
-        await orgDb.execute(`
-          CREATE TABLE IF NOT EXISTS eligibility_answers (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            contact_id INTEGER NOT NULL,
-            quote_id TEXT NOT NULL,
-            answers TEXT NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (contact_id) REFERENCES contacts(id)
-          )
-        `);
-
-        // Create index for eligibility_answers table
-        await orgDb.execute(`CREATE INDEX IF NOT EXISTS idx_eligibility_answers_contact_id ON eligibility_answers(contact_id)`);
+        schemaOperations.push({
+          sql: `
+            CREATE TABLE IF NOT EXISTS eligibility_answers (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              contact_id INTEGER NOT NULL,
+              quote_id TEXT NOT NULL,
+              answers TEXT NOT NULL,
+              created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+              FOREIGN KEY (contact_id) REFERENCES contacts(id)
+            )
+          `,
+          args: []
+        });
+        
+        // Index for eligibility_answers table
+        schemaOperations.push({
+          sql: `CREATE INDEX IF NOT EXISTS idx_eligibility_answers_contact_id ON eligibility_answers(contact_id)`,
+          args: []
+        });
+      }
+      
+      // Execute all schema operations in a single batch if there are any
+      if (schemaOperations.length > 0) {
+        logger.info(`Executing ${schemaOperations.length} schema operations in batch`);
+        await orgDb.batch(schemaOperations, 'write');
+        logger.info('Schema setup completed successfully');
+      } else {
+        logger.info('All required tables already exist, no schema changes needed');
       }
     } catch (error) {
       logger.error(`Error ensuring org schema: ${error}`);
@@ -1123,90 +988,6 @@ export class Database {
   close() {
     if (this.isLocal && this.bunDb) {
       this.bunDb.close()
-    }
-  }
-
-  /**
-   * Get paginated contacts with total count
-   */
-  async getPaginatedContacts(page: number = 1, limit: number = 100, filters: any = {}): Promise<{ contacts: any[], total: number }> {
-    try {
-      // Build the base query
-      let query = 'SELECT * FROM contacts';
-      let countQuery = 'SELECT COUNT(*) as total FROM contacts';
-      const queryParams: any[] = [];
-      const conditions: string[] = [];
-
-      // Add filter conditions
-      if (filters.search) {
-        conditions.push('(LOWER(first_name) LIKE ? OR LOWER(last_name) LIKE ? OR LOWER(email) LIKE ?)');
-        const searchTerm = `%${filters.search.toLowerCase()}%`;
-        queryParams.push(searchTerm, searchTerm, searchTerm);
-      }
-
-      if (filters.states && filters.states.length > 0) {
-        conditions.push(`state IN (${filters.states.map(() => '?').join(',')})`);
-        queryParams.push(...filters.states);
-      }
-
-      if (filters.carriers && filters.carriers.length > 0) {
-        conditions.push(`current_carrier IN (${filters.carriers.map(() => '?').join(',')})`);
-        queryParams.push(...filters.carriers);
-      }
-
-      if (filters.agents && filters.agents.length > 0) {
-        conditions.push(`agent_id IN (${filters.agents.map(() => '?').join(',')})`);
-        queryParams.push(...filters.agents);
-      }
-
-      // Add WHERE clause if there are conditions
-      if (conditions.length > 0) {
-        const whereClause = ` WHERE ${conditions.join(' AND ')}`;
-        query += whereClause;
-        countQuery += whereClause;
-      }
-
-      // Add pagination
-      const offset = (page - 1) * limit;
-      query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
-      queryParams.push(limit, offset);
-
-      // Get total count
-      const totalResult = await this.fetchOne<{ total: number }>(countQuery, queryParams.slice(0, -2));
-      const total = totalResult?.total || 0;
-
-      // Get paginated results
-      const contacts = await this.fetchAll(query, queryParams);
-
-      return {
-        contacts,
-        total
-      };
-    } catch (error) {
-      logger.error(`Error getting paginated contacts: ${error}`);
-      throw error;
-    }
-  }
-
-  /**
-   * Get available filter options
-   */
-  async getFilterOptions(): Promise<{ carriers: string[], states: string[] }> {
-    try {
-      const carriers = await this.fetchAll(
-        'SELECT DISTINCT current_carrier FROM contacts WHERE current_carrier IS NOT NULL'
-      );
-      const states = await this.fetchAll(
-        'SELECT DISTINCT state FROM contacts WHERE state IS NOT NULL'
-      );
-
-      return {
-        carriers: carriers.map((row: { current_carrier: string }) => row.current_carrier).filter(Boolean),
-        states: states.map((row: { state: string }) => row.state).filter(Boolean)
-      };
-    } catch (error) {
-      logger.error(`Error getting filter options: ${error}`);
-      throw error;
     }
   }
 }
@@ -1234,7 +1015,7 @@ export async function getUserFromSession(request: any): Promise<any> {
         if (typeof cookieHeader === 'string') {
           sessionCookie = cookieHeader.split(';')
             .find((c: string) => c.trim().startsWith('session='))
-      ?.split('=')[1];
+            ?.split('=')[1];
         }
       }
     }
@@ -1244,16 +1025,45 @@ export async function getUserFromSession(request: any): Promise<any> {
       return null;
     }
 
-    const user = await db.query(
-      'SELECT * FROM users WHERE session_id = ? AND session_expires > datetime("now")',
+    // Log the session ID for debugging
+    logger.info(`Session lookup result: ${JSON.stringify(await db.fetchOne('SELECT * FROM sessions WHERE id = ?', [sessionCookie]))}`);
+    
+    // Check if the session exists and hasn't expired
+    const session = await db.fetchOne<{ id: string, user_id: number, expires_at: string, created_at: string }>(
+      'SELECT * FROM sessions WHERE id = ?',
       [sessionCookie]
     );
 
-    if (!user || user.length === 0) {
-      logger.info('No valid user session found');
+    if (!session) {
+      logger.info('No valid session found');
       return null;
     }
-    return user[0];
+
+    // Check if session has expired
+    const expiresAt = new Date(session.expires_at);
+    const now = new Date();
+    
+    logger.info(`Session expires: ${expiresAt}, current time: ${now}`);
+    
+    if (expiresAt < now) {
+      logger.info('Session has expired');
+      return null;
+    }
+
+    // Get the user associated with the session
+    const user = await db.fetchOne(
+      'SELECT u.*, o.name as organization_name FROM users u JOIN organizations o ON u.organization_id = o.id WHERE u.id = ?',
+      [session.user_id]
+    );
+
+    logger.info(`User lookup result: ${JSON.stringify(user)}`);
+
+    if (!user) {
+      logger.info('No user found for session');
+      return null;
+    }
+    
+    return user;
   } catch (error) {
     logger.error(`Error getting user from session: ${error}`);
     return null;

@@ -461,72 +461,7 @@ const startServer = async () => {
       })
       // Add health check endpoint
       .get('/health', () => ({ status: 'OK' }))
-      .get('/api/contacts', async ({ request }) => {
-        try {
-          const user = await getUserFromSession(request)
-          if (!user?.organization_id) {
-            throw new Error('No organization ID found in session')
-          }
-
-          logger.info(`GET /api/contacts - Attempting to fetch contacts for org ${user.organization_id}`)
-          
-          // Get org-specific database
-          const orgDb = await Database.getOrgDb(user.organization_id.toString())
-
-          // Get pagination params from URL
-          const url = new URL(request.url)
-          const page = parseInt(url.searchParams.get('page') || '1', 10)
-          const limit = parseInt(url.searchParams.get('limit') || '100', 10)
-          
-          // Get search and filter params
-          const filters = {
-            search: url.searchParams.get('search') || '',
-            carriers: (url.searchParams.get('carriers') || '').split(',').filter(Boolean),
-            states: (url.searchParams.get('states') || '').split(',').filter(Boolean),
-            agents: (url.searchParams.get('agents') || '').split(',')
-              .filter(Boolean)
-              .map(id => parseInt(id, 10))
-          }
-
-          // Get paginated contacts
-          const { contacts, total } = await orgDb.getPaginatedContacts(page, limit, filters)
-
-          // Get filter options
-          const filterOptions = await orgDb.getFilterOptions()
-
-          // Map contacts to the expected format
-          const mappedContacts = contacts.map(contact => ({
-            id: contact.id,
-            first_name: contact.first_name,
-            last_name: contact.last_name,
-            email: contact.email,
-            current_carrier: contact.current_carrier,
-            plan_type: contact.plan_type,
-            effective_date: contact.effective_date,
-            birth_date: contact.birth_date,
-            tobacco_user: Boolean(contact.tobacco_user),
-            gender: contact.gender,
-            state: contact.state,
-            zip_code: contact.zip_code,
-            agent_id: contact.agent_id,
-            last_emailed: contact.last_emailed,
-            phone_number: contact.phone_number || ''
-          }))
-
-          logger.info(`GET /api/contacts - Returning ${mappedContacts.length} contacts (page ${page} of ${Math.ceil(total / limit)})`)
-          
-          return {
-            contacts: mappedContacts,
-            filterOptions,
-            total,
-            page,
-            limit
-          }
-        } catch (e) {
-          logger.error(`Error in GET /api/contacts: ${e}`)
-          throw new Error(String(e))
-        }
-      })
+      // GET /api/contacts is now handled by the contactsRoutes module
       .get('/api/contacts/check-email/:email', async ({ params: { email }, request }) => {
         try {
           const user = await getUserFromSession(request)

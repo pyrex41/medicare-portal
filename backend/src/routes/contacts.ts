@@ -22,13 +22,211 @@ type Context = {
   set: { status: number };
   body: { overwriteExisting?: boolean };
   params: { orgId: string };
+  query: Record<string, string | undefined>;
 };
 
 /**
  * Contacts API endpoints
  */
 export const contactsRoutes = new Elysia({ prefix: '/api/contacts' })
-  .guard({ beforeHandle: [Database.getUserFromSession] }, app => app
+  .guard({
+    beforeHandle: [
+      async ({ request, store }) => {
+        const user = await Database.getUserFromSession(request);
+        if (user) {
+          store.user = user;
+        }
+      }
+    ]
+  }, app => app
+    
+    // Get paginated contacts with filtering
+    .get('/', async ({ query, store, set }: Context) => {
+      const user = store.user;
+      if (!user || !user.organization_id) {
+        set.status = 401;
+        return { error: 'Not authorized' };
+      }
+
+      try {
+        // Get parameters from query
+        const page = parseInt(query?.page as string) || 1;
+        const limit = parseInt(query?.limit as string) || 50;
+        
+        // Handle filters - either from a JSON string or from individual parameters
+        let filters = {};
+        if (query?.filters) {
+          try {
+            filters = JSON.parse(query.filters as string);
+          } catch (e) {
+            logger.warn(`Failed to parse filters JSON: ${query.filters}`);
+          }
+        }
+        
+        // Also handle individual filter parameters
+        const search = query?.search;
+        const statesParam = query?.states;
+        const carriersParam = query?.carriers;
+        const agentsParam = query?.agents;
+        
+        if (search) filters.name = search;
+        if (statesParam) filters.state = statesParam;
+        if (carriersParam) filters.carrier = carriersParam;
+        
+        logger.info(`GET /api/contacts - Fetching page ${page}, limit ${limit}, filters: ${JSON.stringify(filters)}, search: ${search}, states: ${statesParam}, carriers: ${carriersParam}, agents: ${agentsParam}`);
+        
+        // Get organization database
+        const orgDb = await Database.getOrgDb(user.organization_id.toString());
+        logger.info(`GET /api/contacts - Connected to organization database for org ${user.organization_id}`);
+        
+        // Implement pagination directly with SQL
+        const offsetValue = (page - 1) * limit;
+        
+        // Build the WHERE clause based on provided filters
+        let whereClause = '1=1'; // Default condition (all records)
+        const queryParams: any[] = [];
+        
+        if (filters) {
+          // Handle search/name filter
+          if (filters.name) {
+            whereClause += ' AND (first_name LIKE ? OR last_name LIKE ?)';
+            queryParams.push(`%${filters.name}%`, `%${filters.name}%`);
+          }
+          
+          // Handle email filter
+          if (filters.email) {
+            whereClause += ' AND email LIKE ?';
+            queryParams.push(`%${filters.email}%`);
+          }
+          
+          // Handle state filter (could be a single state or an array)
+          if (filters.state) {
+            if (Array.isArray(filters.state) && filters.state.length > 0) {
+              // For arrays of states, create an IN clause
+              const placeholders = filters.state.map(() => '?').join(', ');
+              whereClause += ` AND state IN (${placeholders})`;
+              queryParams.push(...filters.state);
+            } else if (typeof filters.state === 'string' && filters.state.includes(',')) {
+              // Handle comma-separated string of states
+              const states = filters.state.split(',').map(s => s.trim()).filter(Boolean);
+              if (states.length > 0) {
+                const placeholders = states.map(() => '?').join(', ');
+                whereClause += ` AND state IN (${placeholders})`;
+                queryParams.push(...states);
+              }
+            } else if (typeof filters.state === 'string' && filters.state.trim() !== '') {
+              // Handle single state
+              whereClause += ' AND state = ?';
+              queryParams.push(filters.state);
+            }
+          }
+          
+          // Handle carrier filter (could be a single carrier or an array)
+          if (filters.carrier) {
+            if (Array.isArray(filters.carrier) && filters.carrier.length > 0) {
+              // For arrays of carriers, we need multiple LIKE conditions
+              const likeConditions = filters.carrier.map(() => 'current_carrier LIKE ?').join(' OR ');
+              whereClause += ` AND (${likeConditions})`;
+              queryParams.push(...filters.carrier.map(c => `%${c}%`));
+            } else if (typeof filters.carrier === 'string' && filters.carrier.includes(',')) {
+              // Handle comma-separated string of carriers
+              const carriers = filters.carrier.split(',').map(c => c.trim()).filter(Boolean);
+              if (carriers.length > 0) {
+                const likeConditions = carriers.map(() => 'current_carrier LIKE ?').join(' OR ');
+                whereClause += ` AND (${likeConditions})`;
+                queryParams.push(...carriers.map(c => `%${c}%`));
+              }
+            } else if (typeof filters.carrier === 'string' && filters.carrier.trim() !== '') {
+              // Handle single carrier
+              whereClause += ' AND current_carrier LIKE ?';
+              queryParams.push(`%${filters.carrier}%`);
+            }
+          }
+          
+          // Handle agent filter
+          if (filters.agents) {
+            if (Array.isArray(filters.agents) && filters.agents.length > 0) {
+              // For arrays of agent IDs
+              const placeholders = filters.agents.map(() => '?').join(', ');
+              whereClause += ` AND agent_id IN (${placeholders})`;
+              queryParams.push(...filters.agents);
+            } else if (typeof filters.agents === 'string' && filters.agents.includes(',')) {
+              // Handle comma-separated string of agent IDs
+              const agentIds = filters.agents.split(',').map(a => parseInt(a.trim())).filter(a => !isNaN(a));
+              if (agentIds.length > 0) {
+                const placeholders = agentIds.map(() => '?').join(', ');
+                whereClause += ` AND agent_id IN (${placeholders})`;
+                queryParams.push(...agentIds);
+              }
+            } else if (typeof filters.agents === 'string' || typeof filters.agents === 'number') {
+              // Handle single agent ID
+              whereClause += ' AND agent_id = ?';
+              queryParams.push(parseInt(filters.agents as string));
+            }
+          }
+        }
+        
+        // Log the final SQL query
+        logger.info(`GET /api/contacts - WHERE clause: ${whereClause}, params: ${JSON.stringify(queryParams)}`);
+        
+        
+        // Get total count
+        const countResult = await orgDb.fetchOne(
+          `SELECT COUNT(*) as total FROM contacts WHERE ${whereClause}`,
+          queryParams
+        );
+        const total = countResult?.total || 0;
+        logger.info(`GET /api/contacts - Found total of ${total} contacts`);
+        
+        // Get paginated contacts
+        const contacts = await orgDb.fetchAll(
+          `SELECT * FROM contacts WHERE ${whereClause} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+          [...queryParams, limit, offsetValue]
+        );
+        logger.info(`GET /api/contacts - Retrieved ${contacts.length} contacts for this page`);
+        
+        // Map contacts to the expected format
+        const mappedContacts = contacts.map(contact => ({
+          id: contact.id,
+          first_name: contact.first_name,
+          last_name: contact.last_name,
+          email: contact.email,
+          current_carrier: contact.current_carrier,
+          plan_type: contact.plan_type,
+          effective_date: contact.effective_date,
+          birth_date: contact.birth_date,
+          tobacco_user: Boolean(contact.tobacco_user),
+          gender: contact.gender,
+          state: contact.state,
+          zip_code: contact.zip_code,
+          agent_id: contact.agent_id,
+          last_emailed: contact.last_emailed,
+          phone_number: contact.phone_number || ''
+        }));
+
+        // Create filter options from the available data
+        const filterOptions = {
+          carriers: [...new Set(contacts.map(c => c.current_carrier).filter(Boolean))],
+          states: [...new Set(contacts.map(c => c.state).filter(Boolean))]
+        };
+
+        // Format the response to match what the frontend expects
+        const response = {
+          contacts: mappedContacts,
+          filterOptions,
+          total,
+          page,
+          limit
+        };
+        
+        logger.info(`GET /api/contacts - Sending response with ${mappedContacts.length} contacts, total: ${total}`);
+        return response;
+      } catch (error) {
+        logger.error(`Error in GET /api/contacts: ${error}`);
+        set.status = 500;
+        return { error: 'Failed to fetch contacts' };
+      }
+    })
     
     // Bulk import contacts from CSV
     .post('/bulk-import',
@@ -58,57 +256,36 @@ export const contactsRoutes = new Elysia({ prefix: '/api/contacts' })
 
           logger.info(`CSV file saved to ${tempFilePath}, starting import`);
 
-          try {
-            await Database.bulkImportContacts(
-              user.organization_id.toString(), 
-              tempFilePath, 
-              body.overwriteExisting || false
-            );
+          // Start the import process in the background with high priority
+          const importPromise = Database.bulkImportContacts(
+            user.organization_id.toString(), 
+            tempFilePath, 
+            body.overwriteExisting || false
+          );
 
-            await fs.rm(tempDir, { recursive: true, force: true });
+          // Handle promise completion to clean up temp files and log results
+          importPromise
+            .then(() => {
+              logger.info(`Import completed successfully for organization ${user.organization_id}`);
+              return fs.rm(tempDir, { recursive: true, force: true });
+            })
+            .catch((error: Error) => {
+              logger.error(`Background import failed for organization ${user.organization_id}: ${error}`);
+              return fs.rm(tempDir, { recursive: true, force: true }).catch(() => {
+                logger.error(`Failed to clean up temp directory ${tempDir}`);
+              });
+            });
 
-            return { 
-              success: true, 
-              message: 'Contacts imported successfully',
-              error_csv: null,
-              converted_carriers_csv: null,
-              total_rows: 0,
-              error_rows: 0,
-              valid_rows: 0,
-              converted_carrier_rows: 0,
-              supported_carriers: []
-            };
-          } catch (error) {
-            await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
-            throw error;
-          }
+          return { 
+            success: true, 
+            message: 'Started import of contacts',
+            organizationId: user.organization_id
+          };
         } catch (error) {
           const err = error as Error;
           logger.error(`Error in bulk import: ${err}`);
           set.status = 500;
           return { error: 'Failed to process import: ' + err.message };
-        }
-      }
-    )
-    
-    // Add route to delete all contacts
-    .delete('/all',
-      async ({ store, set }: Context) => {
-        const user = store.user;
-        if (!user || !user.organization_id || !user.is_admin) {
-          set.status = 401;
-          return { error: 'Not authorized to delete all contacts' };
-        }
-
-        try {
-          const orgDb = await Database.getOrgDb(user.organization_id.toString());
-          await orgDb.execute('DELETE FROM contacts');
-          return { success: true, message: 'All contacts deleted successfully' };
-        } catch (error) {
-          const err = error as Error;
-          logger.error(`Error deleting all contacts: ${err}`);
-          set.status = 500;
-          return { error: 'Failed to delete contacts: ' + err.message };
         }
       }
     )
