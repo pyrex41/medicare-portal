@@ -660,14 +660,10 @@ export class Database {
         return record[fieldName] || defaultValue;
       };
       
-      // Get all existing emails if we need to check for duplicates
-      let existingEmails = new Set<string>();
-      if (!overwriteExisting) {
-        logger.info('Fetching existing contacts to check for duplicates');
-        const rows = await orgDb.fetchAll('SELECT LOWER(TRIM(email)) as email FROM contacts');
-        existingEmails = new Set(rows.map((row: any) => row.email || row[0]));
-        logger.info(`Found ${existingEmails.size} existing contacts`);
-      }
+      // We don't need to fetch all existing emails anymore since we're using SQL's built-in duplicate handling
+      // Just create a set to track emails within each batch to avoid duplicates in the same import batch
+      const processedEmails = new Set<string>();
+      logger.info("Using SQLite's built-in UPSERT capability to handle duplicates");
       
       // Process in larger batches and execute them concurrently
       const BATCH_SIZE = 1000; // Larger batch size for better throughput
@@ -717,30 +713,23 @@ export class Database {
             
             const email = contact.email.toLowerCase().trim();
             
-            // Check if email exists (no synchronization needed since Set is thread-safe for reads)
-            let emailExists = existingEmails.has(email);
-            
-            // Skip if email exists and we're not overwriting
-            if (emailExists && !overwriteExisting) {
+            // We still need to prevent duplicates within the same batch or import
+            // to avoid constraint violations
+            if (processedEmails.has(email)) {
               batchSkipped++;
               continue;
             }
             
-            // Add email to the set to prevent duplicates
-            existingEmails.add(email);
+            // Add email to the set to prevent duplicates within this import
+            processedEmails.add(email);
             
-            // If overwriting is enabled, add delete operation for existing contacts
-            if (overwriteExisting && emailExists) {
-              batchOperations.push({
-                sql: 'DELETE FROM contacts WHERE LOWER(TRIM(email)) = ?',
-                args: [email]
-              });
-            }
+            // Use the faster approach with SQLite's INSERT OR REPLACE/IGNORE
+            const insertOp = overwriteExisting ? 'REPLACE' : 'IGNORE';
             
-            // Add insert operation
+            // Single operation instead of multiple operations
             batchOperations.push({
               sql: `
-                INSERT INTO contacts (
+                INSERT OR ${insertOp} INTO contacts (
                   first_name, last_name, email, current_carrier, plan_type, effective_date,
                   birth_date, tobacco_user, gender, state, zip_code, phone_number, agent_id,
                   created_at, updated_at
@@ -857,7 +846,7 @@ export class Database {
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               first_name TEXT NOT NULL,
               last_name TEXT NOT NULL,
-              email TEXT NOT NULL,
+              email TEXT NOT NULL UNIQUE,
               current_carrier TEXT NOT NULL,
               plan_type TEXT NOT NULL,
               effective_date TEXT NOT NULL,
