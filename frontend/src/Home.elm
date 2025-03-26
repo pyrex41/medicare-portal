@@ -191,58 +191,58 @@ view model =
     { title = "Medicare Max - Renew Your Medigap Clients on Autopilot"
     , body =
         [ div [ class "min-h-screen bg-white" ]
-            [ nav [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6" ]
+            [ nav [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-6" ]
                 [ div [ class "flex justify-between items-center" ]
                     [ div [ class "flex items-center" ]
                         [ img
                             [ src "/images/medicare-max-logo.png"
-                            , class "h-8 w-auto"
+                            , class "h-6 sm:h-8 w-auto"
                             , alt "Medicare Max logo"
                             ]
                             []
                         ]
-                    , div [ class "flex items-center space-x-4" ]
+                    , div [ class "flex items-center space-x-2 sm:space-x-4" ]
                         [ button
                             [ onClick (NavigateTo "/login")
-                            , class "text-gray-600 hover:text-gray-900 px-4 py-2 text-sm font-medium"
+                            , class "text-gray-600 hover:text-gray-900 px-3 sm:px-4 py-2 text-sm font-medium"
                             ]
                             [ text "Log in" ]
                         , button
                             [ onClick NavigateSignup
-                            , class "bg-[#03045E] text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#1a1f5f] transition-colors duration-200"
+                            , class "bg-[#03045E] text-white px-3 sm:px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#1a1f5f] transition-colors duration-200"
                             ]
                             [ text "Sign up" ]
                         ]
                     ]
                 ]
-            , div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-16 pb-32" ]
-                [ div [ class "grid grid-cols-1 lg:grid-cols-2 gap-16 items-center" ]
-                    [ div [ class "relative bg-white rounded-2xl p-8 lg:p-12" ]
-                        [ div [ class "inline-flex items-center rounded-full bg-[#F9F5FF] px-3 py-1 mb-8" ]
-                            [ div [ class "bg-[#03045E] rounded-full px-2.5 py-0.5" ]
-                                [ span [ class "text-sm font-medium text-white" ] [ text "Old book of business?" ]
+            , div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8 sm:pt-16 pb-16 sm:pb-32" ]
+                [ div [ class "grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-16 items-center" ]
+                    [ div [ class "relative bg-white rounded-2xl p-6 sm:p-8 lg:p-12" ]
+                        [ div [ class "inline-flex items-center rounded-full bg-[#F9F5FF] px-2 sm:px-3 py-1 mb-6 sm:mb-8" ]
+                            [ div [ class "bg-[#03045E] rounded-full px-2 sm:px-2.5 py-0.5" ]
+                                [ span [ class "text-xs sm:text-sm font-medium text-white" ] [ text "Old book of business?" ]
                                 ]
                             , div [ class "flex items-center ml-2" ]
-                                [ span [ class "text-sm font-medium text-[#03045E]" ] [ text "Renew with ease" ]
+                                [ span [ class "text-xs sm:text-sm font-medium text-[#03045E]" ] [ text "Renew with ease" ]
                                 , span [ class "ml-1 text-[#03045E]" ] [ text "→" ]
                                 ]
                             ]
                         , h1
-                            [ class "text-4xl lg:text-5xl xl:text-6xl tracking-tight font-semibold text-[#141B29] leading-[1.2]" ]
+                            [ class "text-3xl sm:text-4xl lg:text-5xl xl:text-6xl tracking-tight font-semibold text-[#141B29] leading-[1.2]" ]
                             [ text "Renew Your Medigap Clients on Autopilot" ]
                         , p
-                            [ class "mt-6 text-lg text-[#475467] leading-[1.5]" ]
+                            [ class "mt-4 sm:mt-6 text-base sm:text-lg text-[#475467] leading-[1.5]" ]
                             [ text "Our AI-powered system handles client outreach, quotes, health underwriting, and e-apps — magically resetting your residuals so you can focus on growing your book." ]
-                        , div [ class "mt-10" ]
+                        , div [ class "mt-6 sm:mt-10" ]
                             [ button
                                 [ onClick NavigateSignup
-                                , class "inline-flex items-center px-6 py-4 rounded-lg text-lg font-semibold text-white bg-[#03045E] hover:bg-[#1a1f5f] transition-colors duration-200"
+                                , class "w-full sm:w-auto inline-flex items-center justify-center px-4 sm:px-6 py-3 sm:py-4 rounded-lg text-base sm:text-lg font-semibold text-white bg-[#03045E] hover:bg-[#1a1f5f] transition-colors duration-200"
                                 ]
                                 [ text "Join the Waitlist" ]
                             ]
                         ]
-                    , div [ class "relative bg-[#F9F5FF] rounded-2xl p-8 lg:p-12" ]
-                        [ div [ class "mx-auto  w-full relative rounded-lg overflow-hidden" ]
+                    , div [ class "relative bg-white rounded-2xl p-4 sm:p-8 lg:p-12" ]
+                        [ div [ class "mx-auto w-full relative rounded-lg overflow-hidden" ]
                             [ img
                                 [ src "/images/hero.png"
                                 , class "w-full"
@@ -253,34 +253,34 @@ view model =
                         ]
                     ]
                 ]
-            , div [ class "bg-white py-16" ]
+            , div [ class "bg-white py-8 sm:py-16" ]
                 [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8" ]
-                    [ div [ class "mb-12 text-left" ]
-                        [ span [ class "text-[#03045E] font-semibold text-base" ] [ text "It's quite simple" ]
-                        , h2 [ class "mt-3 text-3xl sm:text-4xl font-semibold text-gray-900" ] [ text "Here's how it works" ]
-                        , p [ class "mt-4 text-lg text-gray-600" ] [ text "3 easy steps to setup your book and automate your retention." ]
+                    [ div [ class "mb-8 sm:mb-12 text-left" ]
+                        [ span [ class "text-[#03045E] font-semibold text-sm sm:text-base" ] [ text "It's quite simple" ]
+                        , h2 [ class "mt-2 sm:mt-3 text-2xl sm:text-3xl md:text-4xl font-semibold text-gray-900" ] [ text "Here's how it works" ]
+                        , p [ class "mt-2 sm:mt-4 text-base sm:text-lg text-gray-600" ] [ text "3 easy steps to setup your book and automate your retention." ]
                         ]
-                    , div [ class "grid grid-cols-1 md:grid-cols-3 gap-8 mt-16" ]
-                        [ div [ class "bg-[#F9FAFB] p-6 rounded-lg" ]
-                            [ div [ class "bg-[#03045E] w-12 h-12 flex items-center justify-center rounded-lg mb-6" ]
+                    , div [ class "grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-8 mt-8 sm:mt-16" ]
+                        [ div [ class "bg-[#F9FAFB] p-4 sm:p-6 rounded-lg" ]
+                            [ div [ class "bg-[#03045E] w-10 sm:w-12 h-10 sm:h-12 flex items-center justify-center rounded-lg mb-4 sm:mb-6" ]
                                 [ lightning 24 "#FFFFFF"
                                 ]
-                            , h3 [ class "text-xl font-semibold text-gray-900 text-left" ] [ text "Upload" ]
-                            , p [ class "mt-2 text-gray-600 text-left" ] [ text "Upload your book of business effortlessly. Our system tracks policy age, renewal windows, and client details automatically." ]
+                            , h3 [ class "text-lg sm:text-xl font-semibold text-gray-900 text-left" ] [ text "Upload" ]
+                            , p [ class "mt-2 text-sm sm:text-base text-gray-600 text-left" ] [ text "Upload your book of business effortlessly. Our system tracks policy age, renewal windows, and client details automatically." ]
                             ]
-                        , div [ class "bg-[#F9FAFB] p-6 rounded-lg" ]
-                            [ div [ class "bg-[#03045E] w-12 h-12 flex items-center justify-center rounded-lg mb-6" ]
+                        , div [ class "bg-[#F9FAFB] p-4 sm:p-6 rounded-lg" ]
+                            [ div [ class "bg-[#03045E] w-10 sm:w-12 h-10 sm:h-12 flex items-center justify-center rounded-lg mb-4 sm:mb-6" ]
                                 [ envelope 24 "#FFFFFF"
                                 ]
-                            , h3 [ class "text-xl font-semibold text-gray-900 text-left" ] [ text "Engage" ]
-                            , p [ class "mt-2 text-gray-600 text-left" ] [ text "Clients receive personalized quotes showing your preferred carriers, underwriting pre-checks, and renewal options at key moments—without manual outreach." ]
+                            , h3 [ class "text-lg sm:text-xl font-semibold text-gray-900 text-left" ] [ text "Engage" ]
+                            , p [ class "mt-2 text-sm sm:text-base text-gray-600 text-left" ] [ text "Clients receive personalized quotes showing your preferred carriers, underwriting pre-checks, and renewal options at key moments—without manual outreach." ]
                             ]
-                        , div [ class "bg-[#F9FAFB] p-6 rounded-lg" ]
-                            [ div [ class "bg-[#03045E] w-12 h-12 flex items-center justify-center rounded-lg mb-6" ]
+                        , div [ class "bg-[#F9FAFB] p-4 sm:p-6 rounded-lg" ]
+                            [ div [ class "bg-[#03045E] w-10 sm:w-12 h-10 sm:h-12 flex items-center justify-center rounded-lg mb-4 sm:mb-6" ]
                                 [ brightArrow 24 "#FFFFFF"
                                 ]
-                            , h3 [ class "text-xl font-semibold text-gray-900 text-left" ] [ text "Retain & Reset" ]
-                            , p [ class "mt-2 text-gray-600 text-left" ] [ text "Clients complete 95% of the underwriting and application on their own. You simply verify details in a quick 5-minute call and submit the application." ]
+                            , h3 [ class "text-lg sm:text-xl font-semibold text-gray-900 text-left" ] [ text "Retain & Reset" ]
+                            , p [ class "mt-2 text-sm sm:text-base text-gray-600 text-left" ] [ text "Clients complete 95% of the underwriting and application on their own. You simply verify details in a quick 5-minute call and submit the application." ]
                             ]
                         ]
                     ]
@@ -440,21 +440,21 @@ view model =
                         ]
                     ]
                 ]
-            , footer [ class "bg-[#141B29] text-white py-16" ]
+            , footer [ class "bg-[#141B29] text-white py-8 sm:py-16" ]
                 [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8" ]
-                    [ div [ class "flex flex-col md:flex-row justify-between pb-12" ]
-                        [ div [ class "mb-8 md:mb-0" ]
+                    [ div [ class "flex flex-col md:flex-row justify-between pb-8 sm:pb-12" ]
+                        [ div [ class "mb-6 md:mb-0" ]
                             [ div [ class "flex items-center" ]
-                                [ img [ src "/images/whiteIcon.svg", class "h-8 w-auto", alt "Medicare Max logo" ] []
+                                [ img [ src "/images/whiteIcon.svg", class "h-6 sm:h-8 w-auto", alt "Medicare Max logo" ] []
                                 ]
-                            , p [ class "mt-4 text-[#94969C]" ] [ text "Retention technology that has your back." ]
+                            , p [ class "mt-3 sm:mt-4 text-sm sm:text-base text-[#94969C]" ] [ text "Retention technology that has your back." ]
                             ]
-                        , div [ class "flex gap-8" ]
-                            [ a [ href "#", class "text-[#94969C] hover:text-white" ] [ text "Overview" ]
-                            , a [ href "#", class "text-[#94969C] hover:text-white" ] [ text "Contact" ]
+                        , div [ class "flex gap-4 sm:gap-8" ]
+                            [ a [ href "#", class "text-sm sm:text-base text-[#94969C] hover:text-white" ] [ text "Overview" ]
+                            , a [ href "#", class "text-sm sm:text-base text-[#94969C] hover:text-white" ] [ text "Contact" ]
                             ]
                         ]
-                    , div [ class "border-t border-[#1F242F] pt-8 text-[#94969C]" ]
+                    , div [ class "border-t border-[#1F242F] pt-6 sm:pt-8 text-[#94969C] text-sm sm:text-base" ]
                         [ p [] [ text "© 2025 Medicare Max. All rights reserved." ] ]
                     ]
                 ]
@@ -496,11 +496,11 @@ phoneContentClass activeTab tab =
 
 featureCard : String -> String -> Svg Msg -> Html Msg
 featureCard title description icon =
-    div [ class "bg-white p-6 rounded-lg shadow-md" ]
-        [ div [ class "w-12 h-12 mx-auto mb-6" ]
+    div [ class "bg-white p-4 sm:p-6 rounded-lg shadow-md" ]
+        [ div [ class "w-10 sm:w-12 h-10 sm:h-12 mx-auto mb-4 sm:mb-6" ]
             [ icon ]
-        , h3 [ class "text-xl font-semibold text-gray-900 text-center" ] [ text title ]
-        , p [ class "mt-2 text-gray-600 text-center" ] [ text description ]
+        , h3 [ class "text-lg sm:text-xl font-semibold text-gray-900 text-center" ] [ text title ]
+        , p [ class "mt-2 text-sm sm:text-base text-gray-600 text-center" ] [ text description ]
         ]
 
 
@@ -510,17 +510,17 @@ faqItem question answer model =
         isExpanded =
             Set.member question model.expandedFaqs
     in
-    div [ class "py-6" ]
+    div [ class "py-4 sm:py-6" ]
         [ div
             [ class "flex justify-between items-start cursor-pointer group"
             , onClick (ToggleFaq question)
             ]
-            [ h3 [ class "text-lg font-medium text-gray-900 group-hover:text-gray-700 transition-colors duration-200" ] [ text question ]
+            [ h3 [ class "text-base sm:text-lg font-medium text-gray-900 group-hover:text-gray-700 transition-colors duration-200" ] [ text question ]
             , button
-                [ class "ml-6 h-7 w-7 flex items-center justify-center rounded-full group-hover:bg-gray-100 transition-colors duration-200"
+                [ class "ml-4 sm:ml-6 h-6 sm:h-7 w-6 sm:w-7 flex items-center justify-center rounded-full group-hover:bg-gray-100 transition-colors duration-200"
                 ]
                 [ span
-                    [ class "text-gray-500 text-xl transition-transform duration-200"
+                    [ class "text-gray-500 text-lg sm:text-xl transition-transform duration-200"
                     , style "transform"
                         (if isExpanded then
                             "rotate(180deg)"
@@ -540,7 +540,7 @@ faqItem question answer model =
                 ]
             ]
         , div
-            [ class "mt-2 text-gray-600 overflow-hidden transition-all duration-300 ease-in-out"
+            [ class "mt-2 text-sm sm:text-base text-gray-600 overflow-hidden transition-all duration-300 ease-in-out"
             , style "max-height"
                 (if isExpanded then
                     "500px"
