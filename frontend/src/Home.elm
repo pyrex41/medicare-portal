@@ -178,8 +178,8 @@ view : Model -> Browser.Document Msg
 view model =
     { title = "Medicare Max - Renew Your Medigap Clients on Autopilot"
     , body =
-        [ div [ class "min-h-screen bg-white" ]
-            [ nav [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-6" ]
+        [ div [ class "min-h-screen bg-white snap-y snap-mandatory overflow-y-auto h-screen scroll-smooth" ]
+            [ nav [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-6 sticky top-0 z-50 bg-white" ]
                 [ div [ class "flex justify-between items-center" ]
                     [ div [ class "flex items-center" ]
                         [ img
@@ -198,14 +198,14 @@ view model =
                         ]
                     ]
                 ]
-            , div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8 sm:pt-16 pb-16 sm:pb-32" ]
+            , div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8 sm:pt-16 pb-16 sm:pb-32 min-h-screen flex items-center snap-start" ]
                 [ div [ class "grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-16 items-center" ]
-                    [ div [ class "relative bg-white rounded-2xl p-6 sm:p-8 lg:p-12" ]
-                        [ div [ class "inline-flex items-center rounded-full bg-[#F9F5FF] px-2 sm:px-3 py-1 mb-6 sm:mb-8" ]
-                            [ div [ class "bg-[#03045E] rounded-full px-2 sm:px-2.5 py-0.5" ]
-                                [ span [ class "text-xs sm:text-sm font-medium text-white" ] [ text "Old book of business?" ]
+                    [ div [ class "relative" ]
+                        [ div [ class "inline-flex items-center rounded-full bg-[#F9F5FF] px-0 sm:px-0 py-1 mb-6 sm:mb-8" ]
+                            [ div [ class "bg-[#03045E] rounded-full px-3 sm:px-3.5 py-1" ]
+                                [ span [ class "text-xs sm:text-sm text-white" ] [ text "Old book of business?" ]
                                 ]
-                            , div [ class "flex items-center ml-2" ]
+                            , div [ class "flex items-center px-2 sm:px-3" ]
                                 [ span [ class "text-xs sm:text-sm font-medium text-[#03045E]" ] [ text "Renew with ease" ]
                                 , span [ class "ml-1 text-[#03045E]" ] [ text "→" ]
                                 ]
@@ -224,7 +224,7 @@ view model =
                                 [ text "Join the Waitlist" ]
                             ]
                         ]
-                    , div [ class "relative bg-white rounded-2xl p-4 sm:p-8 lg:p-12" ]
+                    , div [ class "relative" ]
                         [ div [ class "mx-auto w-full relative rounded-lg overflow-hidden" ]
                             [ img
                                 [ src "/images/hero.png"
@@ -236,7 +236,7 @@ view model =
                         ]
                     ]
                 ]
-            , div [ class "bg-white py-8 sm:py-16" ]
+            , div [ class "bg-white py-8 sm:py-16 min-h-screen flex items-center snap-start" ]
                 [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8" ]
                     [ div [ class "mb-8 sm:mb-12 text-left" ]
                         [ span [ class "text-[#03045E] font-semibold text-sm sm:text-base" ] [ text "It's quite simple" ]
@@ -268,15 +268,67 @@ view model =
                         ]
                     ]
                 ]
-            , div [ class "py-16 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8" ]
-                [ div [ class "text-left mb-10" ]
+            , div [ class "py-16 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 min-h-screen flex flex-col justify-center snap-start" ]
+                [ div [ class "text-left mb-10 max-w-3xl" ]
                     [ h2 [ class "text-3xl sm:text-4xl font-semibold text-gray-900" ]
                         [ text "Your Client's Personalized Experience" ]
-                    , p [ class "mt-3 text-base text-gray-600 max-w-3xl" ]
+                    , p [ class "mt-3 text-base sm:text-lg text-gray-600" ]
                         [ text "Hover over each section to see what your client will experience along their journey to resetting the clock." ]
                     ]
-                , div [ class "flex flex-col lg:flex-row gap-8 lg:gap-12 items-start" ]
-                    [ div [ class "w-full lg:w-3/5 space-y-8" ]
+                , div [ class "relative" ]
+                    [ div [ class "absolute right-0 top-0 lg:-mt-40 lg:-mr-4 z-0" ]
+                        [ div
+                            [ class "relative h-[650px] w-[340px] lg:w-[380px] lg:h-[770px] rounded-[40px] transform lg:rotate-[3deg] overflow-hidden"
+                            ]
+                            [ div [ class (phoneContentClass model.activeExperienceTab Email) ]
+                                [ img
+                                    [ src "/images/email.jpeg"
+                                    , class "absolute inset-0 w-full h-full object-cover rounded-[40px]"
+                                    , alt "Personalized email preview"
+                                    ]
+                                    []
+                                ]
+                            , div [ class (phoneContentClass model.activeExperienceTab Quote) ]
+                                [ img
+                                    [ src "/images/quote.jpeg"
+                                    , class "absolute inset-0 w-full h-full object-cover rounded-[40px]"
+                                    , alt "Medicare quote comparison"
+                                    ]
+                                    []
+                                ]
+                            , div [ class (phoneContentClass model.activeExperienceTab Underwriting) ]
+                                [ img
+                                    [ src "/images/underwriting.jpeg"
+                                    , class "absolute inset-0 w-full h-full object-cover rounded-[40px]"
+                                    , alt "Underwriting and scheduling interface"
+                                    ]
+                                    []
+                                ]
+                            , div
+                                [ class "absolute inset-0 pointer-events-none z-10"
+                                , style "box-shadow" "inset 0 0 25px 20px #F9FAFB"
+                                , style "border-radius" "40px"
+                                ]
+                                []
+                            , div
+                                [ class "absolute bottom-0 left-0 right-0 h-[30%] pointer-events-none"
+                                , style "background" "linear-gradient(to top, #F9FAFB 0%, rgba(249, 250, 251, 0) 100%)"
+                                ]
+                                []
+                            , div
+                                [ class "absolute top-0 left-0 right-0 h-[20%] pointer-events-none"
+                                , style "background" "linear-gradient(to bottom, #F9FAFB 0%, rgba(249, 250, 251, 0) 100%)"
+                                ]
+                                []
+                            , div
+                                [ class "absolute -left-[50px] -right-[50px] -bottom-[50px] h-[100px] pointer-events-none"
+                                , style "background" "#F9FAFB"
+                                , style "filter" "blur(40px)"
+                                ]
+                                []
+                            ]
+                        ]
+                    , div [ class "relative w-full lg:w-3/5 space-y-8 z-10" ]
                         [ div
                             [ class (experienceTabClass model.activeExperienceTab Email)
                             , onMouseEnter (SetExperienceTab Email)
@@ -308,37 +360,9 @@ view model =
                                 [ text "Your client answers a few quick health questions and picks a time that works best for them—keeping the process smooth, secure, and completely on their terms." ]
                             ]
                         ]
-                    , div [ class "w-full lg:w-2/5 flex items-center justify-end" ]
-                        [ div [ class "relative w-full max-w-[450px] h-auto" ]
-                            [ div [ class (phoneContentClass model.activeExperienceTab Email) ]
-                                [ img
-                                    [ src "/images/email.png"
-                                    , class "w-full object-contain rounded-xl"
-                                    , alt "Personalized email preview"
-                                    ]
-                                    []
-                                ]
-                            , div [ class (phoneContentClass model.activeExperienceTab Quote) ]
-                                [ img
-                                    [ src "/images/quote.png"
-                                    , class "w-full object-contain rounded-xl"
-                                    , alt "Medicare quote comparison"
-                                    ]
-                                    []
-                                ]
-                            , div [ class (phoneContentClass model.activeExperienceTab Underwriting) ]
-                                [ img
-                                    [ src "/images/underwriting.png"
-                                    , class "w-full object-contain rounded-xl"
-                                    , alt "Underwriting and scheduling interface"
-                                    ]
-                                    []
-                                ]
-                            ]
-                        ]
                     ]
                 ]
-            , div [ class "bg-white py-16" ]
+            , div [ class "bg-[#F9FAFB] py-16 min-h-screen flex items-center snap-start" ]
                 [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center" ]
                     [ span [ class "text-[#03045E] font-semibold text-base" ] [ text "Features" ]
                     , h2 [ class "mt-3 text-3xl sm:text-4xl font-semibold text-gray-900" ] [ text "All you need to reset your commissions" ]
@@ -353,13 +377,15 @@ view model =
                         ]
                     ]
                 ]
-            , div [ class "py-24 bg-white" ]
-                [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8" ]
-                    [ div [ class "flex flex-col lg:flex-row gap-12 items-center relative" ]
-                        [ div [ class "w-full lg:w-1/2 space-y-8 z-10" ]
+            , div [ class "py-20 md:py-28 bg-white relative overflow-hidden min-h-screen flex items-center snap-start" ]
+                [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-20 w-full" ]
+                    [ div [ class "relative w-full min-h-[700px] flex items-center" ]
+                        [ div [ class "absolute inset-0 z-0" ]
+                            [ img [ src "/images/flap.png", class "w-full h-full object-contain object-right translate-x-20", alt "Dashboard interface" ] [] ]
+                        , div [ class "relative z-10 max-w-lg p-8 rounded-lg" ]
                             [ h2 [ class "text-4xl font-semibold text-gray-900" ]
                                 [ text "It's like keeping money in your pocket." ]
-                            , div [ class "space-y-4 pl-4" ]
+                            , div [ class "space-y-4 mt-6" ]
                                 [ div [ class "flex gap-3 items-start" ]
                                     [ div [ class "text-[#03045E] text-xl" ] [ text "✓" ]
                                     , p [ class "text-lg text-gray-600" ] [ text "White-Labeled Tools" ]
@@ -373,7 +399,7 @@ view model =
                                     , p [ class "text-lg text-gray-600" ] [ text "Automated Retention" ]
                                     ]
                                 ]
-                            , div [ class "mt-10" ]
+                            , div [ class "mt-8" ]
                                 [ button
                                     [ onClick NavigateSignup
                                     , class "inline-flex items-center px-6 py-3 rounded-lg text-base font-medium text-white bg-[#03045E] hover:bg-[#1a1f5f] transition-colors duration-200"
@@ -381,12 +407,10 @@ view model =
                                     [ text "Join the Waitlist" ]
                                 ]
                             ]
-                        , div [ class "w-full lg:w-3/4 lg:absolute lg:-right-12 lg:top-1/2 lg:transform lg:-translate-y-1/2" ]
-                            [ img [ src "/images/flap.png", class "w-full h-auto rounded-lg", alt "Dashboard interface" ] [] ]
                         ]
                     ]
                 ]
-            , div [ class "py-16" ]
+            , div [ class "py-16 min-h-screen flex items-center snap-start" ]
                 [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8" ]
                     [ div [ class "text-center mb-12" ]
                         [ h2 [ class "text-3xl sm:text-4xl font-semibold text-gray-900" ] [ text "Frequently asked questions" ]
@@ -406,12 +430,8 @@ view model =
                             "Yes, all communications are white-labeled and will appear to come directly from you. You can customize the email sender name and signature to maintain your personal brand and relationship with your clients."
                             model
                         ]
-                    ]
-                ]
-            , div [ class "py-16 bg-white" ]
-                [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8" ]
-                    [ div [ class "bg-white rounded-lg p-12 text-center max-w-3xl mx-auto" ]
-                        [ h2 [ class "text-3xl font-semibold text-gray-900" ] [ text "Want to be notified on launch day?" ]
+                    , div [ class "mt-16 text-center" ]
+                        [ h3 [ class "text-2xl font-semibold text-gray-900" ] [ text "Want to be notified on launch day?" ]
                         , p [ class "mt-4 text-lg text-gray-600" ] [ text "Join agents all across the US ready to reset their books." ]
                         , div [ class "mt-8" ]
                             [ button
@@ -423,7 +443,7 @@ view model =
                         ]
                     ]
                 ]
-            , footer [ class "bg-[#141B29] text-white py-8 sm:py-16" ]
+            , footer [ class "bg-[#141B29] text-white py-8 sm:py-16 snap-start" ]
                 [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8" ]
                     [ div [ class "flex flex-col md:flex-row justify-between pb-8 sm:pb-12" ]
                         [ div [ class "mb-6 md:mb-0" ]
@@ -479,8 +499,8 @@ phoneContentClass activeTab tab =
 
 featureCard : String -> String -> Svg Msg -> Html Msg
 featureCard title description icon =
-    div [ class "bg-white p-4 sm:p-6 rounded-lg shadow-md" ]
-        [ div [ class "w-10 sm:w-12 h-10 sm:h-12 mx-auto mb-4 sm:mb-6" ]
+    div [ class "bg-[#F9FAFB] p-4 sm:p-6 rounded-lg" ]
+        [ div [ class "w-10 sm:w-12 h-10 sm:h-12 mx-auto mb-4 sm:mb-6 rounded-lg flex items-center justify-center shadow-md" ]
             [ icon ]
         , h3 [ class "text-lg sm:text-xl font-semibold text-gray-900 text-center" ] [ text title ]
         , p [ class "mt-2 text-sm sm:text-base text-gray-600 text-center" ] [ text description ]
