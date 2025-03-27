@@ -93,7 +93,39 @@ try {
     }
   })
 
-
+  // Setup IntersectionObserver for phone section
+  if (app.ports && app.ports.viewingPhone) {
+    // Wait for the DOM to be fully rendered
+    setTimeout(() => {
+      // Find the phone section container - being more specific with the selector
+      const phoneSection = document.querySelector('.relative.h-\\[400px\\].w-\\[280px\\].rounded-\\[30px\\].overflow-hidden')
+      
+      if (phoneSection) {
+        console.log('Found phone section, setting up IntersectionObserver')
+        
+        // Create an observer
+        const observer = new IntersectionObserver((entries) => {
+          entries.forEach(entry => {
+            // When the section becomes visible, send true through the port
+            if (entry.isIntersecting) {
+              console.log('Phone section is now visible')
+              app.ports.viewingPhone.send(true)
+            } else {
+              console.log('Phone section is no longer visible')
+              app.ports.viewingPhone.send(false)
+            }
+          })
+        }, {
+          threshold: 0.2 // Fire when at least 20% of the element is visible
+        })
+        
+        // Start observing the phone section
+        observer.observe(phoneSection)
+      } else {
+        console.warn('Could not find phone section for carousel')
+      }
+    }, 1000) // Give the app time to render
+  }
   
   // Stripe integration ports
   if (app.ports) {
