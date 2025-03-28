@@ -209,7 +209,7 @@ update msg model =
 
 view : Model -> Browser.Document Msg
 view model =
-    { title = "Medicare Max - Renew Your Medigap Clients on Autopilot"
+    { title = "Medicare Max - Boost Your Medigap Renewals with AI"
     , body =
         [ div [ class "min-h-screen bg-white md:snap-y md:snap-mandatory overflow-y-auto h-screen scroll-smooth" ]
             [ nav [ class "max-w-7xl mx-auto px-6 sm:px-6 lg:px-8 py-4 sm:py-6 sticky top-0 z-50 bg-white hidden xl:block" ]
@@ -266,7 +266,7 @@ view model =
                             ]
                         , h1
                             [ class "text-3xl sm:text-4xl lg:text-5xl xl:text-6xl tracking-tight font-semibold text-[#141B29] leading-[1.2] text-center sm:text-left" ]
-                            [ text "Renew Your Medigap Clients on Autopilot" ]
+                            [ text "Boost Your Medigap Renewals with AI" ]
                         , p
                             [ class "mt-4 sm:mt-6 text-base sm:text-lg text-[#475467] leading-[1.5] text-center sm:text-left" ]
                             [ text "Our AI-powered system handles client outreach, quotes, health underwriting, and e-apps — magically resetting your residuals so you can focus on growing your book." ]
