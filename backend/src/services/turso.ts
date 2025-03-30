@@ -3,6 +3,7 @@ import { TURSO_CONFIG } from '../config/turso';
 import { logger } from '../logger';
 import { config } from '../config'
 import fetch from 'node-fetch'
+import * as fs from 'fs';
 
 // Use non-null assertion since we check these values immediately
 const TURSO_DB_URL = config.TURSO_DATABASE_URL!;
@@ -66,6 +67,141 @@ export class TursoService {
     this.client = tursoClient;
     
     logger.info('TursoService initialized with API token')
+  }
+
+  async createDatabaseForImport(orgId: string): Promise<{dbName: string, url: string, token: string}> {
+    const dbName = `org-${orgId}-${Date.now()}`
+
+    try {
+      // Create database
+      logger.info(`Creating Turso database for org ${orgId} with name ${dbName}`)
+      const createResponse = await fetch(`https://api.turso.tech/v1/organizations/${TURSO_CONFIG.ORG_SLUG}/databases`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.apiToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: dbName,
+          group: TURSO_CONFIG.GROUP_NAME,
+          "seed": { "type": "database_upload" }
+        }),
+      })
+
+      const newDbData = await fetch(`https://api.turso.tech/v1/organizations/${TURSO_CONFIG.ORG_SLUG}/databases/${dbName}`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${this.apiToken}`,
+        },
+      })
+
+      const newDbDataJson = await newDbData.json() as any
+      const newDbUrl = newDbDataJson.database.Hostname
+
+      const tokenResponse = await fetch(`https://api.turso.tech/v1/organizations/${TURSO_CONFIG.ORG_SLUG}/databases/${dbName}/auth/tokens`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.apiToken}`,
+        },
+      })
+
+      const newTokenData = await tokenResponse.json() as any
+      const newToken = newTokenData.jwt
+
+      // Verify the database is available by checking the databases list
+      let dbFound = false;
+      let attempts = 0;
+      const maxAttempts = 5;
+      
+      while (!dbFound && attempts < maxAttempts) {
+        const listResponse = await fetch(`https://api.turso.tech/v1/organizations/${TURSO_CONFIG.ORG_SLUG}/databases`, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${this.apiToken}`,
+          }
+        });
+        
+        if (listResponse.ok) {
+          const data = await listResponse.json();
+          dbFound = data.databases.some((db: any) => db.Name === dbName);
+          
+          if (!dbFound) {
+            logger.info(`Database ${dbName} not found in list, waiting 1 second before retry (attempt ${attempts + 1}/${maxAttempts})`);
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            attempts++;
+          }
+        } else {
+          logger.warn(`Failed to list databases, status: ${listResponse.status}`);
+          break;
+        }
+      }
+      
+      if (!dbFound) {
+        logger.warn(`Database ${dbName} not found in databases list after ${maxAttempts} attempts, continuing anyway`);
+      } else {
+        logger.info(`Database ${dbName} confirmed in databases list`);
+      }
+
+      return {
+        dbName: dbName,
+        url: newDbUrl,
+        token: newToken,
+      }
+    } catch (error) {
+      logger.error(`Error creating database for import: ${error instanceof Error ? error.message : String(error)}`)
+      throw error
+    }
+  }
+
+  async uploadDatabase(dbName: string, authToken: string, filePath: string): Promise<any> {
+    try {
+      // Strip file: protocol if present
+      const normalizedPath = filePath.replace(/^file:/, '');
+      
+      logger.info(`Attempting to upload database from file: ${normalizedPath}`);
+      
+      // Verify file exists before attempting upload
+      if (!fs.existsSync(normalizedPath)) {
+        const error = new Error(`File not found at path: ${normalizedPath}`);
+        logger.error(`Upload failed - ${error.message}`);
+        throw error;
+      }
+
+      const uploadUrl = `https://${dbName}-${TURSO_CONFIG.ORG_SLUG}.turso.io/v1/upload`;
+      logger.info(`Uploading to URL: ${uploadUrl}`);
+
+      const response = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${authToken}`,
+        },
+        body: fs.createReadStream(normalizedPath),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        logger.error(`Failed to upload database (status ${response.status}): ${errorText}`);
+        
+        // Log headers for debugging
+        const headers: Record<string, string> = {};
+        response.headers.forEach((value, key) => {
+          headers[key] = value;
+        });
+        logger.error(`Response headers: ${JSON.stringify(headers)}`);
+        
+        throw new Error(`Failed to upload database: ${errorText}`);
+      }
+      
+      const result = await response.json();
+      logger.info(`Upload successful: ${JSON.stringify(result)}`);
+      return result;
+    } catch (error: unknown) {
+      logger.error(`Error uploading database: ${error instanceof Error ? error.message : String(error)}`);
+      if (error instanceof Error && error.stack) {
+        logger.error(`Stack trace: ${error.stack}`);
+      }
+      throw error;
+    }
   }
 
   async createOrganizationDatabase(orgId: string): Promise<{url: string, token: string}> {
@@ -317,7 +453,7 @@ export class TursoService {
         } catch (error) {
           // If there's an error with the contacts table missing updated_at, add it
           if (tableStatement.includes('contacts') && 
-              error.toString().includes('no column named updated_at')) {
+              (error as Error).toString().includes('no column named updated_at')) {
             logger.warn('Error creating contacts table, attempting to fix missing updated_at column');
             
             // Add the updated_at column if it's missing
@@ -393,7 +529,7 @@ export class TursoService {
           }
         } catch (error) {
           // Check if this is the updated_at missing error
-          if (!checkedUpdatedAt && error.toString().includes('no column named updated_at')) {
+          if (!checkedUpdatedAt && (error as Error).toString().includes('no column named updated_at')) {
             updatedAtMissing = true;
             checkedUpdatedAt = true;
             logger.warn('Detected missing updated_at column in contacts table, will attempt to fix INSERT statements');
@@ -459,6 +595,7 @@ export class TursoService {
       throw error;
     }
   }
+  
 
   private handleError(error: unknown): never {
     logger.error(`Turso service error: ${error instanceof Error ? error.message : String(error)}`);

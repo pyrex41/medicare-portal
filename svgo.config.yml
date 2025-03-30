@@ -1,0 +1,28 @@
+plugins:
+  - removeDimensions
+  - removeViewBox
+  - cleanupIDs
+  - removeRasterImages
+  - removeUselessDefs
+  - removeNonInheritableGroupAttrs
+  - removeUselessStrokeAndFill
+  - convertStyleToAttrs
+  - removeDuplicateElements
+  - removeAttrs:
+      attrs:
+        - class
+        - data-name
+        - fill-rule
+        - clip-rule
+  - convertColors:
+      currentColor: false
+      names2hex: true
+      rgb2hex: true
+      shorthex: true
+  - convertPathData:
+      noSpaceAfterFlags: false
+  - cleanupNumericValues:
+      floatPrecision: 2
+      leadingZero: true
+      defaultPx: true
+      convertToPx: true 

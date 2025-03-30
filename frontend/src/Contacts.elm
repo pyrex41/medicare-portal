@@ -7,10 +7,16 @@ module Contacts exposing
     , view
     )
 
+-- Proper imports for CSV parsing
+
 import Browser
 import Browser.Events
 import Browser.Navigation as Nav
 import Components.LimitBanner as LimitBanner
+import Csv.Decode as CsvDecode
+import Csv.Parser as CsvParser
+import CsvProcessor exposing (CarrierMapping, ColumnMapping, extractHeaders, extractUniqueValues, processCsvToContacts, suggestCarrierMappings, suggestColumnMappings)
+import Dict exposing (Dict)
 import File exposing (File)
 import File.Download
 import File.Select as Select
@@ -172,6 +178,12 @@ type alias UploadState =
     , stats : Maybe UploadStats
     , overwriteDuplicates : Bool
     , selectedAgentId : Maybe Int
+    , columnMapping : Maybe ColumnMapping
+    , carrierMapping : Maybe CarrierMapping
+    , detectedCarriers : List String
+    , csvHeaders : List String
+    , processingHeaders : Bool
+    , extractingCarriers : Bool
     }
 
 
@@ -233,6 +245,34 @@ type alias PaginationState =
     , totalPages : Int
     , totalItems : Int
     , itemsPerPage : Int
+    }
+
+
+type alias ColumnMapping =
+    { firstName : String
+    , lastName : String
+    , email : String
+    , phoneNumber : String
+    , state : String
+    , currentCarrier : String
+    , effectiveDate : String
+    , birthDate : String
+    , tobaccoUser : String
+    , gender : String
+    , zipCode : String
+    , planType : String
+    }
+
+
+type alias CarrierMapping =
+    { detectedCarriers : List String
+    , mappings : Dict String String -- Original carrier name -> Standardized carrier name
+    }
+
+
+type alias SuggestedMappings =
+    { columnMappings : ColumnMapping
+    , carrierMappings : Dict String String
     }
 
 
@@ -361,33 +401,26 @@ emptyFilters =
 
 emptyUploadState : Model -> UploadState
 emptyUploadState model =
-    -- Pre-assign the current user's agent ID if they are not an admin
     let
         selectedAgentId =
             case model.currentUser of
                 Just user ->
                     if user.isAgent && not user.isAdmin then
-                        -- For non-admin agents, pre-select their own ID
                         Just user.id
 
                     else
-                        -- For admins, leave it unselected initially
                         Nothing
 
                 Nothing ->
                     Nothing
 
-        -- For non-admin agents, always set overwriteDuplicates to false
         overwriteOption =
             case model.currentUser of
                 Just user ->
                     not (user.isAgent && not user.isAdmin)
 
-                -- Only true for admin users
                 Nothing ->
                     True
-
-        -- Default for when user is not yet loaded
     in
     { dragOver = False
     , file = Nothing
@@ -397,6 +430,12 @@ emptyUploadState model =
     , stats = Nothing
     , overwriteDuplicates = overwriteOption
     , selectedAgentId = selectedAgentId
+    , columnMapping = Nothing
+    , carrierMapping = Nothing
+    , detectedCarriers = []
+    , csvHeaders = []
+    , processingHeaders = False
+    , extractingCarriers = False
     }
 
 
@@ -465,6 +504,14 @@ type Msg
     | LimitBannerMsg LimitBanner.Msg
     | ChangePage Int
     | ChangeItemsPerPage Int
+    | UpdateColumnMapping String String
+    | ExtractCsvHeaders File
+    | CsvHeadersExtracted (Result String (List String))
+    | SuggestedMappingsReceived (Result Http.Error SuggestedMappings)
+    | ExtractCarrierValues
+    | CarrierValuesExtracted (List String)
+    | UpdateCarrierMapping String String
+    | GotCarriersForMapping (List String) (Result Http.Error (List { name : String, aliases : List String }))
 
 
 type ContactFormField
@@ -1074,8 +1121,8 @@ update msg model =
         FileDrop file ->
             case model.showModal of
                 CsvUploadModal state ->
-                    ( { model | showModal = CsvUploadModal { state | file = Just file, dragOver = False } }
-                    , Cmd.none
+                    ( { model | showModal = CsvUploadModal { state | file = Just file, dragOver = False, processingHeaders = True } }
+                    , extractCsvHeaders file
                     )
 
                 _ ->
@@ -1084,8 +1131,8 @@ update msg model =
         FileSelected file ->
             case model.showModal of
                 CsvUploadModal state ->
-                    ( { model | showModal = CsvUploadModal { state | file = Just file } }
-                    , Cmd.none
+                    ( { model | showModal = CsvUploadModal { state | file = Just file, processingHeaders = True } }
+                    , extractCsvHeaders file
                     )
 
                 _ ->
@@ -1388,6 +1435,333 @@ update msg model =
             ( updatedModel
             , fetchContacts updatedModel
             )
+
+        UpdateColumnMapping field value ->
+            case model.showModal of
+                CsvUploadModal state ->
+                    let
+                        updatedMapping =
+                            case state.columnMapping of
+                                Just mapping ->
+                                    Just
+                                        (case field of
+                                            "firstName" ->
+                                                { mapping | firstName = value }
+
+                                            "lastName" ->
+                                                { mapping | lastName = value }
+
+                                            "email" ->
+                                                { mapping | email = value }
+
+                                            "phoneNumber" ->
+                                                { mapping | phoneNumber = value }
+
+                                            "state" ->
+                                                { mapping | state = value }
+
+                                            "currentCarrier" ->
+                                                { mapping | currentCarrier = value }
+
+                                            "effectiveDate" ->
+                                                { mapping | effectiveDate = value }
+
+                                            "birthDate" ->
+                                                { mapping | birthDate = value }
+
+                                            "tobaccoUser" ->
+                                                { mapping | tobaccoUser = value }
+
+                                            "gender" ->
+                                                { mapping | gender = value }
+
+                                            "zipCode" ->
+                                                { mapping | zipCode = value }
+
+                                            "planType" ->
+                                                { mapping | planType = value }
+
+                                            _ ->
+                                                mapping
+                                        )
+
+                                Nothing ->
+                                    Just
+                                        { firstName =
+                                            if field == "firstName" then
+                                                value
+
+                                            else
+                                                ""
+                                        , lastName =
+                                            if field == "lastName" then
+                                                value
+
+                                            else
+                                                ""
+                                        , email =
+                                            if field == "email" then
+                                                value
+
+                                            else
+                                                ""
+                                        , phoneNumber =
+                                            if field == "phoneNumber" then
+                                                value
+
+                                            else
+                                                ""
+                                        , state =
+                                            if field == "state" then
+                                                value
+
+                                            else
+                                                ""
+                                        , currentCarrier =
+                                            if field == "currentCarrier" then
+                                                value
+
+                                            else
+                                                ""
+                                        , effectiveDate =
+                                            if field == "effectiveDate" then
+                                                value
+
+                                            else
+                                                ""
+                                        , birthDate =
+                                            if field == "birthDate" then
+                                                value
+
+                                            else
+                                                ""
+                                        , tobaccoUser =
+                                            if field == "tobaccoUser" then
+                                                value
+
+                                            else
+                                                ""
+                                        , gender =
+                                            if field == "gender" then
+                                                value
+
+                                            else
+                                                ""
+                                        , zipCode =
+                                            if field == "zipCode" then
+                                                value
+
+                                            else
+                                                ""
+                                        , planType =
+                                            if field == "planType" then
+                                                value
+
+                                            else
+                                                ""
+                                        }
+                    in
+                    ( { model | showModal = CsvUploadModal { state | columnMapping = updatedMapping } }
+                    , Cmd.none
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        ExtractCsvHeaders file ->
+            ( model
+            , Task.perform
+                (\content -> CsvHeadersExtracted (extractHeadersFromCsv content))
+                (File.toString file)
+            )
+
+        CsvHeadersExtracted result ->
+            case model.showModal of
+                CsvUploadModal state ->
+                    case result of
+                        Ok headers ->
+                            ( { model | showModal = CsvUploadModal { state | csvHeaders = headers, processingHeaders = False } }
+                            , suggestMappings headers
+                            )
+
+                        Err error ->
+                            ( { model | showModal = CsvUploadModal { state | error = Just ("Failed to parse CSV headers: " ++ error), processingHeaders = False } }
+                            , Cmd.none
+                            )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        SuggestedMappingsReceived result ->
+            case model.showModal of
+                CsvUploadModal state ->
+                    case result of
+                        Ok suggestions ->
+                            ( { model
+                                | showModal =
+                                    CsvUploadModal
+                                        { state
+                                            | columnMapping = Just suggestions.columnMappings
+                                            , carrierMapping = Just { detectedCarriers = state.detectedCarriers, mappings = suggestions.carrierMappings }
+                                        }
+                              }
+                            , Cmd.none
+                            )
+
+                        Err _ ->
+                            ( { model | showModal = CsvUploadModal { state | error = Just "Failed to get column suggestions" } }
+                            , Cmd.none
+                            )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        ExtractCarrierValues ->
+            case model.showModal of
+                CsvUploadModal state ->
+                    case state.file of
+                        Just file ->
+                            -- Get carrier column from the column mapping
+                            let
+                                carrierColumn =
+                                    case state.columnMapping of
+                                        Just mapping ->
+                                            if String.isEmpty mapping.currentCarrier then
+                                                Nothing
+
+                                            else
+                                                Just mapping.currentCarrier
+
+                                        Nothing ->
+                                            Nothing
+                            in
+                            case carrierColumn of
+                                Just column ->
+                                    ( { model | showModal = CsvUploadModal { state | extractingCarriers = True } }
+                                    , Task.perform
+                                        (\content -> CarrierValuesExtracted (extractUniqueCarriers content column))
+                                        (File.toString file)
+                                    )
+
+                                Nothing ->
+                                    ( model, Cmd.none )
+
+                        Nothing ->
+                            ( model, Cmd.none )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        CarrierValuesExtracted carrierValues ->
+            case model.showModal of
+                CsvUploadModal state ->
+                    -- Instead of making a new API call, create a structure from the model's carriers list
+                    let
+                        -- Create a map of common carrier aliases for better matching
+                        carrierAliases =
+                            Dict.fromList
+                                [ ( "Aetna", [ "aetna medicare", "aetna advantage", "aetna health", "aetna cvs" ] )
+                                , ( "United Healthcare", [ "uhc", "united health", "united", "aarp", "aarp / uhc", "aarp/uhc" ] )
+                                , ( "Humana", [ "humana gold", "humana gold plus", "humana choice", "humana value", "humana preferred" ] )
+                                , ( "Cigna", [ "cigna healthspring", "cigna-healthspring", "cigna health", "connecticut general" ] )
+                                , ( "Blue Cross Blue Shield", [ "bcbs", "blue cross", "blue shield", "anthem", "anthem bcbs" ] )
+                                , ( "Wellcare", [ "wellcare by allwell", "allwell", "wellcare value", "wellcare essentials" ] )
+                                , ( "Kaiser Permanente", [ "kaiser", "kp", "kaiser senior advantage" ] )
+                                , ( "Anthem", [ "anthem blue", "anthem medicare", "anthem medigap" ] )
+                                , ( "Molina", [ "molina healthcare", "molina advantage", "molina health" ] )
+                                , ( "Ace Chubb", [ "ace / chubb", "ace/chubb", "ace chubb", "chubb" ] )
+                                ]
+
+                        -- Convert the simple carriers string list to the format expected by CsvProcessor
+                        -- and enhance with known aliases
+                        standardCarriers =
+                            List.map
+                                (\name ->
+                                    { name = name
+                                    , aliases = Dict.get name carrierAliases |> Maybe.withDefault []
+                                    }
+                                )
+                                model.carriers
+
+                        -- Use CsvProcessor to suggest carrier mappings
+                        carrierMapping =
+                            CsvProcessor.suggestCarrierMappings carrierValues standardCarriers
+                    in
+                    ( { model
+                        | showModal =
+                            CsvUploadModal
+                                { state
+                                    | detectedCarriers = carrierValues
+                                    , carrierMapping = Just carrierMapping
+                                    , extractingCarriers = False
+                                }
+                      }
+                    , Cmd.none
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        UpdateCarrierMapping original mapped ->
+            case model.showModal of
+                CsvUploadModal state ->
+                    case state.carrierMapping of
+                        Just mapping ->
+                            let
+                                updatedMappings =
+                                    Dict.insert original mapped mapping.mappings
+
+                                updatedMapping =
+                                    { mapping | mappings = updatedMappings }
+                            in
+                            ( { model | showModal = CsvUploadModal { state | carrierMapping = Just updatedMapping } }
+                            , Cmd.none
+                            )
+
+                        Nothing ->
+                            ( model, Cmd.none )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        GotCarriersForMapping detectedCarriers (Ok carriers) ->
+            let
+                -- Use CsvProcessor to suggest carrier mappings with fuzzy matching
+                carrierMapping =
+                    CsvProcessor.suggestCarrierMappings detectedCarriers carriers
+            in
+            case model.showModal of
+                CsvUploadModal state ->
+                    ( { model
+                        | showModal =
+                            CsvUploadModal
+                                { state
+                                    | carrierMapping = Just carrierMapping
+                                    , extractingCarriers = False
+                                }
+                      }
+                    , Cmd.none
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        GotCarriersForMapping _ (Err error) ->
+            case model.showModal of
+                CsvUploadModal state ->
+                    ( { model
+                        | showModal =
+                            CsvUploadModal
+                                { state
+                                    | extractingCarriers = False
+                                    , error = Just "Failed to fetch carrier data for matching"
+                                }
+                      }
+                    , Cmd.none
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
 
 
 
@@ -1991,7 +2365,7 @@ viewEditModal model isSubmitting =
 viewCsvUploadModal : UploadState -> Bool -> Model -> Html Msg
 viewCsvUploadModal state isUploading model =
     div [ class "fixed inset-0 bg-gray-500/75 flex items-center justify-center p-8" ]
-        [ div [ class "bg-white rounded-xl p-10 max-w-2xl w-full mx-4 shadow-xl relative" ]
+        [ div [ class "bg-white rounded-xl p-10 max-w-2xl w-full mx-4 shadow-xl relative max-h-[90vh] overflow-y-auto" ]
             [ button
                 [ class "absolute top-4 right-4 text-gray-400 hover:text-gray-600 transition-colors duration-200"
                 , onClick CloseModal
@@ -2008,6 +2382,8 @@ viewCsvUploadModal state isUploading model =
                     ]
                     [ text "Download example CSV file" ]
                 ]
+
+            -- Error display
             , if state.error /= Nothing then
                 div [ class "mb-6" ]
                     [ if state.stats /= Nothing then
@@ -2053,7 +2429,6 @@ viewCsvUploadModal state isUploading model =
                               else
                                 text ""
                             , if stats.converted_carrier_rows > 0 then
-                                -- Rest of error display (unchanged)
                                 div [ class "p-4 bg-yellow-50 border border-yellow-200 rounded-lg" ]
                                     [ div [ class "flex items-start" ]
                                         [ div [ class "flex-shrink-0" ]
@@ -2125,9 +2500,10 @@ viewCsvUploadModal state isUploading model =
 
               else
                 text ""
+
+            -- Form fields (agent selection, etc.)
             , div [ class "mb-4 space-y-4" ]
-                [ -- Only show overwrite checkbox for admins
-                  case model.currentUser of
+                [ case model.currentUser of
                     Just user ->
                         if user.isAdmin then
                             div [ class "flex items-center space-x-2" ]
@@ -2143,22 +2519,10 @@ viewCsvUploadModal state isUploading model =
                                 ]
 
                         else
-                            -- For non-admin agents, don't show the overwrite option
                             text ""
 
                     Nothing ->
-                        -- Show checkbox if user info isn't loaded yet
-                        div [ class "flex items-center space-x-2" ]
-                            [ input
-                                [ type_ "checkbox"
-                                , checked state.overwriteDuplicates
-                                , onInput (\val -> ToggleOverwriteDuplicates (val == "true"))
-                                , class "rounded border-gray-300 text-purple-600 focus:ring-purple-500"
-                                ]
-                                []
-                            , label [ class "text-sm text-gray-600" ]
-                                [ text "Overwrite existing contacts (matched on email address)" ]
-                            ]
+                        text ""
                 , div [ class "form-group" ]
                     [ Html.label [ class "block text-sm font-medium text-gray-700 mb-2" ]
                         [ text "Assign to Agent" ]
@@ -2208,77 +2572,78 @@ viewCsvUploadModal state isUploading model =
                                             )
 
                                 Nothing ->
-                                    -- Default when user is not loaded yet
-                                    let
-                                        agentOptions =
-                                            List.map
-                                                (\agent ->
-                                                    ( String.fromInt agent.id
-                                                    , agent.firstName ++ " " ++ agent.lastName
-                                                    )
-                                                )
-                                                model.agents
-                                    in
-                                    Html.select
-                                        [ class "w-full px-4 py-3 bg-white border-[2.5px] border-purple-300 rounded-lg text-gray-700 placeholder-gray-400 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 focus:bg-white transition-all duration-200 appearance-none"
-                                        , value (String.fromInt (Maybe.withDefault 0 state.selectedAgentId))
-                                        , onInput (\val -> SelectUploadAgent (String.toInt val |> Maybe.withDefault 0))
-                                        ]
-                                        (List.map
-                                            (\( val, label ) ->
-                                                option [ value val ] [ text label ]
-                                            )
-                                            agentOptions
-                                        )
-                        , case model.currentUser of
-                            Just user ->
-                                if user.isAgent && not user.isAdmin then
-                                    -- No dropdown icon for non-admin agents
                                     text ""
+                        ]
+                    ]
+                ]
+
+            -- File upload area
+            , if state.processingHeaders then
+                -- Show loading indicator while processing CSV headers
+                div [ class "w-full h-64 border-2 border-gray-200 rounded-lg flex flex-col items-center justify-center p-8" ]
+                    [ div [ class "animate-spin rounded-full h-12 w-12 border-4 border-purple-500 border-t-transparent mb-4" ] []
+                    , div [ class "text-gray-600 text-center" ]
+                        [ span [ class "block font-medium mb-1" ]
+                            [ text "Processing your CSV file" ]
+                        , span [ class "text-sm" ]
+                            [ text "We're analyzing your file to map the columns automatically..." ]
+                        ]
+                    ]
+
+              else
+                div
+                    [ class
+                        ("w-full h-64 border-2 border-dashed rounded-lg flex flex-col items-center justify-center p-8 transition-colors "
+                            ++ (if state.dragOver then
+                                    "border-purple-500 bg-purple-50"
 
                                 else
-                                    -- Show dropdown icon for admins
-                                    div [ class "absolute inset-y-0 right-0 flex items-center px-2 pointer-events-none" ]
-                                        [ viewIcon "M19 9l-7 7-7-7" ]
+                                    "border-gray-300 hover:border-purple-400"
+                               )
+                        )
+                    , preventDefaultOn "dragenter" (Decode.succeed ( DragEnter, True ))
+                    , preventDefaultOn "dragover" (Decode.succeed ( NoOp, True ))
+                    , preventDefaultOn "dragleave" (Decode.succeed ( DragLeave, True ))
+                    , preventDefaultOn "drop" (dropDecoder FileDrop)
+                    ]
+                    [ div [ class "text-gray-500 text-center" ]
+                        [ span [ class "block text-lg font-medium mb-2" ]
+                            [ text "Drag and drop your CSV file here, or " ]
+                        , button
+                            [ class "text-purple-600 font-semibold hover:text-purple-700 focus:outline-none focus:underline"
+                            , onClick ClickedSelectFile
+                            ]
+                            [ text "browse" ]
+                        , if state.file /= Nothing then
+                            div [ class "mt-4 text-sm bg-green-50 text-green-800 px-3 py-2 rounded-lg" ]
+                                [ text ("File selected: " ++ (Maybe.map File.name state.file |> Maybe.withDefault "")) ]
 
-                            Nothing ->
-                                -- Show dropdown icon when user is not loaded yet
-                                div [ class "absolute inset-y-0 right-0 flex items-center px-2 pointer-events-none" ]
-                                    [ viewIcon "M19 9l-7 7-7-7" ]
+                          else
+                            text ""
                         ]
                     ]
-                ]
-            , div
-                [ class
-                    ("w-full h-64 border-2 border-dashed rounded-lg flex flex-col items-center justify-center p-8 transition-colors "
-                        ++ (if state.dragOver then
-                                "border-purple-500 bg-purple-50"
 
-                            else
-                                "border-gray-300 hover:border-purple-400"
-                           )
-                    )
-                , preventDefaultOn "dragenter" (Decode.succeed ( DragEnter, True ))
-                , preventDefaultOn "dragover" (Decode.succeed ( NoOp, True ))
-                , preventDefaultOn "dragleave" (Decode.succeed ( DragLeave, True ))
-                , preventDefaultOn "drop" (dropDecoder FileDrop)
-                ]
-                [ div [ class "text-gray-500 text-center" ]
-                    [ span [ class "block text-lg font-medium mb-2" ]
-                        [ text "Drag and drop your CSV file here, or " ]
-                    , button
-                        [ class "text-purple-600 font-semibold hover:text-purple-700 focus:outline-none focus:underline"
-                        , onClick ClickedSelectFile
+            -- Column mapping section
+            , if state.file /= Nothing && not state.processingHeaders && not (List.isEmpty state.csvHeaders) then
+                div [ class "mt-8 space-y-6" ]
+                    [ viewColumnMapping state
+                    , viewCarrierMapping state model.carriers
+                    , div [ class "mt-4" ]
+                        [ h3 [ class "text-sm font-medium text-gray-700 mb-2" ]
+                            [ text "Available CSV Columns" ]
+                        , div [ class "bg-gray-50 p-3 rounded-md text-sm" ]
+                            [ span [ class "text-gray-400 mr-2" ]
+                                [ text "Headers:" ]
+                            , span [ class "text-gray-600" ]
+                                [ text (String.join ", " state.csvHeaders) ]
+                            ]
                         ]
-                        [ text "browse" ]
-                    , if state.file /= Nothing then
-                        div [ class "mt-4 text-sm bg-green-50 text-green-800 px-3 py-2 rounded-lg" ]
-                            [ text ("File selected: " ++ (Maybe.map File.name state.file |> Maybe.withDefault "")) ]
-
-                      else
-                        text ""
                     ]
-                ]
+
+              else
+                text ""
+
+            -- Buttons
             , div [ class "mt-8 flex justify-end space-x-4" ]
                 [ button
                     [ class "px-6 py-3 bg-gray-100 text-gray-600 text-sm font-medium rounded-lg hover:bg-gray-200 transition-colors duration-200 focus:ring-4 focus:ring-gray-200"
@@ -2294,12 +2659,224 @@ viewCsvUploadModal state isUploading model =
                         [ type_ "submit"
                         , class "px-6 py-3 bg-purple-500 text-white text-sm font-medium rounded-lg hover:bg-purple-600 transition-colors duration-200 focus:ring-4 focus:ring-purple-200"
                         , onClick UploadCsv
-                        , Html.Attributes.disabled (state.file == Nothing)
+                        , Html.Attributes.disabled (state.file == Nothing || state.processingHeaders)
                         ]
                         [ text "Upload" ]
                 ]
             ]
         ]
+
+
+viewColumnMapping : UploadState -> Html Msg
+viewColumnMapping state =
+    div [ class "space-y-4" ]
+        [ h3 [ class "text-sm font-medium text-gray-700 flex justify-between" ]
+            [ text "Column Mapping"
+            , span [ class "text-xs text-purple-600" ]
+                [ text ("Detected " ++ String.fromInt (List.length state.csvHeaders) ++ " columns in your CSV") ]
+            ]
+        , p [ class "text-xs text-gray-500" ]
+            [ text "Map your CSV columns to our required fields." ]
+        , div [ class "grid grid-cols-2 gap-3" ]
+            [ viewColumnMapField "First Name" "firstName" state
+            , viewColumnMapField "Last Name" "lastName" state
+            , viewColumnMapField "Email" "email" state
+            , viewColumnMapField "Phone Number" "phoneNumber" state
+            , viewColumnMapField "State" "state" state
+            , viewColumnMapField "Current Carrier" "currentCarrier" state
+            , viewColumnMapField "Effective Date" "effectiveDate" state
+            , viewColumnMapField "Birth Date" "birthDate" state
+            , viewColumnMapField "Tobacco User" "tobaccoUser" state
+            , viewColumnMapField "Gender" "gender" state
+            , viewColumnMapField "ZIP Code" "zipCode" state
+            , viewColumnMapField "Plan Type" "planType" state
+            ]
+        ]
+
+
+viewCarrierMapping : UploadState -> List String -> Html Msg
+viewCarrierMapping state supportedCarriers =
+    let
+        carrierColumnName =
+            case state.columnMapping of
+                Just mapping ->
+                    mapping.currentCarrier
+
+                Nothing ->
+                    ""
+
+        hasCarrierColumn =
+            not (String.isEmpty carrierColumnName)
+
+        hasExtractedCarriers =
+            not (List.isEmpty state.detectedCarriers)
+    in
+    div [ class "mt-6 space-y-4 border-t pt-6" ]
+        [ h3 [ class "text-sm font-medium text-gray-700" ]
+            [ text "Carrier Mapping" ]
+        , p [ class "text-xs text-gray-500" ]
+            [ text "Map carrier names in your CSV to standard carrier names in our system." ]
+
+        -- Show which column is used for carrier data
+        , div [ class "mb-4" ]
+            [ if hasCarrierColumn then
+                div [ class "flex space-x-2" ]
+                    [ div [ class "text-xs font-medium text-gray-600 py-1" ]
+                        [ text ("Using column \"" ++ carrierColumnName ++ "\" for carrier data") ]
+                    , button
+                        [ class "px-3 py-1 bg-purple-500 text-white text-xs font-medium rounded hover:bg-purple-600 transition-colors"
+                        , onClick ExtractCarrierValues
+                        , disabled state.extractingCarriers
+                        ]
+                        [ if state.extractingCarriers then
+                            div [ class "flex items-center" ]
+                                [ viewSpinner
+                                , span [ class "ml-2" ] [ text "Extracting..." ]
+                                ]
+
+                          else
+                            text "Extract Carriers"
+                        ]
+                    ]
+
+              else
+                div [ class "text-xs text-gray-500 italic" ]
+                    [ text "Select a column for \"Current Carrier\" in the mapping above to continue." ]
+            ]
+
+        -- Show carrier mappings once extracted
+        , if hasExtractedCarriers then
+            div [ class "border rounded-md p-4 bg-gray-50" ]
+                [ p [ class "text-xs text-gray-600 mb-3" ]
+                    [ text ("Found " ++ String.fromInt (List.length state.detectedCarriers) ++ " unique carrier names in your CSV.") ]
+                , if List.isEmpty state.detectedCarriers then
+                    div [ class "text-sm text-gray-500 italic" ]
+                        [ text "No carrier names found in the selected column." ]
+
+                  else
+                    div [ class "space-y-2 max-h-64 overflow-y-auto pr-2" ]
+                        (List.map
+                            (\carrier -> viewCarrierMappingRow carrier state supportedCarriers)
+                            state.detectedCarriers
+                        )
+                ]
+
+          else if hasCarrierColumn then
+            div [ class "text-sm text-gray-500 italic" ]
+                [ text "Click 'Extract Carriers' to analyze carrier names in your CSV." ]
+
+          else
+            div [ class "text-sm text-gray-500 italic" ]
+                [ text "Select the \"Current Carrier\" column in the mapping above to begin." ]
+        ]
+
+
+viewCarrierMappingRow : String -> UploadState -> List String -> Html Msg
+viewCarrierMappingRow carrier state supportedCarriers =
+    let
+        currentMapping =
+            case state.carrierMapping of
+                Just mapping ->
+                    Dict.get carrier mapping.mappings
+                        |> Maybe.withDefault "Other"
+
+                Nothing ->
+                    "Other"
+    in
+    div [ class "flex justify-between items-center py-1 border-b border-gray-200" ]
+        [ div [ class "text-sm text-gray-700" ]
+            [ text carrier ]
+        , div [ class "w-1/2" ]
+            [ select
+                [ class "w-full px-2 py-1 text-sm border rounded"
+                , value currentMapping
+                , onInput (UpdateCarrierMapping carrier)
+                ]
+                (option [ value "Other" ] [ text "Other/Unsupported" ]
+                    :: List.map
+                        (\c ->
+                            option
+                                [ value c
+                                , selected (currentMapping == c)
+                                ]
+                                [ text c ]
+                        )
+                        supportedCarriers
+                )
+            ]
+        ]
+
+
+viewColumnMapField : String -> String -> UploadState -> Html Msg
+viewColumnMapField labelText field state =
+    div [ class "flex flex-col gap-1" ]
+        [ label [ class "text-xs font-medium text-gray-600" ]
+            [ text labelText ]
+        , select
+            [ class "w-full px-2 py-1 text-sm border rounded"
+            , value (getColumnMapping field state)
+            , onInput (UpdateColumnMapping field)
+            ]
+            (option [ value "" ] [ text "Select a column" ]
+                :: List.map
+                    (\header ->
+                        option
+                            [ value header
+                            , selected (getColumnMapping field state == header)
+                            ]
+                            [ text header ]
+                    )
+                    state.csvHeaders
+            )
+        ]
+
+
+getColumnMapping : String -> UploadState -> String
+getColumnMapping field state =
+    case state.columnMapping of
+        Just mapping ->
+            case field of
+                "firstName" ->
+                    mapping.firstName
+
+                "lastName" ->
+                    mapping.lastName
+
+                "email" ->
+                    mapping.email
+
+                "phoneNumber" ->
+                    mapping.phoneNumber
+
+                "state" ->
+                    mapping.state
+
+                "currentCarrier" ->
+                    mapping.currentCarrier
+
+                "effectiveDate" ->
+                    mapping.effectiveDate
+
+                "birthDate" ->
+                    mapping.birthDate
+
+                "tobaccoUser" ->
+                    mapping.tobaccoUser
+
+                "gender" ->
+                    mapping.gender
+
+                "zipCode" ->
+                    mapping.zipCode
+
+                "planType" ->
+                    mapping.planType
+
+                _ ->
+                    ""
+
+        Nothing ->
+            ""
 
 
 dropDecoder : (File -> msg) -> Decoder ( msg, Bool )
@@ -2311,54 +2888,164 @@ dropDecoder toMsg =
 uploadCsv : File -> Bool -> Maybe Int -> Model -> Cmd Msg
 uploadCsv file overwriteDuplicates maybeAgentId model =
     let
-        -- For non-admin agents, always enforce overwriteDuplicates=false
         actualOverwriteValue =
             case model.currentUser of
                 Just user ->
                     if user.isAgent && not user.isAdmin then
                         False
-                        -- Always force false for non-admin agents
 
                     else
                         overwriteDuplicates
 
-                -- Use the provided value for admins
                 Nothing ->
                     overwriteDuplicates
-
-        -- Use the provided value if user is not loaded
-        body =
-            Http.multipartBody
-                ([ Http.filePart "file" file
-                 , Http.stringPart "duplicateStrategy"
-                    (if actualOverwriteValue then
-                        "overwrite"
-
-                     else
-                        "skip"
-                    )
-                 , Http.stringPart "overwrite_duplicates"
-                    (if actualOverwriteValue then
-                        "true"
-
-                     else
-                        "false"
-                    )
-                 ]
-                    ++ (case maybeAgentId of
-                            Just agentId ->
-                                [ Http.stringPart "agent_id" (String.fromInt agentId) ]
-
-                            Nothing ->
-                                []
-                       )
-                )
     in
-    Http.post
-        { url = "/api/contacts/upload"
-        , body = body
-        , expect = Http.expectJson CsvUploaded uploadResponseDecoder
-        }
+    File.toString file
+        |> Task.andThen
+            (\csvContent ->
+                case model.showModal of
+                    CsvUploadModal state ->
+                        case ( state.columnMapping, state.carrierMapping ) of
+                            ( Just colMapping, Just carrierMapping ) ->
+                                case CsvProcessor.processCsvToContacts csvContent colMapping carrierMapping of
+                                    Ok contacts ->
+                                        Http.task
+                                            { method = "POST"
+                                            , headers = []
+                                            , url = "/api/contacts/bulk-import"
+                                            , body =
+                                                Http.jsonBody
+                                                    (Encode.object
+                                                        [ ( "contacts", Encode.list encodeProcessedContact contacts )
+                                                        , ( "overwriteExisting", Encode.bool actualOverwriteValue )
+                                                        , ( "agentId"
+                                                          , case maybeAgentId of
+                                                                Just id ->
+                                                                    Encode.int id
+
+                                                                Nothing ->
+                                                                    Encode.null
+                                                          )
+                                                        ]
+                                                    )
+                                            , resolver =
+                                                Http.stringResolver <|
+                                                    \response ->
+                                                        case response of
+                                                            Http.GoodStatus_ _ body ->
+                                                                case Decode.decodeString uploadResponseDecoder body of
+                                                                    Ok value ->
+                                                                        Ok value
+
+                                                                    Err err ->
+                                                                        Err (Http.BadBody (Decode.errorToString err))
+
+                                                            Http.BadUrl_ url ->
+                                                                Err (Http.BadUrl url)
+
+                                                            Http.Timeout_ ->
+                                                                Err Http.Timeout
+
+                                                            Http.NetworkError_ ->
+                                                                Err Http.NetworkError
+
+                                                            Http.BadStatus_ metadata _ ->
+                                                                Err (Http.BadStatus metadata.statusCode)
+                                            , timeout = Nothing
+                                            }
+                                            |> Task.map Ok
+                                            |> Task.onError (\err -> Task.succeed (Err err))
+
+                                    Err err ->
+                                        Task.succeed
+                                            (Err
+                                                (Http.BadBody
+                                                    (case err of
+                                                        CsvProcessor.ParseError msg ->
+                                                            "Failed to parse CSV: " ++ msg
+
+                                                        CsvProcessor.EmptyFile ->
+                                                            "CSV file is empty"
+
+                                                        CsvProcessor.NoHeaders ->
+                                                            "CSV file has no headers"
+                                                    )
+                                                )
+                                            )
+
+                            _ ->
+                                Task.succeed
+                                    (Err
+                                        (Http.BadBody "Column mapping or carrier mapping not configured")
+                                    )
+
+                    _ ->
+                        Task.succeed
+                            (Err
+                                (Http.BadBody "Invalid modal state")
+                            )
+            )
+        |> Task.perform CsvUploaded
+
+
+
+-- Add encoder for processed contacts
+
+
+encodeProcessedContact : CsvProcessor.ProcessedContact -> Encode.Value
+encodeProcessedContact contact =
+    Encode.object
+        [ ( "first_name", Encode.string contact.firstName )
+        , ( "last_name", Encode.string contact.lastName )
+        , ( "email", Encode.string contact.email )
+        , ( "phone_number", Encode.string contact.phoneNumber )
+        , ( "state", Encode.string contact.state )
+        , ( "current_carrier", Encode.string contact.currentCarrier )
+        , ( "effective_date", Encode.string contact.effectiveDate )
+        , ( "birth_date", Encode.string contact.birthDate )
+        , ( "tobacco_user", Encode.bool contact.tobaccoUser )
+        , ( "gender", Encode.string contact.gender )
+        , ( "zip_code", Encode.string contact.zipCode )
+        , ( "plan_type", Encode.string contact.planType )
+        ]
+
+
+
+-- Helper function to encode column mapping to JSON
+
+
+encodeColumnMapping : ColumnMapping -> String
+encodeColumnMapping mapping =
+    Encode.encode 0
+        (Encode.object
+            [ ( "firstName", Encode.string mapping.firstName )
+            , ( "lastName", Encode.string mapping.lastName )
+            , ( "email", Encode.string mapping.email )
+            , ( "phoneNumber", Encode.string mapping.phoneNumber )
+            , ( "state", Encode.string mapping.state )
+            , ( "currentCarrier", Encode.string mapping.currentCarrier )
+            , ( "effectiveDate", Encode.string mapping.effectiveDate )
+            , ( "birthDate", Encode.string mapping.birthDate )
+            , ( "tobaccoUser", Encode.string mapping.tobaccoUser )
+            , ( "gender", Encode.string mapping.gender )
+            , ( "zipCode", Encode.string mapping.zipCode )
+            , ( "planType", Encode.string mapping.planType )
+            ]
+        )
+
+
+
+-- Helper function to encode carrier mapping to JSON
+
+
+encodeCarrierMapping : CarrierMapping -> String
+encodeCarrierMapping mapping =
+    Encode.encode 0
+        (Encode.object
+            [ ( "detectedCarriers", Encode.list Encode.string mapping.detectedCarriers )
+            , ( "mappings", Encode.dict identity Encode.string mapping.mappings )
+            ]
+        )
 
 
 uploadResponseDecoder : Decode.Decoder UploadResponse
@@ -3673,3 +4360,84 @@ viewPaginationControls model =
                 ]
             ]
         ]
+
+
+extractCsvHeaders : File -> Cmd Msg
+extractCsvHeaders file =
+    Task.perform
+        (\content -> CsvHeadersExtracted (extractHeadersFromCsv content))
+        (File.toString file)
+
+
+extractHeadersFromCsv : String -> Result String (List String)
+extractHeadersFromCsv csvContent =
+    case CsvProcessor.extractHeaders csvContent of
+        Ok headers ->
+            Ok headers
+
+        Err CsvProcessor.EmptyFile ->
+            Err "CSV file appears to be empty"
+
+        Err CsvProcessor.NoHeaders ->
+            Err "CSV file has no headers"
+
+        Err (CsvProcessor.ParseError msg) ->
+            Err ("Failed to parse CSV file: " ++ msg)
+
+
+suggestMappings : List String -> Cmd Msg
+suggestMappings headers =
+    let
+        -- Use the CsvProcessor to find best matches for column mappings locally
+        columnMappings =
+            CsvProcessor.suggestColumnMappings headers
+
+        -- Create an empty carrier mapping for now (will be populated later)
+        carrierMappings =
+            Dict.empty
+    in
+    -- Return the suggested mappings directly instead of making an HTTP request
+    Task.perform
+        (\_ ->
+            SuggestedMappingsReceived
+                (Ok
+                    { columnMappings = columnMappings
+                    , carrierMappings = carrierMappings
+                    }
+                )
+        )
+        (Task.succeed ())
+
+
+extractUniqueCarriers : String -> String -> List String
+extractUniqueCarriers csvContent carrierColumn =
+    case CsvProcessor.extractUniqueValues csvContent carrierColumn of
+        Ok values ->
+            values
+
+        Err _ ->
+            []
+
+
+
+-- Helper function to get an element at a specific index
+
+
+getAt : Int -> List a -> Maybe a
+getAt index list =
+    if index < 0 then
+        Nothing
+
+    else
+        List.head (List.drop index list)
+
+
+
+-- Add a function to fetch carriers and create CsvProcessor.CarrierMapping compatible format
+
+
+fetchAndProcessCarriers : List String -> Cmd Msg
+fetchAndProcessCarriers detectedCarriers =
+    -- Use a model function instead of an API call
+    -- We'll use this from the GotCarriers handler
+    Cmd.none

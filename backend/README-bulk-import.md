@@ -13,6 +13,21 @@ The bulk import process works by:
 6. Updating the organization to point to the new database
 7. Cleaning up the old database
 
+## Duplicate Email Handling
+
+The system now handles duplicate emails in three ways:
+
+1. **During Import**: The email field has a unique index that enforces case-insensitive uniqueness.
+   - With `overwriteExisting = false`, duplicates are skipped (using `INSERT OR IGNORE`)
+   - With `overwriteExisting = true`, existing records are updated (using `INSERT OR REPLACE`) 
+
+2. **Deduplicate Existing Data**: A migration script (`bun run fix-contacts`) can be run to:
+   - Find all organization databases with duplicate email entries
+   - Keep only the most recently updated record for each email
+   - Create the necessary unique index to prevent future duplicates
+
+3. **Schema Protection**: The database schema setup now always creates the unique index on email, regardless of whether the table is being created or already exists.
+
 ## Usage
 
 Three options are provided for using the bulk import functionality:
@@ -128,7 +143,7 @@ This endpoint is also available through the web interface at `/test-bulk-import.
 
 The core implementation is in two main files:
 
-1. `/backend/src/database.ts` - Contains the `bulkImportContacts` method
+1. `/backend/src/database.ts` - Contains the `bulkImportContacts` method and email uniqueness enforcement
 2. `/backend/src/services/turso.ts` - Contains the `createDatabaseFromDump` method
 
 The process works by:
@@ -144,3 +159,23 @@ The implementation includes robust error handling:
 - SQL execution errors
 - Validation errors for malformed contacts
 - Cleanup operations for partial failures
+
+## Fixing Duplicate Contacts
+
+If you're experiencing duplicate contacts in your database, run the contact fix script:
+
+```bash
+# In the backend directory
+bun run fix-contacts
+```
+
+This script will:
+1. Check all organization databases for duplicate email addresses
+2. For each database with duplicates:
+   - Create a backup of the contacts table
+   - Deduplicate contacts by keeping the most recently updated record for each email
+   - Create the necessary unique index to prevent future duplicates
+3. For databases without duplicates:
+   - Only create the unique index if it doesn't exist
+
+The script is safe to run multiple times and will only make changes where needed.

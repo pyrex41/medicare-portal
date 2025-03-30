@@ -7,8 +7,153 @@ import fs from 'fs'
 import path from 'path'
 import { parse } from 'csv-parse'
 import { pipeline } from 'stream/promises'
-import fetch from 'node-fetch'
+import fetch, { Response } from 'node-fetch'
+import type { RequestInit, RequestInfo } from 'node-fetch'
 import type { ContactCreate } from './types'
+import { Database as SqliteDatabase, open } from 'sqlite'
+import sqlite3 from 'sqlite3'
+import fsPromises from 'fs/promises'
+
+// Connection pool to reuse database connections
+interface ConnectionInfo {
+  client: any;
+  url: string;
+  lastUsed: number;
+}
+
+class ConnectionPool {
+  private static instance: ConnectionPool;
+  private connections: Map<string, ConnectionInfo> = new Map();
+  private readonly MAX_IDLE_TIME = 60000; // 60 seconds max idle time
+  private readonly MAX_POOL_SIZE = 20; // Maximum connections to keep in the pool
+  private cleanupInterval: any;
+
+  private constructor() {
+    // Start the cleanup interval to remove idle connections
+    this.cleanupInterval = setInterval(() => this.cleanupIdleConnections(), 30000);
+  }
+
+  public static getInstance(): ConnectionPool {
+    if (!ConnectionPool.instance) {
+      ConnectionPool.instance = new ConnectionPool();
+    }
+    return ConnectionPool.instance;
+  }
+
+  public getConnection(url: string, authToken: string): any {
+    // Check if we have a connection for this URL
+    if (this.connections.has(url)) {
+      const conn = this.connections.get(url)!;
+      conn.lastUsed = Date.now();
+      return conn.client;
+    }
+
+    // If we've reached max pool size, remove the oldest connection
+    if (this.connections.size >= this.MAX_POOL_SIZE) {
+      let oldestTime = Infinity;
+      let oldestUrl = '';
+      
+      for (const [connUrl, conn] of this.connections.entries()) {
+        if (conn.lastUsed < oldestTime) {
+          oldestTime = conn.lastUsed;
+          oldestUrl = connUrl;
+        }
+      }
+      
+      if (oldestUrl) {
+        logger.info(`Connection pool: removing oldest connection ${oldestUrl}`);
+        this.connections.delete(oldestUrl);
+      }
+    }
+
+    // Create a new connection
+    logger.info(`Creating new Turso connection for ${url}`);
+    const client = createClient({
+      url,
+      authToken,
+      concurrency: 25, // Lower concurrency to prevent rate limits
+      fetch: async (fetchUrl, options) => {
+        // Add custom fetch with retry for 429 errors
+        const maxRetries = 3;
+        for (let attempt = 0; attempt < maxRetries; attempt++) {
+          try {
+            const response = await fetch(fetchUrl, options);
+            if (response.status === 429) {
+              // Rate limited, wait with exponential backoff
+              const delay = Math.pow(2, attempt) * 1000;
+              logger.warn(`Rate limit hit in Turso API call, retry ${attempt+1}/${maxRetries} after ${delay}ms`);
+              await new Promise(resolve => setTimeout(resolve, delay));
+              continue;
+            }
+            return response;
+          } catch (error) {
+            if (attempt === maxRetries - 1) throw error;
+            const delay = Math.pow(2, attempt) * 1000;
+            logger.warn(`Error in Turso API call, retry ${attempt+1}/${maxRetries} after ${delay}ms: ${error}`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+          }
+        }
+        throw new Error('Max retries reached for Turso API call');
+      }
+    });
+
+    // Store in the pool
+    this.connections.set(url, {
+      client,
+      url,
+      lastUsed: Date.now()
+    });
+
+    return client;
+  }
+
+  private cleanupIdleConnections() {
+    const now = Date.now();
+    let cleanedCount = 0;
+    
+    for (const [url, conn] of this.connections.entries()) {
+      if (now - conn.lastUsed > this.MAX_IDLE_TIME) {
+        this.connections.delete(url);
+        cleanedCount++;
+      }
+    }
+    
+    if (cleanedCount > 0) {
+      logger.info(`Connection pool: cleaned up ${cleanedCount} idle connections, remaining: ${this.connections.size}`);
+    }
+  }
+
+  public shutdown() {
+    clearInterval(this.cleanupInterval);
+    this.connections.clear();
+  }
+}
+
+type ColumnMapping = {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phoneNumber: string;
+  state: string;
+  currentCarrier: string;
+  effectiveDate: string;
+  birthDate: string;
+  tobaccoUser: string;
+  gender: string;
+  zipCode: string;
+  planType: string;
+};
+
+type CarrierMapping = {
+  detectedCarriers: string[];
+  mappings: Record<string, string>;
+};
+
+interface FetchOptions extends RequestInit {
+  method?: string;
+  headers?: Record<string, string>;
+  body?: string | null;
+}
 
 export class Database {
   private client: any
@@ -64,7 +209,30 @@ export class Database {
       this.client = createClient({
         url: normalizedUrl,
         authToken: token,
-        concurrency: 50 // Increase concurrency for higher throughput
+        concurrency: 25, // Reduced concurrency to prevent rate limits
+        fetch: async (fetchUrl, options) => {
+          // Add custom fetch with retry for 429 errors
+          const maxRetries = 3;
+          for (let attempt = 0; attempt < maxRetries; attempt++) {
+            try {
+              const response = await fetch(fetchUrl, options);
+              if (response.status === 429) {
+                // Rate limited, wait with exponential backoff
+                const delay = Math.pow(2, attempt) * 1000;
+                logger.warn(`Rate limit hit in Turso API call, retry ${attempt+1}/${maxRetries} after ${delay}ms`);
+                await new Promise(resolve => setTimeout(resolve, delay));
+                continue;
+              }
+              return response;
+            } catch (error) {
+              if (attempt === maxRetries - 1) throw error;
+              const delay = Math.pow(2, attempt) * 1000;
+              logger.warn(`Error in Turso API call, retry ${attempt+1}/${maxRetries} after ${delay}ms: ${error}`);
+              await new Promise(resolve => setTimeout(resolve, delay));
+            }
+          }
+          throw new Error('Max retries reached for Turso API call');
+        }
       })
     }
     
@@ -103,6 +271,7 @@ export class Database {
   static async getOrInitOrgDb(orgId: string): Promise<Database> {
     try {
       const db = await Database.getOrgDb(orgId)
+      
       await Database.ensureOrgSchema(db)
       return db
     } catch (error) {
@@ -196,6 +365,7 @@ export class Database {
             agent_id INTEGER,
             last_emailed DATETIME,
             phone_number TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT '',
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )`,
@@ -262,24 +432,23 @@ export class Database {
     // Prepare batch operations
     const batchOperations = [];
     
-    // Add table creation and index statements for missing tables
     for (const table of tables) {
       if (!tableSet.has(table.name)) {
-        logger.info(`Adding schema operations for missing table ${table.name} for org ${orgId}`);
-        
-        // Add create table statement
+        logger.info(`Adding create table operation for ${table.name}`);
         batchOperations.push({
           sql: table.createStatement,
           args: []
         });
-        
-        // Add index statements
-        for (const indexStatement of table.indexStatements) {
-          batchOperations.push({
-            sql: indexStatement,
-            args: []
-          });
-        }
+      }
+      
+      // Always add index creation statements, even for existing tables
+      // This ensures all necessary indexes exist in all databases
+      for (const indexStatement of table.indexStatements) {
+        logger.info(`Ensuring index for ${table.name}: ${indexStatement}`);
+        batchOperations.push({
+          sql: indexStatement,
+          args: []
+        });
       }
     }
     
@@ -289,7 +458,7 @@ export class Database {
       await orgDb.batch(batchOperations, 'write');
       logger.info(`Schema setup completed successfully for org ${orgId}`);
     } else {
-      logger.info(`All required tables already exist for org ${orgId}, no schema changes needed`);
+      logger.info(`No schema changes needed for org ${orgId}`);
     }
   }
 
@@ -458,365 +627,342 @@ export class Database {
   }
 
   /**
-   * Bulk import contacts from CSV directly into the database with high concurrency
+   * Bulk import contacts from CSV directly into the database
    */
-  static async bulkImportContacts(orgId: string, csvFilePath: string, overwriteExisting: boolean = false): Promise<void> {
+  static async bulkImportContacts(
+    orgId: string,
+    csvFilePath: string,
+    overwriteExisting: boolean = false,
+    columnMapping?: ColumnMapping,
+    carrierMapping?: CarrierMapping,
+    agentId?: number | null
+  ): Promise<string> {
+    logger.info(`Starting bulk import for organization ${orgId} from ${csvFilePath}`);
+    
     try {
-      logger.info(`Starting bulk import for org ${orgId}`);
-      
-      // Get database credentials
+      // get the main db
       const mainDb = new Database();
-      const org = await mainDb.fetchOne<{ turso_db_url: string; turso_auth_token: string }>(
+      
+      // get the org db url / auth token
+      const orgData = await mainDb.fetchOne<{ turso_db_url: string, turso_auth_token: string }>(
         'SELECT turso_db_url, turso_auth_token FROM organizations WHERE id = ?',
         [orgId]
       );
-      
-      if (!org?.turso_db_url || !org?.turso_auth_token) {
-        throw new Error('Organization database not configured');
+
+      if (!orgData) {
+        throw new Error(`Organization ${orgId} not found`);
       }
+
+      const { turso_db_url, turso_auth_token } = orgData;
+
+      if (!turso_db_url || !turso_auth_token) {
+        throw new Error(`Could not get database configuration for organization ${orgId}`);
+      }
+
+      // Create a temporary database with our current schema
+      const tempDbSuffix = `temp-${Date.now()}`;
+      const localDb = new BunDatabase(`file:${tempDbSuffix}`);
+
+      // Create tables with current schema
+      localDb.exec(`
+        CREATE TABLE contacts (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          first_name TEXT NOT NULL,
+          last_name TEXT NOT NULL,
+          email TEXT NOT NULL UNIQUE,
+          current_carrier TEXT NOT NULL,
+          plan_type TEXT NOT NULL,
+          effective_date TEXT NOT NULL,
+          birth_date TEXT NOT NULL,
+          tobacco_user INTEGER NOT NULL,
+          gender TEXT NOT NULL,
+          state TEXT NOT NULL,
+          zip_code TEXT NOT NULL,
+          agent_id INTEGER,
+          last_emailed DATETIME,
+          phone_number TEXT NOT NULL DEFAULT '',
+          status TEXT NOT NULL DEFAULT '',
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        -- Add indexes for contacts table
+        CREATE INDEX idx_contacts_email ON contacts(email);
+        CREATE UNIQUE INDEX idx_contacts_email_unique ON contacts(LOWER(TRIM(email)));
+        CREATE INDEX idx_contacts_agent_id ON contacts(agent_id);
+        CREATE INDEX idx_contacts_status ON contacts(status);
+
+        -- Create trigger for updated_at
+        CREATE TRIGGER update_contacts_timestamp 
+        AFTER UPDATE ON contacts 
+        BEGIN 
+          UPDATE contacts SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id; 
+        END;
+
+        -- Create other required tables
+        CREATE TABLE contact_events (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          contact_id INTEGER,
+          lead_id INTEGER,
+          event_type TEXT NOT NULL,
+          metadata TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (contact_id) REFERENCES contacts(id),
+          FOREIGN KEY (lead_id) REFERENCES leads(id)
+        );
+
+        CREATE INDEX idx_contact_events_contact_id ON contact_events(contact_id);
+        CREATE INDEX idx_contact_events_lead_id ON contact_events(lead_id);
+        CREATE INDEX idx_contact_events_type ON contact_events(event_type);
+
+        CREATE TABLE leads (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          email TEXT NOT NULL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(email)
+        );
+
+        CREATE INDEX idx_leads_email ON leads(email);
+
+        CREATE TABLE eligibility_answers (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          contact_id INTEGER NOT NULL,
+          quote_id TEXT NOT NULL,
+          answers TEXT NOT NULL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (contact_id) REFERENCES contacts(id)
+        );
+
+        CREATE INDEX idx_eligibility_answers_contact_id ON eligibility_answers(contact_id);
+      `);
       
-      // Connect to the organization's database 
-      const orgDb = new Database(org.turso_db_url, org.turso_auth_token);
-      logger.info(`Connected to organization database: ${org.turso_db_url}`);
-      
-      // Parse CSV data
-      logger.info(`Reading CSV file: ${csvFilePath}`);
-      const csvContent = await fs.promises.readFile(csvFilePath, 'utf-8');
-      
-      // Parse the CSV content
-      const records: any[] = [];
-      await new Promise<void>((resolve, reject) => {
-        parse(csvContent, {
-          columns: true,
-          skip_empty_lines: true,
-          trim: true
-        }, (err, output) => {
-          if (err) reject(err);
-          else {
-            records.push(...output);
-            resolve();
+      // Read the CSV file
+      const fileContents = await fsPromises.readFile(csvFilePath, 'utf8');
+      const rows = await new Promise<any[]>((resolve, reject) => {
+        const results: any[] = [];
+        const parser = parse(fileContents, { columns: true });
+        
+        parser.on('readable', function() {
+          let record;
+          while ((record = parser.read()) !== null) {
+            results.push(record);
           }
+        });
+        
+        parser.on('error', function(err) {
+          reject(err);
+        });
+        
+        parser.on('end', function() {
+          resolve(results);
         });
       });
       
-      if (records.length === 0) {
-        logger.info('No records found in CSV file, import completed');
-        return;
+      logger.info(`Processing ${rows.length} rows for organization ${orgId}`);
+      
+      // Find the email column (required for deduplication)
+      const emailColumn = columnMapping ? columnMapping.email : 'email';
+      if (!rows[0]?.[emailColumn]) {
+        throw new Error(`Email column "${emailColumn}" not found in CSV`);
       }
       
-      // Log the first record and its keys to help debug column mapping
-      const firstRecord = records[0];
-      logger.info(`CSV column headers: ${Object.keys(firstRecord).join(', ')}`);
-      logger.info(`First record raw data: ${JSON.stringify(firstRecord)}`);
-      
-      // Column mapping with variations
-      const columnMap: Record<string, string> = {
-        // First Name variations
-        first_name: 'first_name',
-        firstName: 'first_name',
-        'first name': 'first_name',
-        'First Name': 'first_name',
-        'FirstName': 'first_name',
-        fname: 'first_name',
-        'first-name': 'first_name',
+      // Map columns based on provided mapping or use default field names
+      const processRow = (row: any) => {
+        const mappedRow: any = {};
         
-        // Last Name variations
-        last_name: 'last_name',
-        lastName: 'last_name',
-        'last name': 'last_name',
-        'Last Name': 'last_name',
-        'LastName': 'last_name',
-        lname: 'last_name',
-        'last-name': 'last_name',
-        
-        // Email variations
-        email: 'email',
-        'Email': 'email',
-        'email_address': 'email',
-        'emailAddress': 'email',
-        'email address': 'email',
-        'Email Address': 'email',
-        
-        // Carrier variations
-        current_carrier: 'current_carrier',
-        currentCarrier: 'current_carrier',
-        'current carrier': 'current_carrier',
-        carrier: 'current_carrier',
-        'Current Carrier': 'current_carrier',
-        'insurance carrier': 'current_carrier',
-        'Insurance Carrier': 'current_carrier',
-        
-        // Plan Type variations
-        plan_type: 'plan_type',
-        planType: 'plan_type',
-        'plan type': 'plan_type',
-        'Plan Type': 'plan_type',
-        'insurance type': 'plan_type',
-        'Insurance Type': 'plan_type',
-        
-        // Effective Date variations
-        effective_date: 'effective_date',
-        effectiveDate: 'effective_date',
-        'effective date': 'effective_date',
-        'Effective Date': 'effective_date',
-        'start date': 'effective_date',
-        'Start Date': 'effective_date',
-        
-        // Birth Date variations
-        birth_date: 'birth_date',
-        birthDate: 'birth_date',
-        'birth date': 'birth_date',
-        'Birth Date': 'birth_date',
-        dob: 'birth_date',
-        'DOB': 'birth_date',
-        'date of birth': 'birth_date',
-        'Date of Birth': 'birth_date',
-        
-        // Tobacco User variations
-        tobacco_user: 'tobacco_user',
-        tobaccoUser: 'tobacco_user',
-        'tobacco user': 'tobacco_user',
-        'Tobacco User': 'tobacco_user',
-        'uses tobacco': 'tobacco_user',
-        'Uses Tobacco': 'tobacco_user',
-        smoker: 'tobacco_user',
-        'Smoker': 'tobacco_user',
-        
-        // Gender variations
-        gender: 'gender',
-        'Gender': 'gender',
-        sex: 'gender',
-        'Sex': 'gender',
-        
-        // State variations
-        state: 'state',
-        'State': 'state',
-        'state code': 'state',
-        'State Code': 'state',
-        
-        // Zip Code variations
-        zip_code: 'zip_code',
-        zipCode: 'zip_code',
-        'zip code': 'zip_code',
-        'Zip Code': 'zip_code',
-        zip: 'zip_code',
-        'ZIP': 'zip_code',
-        postal: 'zip_code',
-        'Postal': 'zip_code',
-        
-        // Phone Number variations
-        phone_number: 'phone_number',
-        phoneNumber: 'phone_number',
-        'phone number': 'phone_number',
-        'Phone Number': 'phone_number',
-        phone: 'phone_number',
-        'Phone': 'phone_number',
-        tel: 'phone_number',
-        'Tel': 'phone_number',
-        
-        // Agent ID variations
-        agent_id: 'agent_id',
-        agentId: 'agent_id',
-        'agent id': 'agent_id',
-        'Agent ID': 'agent_id',
-        'agent number': 'agent_id',
-        'Agent Number': 'agent_id'
-      };
-      
-      // Log column mapping analysis
-      const recordKeys = Object.keys(firstRecord);
-      logger.info(`CSV columns found: ${recordKeys.join(', ')}`);
-      
-      const mappedFields = new Set<string>();
-      recordKeys.forEach(key => {
-        const mappedTo = columnMap[key];
-        if (mappedTo) {
-          mappedFields.add(mappedTo);
-          logger.info(`Mapped column '${key}' to '${mappedTo}'`);
+        // Apply column mappings if provided
+        if (columnMapping) {
+          // Map each field using the provided column mapping
+          mappedRow.first_name = row[columnMapping.firstName] || '';
+          mappedRow.last_name = row[columnMapping.lastName] || '';
+          mappedRow.email = row[columnMapping.email] || '';
+          mappedRow.phone_number = row[columnMapping.phoneNumber] || '';
+          mappedRow.state = row[columnMapping.state] || '';
+          
+          // Apply carrier mapping if provided
+          let carrierValue = '';
+          if (columnMapping.currentCarrier && row[columnMapping.currentCarrier]) {
+            const originalCarrier = row[columnMapping.currentCarrier];
+            
+            // Use carrier mapping if available
+            if (carrierMapping && carrierMapping.mappings[originalCarrier]) {
+              carrierValue = carrierMapping.mappings[originalCarrier];
+              
+              // If mapped to "Other", preserve original value
+              if (carrierValue === 'Other') {
+                carrierValue = originalCarrier;
+              }
+            } else {
+              carrierValue = originalCarrier;
+            }
+          }
+          
+          mappedRow.current_carrier = carrierValue;
+          mappedRow.effective_date = row[columnMapping.effectiveDate] || '';
+          mappedRow.birth_date = row[columnMapping.birthDate] || '';
+          mappedRow.tobacco_user = row[columnMapping.tobaccoUser] === 'true' || row[columnMapping.tobaccoUser] === 'yes' || row[columnMapping.tobaccoUser] === '1';
+          mappedRow.gender = row[columnMapping.gender] || '';
+          mappedRow.zip_code = row[columnMapping.zipCode] || '';
+          mappedRow.plan_type = row[columnMapping.planType] || '';
         } else {
-          logger.warn(`No mapping found for column: '${key}'`);
+          // Use default field names if no mapping provided
+          mappedRow.first_name = row.first_name || row.firstName || '';
+          mappedRow.last_name = row.last_name || row.lastName || '';
+          mappedRow.email = row.email || '';
+          mappedRow.phone_number = row.phone_number || row.phoneNumber || '';
+          mappedRow.state = row.state || '';
+          mappedRow.current_carrier = row.current_carrier || row.currentCarrier || '';
+          mappedRow.effective_date = row.effective_date || row.effectiveDate || '';
+          mappedRow.birth_date = row.birth_date || row.birthDate || '';
+          mappedRow.tobacco_user = row.tobacco_user === 'true' || row.tobacco_user === 'yes' || row.tobacco_user === '1' ||
+                                 row.tobaccoUser === 'true' || row.tobaccoUser === 'yes' || row.tobaccoUser === '1';
+          mappedRow.gender = row.gender || '';
+          mappedRow.zip_code = row.zip_code || row.zipCode || '';
+          mappedRow.plan_type = row.plan_type || row.planType || '';
         }
-      });
-      
-      // Check for missing required fields
-      const requiredFields = ['first_name', 'last_name', 'email', 'effective_date', 'birth_date'];
-      const missingRequired = requiredFields.filter(field => !mappedFields.has(field));
-      if (missingRequired.length > 0) {
-        logger.warn(`Missing required fields in CSV: ${missingRequired.join(', ')}`);
-        if (missingRequired.length >= 3) {
-          throw new Error(`Too many required fields missing from CSV: ${missingRequired.join(', ')}`);
+        
+        // Add standard fields
+        mappedRow.created_at = new Date().toISOString();
+        mappedRow.updated_at = new Date().toISOString();
+        
+        // Add agent_id if provided
+        if (agentId !== undefined && agentId !== null) {
+          mappedRow.agent_id = agentId;
         }
-      }
-      
-      // Helper function for normalized field value extraction
-      const getValue = (record: any, fieldName: string, defaultValue: string = ''): string => {
-        // Try all possible mappings
-        for (const [key, mappedField] of Object.entries(columnMap)) {
-          if (mappedField === fieldName && record[key] !== undefined) {
-            return record[key] || defaultValue;
-          }
-        }
-        // Try direct field name
-        return record[fieldName] || defaultValue;
+        
+        return mappedRow;
       };
       
-      // We don't need to fetch all existing emails anymore since we're using SQL's built-in duplicate handling
-      // Just create a set to track emails within each batch to avoid duplicates in the same import batch
-      const processedEmails = new Set<string>();
-      logger.info("Using SQLite's built-in UPSERT capability to handle duplicates");
-      
-      // Process in larger batches and execute them concurrently
-      const BATCH_SIZE = 1000; // Larger batch size for better throughput
-      const totalBatches = Math.ceil(records.length / BATCH_SIZE);
-      
-      logger.info(`Processing ${records.length} records in ${totalBatches} concurrent batches of up to ${BATCH_SIZE} records each`);
-      
-      // Prepare batch function to be called concurrently
-      const processBatch = async (batchIndex: number): Promise<{added: number, skipped: number}> => {
-        const startIdx = batchIndex * BATCH_SIZE;
-        const endIdx = Math.min(startIdx + BATCH_SIZE, records.length);
-        const batchRecords = records.slice(startIdx, endIdx);
-        
-        let batchAdded = 0;
-        let batchSkipped = 0;
-        
-        // Prepare batch operations
-        const batchOperations: { sql: string, args: any[] }[] = [];
-        
-        for (const record of batchRecords) {
-          try {
-            const contact: ContactCreate = {
-              first_name: getValue(record, 'first_name'),
-              last_name: getValue(record, 'last_name'),
-              email: getValue(record, 'email'),
-              current_carrier: getValue(record, 'current_carrier'),
-              plan_type: getValue(record, 'plan_type'),
-              effective_date: getValue(record, 'effective_date'),
-              birth_date: getValue(record, 'birth_date'),
-              tobacco_user: !!(getValue(record, 'tobacco_user') === '1' || getValue(record, 'tobacco_user').toLowerCase() === 'true'),
-              gender: getValue(record, 'gender'),
-              state: getValue(record, 'state'),
-              zip_code: getValue(record, 'zip_code'),
-              phone_number: getValue(record, 'phone_number'),
-              agent_id: getValue(record, 'agent_id') ? Number(getValue(record, 'agent_id')) : null,
-            };
-            
-            // Log sample data for first few records
-            if (startIdx + batchAdded + batchSkipped < 3) {
-              logger.info(`Sample mapped contact data: ${JSON.stringify(contact)}`);
-            }
-            
-            if (!contact.first_name || !contact.last_name || !contact.email || !contact.effective_date || !contact.birth_date) {
-              batchSkipped++;
-              continue;
-            }
-            
-            const email = contact.email.toLowerCase().trim();
-            
-            // We still need to prevent duplicates within the same batch or import
-            // to avoid constraint violations
-            if (processedEmails.has(email)) {
-              batchSkipped++;
-              continue;
-            }
-            
-            // Add email to the set to prevent duplicates within this import
-            processedEmails.add(email);
-            
-            // Use the faster approach with SQLite's INSERT OR REPLACE/IGNORE
-            const insertOp = overwriteExisting ? 'REPLACE' : 'IGNORE';
-            
-            // Single operation instead of multiple operations
-            batchOperations.push({
-              sql: `
-                INSERT OR ${insertOp} INTO contacts (
-                  first_name, last_name, email, current_carrier, plan_type, effective_date,
-                  birth_date, tobacco_user, gender, state, zip_code, phone_number, agent_id,
-                  created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-              `,
-              args: [
-                contact.first_name,
-                contact.last_name,
-                email,
-                contact.current_carrier,
-                contact.plan_type,
-                contact.effective_date,
-                contact.birth_date,
-                contact.tobacco_user ? 1 : 0,
-                contact.gender,
-                contact.state,
-                contact.zip_code,
-                contact.phone_number,
-                contact.agent_id === null ? null : Number(contact.agent_id)
-              ]
-            });
-            
-            batchAdded++;
-          } catch (error) {
-            batchSkipped++;
-          }
-        }
-        
-        // Execute batch operations with transaction support
-        if (batchOperations.length > 0) {
-          logger.info(`Executing batch ${batchIndex + 1}/${totalBatches} with ${batchOperations.length} operations`);
-          try {
-            await orgDb.batch(batchOperations, 'write');
-            logger.info(`Batch ${batchIndex + 1}/${totalBatches} completed successfully: added ${batchAdded}, skipped ${batchSkipped}`);
-            return { added: batchAdded, skipped: batchSkipped };
-          } catch (error) {
-            logger.error(`Error executing batch ${batchIndex + 1}/${totalBatches}: ${error}`);
-            // Continue with the next batch even if this one failed
-            return { added: 0, skipped: batchRecords.length };
-          }
-        } else {
-          logger.info(`Batch ${batchIndex + 1}/${totalBatches} had no operations to execute`);
-          return { added: 0, skipped: batchRecords.length };
-        }
-      };
-      
-      // Launch all batches concurrently
-      const batchPromises: Promise<{added: number, skipped: number}>[] = [];
-      for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
-        batchPromises.push(processBatch(batchIndex));
-      }
-      
-      // Wait for all batches to complete
-      logger.info(`Launched ${batchPromises.length} concurrent batch operations`);
-      const results = await Promise.allSettled(batchPromises);
-      
-      // Compute total results
+      // Process rows in batches to avoid memory issues
+      const batchSize = 100;
+      const totalBatches = Math.ceil(rows.length / batchSize);
+      let totalProcessed = 0;
       let totalAdded = 0;
       let totalSkipped = 0;
-      let totalProcessed = 0;
       
-      results.forEach((result, index) => {
-        if (result.status === 'fulfilled') {
-          totalAdded += result.value.added;
-          totalSkipped += result.value.skipped;
-        } else {
-          logger.error(`Batch ${index + 1} failed: ${result.reason}`);
-          // Assume all records in this batch were skipped
-          const batchSize = Math.min(BATCH_SIZE, records.length - (index * BATCH_SIZE));
-          totalSkipped += batchSize;
+      // Begin transaction for batch processing
+      localDb.exec('BEGIN TRANSACTION');
+      
+      try {
+        // Prepare the insert statement with ON CONFLICT clause
+        const stmt = localDb.prepare(`
+          INSERT INTO contacts (
+            first_name, last_name, email, phone_number, state,
+            current_carrier, effective_date, birth_date, tobacco_user,
+            gender, zip_code, plan_type, agent_id, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ${overwriteExisting ? `
+          ON CONFLICT(email) DO UPDATE SET
+            first_name = excluded.first_name,
+            last_name = excluded.last_name,
+            phone_number = excluded.phone_number,
+            state = excluded.state,
+            current_carrier = excluded.current_carrier,
+            effective_date = excluded.effective_date,
+            birth_date = excluded.birth_date,
+            tobacco_user = excluded.tobacco_user,
+            gender = excluded.gender,
+            zip_code = excluded.zip_code,
+            plan_type = excluded.plan_type,
+            agent_id = excluded.agent_id,
+            updated_at = excluded.updated_at
+          ` : 'ON CONFLICT(email) DO NOTHING'}
+        `);
+
+        // Process each batch
+        for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
+          const start = batchIndex * batchSize;
+          const end = Math.min(start + batchSize, rows.length);
+          const batch = rows.slice(start, end);
+          
+          logger.info(`Processing batch ${batchIndex + 1}/${totalBatches} (rows ${start + 1}-${end})`);
+          
+          // Process each row in the batch
+          for (const row of batch) {
+            totalProcessed++;
+            const processedRow = processRow(row);
+            const email = processedRow.email.toLowerCase().trim();
+            
+            if (!email) {
+              logger.warn('Skipping row with no email address');
+              totalSkipped++;
+              continue;
+            }
+            
+            try {
+              const result = stmt.run(
+                processedRow.first_name,
+                processedRow.last_name,
+                email,
+                processedRow.phone_number,
+                processedRow.state,
+                processedRow.current_carrier,
+                processedRow.effective_date,
+                processedRow.birth_date,
+                processedRow.tobacco_user ? 1 : 0,
+                processedRow.gender,
+                processedRow.zip_code,
+                processedRow.plan_type,
+                processedRow.agent_id || null,
+                processedRow.created_at,
+                processedRow.updated_at
+              );
+              
+              if (result.changes > 0) {
+                totalAdded++;
+              } else {
+                totalSkipped++;
+              }
+            } catch (err) {
+              logger.error(`Error processing row with email ${email}: ${err}`);
+              totalSkipped++;
+            }
+          }
         }
-      });
-      
-      totalProcessed = totalAdded + totalSkipped;
-      
-      // Update the organization's last update timestamp
-      await mainDb.execute(
-        'UPDATE organizations SET updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-        [orgId]
-      );
-      
-      // Get final count
-      const finalCount = await orgDb.fetchOne<{ count: number }>('SELECT COUNT(*) as count FROM contacts');
-      logger.info(`Bulk import completed for org ${orgId}: processed ${totalProcessed}, added ${totalAdded}, skipped ${totalSkipped}, final count: ${finalCount?.count || 'unknown'}`);
-      
+        
+        // Commit transaction after successful processing
+        localDb.exec('COMMIT');
+        logger.info(`Successfully processed all rows for organization ${orgId}`);
+        logger.info(`Total processed: ${totalProcessed}, added: ${totalAdded}, skipped: ${totalSkipped}`);
+
+        try {
+          // Create new database and upload data
+          const tursoService = new TursoService();
+          logger.info(`Creating new Turso database for import`);
+          const { dbName: newOrgDbName, url: newOrgDbUrl, token: newOrgDbToken } = await tursoService.createDatabaseForImport(orgId);
+          
+          // Upload the local db to the new org db
+          logger.info(`Uploading data to new Turso database at ${newOrgDbUrl}`);
+          await tursoService.uploadDatabase(newOrgDbName, newOrgDbToken, `file:${tempDbSuffix}`);
+          
+          // Update main db with new org db url / auth token 
+          logger.info(`Updating organization ${orgId} with new database credentials`);
+          await mainDb.execute(`
+            UPDATE organizations 
+            SET turso_db_url = ?, turso_auth_token = ?
+            WHERE id = ?
+          `, [newOrgDbUrl, newOrgDbToken, orgId]);
+          
+          logger.info(`Successfully completed import for organization ${orgId}`);
+          
+          // Return success message with import stats
+          return `Successfully imported ${totalAdded} contacts (${totalSkipped} skipped) to new database: ${newOrgDbUrl}`;
+        } catch (importError) {
+          logger.error(`Error during Turso database creation or upload: ${importError}`);
+          throw importError;
+        }
+      } catch (error) {
+        // Rollback transaction on error
+        try {
+          localDb.exec('ROLLBACK');
+        } catch (rollbackError) {
+          logger.error(`Error during transaction rollback: ${rollbackError}`);
+        }
+        throw error;
+      }
     } catch (error) {
-      logger.error(`Bulk import failed: ${error}`);
+      logger.error(`Error in bulk import for organization ${orgId}: ${error}`);
       throw error;
     }
   }
@@ -834,14 +980,11 @@ export class Database {
       // Create a set of existing table names for faster lookup
       const tableSet = new Set(existingTables.map((row: any) => row.name || row[0]));
       
-      // Prepare all schema creation statements
-      const schemaOperations = [];
-      
-      // Contacts table
-      if (!tableSet.has('contacts')) {
-        logger.info('Creating contacts table schema');
-        schemaOperations.push({
-          sql: `
+      // Define tables with their schema and indexes
+      const tables = [
+        {
+          name: 'contacts',
+          createSql: `
             CREATE TABLE IF NOT EXISTS contacts (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               first_name TEXT NOT NULL,
@@ -858,30 +1001,22 @@ export class Database {
               agent_id INTEGER,
               last_emailed DATETIME,
               phone_number TEXT NOT NULL DEFAULT '',
+              status TEXT NOT NULL DEFAULT '',
               created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
               updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
           `,
-          args: []
-        });
-        
-        // Indexes for contacts table
-        schemaOperations.push({
-          sql: `CREATE INDEX IF NOT EXISTS idx_contacts_email ON contacts(email)`,
-          args: []
-        });
-        
-        schemaOperations.push({
-          sql: `CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_email_unique ON contacts(LOWER(TRIM(email)))`,
-          args: []
-        });
-      }
-      
-      // Contact events table
-      if (!tableSet.has('contact_events')) {
-        logger.info('Creating contact_events table schema');
-        schemaOperations.push({
-          sql: `
+          indexSqls: [
+            `CREATE INDEX IF NOT EXISTS idx_contacts_email ON contacts(email)`,
+            `CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_email_unique ON contacts(LOWER(TRIM(email)))`,
+            `CREATE INDEX IF NOT EXISTS idx_contacts_agent_id ON contacts(agent_id)`,
+            `CREATE INDEX IF NOT EXISTS idx_contacts_status ON contacts(status)`,
+            `CREATE TRIGGER IF NOT EXISTS update_contacts_timestamp AFTER UPDATE ON contacts BEGIN UPDATE contacts SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id; END`
+          ]
+        },
+        {
+          name: 'contact_events',
+          createSql: `
             CREATE TABLE IF NOT EXISTS contact_events (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               contact_id INTEGER,
@@ -893,31 +1028,15 @@ export class Database {
               FOREIGN KEY (lead_id) REFERENCES leads(id)
             )
           `,
-          args: []
-        });
-        
-        // Indexes for contact_events table
-        schemaOperations.push({
-          sql: `CREATE INDEX IF NOT EXISTS idx_contact_events_contact_id ON contact_events(contact_id)`,
-          args: []
-        });
-        
-        schemaOperations.push({
-          sql: `CREATE INDEX IF NOT EXISTS idx_contact_events_lead_id ON contact_events(lead_id)`,
-          args: []
-        });
-        
-        schemaOperations.push({
-          sql: `CREATE INDEX IF NOT EXISTS idx_contact_events_type ON contact_events(event_type)`,
-          args: []
-        });
-      }
-      
-      // Leads table
-      if (!tableSet.has('leads')) {
-        logger.info('Creating leads table schema');
-        schemaOperations.push({
-          sql: `
+          indexSqls: [
+            `CREATE INDEX IF NOT EXISTS idx_contact_events_contact_id ON contact_events(contact_id)`,
+            `CREATE INDEX IF NOT EXISTS idx_contact_events_lead_id ON contact_events(lead_id)`,
+            `CREATE INDEX IF NOT EXISTS idx_contact_events_type ON contact_events(event_type)`
+          ]
+        },
+        {
+          name: 'leads',
+          createSql: `
             CREATE TABLE IF NOT EXISTS leads (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               name TEXT NOT NULL,
@@ -926,21 +1045,13 @@ export class Database {
               UNIQUE(email)
             )
           `,
-          args: []
-        });
-        
-        // Index for leads table
-        schemaOperations.push({
-          sql: `CREATE INDEX IF NOT EXISTS idx_leads_email ON leads(email)`,
-          args: []
-        });
-      }
-      
-      // Eligibility answers table
-      if (!tableSet.has('eligibility_answers')) {
-        logger.info('Creating eligibility_answers table schema');
-        schemaOperations.push({
-          sql: `
+          indexSqls: [
+            `CREATE INDEX IF NOT EXISTS idx_leads_email ON leads(email)`
+          ]
+        },
+        {
+          name: 'eligibility_answers',
+          createSql: `
             CREATE TABLE IF NOT EXISTS eligibility_answers (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               contact_id INTEGER NOT NULL,
@@ -950,14 +1061,35 @@ export class Database {
               FOREIGN KEY (contact_id) REFERENCES contacts(id)
             )
           `,
-          args: []
-        });
+          indexSqls: [
+            `CREATE INDEX IF NOT EXISTS idx_eligibility_answers_contact_id ON eligibility_answers(contact_id)`
+          ]
+        }
+      ];
+      
+      // Prepare batch operations
+      const schemaOperations = [];
+      
+      // Process each table
+      for (const table of tables) {
+        // Create table if it doesn't exist
+        if (!tableSet.has(table.name)) {
+          logger.info(`Creating ${table.name} table schema`);
+          schemaOperations.push({
+            sql: table.createSql,
+            args: []
+          });
+        }
         
-        // Index for eligibility_answers table
-        schemaOperations.push({
-          sql: `CREATE INDEX IF NOT EXISTS idx_eligibility_answers_contact_id ON eligibility_answers(contact_id)`,
-          args: []
-        });
+        // Always add indexes regardless of whether table existed before
+        // This ensures all necessary indexes exist in all databases
+        for (const indexSql of table.indexSqls) {
+          logger.info(`Ensuring index for ${table.name}: ${indexSql}`);
+          schemaOperations.push({
+            sql: indexSql,
+            args: []
+          });
+        }
       }
       
       // Execute all schema operations in a single batch if there are any
@@ -966,7 +1098,24 @@ export class Database {
         await orgDb.batch(schemaOperations, 'write');
         logger.info('Schema setup completed successfully');
       } else {
-        logger.info('All required tables already exist, no schema changes needed');
+        logger.info('All required tables exist, checking indexes...');
+        
+        // Even if all tables exist, we still need to ensure all indexes exist
+        const indexOperations = [];
+        for (const table of tables) {
+          for (const indexSql of table.indexSqls) {
+            indexOperations.push({
+              sql: indexSql,
+              args: []
+            });
+          }
+        }
+        
+        if (indexOperations.length > 0) {
+          logger.info(`Ensuring ${indexOperations.length} indexes exist`);
+          await orgDb.batch(indexOperations, 'write');
+          logger.info('Index verification completed');
+        }
       }
     } catch (error) {
       logger.error(`Error ensuring org schema: ${error}`);
@@ -978,6 +1127,42 @@ export class Database {
     if (this.isLocal && this.bunDb) {
       this.bunDb.close()
     }
+  }
+
+  private async fetch(fetchUrl: RequestInfo, options: RequestInit | undefined = undefined): Promise<Response> {
+    const response = await fetch(fetchUrl, options || {});
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    return response;
+  }
+
+  private async fetchWithRetry(fetchUrl: RequestInfo, options: RequestInit | undefined = undefined): Promise<Response> {
+    const maxRetries = 3;
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        const response = await this.fetch(fetchUrl, options);
+        if (response.status === 429) {
+          // Rate limited, wait with exponential backoff
+          const delay = Math.pow(2, attempt) * 1000;
+          logger.warn(`Rate limit hit, retry ${attempt + 1}/${maxRetries} after ${delay}ms`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+        return response;
+      } catch (error) {
+        lastError = error as Error;
+        if (attempt < maxRetries - 1) {
+          const delay = Math.pow(2, attempt) * 1000;
+          logger.warn(`Request failed, retry ${attempt + 1}/${maxRetries} after ${delay}ms: ${error}`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+      }
+    }
+
+    throw lastError || new Error('Max retries reached');
   }
 }
 

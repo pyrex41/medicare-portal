@@ -16,6 +16,7 @@ import Json.Encode as Encode
 import Process
 import Task
 import Time exposing (Month(..), Posix, Zone)
+import Utils.MyDate exposing (dateFromMonthDayYear)
 
 
 
@@ -397,6 +398,21 @@ type ContactFormField
     | PlanType
 
 
+safeStringToDate : String -> Result String Date
+safeStringToDate dateString =
+    case Date.fromIsoString dateString of
+        Ok date ->
+            Ok date
+
+        Err error ->
+            case dateFromMonthDayYear dateString of
+                Ok date ->
+                    Ok date
+
+                Err _ ->
+                    Err error
+
+
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
@@ -404,9 +420,9 @@ update msg model =
             ( model, Cmd.none )
 
         GotContact (Ok contact) ->
-            case Date.fromIsoString contact.effectiveDate of
+            case safeStringToDate contact.effectiveDate of
                 Ok effectiveDate ->
-                    case Date.fromIsoString contact.birthDate of
+                    case safeStringToDate contact.birthDate of
                         Ok birthDate ->
                             let
                                 planType =
@@ -1773,33 +1789,9 @@ formatDate zone time =
 -- HELPERS
 
 
-stringToPosix : String -> Date
-stringToPosix dateString =
-    case Date.fromIsoString dateString of
-        Ok date ->
-            date
-
-        Err _ ->
-            -- Default to Unix epoch if invalid date
-            Date.fromCalendarDate 1970 Jan 1
-
-
 isStateActive : EmailSchedule -> Bool
 isStateActive schedule =
     List.member schedule.state schedule.stateLicenses
-
-
-updateContact : Contact -> List Contact -> List Contact
-updateContact updated contacts =
-    List.map
-        (\contact ->
-            if contact.id == updated.id then
-                updated
-
-            else
-                contact
-        )
-        contacts
 
 
 

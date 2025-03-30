@@ -10,89 +10,41 @@ if (!root) {
 
 
 
-// Add a hook to capture redirects in case we're still having issues
-const originalPushState = history.pushState;
-history.pushState = function(data: any, unused: string, url?: string | URL | null) {
-  console.warn('NAVIGATION:', 'pushState', url);
-  // Also save to debug info storage
-  const redirectInfo = `Redirect: ${url}`;
-  localStorage.setItem('redirect_debug_info', redirectInfo);
-  sessionStorage.setItem('redirect_debug_info', redirectInfo);
-  return originalPushState.apply(this, [data, unused, url]);
-};
-
-const originalReplaceState = history.replaceState;
-history.replaceState = function(data: any, unused: string, url?: string | URL | null) {
-  console.warn('NAVIGATION:', 'replaceState', url);
-  // Also save to debug info storage
-  const redirectInfo = `Redirect (replace): ${url}`;
-  localStorage.setItem('redirect_debug_info', redirectInfo);
-  sessionStorage.setItem('redirect_debug_info', redirectInfo);
-  return originalReplaceState.apply(this, [data, unused, url]);
-};
-
-// Check if we're on an error page and display debug info if available
-const urlParams = new URLSearchParams(window.location.search);
-const errorMsg = urlParams.get('message');
-if (window.location.pathname === '/error' && errorMsg) {
-  console.error('Error page detected:', errorMsg);
-  
-  // Get debug info
-  const debugInfo = localStorage.getItem('selfservice_debug_info') || 
-                   sessionStorage.getItem('selfservice_debug_info') || 
-                   'No debug information available';
-                   
-  // Get redirect info
-  const redirectInfo = localStorage.getItem('redirect_debug_info') || 
-                      sessionStorage.getItem('redirect_debug_info') || 
-                      'No redirect information available';
-  
-  // Show debugging information on the page
-  root.innerHTML = `
-    <div style="max-width: 800px; margin: 50px auto; padding: 20px; font-family: sans-serif;">
-      <h1 style="color: #e53e3e;">Error</h1>
-      <p style="margin-bottom: 20px; font-size: 18px;">${errorMsg}</p>
-      
-      <h2 style="margin-top: 30px;">Debug Information</h2>
-      <pre style="background: #f7fafc; padding: 15px; border-radius: 5px; overflow: auto; max-height: 300px;">${debugInfo}</pre>
-      
-      <h2 style="margin-top: 30px;">Redirect Information</h2>
-      <pre style="background: #f7fafc; padding: 15px; border-radius: 5px; overflow: auto; max-height: 300px;">${redirectInfo}</pre>
-      
-      <div style="margin-top: 30px;">
-        <button onclick="window.history.back()" style="padding: 10px 20px; background: #4299e1; color: white; border: none; border-radius: 5px; cursor: pointer;">Go Back</button>
-        <button onclick="window.location.href='/'" style="margin-left: 10px; padding: 10px 20px; background: #718096; color: white; border: none; border-radius: 5px; cursor: pointer;">Go Home</button>
-      </div>
-    </div>
-  `;
-  
-  // Don't initialize Elm on error pages
-  throw new Error('Skipping Elm initialization on error page');
-}
-
-// Get session cookie if it exists
-const getCookie = (name: string) => {
-  const value = `; ${document.cookie}`
-  const parts = value.split(`; ${name}=`)
-  if (parts.length === 2) return parts.pop()?.split(';').shift()
-  return null
-}
-
-const sessionCookie = getCookie('session')
-console.log('Found session cookie:', sessionCookie)
-
 // Favicon is now set directly in index.html
 
 try {
+  console.log('Initializing Elm application...');
+  
+  // Verify the Elm object exists and has required properties
+  if (!Elm) {
+    throw new Error('Elm object is not defined');
+  }
+  
+  if (!Elm.Main) {
+    throw new Error('Elm.Main is not defined. Make sure the Elm application is correctly compiled.');
+  }
+  
+  if (typeof Elm.Main.init !== 'function') {
+    throw new Error('Elm.Main.init is not a function. The Elm application might not be correctly compiled.');
+  }
+  
+  // Log Elm details for debugging
+  console.log('Elm available:', !!Elm);
+  console.log('Elm.Main available:', !!Elm.Main);
+  console.log('Elm.Main.init available:', !!(Elm.Main && typeof Elm.Main.init === 'function'));
+  
+  // Create the flags object with only what's needed by Elm
+
+    
   // @ts-ignore - Will be used for ports in the future
   const app = Elm.Main.init({
-    node: root,
-    flags: {
-      apiUrl: 'http://localhost:3000',
-      initialSession: sessionCookie || null
-    }
-  })
-
+    node: root  
+  });
+  
+  // Expose app and Elm objects for debugging
+  (window as any).elmApp = app;
+  (window as any).elmDebug = Elm;
+  
   // Setup IntersectionObserver for phone section
   if (app.ports && app.ports.viewingPhone) {
     // Wait for the DOM to be fully rendered
@@ -151,16 +103,7 @@ try {
     // get org slug
     if (app.ports.getOrgSlug) {
       app.ports.getOrgSlug.subscribe(() => {
-        console.log('Getting org slug')
-        const orgSlug = getCookie('orgSlug')
-        if (orgSlug) {
-          app.ports.receiveOrgSlug.send(orgSlug)
-        } else {
-          console.log('No orgSlug cookie found')
-          if (app.ports.receiveOrgSlug) {
-            app.ports.receiveOrgSlug.send("")
-          }
-        }
+        app.ports.receiveOrgSlug.send("")
       })
     }
 
@@ -254,6 +197,18 @@ try {
     }
   }
 } catch (error) {
-  console.error('Failed to initialize Elm application:', error)
-  root.innerHTML = 'Failed to load application. Please try refreshing the page.'
+  console.error('Error initializing Elm application:', error);
+  
+  // Display a user-friendly error message
+  if (root) {
+    root.innerHTML = `
+      <div style="max-width: 800px; margin: 50px auto; padding: 20px; font-family: sans-serif; background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 5px;">
+        <h1 style="color: #721c24;">Elm Initialization Error</h1>
+        <p style="margin-bottom: 20px; font-size: 16px;">There was a problem initializing the application:</p>
+        <pre style="background: #f8f9fa; padding: 15px; border-radius: 5px; overflow: auto; max-height: 300px;">${error}</pre>
+        <p style="margin-top: 20px; font-size: 14px;">Try refreshing the page or clearing your browser cache.</p>
+        <button onclick="window.location.reload()" style="padding: 10px 20px; background: #dc3545; color: white; border: none; border-radius: 5px; cursor: pointer; margin-top: 10px;">Refresh Page</button>
+      </div>
+    `;
+  }
 }

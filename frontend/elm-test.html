@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Elm Test</title>
+</head>
+<body>
+  <div id="app"></div>
+
+  <script src="/dist/main.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', function() {
+      try {
+        console.log('Trying to initialize Elm directly');
+        
+        setTimeout(function() {
+          if (typeof Elm !== 'undefined' && Elm.Main) {
+            console.log('Elm.Main available:', !!Elm.Main);
+            console.log('Elm.Main.init available:', !!(Elm.Main && typeof Elm.Main.init === 'function'));
+            
+            // Create flags properly
+            var flags = { initialSession: null };
+            console.log('Flags:', flags);
+            
+            // Initialize Elm
+            var app = Elm.Main.init({
+              node: document.getElementById('app'),
+              flags: flags
+            });
+            
+            console.log('Elm initialization successful!');
+          } else {
+            console.error('Elm object is not available on the window');
+          }
+        }, 1000);
+      } catch (e) {
+        console.error('Direct Elm initialization error:', e);
+      }
+    });
+  </script>
+</body>
+</html> 

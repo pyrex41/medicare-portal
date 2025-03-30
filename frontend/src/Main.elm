@@ -237,7 +237,7 @@ type Msg
 
 
 type alias Flags =
-    { initialSession : Maybe String }
+    {}
 
 
 type alias CompareFlags =
@@ -301,12 +301,7 @@ init : Flags -> Url.Url -> Nav.Key -> ( Model, Cmd Msg )
 init flags url key =
     let
         initialSession =
-            case flags.initialSession of
-                Just session ->
-                    Verified session
-
-                Nothing ->
-                    Unknown
+            Unknown
 
         -- Parse the initial route to determine if we're on a public page
         initialRoute =

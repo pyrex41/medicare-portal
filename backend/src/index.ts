@@ -32,13 +32,13 @@ import * as path from 'path'
 import * as os from 'os'
 
 // At the top of the file, add interface for ZIP data
-interface ZipInfo {
+export interface ZipInfo {
   state: string;
-  // Add other ZIP info properties as needed
+  counties: string[];
 }
 
 // Update ZIP_DATA declaration
-let ZIP_DATA: Record<string, ZipInfo> = {}
+export let ZIP_DATA: Record<string, ZipInfo> = {}
 try {
   ZIP_DATA = JSON.parse(readFileSync(path.join(__dirname, '..', 'zipData.json'), 'utf-8'))
 } catch (e) {

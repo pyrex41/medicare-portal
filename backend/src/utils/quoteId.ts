@@ -3,7 +3,11 @@ import { createHash } from 'crypto';
 // Function to generate a unique quote ID from org ID and contact ID
 export function generateQuoteId(orgId: number, contactId: number): string {
     // Create a string to hash that includes org, contact, and secret
-    const dataToHash = `${orgId}-${contactId}-${process.env.QUOTE_SECRET || 'your-default-secret-key'}`;
+
+    const secret = process.env.QUOTE_SECRET || 'your-default-secret-key';
+
+    const dataToHash = `${orgId}-${contactId}-${secret}`;
+    console.log('dataToHash', dataToHash);
     
     // Generate hash using crypto
     const hash = createHash('sha256')
@@ -12,7 +16,9 @@ export function generateQuoteId(orgId: number, contactId: number): string {
         .slice(0, 8); // Take first 8 characters for brevity
     
     // Combine components into quote ID
-    return `${orgId}-${contactId}-${hash}`;
+    const finalQuoteId = `${orgId}-${contactId}-${hash}`;
+    console.log('finalQuoteId', finalQuoteId);
+    return finalQuoteId;
 }
 
 // Function to decode a quote ID back to org ID and contact ID
@@ -26,7 +32,9 @@ export function decodeQuoteId(quoteId: string): { orgId: number; contactId: numb
         const [orgId, contactId, providedHash] = parts;
         
         // Recreate hash to validate
-        const dataToHash = `${orgId}-${contactId}-${process.env.QUOTE_SECRET || 'your-default-secret-key'}`;
+        const secret = process.env.QUOTE_SECRET || 'your-default-secret-key';
+        const dataToHash = `${orgId}-${contactId}-${secret}`;
+        console.log('dataToHash', dataToHash);
         const expectedHash = createHash('sha256')
             .update(dataToHash)
             .digest('hex')

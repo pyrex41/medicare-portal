@@ -46,6 +46,8 @@ export const config = {
   TURSO_API_TOKEN: process.env.TURSO_API_TOKEN,
   TURSO_ORG_GROUP: process.env.TURSO_ORG_GROUP || 'medicare-portal',
   TURSO_ORG_SLUG: process.env.TURSO_ORG_SLUG || 'pyrex41',
+  USE_LOCAL_SQLITE: process.env.USE_LOCAL_SQLITE === 'true',
+  LOCAL_DB_PATH: process.env.LOCAL_DB_PATH || './.data',
   quoteApiKey: process.env.QUOTE_API_KEY,
   quoteSecret: process.env.QUOTE_SECRET,
   magicLinkSecret: process.env.MAGIC_LINK_SECRET,

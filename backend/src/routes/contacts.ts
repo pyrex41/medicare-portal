@@ -1,10 +1,15 @@
 import { Elysia, t } from 'elysia';
 import { Database } from '../database';
 import { logger } from '../logger';
-import type { ContactCreate } from '../types';
-import fs from 'fs/promises';
+import { validateSession } from '../services/auth';
+import fs from 'fs';
 import path from 'path';
-import os from 'os';
+import { stringify } from 'csv-stringify/sync';
+import { nanoid } from 'nanoid';
+import { ZIP_DATA } from '../index';
+import { TursoService } from '../services/turso';
+import { TURSO_CONFIG } from '../config/turso';
+import fetch from 'node-fetch';
 
 type User = {
   id: number;
@@ -12,372 +17,447 @@ type User = {
   is_admin: boolean;
 };
 
-type Store = {
-  user: User;
+interface ContactImport {
+  first_name: string;
+  last_name: string;
+  email: string;
+  phone_number: string;
+  state: string;
+  current_carrier: string;
+  effective_date: string;
+  birth_date: string;
+  tobacco_user: boolean;
+  gender: string;
+  zip_code: string;
+  plan_type: string;
+}
+
+type BulkImportRequest = {
+  contacts: ContactImport[];
+  overwriteExisting: boolean;
+  agentId?: number | null;
 };
+
+interface Contact {
+  id: number;
+  first_name: string;
+  last_name: string;
+  email: string;
+  phone_number?: string;
+  state: string;
+  current_carrier?: string;
+  effective_date: string;
+  birth_date: string;
+  tobacco_user: number;
+  gender: string;
+  zip_code: string;
+  plan_type?: string;
+  agent_id?: number;
+  last_emailed?: string;
+  created_at: string;
+  updated_at: string;
+  status?: string;
+}
 
 type Context = {
   request: Request;
-  store: Store;
+  user: User;
   set: { status: number };
-  body: { overwriteExisting?: boolean };
-  params: { orgId: string };
-  query: Record<string, string | undefined>;
 };
 
 /**
  * Contacts API endpoints
  */
 export const contactsRoutes = new Elysia({ prefix: '/api/contacts' })
-  .guard({
-    beforeHandle: [
-      async ({ request, store }) => {
-        const user = await Database.getUserFromSession(request);
-        if (user) {
-          store.user = user;
-        }
-      }
-    ]
-  }, app => app
-    
-    // Get paginated contacts with filtering
-    .get('/', async ({ query, store, set }: Context) => {
-      const user = store.user;
-      if (!user || !user.organization_id) {
+  .use(app => app
+    .derive(async ({ request, set }) => {
+      const sessionCookie = request.headers.get('cookie')?.split(';')
+        .find(c => c.trim().startsWith('session='))
+        ?.split('=')[1];
+
+      if (!sessionCookie) {
         set.status = 401;
         return { error: 'Not authorized' };
       }
 
+      const user = await validateSession(sessionCookie);
+      if (!user) {
+        set.status = 401;
+        return { error: 'Not authorized' };
+      }
+
+      return { user };
+    })
+  )
+  .get('/', async ({ request, user, set }: Context) => {
+    if (!user || !user.organization_id) {
+      set.status = 401;
+      return { error: 'Not authorized' };
+    }
+
+    try {
+      // Parse query parameters
+      const url = new URL(request.url);
+      const page = parseInt(url.searchParams.get('page') || '1');
+      const limit = parseInt(url.searchParams.get('limit') || '100');
+      const search = url.searchParams.get('search') || '';
+      const states = url.searchParams.get('states')?.split(',').filter(Boolean) || [];
+      const carriers = url.searchParams.get('carriers')?.split(',').filter(Boolean) || [];
+      const agents = url.searchParams.get('agents')?.split(',').map(Number).filter(Boolean) || [];
+
+      logger.info(`Fetching contacts for org ${user.organization_id} - page: ${page}, limit: ${limit}, search: ${search || 'none'}, states: ${states.length ? states.join(',') : 'none'}, carriers: ${carriers.length ? carriers.join(',') : 'none'}, agents: ${agents.length ? agents.join(',') : 'none'}`);
+
+      // Build base query parts
+      let whereConditions = ['1=1'];
+      let params: any[] = [];
+
+      // Add search condition if present
+      if (search) {
+        whereConditions.push('(first_name LIKE ? OR last_name LIKE ? OR email LIKE ?)');
+        params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+      }
+
+      // Add state filter
+      if (states.length > 0) {
+        const zipCodesForStates = Object.entries(ZIP_DATA)
+          .filter(([_, info]) => states.includes(info.state))
+          .map(([zipCode]) => zipCode);
+        whereConditions.push(`zip_code IN (${zipCodesForStates.map(() => '?').join(',')})`);
+        params.push(...zipCodesForStates);
+      }
+
+      // Add carrier filter
+      if (carriers.length > 0) {
+        whereConditions.push(`(${carriers.map(() => 'current_carrier LIKE ?').join(' OR ')})`);
+        params.push(...carriers.map(c => `%${c}%`));
+      }
+
+      // Add agent filter
+      if (agents.length > 0) {
+        whereConditions.push(`agent_id IN (${agents.map(() => '?').join(',')})`);
+        params.push(...agents);
+      }
+
+      // Combine conditions
+      const whereClause = whereConditions.join(' AND ');
+
+      // Get organization database with retry logic
+      let orgDb;
       try {
-        // Get parameters from query
-        const page = parseInt(query?.page as string) || 1;
-        const limit = parseInt(query?.limit as string) || 50;
+        orgDb = await Database.getOrgDb(user.organization_id.toString());
+      } catch (error) {
+        // If database not found, check if it exists in the list
+        if (error instanceof Error && error.message.includes('database not configured')) {
+          logger.info(`Database not found for org ${user.organization_id}, checking database list...`);
+          
+          const tursoService = new TursoService();
+          const mainDb = new Database();
+          
+          // Get the org's database URL
+          const orgData = await mainDb.fetchOne<{ turso_db_url: string }>(
+            'SELECT turso_db_url FROM organizations WHERE id = ?',
+            [user.organization_id]
+          );
+
+          if (!orgData?.turso_db_url) {
+            logger.error(`No database URL found for org ${user.organization_id}`);
+            set.status = 500;
+            return { error: 'Organization database not configured' };
+          }
+
+          // Extract database name from URL
+          const dbName = orgData.turso_db_url.split('/').pop()?.split('.')[0];
+          if (!dbName) {
+            logger.error(`Could not extract database name from URL: ${orgData.turso_db_url}`);
+            set.status = 500;
+            return { error: 'Invalid database configuration' };
+          }
+
+          // Check if database exists in Turso
+          const response = await fetch(`https://api.turso.tech/v1/organizations/${TURSO_CONFIG.ORG_SLUG}/databases`, {
+            method: 'GET',
+            headers: {
+              'Authorization': `Bearer ${TURSO_CONFIG.API_TOKEN}`,
+            }
+          });
+
+          if (!response.ok) {
+            logger.error(`Failed to list databases, status: ${response.status}`);
+            set.status = 500;
+            return { error: 'Failed to verify database status' };
+          }
+
+          const data = await response.json();
+          const dbExists = data.databases.some((db: any) => db.Name === dbName);
+
+          if (dbExists) {
+            logger.info(`Database ${dbName} found in list, retrying connection...`);
+            // Retry getting the database
+            try {
+              orgDb = await Database.getOrgDb(user.organization_id.toString());
+            } catch (retryError) {
+              logger.error(`Failed to connect to database after verification: ${retryError}`);
+              set.status = 500;
+              return { error: 'Database exists but connection failed' };
+            }
+          } else {
+            logger.error(`Database ${dbName} not found in Turso organization`);
+            set.status = 500;
+            return { error: 'Database not found in organization' };
+          }
+        } else {
+          // For other errors, throw them
+          throw error;
+        }
+      }
+
+      logger.info(`Connected to org database for ${user.organization_id}`);
+
+      // First get total count with a simpler query
+      const countQuery = `SELECT COUNT(*) as total FROM contacts WHERE ${whereClause}`;
+      logger.info(`Executing count query: ${countQuery} with params: ${JSON.stringify(params)}`);
+      
+      const countResult = await orgDb.fetchOne<{ total: number }>(countQuery, params);
+      let total = countResult?.total || 0;
+      logger.info(`Found total of ${total} contacts matching criteria`);
+
+      // If no contacts found, verify database is properly synced
+      if (total === 0) {
+        logger.info(`No contacts found for org ${user.organization_id}, verifying database sync status...`);
         
-        // Handle filters - either from a JSON string or from individual parameters
-        let filters = {};
-        if (query?.filters) {
+        const mainDb = new Database();
+        
+        // Get the org's database URL
+        const orgData = await mainDb.fetchOne<{ turso_db_url: string }>(
+          'SELECT turso_db_url FROM organizations WHERE id = ?',
+          [user.organization_id]
+        );
+
+        if (!orgData?.turso_db_url) {
+          logger.error(`No database URL found for org ${user.organization_id}`);
+          set.status = 500;
+          return { error: 'Organization database not configured' };
+        }
+
+        // Extract database name from URL
+        const dbName = orgData.turso_db_url.split('/').pop()?.split('.')[0];
+        if (!dbName) {
+          logger.error(`Could not extract database name from URL: ${orgData.turso_db_url}`);
+          set.status = 500;
+          return { error: 'Invalid database configuration' };
+        }
+
+        // Check if database exists in Turso
+        const response = await fetch(`https://api.turso.tech/v1/organizations/${TURSO_CONFIG.ORG_SLUG}/databases`, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${TURSO_CONFIG.API_TOKEN}`,
+          }
+        });
+
+        if (!response.ok) {
+          logger.error(`Failed to list databases, status: ${response.status}`);
+          set.status = 500;
+          return { error: 'Failed to verify database status' };
+        }
+
+        const data = await response.json();
+        const dbExists = data.databases.some((db: any) => db.Name === dbName);
+
+        if (dbExists) {
+          logger.info(`Database ${dbName} found in list, retrying connection and count...`);
+          // Retry getting the database and count
           try {
-            filters = JSON.parse(query.filters as string);
-          } catch (e) {
-            logger.warn(`Failed to parse filters JSON: ${query.filters}`);
+            orgDb = await Database.getOrgDb(user.organization_id.toString());
+            const retryCountResult = await orgDb.fetchOne<{ total: number }>(countQuery, params);
+            const retryTotal = retryCountResult?.total || 0;
+            logger.info(`Retry count found ${retryTotal} contacts`);
+            if (retryTotal > 0) {
+              total = retryTotal; // Update total if we found contacts on retry
+            }
+          } catch (retryError) {
+            logger.error(`Failed to reconnect to database after verification: ${retryError}`);
+            set.status = 500;
+            return { error: 'Database exists but connection failed' };
           }
+        } else {
+          logger.error(`Database ${dbName} not found in Turso organization`);
+          set.status = 500;
+          return { error: 'Database not found in organization' };
         }
-        
-        // Also handle individual filter parameters
-        const search = query?.search;
-        const statesParam = query?.states;
-        const carriersParam = query?.carriers;
-        const agentsParam = query?.agents;
-        
-        if (search) filters.name = search;
-        if (statesParam) filters.state = statesParam;
-        if (carriersParam) filters.carrier = carriersParam;
-        
-        logger.info(`GET /api/contacts - Fetching page ${page}, limit ${limit}, filters: ${JSON.stringify(filters)}, search: ${search}, states: ${statesParam}, carriers: ${carriersParam}, agents: ${agentsParam}`);
-        
-        // Get organization database
-        const orgDb = await Database.getOrgDb(user.organization_id.toString());
-        logger.info(`GET /api/contacts - Connected to organization database for org ${user.organization_id}`);
-        
-        // Implement pagination directly with SQL
-        const offsetValue = (page - 1) * limit;
-        
-        // Build the WHERE clause based on provided filters
-        let whereClause = '1=1'; // Default condition (all records)
-        const queryParams: any[] = [];
-        
-        if (filters) {
-          // Handle search/name filter
-          if (filters.name) {
-            whereClause += ' AND (first_name LIKE ? OR last_name LIKE ?)';
-            queryParams.push(`%${filters.name}%`, `%${filters.name}%`);
-          }
-          
-          // Handle email filter
-          if (filters.email) {
-            whereClause += ' AND email LIKE ?';
-            queryParams.push(`%${filters.email}%`);
-          }
-          
-          // Handle state filter (could be a single state or an array)
-          if (filters.state) {
-            if (Array.isArray(filters.state) && filters.state.length > 0) {
-              // For arrays of states, create an IN clause
-              const placeholders = filters.state.map(() => '?').join(', ');
-              whereClause += ` AND state IN (${placeholders})`;
-              queryParams.push(...filters.state);
-            } else if (typeof filters.state === 'string' && filters.state.includes(',')) {
-              // Handle comma-separated string of states
-              const states = filters.state.split(',').map(s => s.trim()).filter(Boolean);
-              if (states.length > 0) {
-                const placeholders = states.map(() => '?').join(', ');
-                whereClause += ` AND state IN (${placeholders})`;
-                queryParams.push(...states);
-              }
-            } else if (typeof filters.state === 'string' && filters.state.trim() !== '') {
-              // Handle single state
-              whereClause += ' AND state = ?';
-              queryParams.push(filters.state);
-            }
-          }
-          
-          // Handle carrier filter (could be a single carrier or an array)
-          if (filters.carrier) {
-            if (Array.isArray(filters.carrier) && filters.carrier.length > 0) {
-              // For arrays of carriers, we need multiple LIKE conditions
-              const likeConditions = filters.carrier.map(() => 'current_carrier LIKE ?').join(' OR ');
-              whereClause += ` AND (${likeConditions})`;
-              queryParams.push(...filters.carrier.map(c => `%${c}%`));
-            } else if (typeof filters.carrier === 'string' && filters.carrier.includes(',')) {
-              // Handle comma-separated string of carriers
-              const carriers = filters.carrier.split(',').map(c => c.trim()).filter(Boolean);
-              if (carriers.length > 0) {
-                const likeConditions = carriers.map(() => 'current_carrier LIKE ?').join(' OR ');
-                whereClause += ` AND (${likeConditions})`;
-                queryParams.push(...carriers.map(c => `%${c}%`));
-              }
-            } else if (typeof filters.carrier === 'string' && filters.carrier.trim() !== '') {
-              // Handle single carrier
-              whereClause += ' AND current_carrier LIKE ?';
-              queryParams.push(`%${filters.carrier}%`);
-            }
-          }
-          
-          // Handle agent filter
-          if (filters.agents) {
-            if (Array.isArray(filters.agents) && filters.agents.length > 0) {
-              // For arrays of agent IDs
-              const placeholders = filters.agents.map(() => '?').join(', ');
-              whereClause += ` AND agent_id IN (${placeholders})`;
-              queryParams.push(...filters.agents);
-            } else if (typeof filters.agents === 'string' && filters.agents.includes(',')) {
-              // Handle comma-separated string of agent IDs
-              const agentIds = filters.agents.split(',').map(a => parseInt(a.trim())).filter(a => !isNaN(a));
-              if (agentIds.length > 0) {
-                const placeholders = agentIds.map(() => '?').join(', ');
-                whereClause += ` AND agent_id IN (${placeholders})`;
-                queryParams.push(...agentIds);
-              }
-            } else if (typeof filters.agents === 'string' || typeof filters.agents === 'number') {
-              // Handle single agent ID
-              whereClause += ' AND agent_id = ?';
-              queryParams.push(parseInt(filters.agents as string));
-            }
-          }
+      }
+
+      // Then get paginated results
+      const offset = (page - 1) * limit;
+      const selectQuery = `
+        SELECT 
+          COALESCE(id, rowid) as id,
+          first_name, last_name, email, phone_number, state,
+          current_carrier, effective_date, birth_date, tobacco_user,
+          gender, zip_code, plan_type, agent_id, last_emailed,
+          created_at, updated_at, status
+        FROM contacts 
+        WHERE ${whereClause}
+        ORDER BY created_at DESC 
+        LIMIT ? OFFSET ?`;
+      
+      logger.info(`Executing select query: ${selectQuery} with params: ${JSON.stringify([...params, limit, offset])}`);
+      
+      const contacts = await orgDb.query<Contact>(selectQuery, [...params, limit, offset]);
+      logger.info(`Retrieved ${contacts.length} contacts for current page`);
+
+      // Log first contact for debugging
+      if (contacts.length > 0) {
+        logger.info(`First contact: ${JSON.stringify(contacts[0])}`);
+      }
+
+      // Get filter options using separate queries for unique values
+      const carrierQuery = `SELECT DISTINCT current_carrier FROM contacts WHERE ${whereClause} AND current_carrier IS NOT NULL ORDER BY current_carrier`;
+      const zipQuery = `SELECT DISTINCT zip_code FROM contacts WHERE ${whereClause} AND zip_code IS NOT NULL ORDER BY zip_code`;
+      
+      const [carrierRows, zipRows] = await Promise.all([
+        orgDb.query<{current_carrier: string}>(carrierQuery, params),
+        orgDb.query<{zip_code: string}>(zipQuery, params)
+      ]);
+
+      // Get unique states from zip codes using ZIP_DATA
+      const uniqueStates = zipRows
+        .map(row => {
+          const zipInfo = ZIP_DATA[row.zip_code];
+          return zipInfo?.state;
+        })
+        .filter((state): state is string => state !== undefined)
+        .filter((value, index, self) => self.indexOf(value) === index)
+        .sort();
+      
+      const filterOptions = {
+        carriers: carrierRows.map(row => row.current_carrier).filter(Boolean),
+        states: uniqueStates
+      };
+      
+      logger.info(`Filter options - carriers: ${filterOptions.carriers.join(',')}, states: ${filterOptions.states.join(',')}`);
+
+      // Map contacts to expected format using snake_case
+      const mappedContacts = contacts.map(contact => {
+        // Get state from ZIP code
+        const zipInfo = ZIP_DATA[contact.zip_code];
+        const state = zipInfo?.state || contact.state; // Fallback to stored state if ZIP lookup fails
+
+        // Ensure we have a valid ID
+        if (!contact.id) {
+          logger.error(`Contact missing ID: ${JSON.stringify(contact)}`);
         }
-        
-        // Log the final SQL query
-        logger.info(`GET /api/contacts - WHERE clause: ${whereClause}, params: ${JSON.stringify(queryParams)}`);
-        
-        
-        // Get total count
-        const countResult = await orgDb.fetchOne(
-          `SELECT COUNT(*) as total FROM contacts WHERE ${whereClause}`,
-          queryParams
-        );
-        const total = countResult?.total || 0;
-        logger.info(`GET /api/contacts - Found total of ${total} contacts`);
-        
-        // Get paginated contacts
-        const contacts = await orgDb.fetchAll(
-          `SELECT * FROM contacts WHERE ${whereClause} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
-          [...queryParams, limit, offsetValue]
-        );
-        logger.info(`GET /api/contacts - Retrieved ${contacts.length} contacts for this page`);
-        
-        // Map contacts to the expected format
-        const mappedContacts = contacts.map(contact => ({
-          id: contact.id,
+
+        return {
+          id: contact.id || 0, // Fallback to 0 if null (shouldn't happen with COALESCE)
           first_name: contact.first_name,
           last_name: contact.last_name,
           email: contact.email,
+          phone_number: contact.phone_number || '',
+          state: state,
           current_carrier: contact.current_carrier,
-          plan_type: contact.plan_type,
           effective_date: contact.effective_date,
           birth_date: contact.birth_date,
           tobacco_user: Boolean(contact.tobacco_user),
           gender: contact.gender,
-          state: contact.state,
           zip_code: contact.zip_code,
+          plan_type: contact.plan_type,
           agent_id: contact.agent_id,
           last_emailed: contact.last_emailed,
-          phone_number: contact.phone_number || ''
-        }));
-
-        // Create filter options from the available data
-        const filterOptions = {
-          carriers: [...new Set(contacts.map(c => c.current_carrier).filter(Boolean))],
-          states: [...new Set(contacts.map(c => c.state).filter(Boolean))]
+          status: contact.status || 'New'
         };
+      });
 
-        // Format the response to match what the frontend expects
-        const response = {
-          contacts: mappedContacts,
-          filterOptions,
-          total,
-          page,
-          limit
-        };
-        
-        logger.info(`GET /api/contacts - Sending response with ${mappedContacts.length} contacts, total: ${total}`);
-        return response;
-      } catch (error) {
-        logger.error(`Error in GET /api/contacts: ${error}`);
-        set.status = 500;
-        return { error: 'Failed to fetch contacts' };
+      const response = {
+        contacts: mappedContacts,
+        filterOptions,
+        total,
+        page,
+        limit
+      };
+
+      logger.info(`Returning response with ${mappedContacts.length} contacts, total: ${total}`);
+      return response;
+
+    } catch (error) {
+      logger.error(`Error fetching contacts: ${error}`);
+      set.status = 500;
+      return { error: 'Failed to fetch contacts' };
+    }
+  })
+  .post('/bulk-import', async ({ body, user, set }: { body: BulkImportRequest; user: User; set: { status: number } }) => {
+    if (!user || !user.organization_id || !user.is_admin) {
+      set.status = 401;
+      return { error: 'Not authorized for bulk import' };
+    }
+
+    try {
+      // For non-admin agents, force overwriteExisting to false
+      const overwriteExisting = user.is_admin ? body.overwriteExisting : false;
+
+      // Validate contacts array
+      if (!Array.isArray(body.contacts) || body.contacts.length === 0) {
+        set.status = 400;
+        return { error: 'No contacts provided' };
       }
-    })
-    
-    // Bulk import contacts from CSV
-    .post('/bulk-import',
-      {
-        body: t.Object({
-          overwriteExisting: t.Optional(t.Boolean())
-        })
-      },
-      async ({ request, store, set, body }: Context) => {
-        const user = store.user;
-        if (!user || !user.organization_id || !user.is_admin) {
-          set.status = 401;
-          return { error: 'Not authorized for bulk import' };
-        }
 
-        try {
-          const formData = await request.formData();
-          const file = formData.get('file');
-          if (!file || !(file instanceof File) || path.extname(file.name).toLowerCase() !== '.csv') {
-            set.status = 400;
-            return { error: 'File must be a CSV' };
-          }
-
-          const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'import-'));
-          const tempFilePath = path.join(tempDir, 'contacts.csv');
-          await fs.writeFile(tempFilePath, Buffer.from(await file.arrayBuffer()));
-
-          logger.info(`CSV file saved to ${tempFilePath}, starting import`);
-
-          // Start the import process in the background with high priority
-          const importPromise = Database.bulkImportContacts(
-            user.organization_id.toString(), 
-            tempFilePath, 
-            body.overwriteExisting || false
-          );
-
-          // Handle promise completion to clean up temp files and log results
-          importPromise
-            .then(() => {
-              logger.info(`Import completed successfully for organization ${user.organization_id}`);
-              return fs.rm(tempDir, { recursive: true, force: true });
-            })
-            .catch((error: Error) => {
-              logger.error(`Background import failed for organization ${user.organization_id}: ${error}`);
-              return fs.rm(tempDir, { recursive: true, force: true }).catch(() => {
-                logger.error(`Failed to clean up temp directory ${tempDir}`);
-              });
-            });
-
-          return { 
-            success: true, 
-            message: 'Started import of contacts',
-            organizationId: user.organization_id
-          };
-        } catch (error) {
-          const err = error as Error;
-          logger.error(`Error in bulk import: ${err}`);
-          set.status = 500;
-          return { error: 'Failed to process import: ' + err.message };
-        }
+      // Create temp directory if it doesn't exist
+      const tempDir = path.join(process.cwd(), 'tmp');
+      if (!fs.existsSync(tempDir)) {
+        fs.mkdirSync(tempDir, { recursive: true });
       }
-    )
-    
-    // Add route to check import status
-    .get('/import-status/:orgId', async ({ params, store, set }: Context) => {
-      const user = store.user;
-      
-      if (!user || !user.organization_id) {
-        set.status = 401;
-        return { error: 'Not authorized' };
-      }
-      
-      // Only admins can check import status for any org
-      // Regular users can only check their own org's status
-      if (Number(params.orgId) !== user.organization_id && !user.is_admin) {
-        set.status = 403;
-        return { error: 'Not authorized to view this organization' };
-      }
+
+      // Generate temp file name with random ID to avoid conflicts
+      const tempFile = path.join(tempDir, `contacts-${nanoid()}.csv`);
       
       try {
-        // Look for a backup file to indicate an import is in progress
-        const backupDir = path.join(process.cwd(), 'backups');
-        const files = await fs.readdir(backupDir);
-        
-        // Filter files for this organization
-        const orgBackups = files.filter(file => file.startsWith(`org-${params.orgId}-`));
-        
-        if (orgBackups.length === 0) {
-          return { 
-            status: 'none',
-            message: 'No import in progress or recently completed' 
-          };
-        }
-        
-        // Sort by creation time (most recent first)
-        const statPromises = orgBackups.map(async (file) => {
-          const stats = await fs.stat(path.join(backupDir, file));
-          return { file, stats };
+        // Convert contacts array to CSV string
+        const csvData = stringify(body.contacts, {
+          header: true,
+          columns: [
+            'first_name', 'last_name', 'email', 'phone_number', 'state',
+            'current_carrier', 'effective_date', 'birth_date', 'tobacco_user',
+            'gender', 'zip_code', 'plan_type'
+          ]
         });
         
-        const fileStats = await Promise.all(statPromises);
-        fileStats.sort((a, b) => b.stats.mtimeMs - a.stats.mtimeMs);
+        // Write CSV data to temp file
+        fs.writeFileSync(tempFile, csvData);
+        logger.info(`Created temporary CSV file: ${tempFile} with ${body.contacts.length} contacts`);
         
-        const latestBackup = fileStats[0];
-        const ageInMinutes = (Date.now() - latestBackup.stats.mtimeMs) / 60000;
+        // Use the bulk import function with the temp CSV file
+        const result = await Database.bulkImportContacts(
+          user.organization_id.toString(),
+          tempFile,
+          overwriteExisting,
+          undefined, // columnMapping
+          undefined, // carrierMapping
+          body.agentId // Pass the agentId
+        );
         
-        // If backup file is less than 30 minutes old, consider it active
-        if (ageInMinutes < 30) {
-          const timestamp = latestBackup.file.split('-').pop()?.split('.')[0] || '';
-          
-          // Check logs for progress info
-          let progress = "unknown";
-          try {
-            const logs = await fs.readFile(path.join(process.cwd(), 'logs', 'ai-interactions.log'), 'utf-8');
-            const progressLines = logs.split('\n').filter(line => 
-              line.includes(`org-${params.orgId}-${timestamp}`) && line.includes('contacts')
-            );
-            
-            if (progressLines.length > 0) {
-              const lastLine = progressLines[progressLines.length - 1];
-              if (lastLine.includes('completed successfully')) {
-                progress = "completed";
-              } else {
-                progress = "in progress";
-              }
-            }
-          } catch (error) {
-            // Can't read logs, continue with unknown status
-          }
-          
-          return {
-            status: progress,
-            message: `Import ${progress === "completed" ? "completed" : "in progress"}`,
-            timestamp: new Date(parseInt(timestamp)).toISOString(),
-            age: Math.round(ageInMinutes)
-          };
-        } else {
-          return {
-            status: 'completed',
-            message: 'Import completed',
-            timestamp: new Date(latestBackup.stats.mtimeMs).toISOString(),
-            age: Math.round(ageInMinutes)
-          };
-        }
-      } catch (error) {
-        const err = error as Error;
-        logger.error(`Error checking import status: ${err}`);
-        return { 
-          status: 'error',
-          message: `Error checking import status: ${err.message}`
+        logger.info(`Bulk import completed: ${result}`);
+        
+        return {
+          success: true,
+          message: `Successfully processed ${body.contacts.length} contacts`,
+          totalRows: body.contacts.length,
+          processedRows: body.contacts.length,
+          errorRows: 0
         };
+      } finally {
+        // Clean up temp file
+        if (fs.existsSync(tempFile)) {
+          fs.unlinkSync(tempFile);
+          logger.info(`Removed temporary CSV file: ${tempFile}`);
+        }
       }
-    })
-  );
+    } catch (error) {
+      logger.error(`Error in bulk import: ${error}`);
+      set.status = 500;
+      return { 
+        success: false,
+        error: 'Failed to process import',
+        message: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  });
