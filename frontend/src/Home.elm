@@ -227,7 +227,7 @@ view model =
                             [ onClick NavigateSignup
                             , class "bg-[#03045E] text-white px-4 sm:px-6 py-2 rounded-lg text-sm font-medium hover:bg-[#1a1f5f] transition-colors duration-200"
                             ]
-                            [ text "Join the Waitlist" ]
+                            [ text "Get Early Access" ]
                         ]
                     ]
                 ]
@@ -249,7 +249,7 @@ view model =
                                         [ onClick NavigateSignup
                                         , class "bg-[#03045E] text-white px-4 sm:px-6 py-2 rounded-lg text-sm font-medium hover:bg-[#1a1f5f] transition-colors duration-200"
                                         ]
-                                        [ text "Join the Waitlist" ]
+                                        [ text "Get Early Access" ]
                                     ]
                                 ]
                             ]
@@ -275,7 +275,7 @@ view model =
                                 [ onClick NavigateSignup
                                 , class "w-full sm:w-auto inline-flex items-center justify-center px-4 sm:px-6 py-3 sm:py-4 rounded-lg text-base sm:text-lg font-semibold text-white bg-[#03045E] hover:bg-[#1a1f5f] transition-colors duration-200"
                                 ]
-                                [ text "Join the Waitlist" ]
+                                [ text "Get Early Access" ]
                             ]
                         ]
                     , div [ class "relative" ]
@@ -575,7 +575,7 @@ view model =
                                         [ onClick NavigateSignup
                                         , class "inline-flex items-center px-5 py-2 rounded-lg text-base font-medium text-white bg-[#03045E] hover:bg-[#1a1f5f] transition-colors duration-200"
                                         ]
-                                        [ text "Join the Waitlist" ]
+                                        [ text "Get Early Access" ]
                                     ]
                                 ]
                             ]
@@ -604,7 +604,7 @@ view model =
                                                 [ onClick NavigateSignup
                                                 , class "inline-flex items-center px-8 py-4 rounded-lg text-lg font-medium text-white bg-[#03045E] hover:bg-[#1a1f5f] transition-colors duration-200"
                                                 ]
-                                                [ text "Join the Waitlist" ]
+                                                [ text "Get Early Access" ]
                                             ]
                                         ]
                                     , div [ class "relative w-[500px]" ]
@@ -643,7 +643,7 @@ view model =
                                 [ onClick NavigateSignup
                                 , class "inline-flex items-center px-6 py-3 rounded-lg text-base font-medium text-white bg-[#03045E] hover:bg-[#1a1f5f] transition-colors duration-200"
                                 ]
-                                [ text "Join the Waitlist" ]
+                                [ text "Get Early Access" ]
                             ]
                         ]
                     ]
@@ -658,7 +658,7 @@ view model =
                                 [ onClick NavigateSignup
                                 , class "inline-flex items-center px-6 py-3 rounded-lg text-base font-medium text-white bg-[#03045E] hover:bg-[#1a1f5f] transition-colors duration-200 w-full sm:w-auto justify-center"
                                 ]
-                                [ text "Join the Waitlist" ]
+                                [ text "Get Early Access" ]
                             ]
                         ]
                     ]
