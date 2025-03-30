@@ -527,18 +527,36 @@ view model =
                     ]
                 ]
             , div [ class "py-12 sm:py-16 bg-white relative overflow-hidden min-h-[50vh] sm:min-h-screen flex items-center md:snap-start" ]
+                [ div [ class "max-w-7xl mx-auto px-6 sm:px-6 lg:px-8" ]
+                    [ div [ class "text-center mb-8" ]
+                        [ h2 [ class "text-3xl sm:text-4xl font-semibold text-gray-900" ] [ text "All you need to reset your commissions" ]
+                        , p [ class "mt-4 text-lg text-gray-600" ] [ text "It's like having a new team member that's only focused on retention." ]
+                        ]
+                    , div [ class "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 mt-16" ]
+                        [ featureCard model "quote-flow" "Simple Quote to Call Flow" "Streamline your workflow with a automated process that takes clients from initial quote to final application in just a few clicks." (chatBubbles 24 "#03045E")
+                        , featureCard model "protection" "Non-Commissionable Protection" "Our AI-powered logic engine only sends emails to clients that are fully commissionable." (lightning 24 "#03045E")
+                        , featureCard model "analytics" "Live Analytics" "Track real-time engagement metrics, conversion rates, and upcoming renewal opportunities in your personalized dashboard." (activity 24 "#03045E")
+                        , featureCard model "notifications" "Activity Notifications" "Get instant alerts when clients review quotes, complete underwriting, or request follow-ups, so you never miss an opportunity to connect." (smilieyChat 24 "#03045E")
+                        , featureCard model "carrier-control" "Carrier and Licensing Control" "Customize which carriers and plans to showcase based on your licenses and preferred partnerships." (commandKey 24 "#03045E")
+                        , featureCard model "agency-setup" "Agent or Agency Setup" "Configure individual agent profiles or manage your entire agency with customizable roles and white-labeled client communications." (heartBubble 24 "#03045E")
+                        ]
+                    ]
+                ]
+            , div [ class "py-12 sm:py-16 bg-white relative overflow-hidden min-h-[50vh] sm:min-h-screen flex items-center md:snap-start" ]
                 [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-20 w-full" ]
-                    [ -- Mobile layout (hidden on md screens and up)
-                      div [ class "md:hidden w-full" ]
-                        [ div [ class "flex flex-col items-center" ]
-                            [ div [ class "w-full mb-6" ]
+                    [ div [ class "grid grid-cols-1 gap-8 mt-16" ]
+                        [ -- Mobile layout (hidden on larger screens)
+                          div [ class "flex flex-col items-center md:hidden" ]
+                            [ div [ class "w-full text-center px-4 mb-8" ]
+                                [ h2 [ class "text-2xl font-semibold text-gray-900" ]
+                                    [ text "It's like keeping money in your pocket." ]
+                                ]
+                            , div [ class "w-full mb-6" ]
                                 [ div [ class "mx-auto max-w-xs" ]
                                     [ img [ src "/images/flap.png", class "w-full h-auto", alt "Dashboard interface" ] [] ]
                                 ]
                             , div [ class "w-full text-center p-4" ]
-                                [ h2 [ class "text-2xl font-semibold text-gray-900" ]
-                                    [ text "It's like keeping money in your pocket." ]
-                                , div [ class "space-y-3 mt-4" ]
+                                [ div [ class "space-y-3 mt-8" ]
                                     [ div [ class "flex gap-3 items-start" ]
                                         [ div [ class "text-[#03045E] text-lg flex-shrink-0" ] [ text "✓" ]
                                         , p [ class "text-base text-gray-600 text-left" ] [ text "White-Labeled Tools" ]
@@ -561,35 +579,37 @@ view model =
                                     ]
                                 ]
                             ]
-                        ]
 
-                    -- Desktop layout (hidden on small screens)
-                    , div [ class "hidden md:block relative w-full min-h-[700px]" ]
-                        [ div [ class "absolute inset-0 z-0" ]
-                            [ img [ src "/images/flap.png", class "w-full h-full object-contain object-right translate-x-20", alt "Dashboard interface" ] [] ]
-                        , div [ class "relative z-10 max-w-lg p-8 rounded-lg" ]
-                            [ h2 [ class "text-4xl font-semibold text-gray-900" ]
-                                [ text "It's like keeping money in your pocket." ]
-                            , div [ class "space-y-4 mt-6" ]
-                                [ div [ class "flex gap-3 items-start" ]
-                                    [ div [ class "text-[#03045E] text-xl" ] [ text "✓" ]
-                                    , p [ class "text-lg text-gray-600" ] [ text "White-Labeled Tools" ]
+                        -- Desktop layout (hidden on small screens)
+                        , div [ class "hidden md:flex flex-col items-center justify-center relative w-full min-h-[700px]" ]
+                            [ div [ class "max-w-4xl mx-auto text-center" ]
+                                [ h2 [ class "text-6xl font-semibold text-gray-900 mb-12" ]
+                                    [ text "It's like keeping money in your pocket." ]
+                                , div [ class "flex justify-center items-center gap-24" ]
+                                    [ div [ class "space-y-6 text-left" ]
+                                        [ div [ class "flex gap-4 items-start" ]
+                                            [ div [ class "text-[#03045E] text-2xl" ] [ text "✓" ]
+                                            , p [ class "text-xl text-gray-600" ] [ text "White-Labeled Tools" ]
+                                            ]
+                                        , div [ class "flex gap-4 items-start" ]
+                                            [ div [ class "text-[#03045E] text-2xl" ] [ text "✓" ]
+                                            , p [ class "text-xl text-gray-600" ] [ text "5 Minute Setup" ]
+                                            ]
+                                        , div [ class "flex gap-4 items-start" ]
+                                            [ div [ class "text-[#03045E] text-2xl" ] [ text "✓" ]
+                                            , p [ class "text-xl text-gray-600" ] [ text "Automated Retention" ]
+                                            ]
+                                        , div [ class "mt-10" ]
+                                            [ button
+                                                [ onClick NavigateSignup
+                                                , class "inline-flex items-center px-8 py-4 rounded-lg text-lg font-medium text-white bg-[#03045E] hover:bg-[#1a1f5f] transition-colors duration-200"
+                                                ]
+                                                [ text "Join the Waitlist" ]
+                                            ]
+                                        ]
+                                    , div [ class "relative w-[500px]" ]
+                                        [ img [ src "/images/flap.png", class "w-full h-auto", alt "Dashboard interface" ] [] ]
                                     ]
-                                , div [ class "flex gap-3 items-start" ]
-                                    [ div [ class "text-[#03045E] text-xl" ] [ text "✓" ]
-                                    , p [ class "text-lg text-gray-600" ] [ text "5 Minute Setup" ]
-                                    ]
-                                , div [ class "flex gap-3 items-start" ]
-                                    [ div [ class "text-[#03045E] text-xl" ] [ text "✓" ]
-                                    , p [ class "text-lg text-gray-600" ] [ text "Automated Retention" ]
-                                    ]
-                                ]
-                            , div [ class "mt-8" ]
-                                [ button
-                                    [ onClick NavigateSignup
-                                    , class "inline-flex items-center px-6 py-3 rounded-lg text-base font-medium text-white bg-[#03045E] hover:bg-[#1a1f5f] transition-colors duration-200"
-                                    ]
-                                    [ text "Join the Waitlist" ]
                                 ]
                             ]
                         ]
@@ -700,92 +720,44 @@ phoneContentClass activeTab tab =
 featureCard : Model -> String -> String -> String -> Svg Msg -> Html Msg
 featureCard model id title description icon =
     let
-        isExpanded =
-            model.expandedFeature == Just id
-
         -- Base classes shared across all sizes
         baseCardClass =
-            "rounded-lg transition-all duration-500 ease-in-out flex flex-col h-full"
+            "rounded-lg transition-all duration-300 ease-in-out flex flex-col h-full"
 
-        -- Mobile-specific classes (expanded state)
+        -- Mobile-specific classes (non-expandable, more compact)
         mobileCardClass =
-            if isExpanded then
-                "md:hidden " ++ baseCardClass ++ " bg-white p-4 z-10 transform scale-102 shadow-lg"
+            "md:hidden " ++ baseCardClass ++ " bg-[#F9FAFB] p-4 mx-4"
 
-            else
-                "md:hidden " ++ baseCardClass ++ " bg-white p-3 hover:shadow-md"
-
-        -- Desktop-specific classes (always showing description)
+        -- Desktop-specific classes
         desktopCardClass =
             "hidden md:flex " ++ baseCardClass ++ " bg-[#F9FAFB] p-4 sm:p-5"
 
         -- Mobile title classes
         mobileTitleClass =
-            if isExpanded then
-                "md:hidden text-base font-semibold text-[#03045E] text-center transition-colors duration-500"
+            "md:hidden text-base font-semibold text-gray-900 text-center"
 
-            else
-                "md:hidden text-base font-semibold text-gray-900 text-center transition-colors duration-500"
-
-        -- Desktop title classes (always the same)
+        -- Desktop title classes
         desktopTitleClass =
             "hidden md:block text-base sm:text-lg font-semibold text-gray-900 text-center"
 
         -- Mobile icon container
         mobileIconContainerClass =
-            if isExpanded then
-                "md:hidden w-10 h-10 mx-auto mb-3 rounded-lg flex items-center justify-center shadow-md transition-all duration-500"
-
-            else
-                "md:hidden w-10 h-10 mx-auto mb-3 rounded-lg flex items-center justify-center shadow-sm transition-all duration-500"
+            "md:hidden w-10 h-10 mx-auto mb-3 rounded-lg flex items-center justify-center shadow-sm"
 
         -- Desktop icon container
         desktopIconContainerClass =
             "hidden md:flex w-10 h-10 sm:w-11 sm:h-11 mx-auto mb-3 sm:mb-4 rounded-lg items-center justify-center shadow-md"
     in
     div []
-        [ -- Mobile version with tap-to-expand
+        [ -- Mobile version (non-expandable)
           div
-            [ class mobileCardClass
-            , style "box-shadow"
-                (if isExpanded then
-                    "0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1)"
-
-                 else
-                    "0 1px 3px 0 rgba(0, 0, 0, 0.1)"
-                )
-            , onClick (ToggleFeature id)
-            ]
+            [ class mobileCardClass ]
             [ div [ class mobileIconContainerClass ] [ icon ]
             , h3 [ class mobileTitleClass ] [ text title ]
-            , div
-                [ class "md:hidden overflow-hidden transition-all duration-500 ease-in-out mt-2"
-                , style "max-height"
-                    (if isExpanded then
-                        "200px"
-
-                     else
-                        "0px"
-                    )
-                , style "opacity"
-                    (if isExpanded then
-                        "1"
-
-                     else
-                        "0"
-                    )
-                , style "transform"
-                    (if isExpanded then
-                        "translateY(0)"
-
-                     else
-                        "translateY(-10px)"
-                    )
-                ]
-                [ p [ class "text-xs text-[#03045E] text-center" ] [ text description ] ]
+            , p [ class "md:hidden mt-2 text-xs text-gray-600 text-center" ] [ text description ]
             ]
 
-        -- Desktop version (always showing description)
+        -- Desktop version
         , div [ class desktopCardClass ]
             [ div [ class desktopIconContainerClass ] [ icon ]
             , h3 [ class desktopTitleClass ] [ text title ]
