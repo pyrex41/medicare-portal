@@ -120,39 +120,56 @@ export const createWaitlistRoutes = () => {
                         name: 'Medicare Max'
                     },
                     replyTo: process.env.HELLO_EMAIL || 'information@medicaremax.ai',
-                    subject: "You're in! (No secret handshake required)",
+                    subject: "You're In. Time to Max What's Yours.",
                     text: `Hey ${name.trim()},
 
-You're officially on the Medicare Max waitlist! Early access is coming your way faster than you can say "insurance paperwork nightmare." Stay tuned—we'll zap you an email when it's go-time.
+You made it on the Medicare Max waitlist—and not a moment too soon. 
+
+You're doing the work, building the book, and watching revenue slip through the cracks. That stops here.
+
+It's time to keep more, earn smarter, and finally get what's yours.
+
+Early access is on the way. Stay ready.
 
 Have questions? Just reply to this email and we'll get back to you.
 
 Cheers,
-The Medicare Max Team`,
+THe Medicare Max Team`,
                     html: `
                         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #ffffff; padding: 40px 20px;">
                             <div style="text-align: center; margin-bottom: 30px;">
-                                <img src="https://medicaremax.ai/images/medicare-max-logo.png" alt="Medicare Max Logo" style="height: 40px; margin: 0 auto;">
+                                <a href="https://medicaremax.ai" style="text-decoration: none; display: inline-block;">
+                                    <img src="https://medicaremax.ai/images/medicare-max-logo.png" alt="Medicare Max Logo" style="height: 40px; margin: 0 auto;">
+                                </a>
                             </div>
-                            <div style="background-color: #f8f9ff; border-radius: 12px; padding: 30px; margin: 20px 0;">
+                            <div style="background-color: #f0f9ff; border-radius: 12px; padding: 30px; margin: 20px 0;">
                                 <h2 style="color: #03045E; font-size: 24px; margin-bottom: 20px;">Hey ${name.trim()},</h2>
                                 <p style="color: #1a1f5f; font-size: 16px; line-height: 1.6; margin-bottom: 20px;">
-                                    You're officially on the list to join Medicare Max! Early access is coming your way faster than you can say "insurance paperwork nightmare." Stay tuned—we'll zap you an email when it's go-time.
+                                    You made it on the Medicare Max waitlist—and not a moment too soon.
+                                </p>
+                                <p style="color: #1a1f5f; font-size: 16px; line-height: 1.6; margin-bottom: 20px;">
+                                    You're doing the work, building the book, and watching revenue slip through the cracks. That stops here.
                                 </p>
                                 <div style="text-align: center;">
                                     <div style="background-color: #03045E; color: white; padding: 15px 25px; border-radius: 8px; display: inline-block; margin: 20px 0;">
                                         <span style="font-size: 20px; vertical-align: middle; margin-right: 8px;">🎉</span>
-                                        <span style="vertical-align: middle;">You're on the list!</span>
+                                        <span style="vertical-align: middle;">Time to max what's yours</span>
                                     </div>
                                 </div>
-                                <p style="color: #1a1f5f; font-size: 16px; line-height: 1.6; margin-top: 20px;">
+                                <p style="color: #1a1f5f; font-size: 16px; line-height: 1.6; margin-bottom: 20px;">
+                                    It's time to keep more, earn smarter, and finally get what's yours.
+                                </p>
+                                <p style="color: #1a1f5f; font-size: 16px; line-height: 1.6; margin-bottom: 20px;">
+                                    Early access is on the way. Stay ready.
+                                </p>
+                                <p style="color: #1a1f5f; font-size: 16px; line-height: 1.6; margin-top: 20px; font-style: italic;">
                                     Have questions? Just reply to this email and we'll get back to you.
                                 </p>
                             </div>
                             <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb; text-align: center;">
                                 <p style="color: #6b7280; font-size: 14px;">
                                     Cheers,<br>
-                                    <strong style="color: #03045E;">The Medicare Max Team</strong>
+                                    The Medicare Max Team
                                 </p>
                             </div>
                         </div>
