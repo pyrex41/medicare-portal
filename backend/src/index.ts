@@ -40,7 +40,10 @@ export interface ZipInfo {
 // Update ZIP_DATA declaration
 export let ZIP_DATA: Record<string, ZipInfo> = {}
 try {
-  ZIP_DATA = JSON.parse(readFileSync(path.join(__dirname, '..', 'zipData.json'), 'utf-8'))
+  const dataPath = path.join(process.cwd(), 'data', 'zipData.json');
+  logger.info(`Loading ZIP data from: ${dataPath}`);
+  ZIP_DATA = JSON.parse(readFileSync(dataPath, 'utf-8'))
+  logger.info('Successfully loaded ZIP data');
 } catch (e) {
   logger.error(`Error loading ZIP data: ${e}`)
 }

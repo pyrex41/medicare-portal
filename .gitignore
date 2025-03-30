@@ -3,3 +3,6 @@ dist/
 frontend/node_modules/
 backend/node_modules/
 frontend/elm-stuff/
+
+# Ignore root zipData.json but not the one in backend/data
+/zipData.json
