@@ -2,6 +2,7 @@ import { Elysia, t } from 'elysia';
 import { Database } from '../database';
 import { logger } from '../logger';
 import { cors } from '@elysiajs/cors';
+import sgMail from '@sendgrid/mail';
 
 // Types for request body
 interface WaitlistEntry {
@@ -38,6 +39,12 @@ export const createWaitlistRoutes = () => {
     }));
     
     const db = new Database(); // Create a new instance of the main database
+
+    // Initialize SendGrid
+    if (!process.env.SENDGRID_API_KEY) {
+        throw new Error('Missing SENDGRID_API_KEY environment variable');
+    }
+    sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
     app.post('/', async ({ body, set }: { body: WaitlistEntry, set: any }) => {
         try {
@@ -103,6 +110,59 @@ export const createWaitlistRoutes = () => {
             ]);
 
             logger.info(`Upsert result: ${JSON.stringify(upsertResult)}`);
+
+            // Send confirmation email
+            try {
+                await sgMail.send({
+                    to: email.trim(),
+                    from: {
+                        email: process.env.HELLO_EMAIL || 'information@medicaremax.ai',
+                        name: 'Medicare Max'
+                    },
+                    replyTo: process.env.HELLO_EMAIL || 'information@medicaremax.ai',
+                    subject: "You're in! (No secret handshake required)",
+                    text: `Hey ${name.trim()},
+
+You're officially on the Medicare Max waitlist! Early access is coming your way faster than you can say "insurance paperwork nightmare." Stay tuned—we'll zap you an email when it's go-time.
+
+Have questions? Just reply to this email and we'll get back to you.
+
+Cheers,
+The Medicare Max Team`,
+                    html: `
+                        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #ffffff; padding: 40px 20px;">
+                            <div style="text-align: center; margin-bottom: 30px;">
+                                <img src="https://medicaremax.ai/images/medicare-max-logo.png" alt="Medicare Max Logo" style="height: 40px; margin: 0 auto;">
+                            </div>
+                            <div style="background-color: #f8f9ff; border-radius: 12px; padding: 30px; margin: 20px 0;">
+                                <h2 style="color: #03045E; font-size: 24px; margin-bottom: 20px;">Hey ${name.trim()},</h2>
+                                <p style="color: #1a1f5f; font-size: 16px; line-height: 1.6; margin-bottom: 20px;">
+                                    You're officially on the list to join Medicare Max! Early access is coming your way faster than you can say "insurance paperwork nightmare." Stay tuned—we'll zap you an email when it's go-time.
+                                </p>
+                                <div style="text-align: center;">
+                                    <div style="background-color: #03045E; color: white; padding: 15px 25px; border-radius: 8px; display: inline-block; margin: 20px 0;">
+                                        <span style="font-size: 20px; vertical-align: middle; margin-right: 8px;">🎉</span>
+                                        <span style="vertical-align: middle;">You're on the list!</span>
+                                    </div>
+                                </div>
+                                <p style="color: #1a1f5f; font-size: 16px; line-height: 1.6; margin-top: 20px;">
+                                    Have questions? Just reply to this email and we'll get back to you.
+                                </p>
+                            </div>
+                            <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb; text-align: center;">
+                                <p style="color: #6b7280; font-size: 14px;">
+                                    Cheers,<br>
+                                    <strong style="color: #03045E;">The Medicare Max Team</strong>
+                                </p>
+                            </div>
+                        </div>
+                    `
+                });
+                logger.info(`Confirmation email sent to ${email}`);
+            } catch (emailError) {
+                // Log the error but don't fail the request
+                logger.error(`Failed to send confirmation email: ${emailError instanceof Error ? emailError.message : String(emailError)}`);
+            }
 
             // Explicitly set success status
             set.status = 200;
