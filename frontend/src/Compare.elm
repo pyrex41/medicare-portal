@@ -615,8 +615,35 @@ update msg model =
                     )
 
                 Err error ->
+                    let
+                        detailedError =
+                            case error of
+                                Http.BadStatus 401 ->
+                                    "Authentication error: Please check your session and try again."
+
+                                Http.BadStatus 403 ->
+                                    "Access forbidden: You don't have permission to access these quotes."
+
+                                Http.BadStatus 500 ->
+                                    "Server error: The quote service is experiencing issues. Please try again later."
+
+                                Http.NetworkError ->
+                                    "Network error: Please check your internet connection and try again."
+
+                                Http.Timeout ->
+                                    "Request timed out: The quote service took too long to respond. Please try again."
+
+                                Http.BadUrl url ->
+                                    "Invalid URL: " ++ url
+
+                                Http.BadBody message ->
+                                    "Invalid response format: " ++ message
+
+                                _ ->
+                                    httpErrorToString error
+                    in
                     ( { model
-                        | error = Just (httpErrorToString error)
+                        | error = Just detailedError
                         , isLoading = False
                       }
                     , Cmd.none

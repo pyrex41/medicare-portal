@@ -291,7 +291,7 @@ export const quotesRoutes = (app: Elysia) => {
             };
         }
     })
-    .post('/api/quotes', async ({ body }: { body: QuoteRequestBody }) => {
+    .post('/api/quotes', async ({ body, set }: { body: QuoteRequestBody, set: any }) => {
         try {
             // Format request body
             const requestBody: QuoteRequest = {
@@ -321,16 +321,43 @@ export const quotesRoutes = (app: Elysia) => {
                 data: requestBody
             };
 
+            logger.info(`Making request to quote engine with config: ${JSON.stringify({
+                url: requestConfig.url,
+                method: requestConfig.method,
+                headers: {
+                    ...requestConfig.headers,
+                    'X-API-Key': '[REDACTED]'
+                }
+            }, null, 2)}`);
+
             // Make request to quote engine API
             const response = await axios(requestConfig);
             
             logger.info(`Quote engine response status: ${response.status}`);
-            //logger.info(`Quote engine response data: ${JSON.stringify(response.data, null, 2)}`);
+            logger.info(`Quote engine response headers: ${JSON.stringify(response.headers, null, 2)}`);
+            logger.info(`Quote engine response data length: ${JSON.stringify(response.data).length} characters`);
+            logger.info(`Quote engine response data preview: ${JSON.stringify(response.data).substring(0, 200)}...`);
             
+            if (!response.data) {
+                logger.error('Quote engine returned empty response data');
+                set.status = 500;
+                return { error: 'No quote data received from engine' };
+            }
+
             // Return quotes from response data
+            set.status = 200; // Explicitly set 200 status
             return response.data;
         } catch (error) {
             logger.error(`Error fetching quotes: ${error}`);
+            if (axios.isAxiosError(error)) {
+                logger.error(`Axios error details: ${JSON.stringify({
+                    status: error.response?.status,
+                    statusText: error.response?.statusText,
+                    headers: error.response?.headers,
+                    data: error.response?.data
+                }, null, 2)}`);
+            }
+            set.status = error.response?.status || 500;
             throw new Error(String(error));
         }
     })
