@@ -1149,11 +1149,11 @@ viewPersonalInfo model =
                             , p [ class "text-[16px] font-medium" ] [ text (Maybe.withDefault "Loading..." model.name) ]
                             , p [ class "text-[12px] text-[#667085]" ]
                                 [ text
-                                    (if Maybe.withDefault "" model.gender == "M" then
-                                        "M"
+                                    (if String.contains "F" (model.gender |> Maybe.withDefault "" |> String.toUpper) then
+                                        "F"
 
                                      else
-                                        "F"
+                                        "M"
                                     )
                                 , span [ class "text-[#475569] mx-2 font-medium" ] [ text "│" ]
                                 , text
