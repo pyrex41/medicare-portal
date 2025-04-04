@@ -240,27 +240,50 @@ export class Database {
   }
 
   static async getOrgDb(orgId: string): Promise<Database> {
-    const mainDb = new Database()
-    const org = await mainDb.fetchOne<{ turso_db_url: string; turso_auth_token: string }>(
-      'SELECT turso_db_url, turso_auth_token FROM organizations WHERE id = ?',
-      [orgId]
-    )
-    if (!org?.turso_db_url) {
-      logger.error(`No database URL found for org ${orgId}`)
-      throw new Error('Organization database not configured')
-    }
+    logger.info(`Getting org database for org ${orgId}`);
+    const mainDb = new Database();
     
-    // If using local SQLite, we don't need the auth token
-    if (config.USE_LOCAL_SQLITE) {
-      logger.info(`Creating local SQLite client for org ${orgId}`)
-      return new Database(org.turso_db_url)
-    } else {
-      if (!org.turso_auth_token) {
-        logger.error(`No auth token found for org ${orgId}`)
-        throw new Error('Organization database not configured')
+    try {
+      const org = await mainDb.fetchOne<{ turso_db_url: string; turso_auth_token: string }>(
+        'SELECT turso_db_url, turso_auth_token FROM organizations WHERE id = ?',
+        [orgId]
+      );
+
+      if (!org?.turso_db_url) {
+        logger.error(`No database URL found for org ${orgId}`);
+        throw new Error('Organization database not configured');
       }
-      logger.info(`Creating Turso client for org ${orgId}`)
-      return new Database(org.turso_db_url, org.turso_auth_token)
+
+      logger.info(`Creating Turso client for org ${orgId} **********`);
+      const db = new Database(org.turso_db_url, org.turso_auth_token);
+
+      // Validate connection by running a simple query with timeout
+      logger.info(`Validating database connection for org ${orgId}...`);
+      try {
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('Database validation timed out after 5 seconds')), 5000);
+        });
+        
+        const queryPromise = db.execute('SELECT 1');
+        
+        const result = await Promise.race([queryPromise, timeoutPromise]);
+        logger.info(`Database connection validation successful for org ${orgId}. Result: ${JSON.stringify(result)}`);
+        return db;
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        logger.error(`Database connection validation failed for org ${orgId}. Error: ${errorMessage}`);
+        if (error instanceof Error && error.stack) {
+          logger.error(`Stack trace: ${error.stack}`);
+        }
+        throw new Error(`Failed to establish database connection: ${errorMessage}`);
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(`Error getting org database for org ${orgId}: ${errorMessage}`);
+      if (error instanceof Error && error.stack) {
+        logger.error(`Stack trace: ${error.stack}`);
+      }
+      throw error;
     }
   }
 

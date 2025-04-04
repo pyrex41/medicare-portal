@@ -99,6 +99,9 @@ export function createSelfServiceRoutes() {
       }
     })
     .post('/api/self-service/signup', async ({ body, set }) => {
+      logger.info('Starting signup process with detailed logging...');
+      logger.info(`Request body: ${JSON.stringify(body, null, 2)}`);
+      
       const { orgId, email, firstName, lastName, optInQuarterlyUpdates, zipCode, dateOfBirth, gender, tobacco, phoneNumber, currentPremium, currentCarrier, state, county } = body as {
         orgId: string;
         email: string;
@@ -116,116 +119,158 @@ export function createSelfServiceRoutes() {
         county: string;
       };
 
+      logger.info(`[1/6] Validating input parameters...`);
+      logger.info(`Input validation data:
+        - orgId: ${orgId ? 'present' : 'missing'}
+        - email: ${email ? 'present' : 'missing'}
+        - firstName: ${firstName ? 'present' : 'missing'}
+        - lastName: ${lastName ? 'present' : 'missing'}
+        - zipCode: ${zipCode ? 'present' : 'missing'}
+        - dateOfBirth: ${dateOfBirth ? 'present' : 'missing'}
+        - gender: ${gender ? 'present' : 'missing'}
+        - state: ${state ? 'present' : 'missing'}`
+      );
+
       // Validate required parameters
       if (!orgId || !email || !firstName || !lastName || !zipCode || !dateOfBirth || !gender || !state) {
+        const missingFields = [];
+        if (!orgId) missingFields.push('orgId');
+        if (!email) missingFields.push('email');
+        if (!firstName) missingFields.push('firstName');
+        if (!lastName) missingFields.push('lastName');
+        if (!zipCode) missingFields.push('zipCode');
+        if (!dateOfBirth) missingFields.push('dateOfBirth');
+        if (!gender) missingFields.push('gender');
+        if (!state) missingFields.push('state');
+        
+        logger.error(`[ERROR] Missing required fields: ${missingFields.join(', ')}`);
         set.status = 400;
-        return { error: 'Missing required fields' };
+        return { error: 'Missing required fields', missingFields };
       }
       
-      // Only proceed if the user has agreed to receive updates
-      if (!optInQuarterlyUpdates) {
-        set.status = 400;
-        return { error: 'You must agree to receive updates to continue' };
-      }
+      logger.info('[2/6] All required fields present, proceeding with database connection...');
 
       try {
+        logger.info(`[3/6] Attempting to get org database for orgId: ${orgId}`);
         // Get organization database
         const orgDb = await Database.getOrgDb(orgId);
+        logger.info('[4/6] Successfully connected to org database');
+        
         const client = orgDb.getClient();
+        logger.info('[4.5/6] Successfully got database client');
         
         // Check if contact already exists
+        logger.info(`[5/6] Checking for existing contact with email: ${email}`);
         const existingContact = await client.execute({
           sql: 'SELECT id FROM contacts WHERE email = ?',
           args: [email]
         });
+        logger.info(`[5.5/6] Existing contact check complete. Found: ${existingContact.rows.length > 0}`);
 
         if (existingContact.rows.length > 0) {
           // Update existing contact
           const contactId = existingContact.rows[0].id;
-          await client.execute({
-            sql: `UPDATE contacts SET 
-                  first_name = ?, 
-                  last_name = ?,
-                  phone_number = ?,
-                  zip_code = ?,
-                  state = ?,
-                  gender = ?,
-                  birth_date = ?,
-                  tobacco_user = ?,
-                  current_carrier = ?
-                  WHERE id = ?`,
-            args: [
-              firstName, 
-              lastName, 
-              phoneNumber || '', 
-              zipCode, 
-              state,
-              gender,
-              dateOfBirth,
-              tobacco ? 1 : 0,
-              currentCarrier || '', 
-              contactId
-            ]
-          });
+          logger.info(`[6/6] Updating existing contact ${contactId}`);
           
-          logger.info(`Updated contact ${contactId} for email ${email} in organization ${orgId}`);
-          
-          return { 
-            success: true,
-            contactId,
-            email
-          };
+          try {
+            await client.execute({
+              sql: `UPDATE contacts SET 
+                    first_name = ?, 
+                    last_name = ?,
+                    phone_number = ?,
+                    zip_code = ?,
+                    state = ?,
+                    gender = ?,
+                    birth_date = ?,
+                    tobacco_user = ?,
+                    current_carrier = ?
+                    WHERE id = ?`,
+              args: [
+                firstName, 
+                lastName, 
+                phoneNumber || '', 
+                zipCode, 
+                state,
+                gender,
+                dateOfBirth,
+                tobacco ? 1 : 0,
+                currentCarrier || '', 
+                contactId
+              ]
+            });
+            
+            logger.info(`Successfully updated contact ${contactId}`);
+            
+            return { 
+              success: true,
+              contactId,
+              email
+            };
+          } catch (updateError) {
+            logger.error(`Error updating existing contact: ${updateError}`);
+            throw updateError;
+          }
         } else {
-          // Create new contact with required fields
-          const result = await client.execute({
-            sql: `INSERT INTO contacts (
-                  email, 
-                  first_name, 
-                  last_name,
-                  phone_number,
-                  zip_code,
-                  state,
-                  gender,
-                  birth_date,
-                  tobacco_user,
-                  current_carrier,
-                  effective_date
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            args: [
-              email, 
-              firstName, 
-              lastName, 
-              phoneNumber || '', 
-              zipCode, 
-              state,
-              gender,
-              dateOfBirth,
-              tobacco ? 1 : 0,
-              currentCarrier || null, // Default plan type
-              new Date().toISOString().split('T')[0] // Today as effective date
-            ]
-          });
-          
-          // Get the ID of the newly created contact
-          const newContactResult = await client.execute({
-            sql: 'SELECT id FROM contacts WHERE email = ?',
-            args: [email]
-          });
-          
-          const contactId = newContactResult.rows[0]?.id;
-          
-          logger.info(`Created new contact ${contactId} for email ${email} in organization ${orgId}`);
-          
-          return { 
-            success: true,
-            contactId,
-            email
-          };
+          // Create new contact
+          logger.info('[6/6] Creating new contact');
+          try {
+            const result = await client.execute({
+              sql: `INSERT INTO contacts (
+                    email, 
+                    first_name, 
+                    last_name,
+                    phone_number,
+                    zip_code,
+                    state,
+                    gender,
+                    birth_date,
+                    tobacco_user,
+                    current_carrier,
+                    effective_date
+                  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              args: [
+                email, 
+                firstName, 
+                lastName, 
+                phoneNumber || '', 
+                zipCode, 
+                state,
+                gender,
+                dateOfBirth,
+                tobacco ? 1 : 0,
+                currentCarrier || null,
+                new Date().toISOString().split('T')[0]
+              ]
+            });
+            logger.info('Successfully inserted new contact');
+            
+            // Get the ID of the newly created contact
+            logger.info('Getting ID of new contact');
+            const newContactResult = await client.execute({
+              sql: 'SELECT id FROM contacts WHERE email = ?',
+              args: [email]
+            });
+            
+            const contactId = newContactResult.rows[0]?.id;
+            logger.info(`Got new contact ID: ${contactId}`);
+            
+            return { 
+              success: true,
+              contactId,
+              email
+            };
+          } catch (insertError) {
+            logger.error(`Error creating new contact: ${insertError}`);
+            throw insertError;
+          }
         }
       } catch (error) {
-        logger.error(`Error in self-service signup endpoint: ${error}`);
+        logger.error(`[ERROR] Error in self-service signup endpoint: ${error}`);
+        if (error instanceof Error) {
+          logger.error(`Error stack trace: ${error.stack}`);
+        }
         set.status = 500;
-        return { error: 'Internal server error' };
+        return { error: 'Internal server error', details: error instanceof Error ? error.message : String(error) };
       }
     })
     .post('/api/self-service/update-location', async ({ body, set }) => {

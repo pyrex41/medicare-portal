@@ -61,13 +61,7 @@ type alias Model =
     , selectedCounty : Maybe String
     , isLoadingZipData : Bool
     , zipError : Maybe String
-    , formStep : FormStep
     }
-
-
-type FormStep
-    = SingleStep
-    | ConfirmSubmit
 
 
 
@@ -134,7 +128,6 @@ init key url =
             , selectedCounty = Nothing
             , isLoadingZipData = False
             , zipError = Nothing
-            , formStep = SingleStep
             }
 
         commands =
@@ -346,8 +339,6 @@ type Msg
     | GotZipInfo (Result Http.Error ZipInfo)
     | GotSignupResponse (Result Http.Error SignupResponse)
     | GotQuoteResponse (Result Http.Error QuoteResponse)
-    | NextStep
-    | PrevStep
     | GoToQuote
 
 
@@ -659,34 +650,6 @@ update msg model =
         GotCurrentDate date ->
             ( { model | currentDate = Just date }, Cmd.none )
 
-        NextStep ->
-            let
-                nextStep =
-                    case model.formStep of
-                        SingleStep ->
-                            if isFormValid model then
-                                ConfirmSubmit
-
-                            else
-                                SingleStep
-
-                        ConfirmSubmit ->
-                            ConfirmSubmit
-            in
-            ( { model | formStep = nextStep, error = Nothing }, Cmd.none )
-
-        PrevStep ->
-            let
-                prevStep =
-                    case model.formStep of
-                        SingleStep ->
-                            SingleStep
-
-                        ConfirmSubmit ->
-                            SingleStep
-            in
-            ( { model | formStep = prevStep, error = Nothing }, Cmd.none )
-
         SubmitForm ->
             if isFormValid model then
                 ( { model | isSubmitting = True, error = Nothing }
@@ -829,6 +792,23 @@ update msg model =
 
 isFormValid : Model -> Bool
 isFormValid model =
+    let
+        isValidDate str =
+            case String.split "-" str of
+                [ year, month, day ] ->
+                    String.length year
+                        == 4
+                        && String.length month
+                        == 2
+                        && String.length day
+                        == 2
+                        && String.all Char.isDigit year
+                        && String.all Char.isDigit month
+                        && String.all Char.isDigit day
+
+                _ ->
+                    False
+    in
     -- Contact info (required)
     not (String.isEmpty model.email)
         && not (String.isEmpty model.firstName)
@@ -839,6 +819,7 @@ isFormValid model =
         && String.length model.zipCode
         == 5
         && not (String.isEmpty model.dateOfBirth)
+        && isValidDate model.dateOfBirth
         && not (String.isEmpty model.gender)
         -- Tobacco status is now explicitly required
         && (model.tobacco == True || model.tobacco == False)
@@ -1079,15 +1060,18 @@ view model =
 viewForm : Model -> Html Msg
 viewForm model =
     div [ class "max-w-4xl mx-auto bg-white rounded-xl shadow-md p-4 sm:p-8" ]
-        [ if model.success then
-            div []
-                [ if model.isGeneratingQuote then
-                    div [ class "p-4 mb-4 bg-blue-100 border border-blue-400 text-blue-700 rounded" ]
-                        [ text "Your profile has been updated! Generating your quote..." ]
+        [ if model.isSubmitting || model.isGeneratingQuote then
+            div [ class "fixed inset-0 bg-white flex flex-col items-center justify-center gap-4 text-center" ]
+                [ div [ class "animate-spin rounded-full h-12 w-12 border-4 border-[#03045E] border-t-transparent" ] []
+                , p [ class "text-center text-lg font-medium text-gray-600" ]
+                    [ text
+                        (if model.isSubmitting then
+                            "Submitting your information..."
 
-                  else
-                    div [ class "p-4 mb-4 bg-green-100 border border-green-400 text-green-700 rounded" ]
-                        [ text "Profile updated successfully! Redirecting to your quote..." ]
+                         else
+                            "Generating your quote..."
+                        )
+                    ]
                 ]
 
           else if model.orgId == Nothing && model.error == Nothing then
@@ -1104,52 +1088,29 @@ viewForm model =
 
 viewFormStep : Model -> Html Msg
 viewFormStep model =
-    case model.formStep of
-        SingleStep ->
-            div []
-                [ viewHeader model.logo model.orgName
-                , div [ class "text-center mb-6 px-2 sm:px-0" ]
-                    [ h1 [ class "text-2xl sm:text-3xl font-bold text-[#101828]" ] [ text "Let's Get Some Details" ]
-                    , p [ class "text-[#475467] mt-2 text-sm sm:text-base" ] [ text "We use this information to get you the most accurate quote for your area." ]
-                    ]
-                , viewCombinedForm model
-                , viewError model.error
-                , button
-                    [ type_ "button"
-                    , class "w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-[#03045E] hover:bg-[#02034e] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#3DBDEC] mt-6"
-                    , onClick NextStep
-                    , disabled (not (isFormValid model))
-                    ]
-                    [ text "Continue" ]
-                ]
+    div []
+        [ viewHeader model.logo model.orgName
+        , div [ class "text-center mb-6 px-2 sm:px-0" ]
+            [ h1 [ class "text-2xl sm:text-3xl font-bold text-[#101828]" ] [ text "Let's Get Some Details" ]
+            , p [ class "text-[#475467] mt-2 text-sm sm:text-base" ] [ text "We use this information to get you the most accurate quote for your area." ]
+            ]
+        , viewCombinedForm model
+        , viewError model.error
+        , button
+            [ type_ "button"
+            , class "w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-[#03045E] hover:bg-[#02034e] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#3DBDEC] mt-6"
+            , onClick SubmitForm
+            , disabled (model.isSubmitting || not (isFormValid model))
+            ]
+            [ text
+                (if model.isSubmitting then
+                    "Submitting..."
 
-        ConfirmSubmit ->
-            div []
-                [ viewFormSummary model
-                , viewError model.error
-                , div [ class "flex flex-col sm:flex-row justify-between gap-3 sm:gap-0 mt-4" ]
-                    [ button
-                        [ type_ "button"
-                        , class "w-full sm:w-auto flex justify-center py-2 px-4 border border-[#D0D5DD] rounded-md shadow-sm text-sm font-medium text-[#344054] bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#3DBDEC]"
-                        , onClick PrevStep
-                        ]
-                        [ text "Back" ]
-                    , button
-                        [ type_ "button"
-                        , class "w-full sm:w-auto flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-[#03045E] hover:bg-[#02034e] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#3DBDEC]"
-                        , onClick SubmitForm
-                        , disabled (model.isSubmitting || not (isFormValid model))
-                        ]
-                        [ text
-                            (if model.isSubmitting then
-                                "Submitting..."
-
-                             else
-                                "Submit"
-                            )
-                        ]
-                    ]
-                ]
+                 else
+                    "Submit"
+                )
+            ]
+        ]
 
 
 viewCombinedForm : Model -> Html Msg
@@ -1165,12 +1126,12 @@ viewCombinedForm model =
             [ div [ class "col-span-1" ]
                 [ label [ class "block text-sm font-medium text-gray-700 mb-1" ] [ text "Date of Birth" ]
                 , input
-                    [ type_ "text"
+                    [ type_ "date"
                     , class "w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-sky-500 focus:border-sky-500"
-                    , placeholder "MM-DD-YYYY"
                     , Html.Attributes.value model.dateOfBirth
                     , onInput UpdateDateOfBirth
                     , required True
+                    , Html.Attributes.max (model.currentDate |> Maybe.map Date.toIsoString |> Maybe.withDefault "")
                     ]
                     []
                 ]
