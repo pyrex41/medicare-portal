@@ -36,6 +36,10 @@ type alias Model =
     , key : Nav.Key
     , contactCount : String
     , calculatedPrice : Maybe Int
+    , averageAge : String
+    , rolloverPercent : String
+    , calculatedRevenue : Maybe Float
+    , firstYearRevenue : Maybe Float
     }
 
 
@@ -104,6 +108,10 @@ init key url =
       , key = key
       , contactCount = "500"
       , calculatedPrice = Just 60
+      , averageAge = "3"
+      , rolloverPercent = "5"
+      , calculatedRevenue = Just 175000
+      , firstYearRevenue = Just 8750
       }
     , case maybeUser of
         Just _ ->
@@ -127,6 +135,8 @@ type Msg
     | ContinueClicked
     | BackClicked
     | ContactCountChanged String -- New message for contact count input
+    | AverageAgeChanged String
+    | RolloverPercentChanged String
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -187,10 +197,68 @@ update msg model =
                 calculatedPrice =
                     maybeInt
                         |> Maybe.map calculatePrice
+
+                ( calculatedRevenue, firstYearRevenue ) =
+                    case ( maybeInt, String.toFloat model.averageAge, String.toFloat model.rolloverPercent ) of
+                        ( Just c, Just a, Just r ) ->
+                            let
+                                ( rev, firstYear ) =
+                                    calculateRevenue c a r
+                            in
+                            ( Just rev, Just firstYear )
+
+                        _ ->
+                            ( Nothing, Nothing )
             in
             ( { model
                 | contactCount = count
                 , calculatedPrice = calculatedPrice
+                , calculatedRevenue = calculatedRevenue
+                , firstYearRevenue = firstYearRevenue
+              }
+            , Cmd.none
+            )
+
+        AverageAgeChanged age ->
+            let
+                ( calculatedRevenue, firstYearRevenue ) =
+                    case ( String.toInt model.contactCount, String.toFloat age, String.toFloat model.rolloverPercent ) of
+                        ( Just c, Just a, Just r ) ->
+                            let
+                                ( rev, firstYear ) =
+                                    calculateRevenue c a r
+                            in
+                            ( Just rev, Just firstYear )
+
+                        _ ->
+                            ( Nothing, Nothing )
+            in
+            ( { model
+                | averageAge = age
+                , calculatedRevenue = calculatedRevenue
+                , firstYearRevenue = firstYearRevenue
+              }
+            , Cmd.none
+            )
+
+        RolloverPercentChanged percent ->
+            let
+                ( calculatedRevenue, firstYearRevenue ) =
+                    case ( String.toInt model.contactCount, String.toFloat model.averageAge, String.toFloat percent ) of
+                        ( Just c, Just a, Just r ) ->
+                            let
+                                ( rev, firstYear ) =
+                                    calculateRevenue c a r
+                            in
+                            ( Just rev, Just firstYear )
+
+                        _ ->
+                            ( Nothing, Nothing )
+            in
+            ( { model
+                | rolloverPercent = percent
+                , calculatedRevenue = calculatedRevenue
+                , firstYearRevenue = firstYearRevenue
               }
             , Cmd.none
             )
@@ -216,6 +284,79 @@ calculatePrice contacts =
         -- $40 for each additional 500 contacts
     in
     basePrice + additionalPrice
+
+
+
+-- Calculate revenue based on contacts, average age, and rollover percent
+
+
+calculateRevenue : Int -> Float -> Float -> ( Float, Float )
+calculateRevenue contacts averageAge rolloverPercent =
+    let
+        -- Constants
+        commissionPerYear =
+            350.0
+
+        maxYears =
+            6.0
+
+        ltvDiscount =
+            0.75
+
+        -- account for cancellations
+        -- Calculate LTV metrics
+        ltvPerContact =
+            commissionPerYear * maxYears * ltvDiscount
+
+        -- Average remaining LTV based on current age
+        avgLtv =
+            ltvPerContact * (maxYears - averageAge) / maxYears
+
+        -- Average LTV after rollover (adds another cycle)
+        avgLtvNew =
+            ltvPerContact * (maxYears - averageAge + maxYears) / maxYears
+
+        -- Convert percentage to fraction
+        rolloverFraction =
+            rolloverPercent / 100.0
+
+        -- Calculate future revenue
+        oldFutureRevenue =
+            avgLtv * toFloat contacts
+
+        -- New future revenue (non-rollovers + rollovers)
+        newFutureRevenue =
+            (avgLtv * toFloat contacts * (1 - rolloverFraction))
+                + (avgLtvNew * toFloat contacts * rolloverFraction)
+
+        -- Additional revenue from rollovers
+        additionalRevenue =
+            newFutureRevenue - oldFutureRevenue
+
+        -- First year additional revenue
+        -- Based on the proportion of contacts at or beyond max age
+        -- that would generate immediate additional revenue
+        contactsAtMaxAge =
+            if averageAge >= maxYears / 2 then
+                -- Calculate percentage of contacts at or beyond max age
+                -- based on even distribution assumption
+                let
+                    percentAtMaxAge =
+                        (averageAge + (maxYears / 2))
+                            / maxYears
+                            |> Basics.min 1.0
+                            |> Basics.max 0.0
+                in
+                percentAtMaxAge * toFloat contacts * rolloverFraction
+
+            else
+                -- Few or no contacts at max age yet
+                0
+
+        firstYearAdditional =
+            contactsAtMaxAge * commissionPerYear
+    in
+    ( additionalRevenue, firstYearAdditional )
 
 
 
@@ -264,100 +405,183 @@ viewPricing model =
         , h2 [ class "text-2xl font-semibold text-gray-900 mt-6" ] [ text "Subscription Pricing" ]
         , p [ class "text-gray-500 mt-2 mb-6" ] [ text "Simple, transparent pricing for your Medicare portal." ]
         , div [ class "w-full max-w-3xl mt-6" ]
-            [ div [ class "bg-white overflow-hidden shadow rounded-lg divide-y divide-gray-200" ]
-                [ div [ class "px-4 py-5 sm:px-6 bg-indigo-50" ]
-                    [ h3 [ class "text-lg leading-6 font-medium text-gray-900" ]
-                        [ text "Base Subscription" ]
-                    ]
-                , div [ class "px-4 py-5 sm:p-6" ]
-                    [ div [ class "flex items-center justify-between" ]
-                        [ div [ class "flex items-center" ]
-                            [ span [ class "text-3xl font-bold text-gray-900" ] [ text "$60" ]
-                            , span [ class "ml-2 text-gray-500" ] [ text "/month" ]
-                            ]
-                        , span [ class "bg-green-100 text-green-800 px-2 py-1 rounded-full text-sm font-medium" ]
-                            [ text "Up to 500 contacts included" ]
+            [ div [ class "flex flex-col md:flex-row gap-6" ]
+                [ div [ class "bg-white overflow-hidden shadow rounded-lg divide-y divide-gray-200 md:w-1/2" ]
+                    [ div [ class "px-4 py-5 sm:px-6 bg-indigo-50" ]
+                        [ h3 [ class "text-lg leading-6 font-medium text-gray-900" ]
+                            [ text "Base Subscription" ]
                         ]
-                    , div [ class "mt-4" ]
-                        [ p [ class "text-sm text-gray-500" ]
-                            [ text "Our base subscription includes all features of the Medicare Max portal platform and allows you to manage up to 500 contacts." ]
+                    , div [ class "px-4 py-5 sm:p-6" ]
+                        [ div [ class "flex items-center justify-between" ]
+                            [ div [ class "flex items-center" ]
+                                [ span [ class "text-3xl font-bold text-gray-900" ] [ text "$60" ]
+                                , span [ class "ml-2 text-gray-500" ] [ text "/month" ]
+                                ]
+                            , span [ class "bg-green-100 text-green-800 px-2 py-1 rounded-full text-sm font-medium" ]
+                                [ text "First 500 contacts" ]
+                            ]
+                        , div [ class "mt-4" ]
+                            [ p [ class "text-sm text-gray-500" ]
+                                [ text "Our base subscription includes all features of the Medicare Max portal platform and allows you to manage up to 500 contacts." ]
+                            ]
+                        ]
+                    ]
+                , div [ class "bg-white overflow-hidden shadow rounded-lg divide-y divide-gray-200 md:w-1/2" ]
+                    [ div [ class "px-4 py-5 sm:px-6 bg-indigo-50" ]
+                        [ h3 [ class "text-lg leading-6 font-medium text-gray-900" ]
+                            [ text "Additional Contacts" ]
+                        ]
+                    , div [ class "px-4 py-5 sm:p-6" ]
+                        [ div [ class "flex items-center justify-between" ]
+                            [ div [ class "flex items-center" ]
+                                [ span [ class "text-3xl font-bold text-gray-900" ] [ text "$40" ]
+                                , span [ class "ml-2 text-gray-500" ] [ text "/month" ]
+                                ]
+                            , span [ class "bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-sm font-medium" ]
+                                [ text "per 500 contacts" ]
+                            ]
+                        , div [ class "mt-4" ]
+                            [ p [ class "text-sm text-gray-500" ]
+                                [ text "For every additional 500 contacts (or portion thereof), we charge $40 per month." ]
+                            ]
                         ]
                     ]
                 ]
-            , div [ class "bg-white overflow-hidden shadow rounded-lg divide-y divide-gray-200 mt-6" ]
-                [ div [ class "px-4 py-5 sm:px-6 bg-indigo-50" ]
-                    [ h3 [ class "text-lg leading-6 font-medium text-gray-900" ]
-                        [ text "Additional Contacts" ]
-                    ]
-                , div [ class "px-4 py-5 sm:p-6" ]
-                    [ div [ class "flex items-center justify-between" ]
-                        [ div [ class "flex items-center" ]
-                            [ span [ class "text-3xl font-bold text-gray-900" ] [ text "$40" ]
-                            , span [ class "ml-2 text-gray-500" ] [ text "/month" ]
-                            ]
-                        , span [ class "bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-sm font-medium" ]
-                            [ text "per 500 additional contacts" ]
+            , div [ class "grid grid-cols-1 md:grid-cols-2 gap-6 mt-6" ]
+                [ div [ class "bg-white overflow-hidden shadow rounded-lg divide-y divide-gray-200" ]
+                    [ div [ class "px-4 py-5 sm:px-6 bg-indigo-50" ]
+                        [ h3 [ class "text-lg leading-6 font-medium text-gray-900" ]
+                            [ text "Price Calculator" ]
                         ]
-                    , div [ class "mt-4" ]
-                        [ p [ class "text-sm text-gray-500" ]
-                            [ text "For every additional 500 contacts (or portion thereof), we charge $40 per month." ]
-                        ]
-                    ]
-                ]
-            , div [ class "bg-white overflow-hidden shadow rounded-lg divide-y divide-gray-200 mt-6" ]
-                [ div [ class "px-4 py-5 sm:px-6 bg-indigo-50" ]
-                    [ h3 [ class "text-lg leading-6 font-medium text-gray-900" ]
-                        [ text "Price Calculator" ]
-                    ]
-                , div [ class "px-4 py-5 sm:p-6" ]
-                    [ div [ class "space-y-4" ]
-                        [ div [ class "space-y-2" ]
-                            [ label [ class "block text-sm font-medium text-gray-700", for "contact-count" ]
-                                [ text "Number of Contacts" ]
-                            , input
-                                [ class "mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
-                                , id "contact-count"
-                                , type_ "number"
-                                , placeholder "Enter number of contacts"
-                                , value model.contactCount
-                                , onInput ContactCountChanged
-                                , Html.Attributes.min "0"
-                                , Html.Attributes.step "1"
-                                ]
-                                []
-                            ]
-                        , div [ class "pt-4" ]
-                            [ div [ class "flex items-center justify-between pb-2 border-b border-gray-200" ]
-                                [ span [ class "text-gray-600" ] [ text "Base subscription:" ]
-                                , span [ class "font-medium text-gray-900" ] [ text "$60/month" ]
-                                ]
-                            , if model.calculatedPrice /= Just 60 then
-                                div [ class "flex items-center justify-between py-2 border-b border-gray-200" ]
-                                    [ span [ class "text-gray-600" ]
-                                        [ text <| "Additional contacts cost:" ]
-                                    , span [ class "font-medium text-gray-900" ]
-                                        [ text <| "$" ++ String.fromInt (Maybe.withDefault 0 model.calculatedPrice - 60) ++ "/month" ]
+                    , div [ class "px-4 py-5 sm:p-6" ]
+                        [ div [ class "space-y-4" ]
+                            [ div [ class "space-y-2" ]
+                                [ label [ class "block text-sm font-medium text-gray-700", for "contact-count" ]
+                                    [ text "Number of Contacts" ]
+                                , input
+                                    [ class "mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                                    , id "contact-count"
+                                    , type_ "number"
+                                    , placeholder "Enter number of contacts"
+                                    , value model.contactCount
+                                    , onInput ContactCountChanged
+                                    , Html.Attributes.min "0"
+                                    , Html.Attributes.step "1"
                                     ]
+                                    []
+                                ]
+                            , div [ class "pt-4" ]
+                                [ div [ class "flex items-center justify-between pb-2 border-b border-gray-200" ]
+                                    [ span [ class "text-gray-600" ] [ text "Base subscription:" ]
+                                    , span [ class "font-medium text-gray-900" ] [ text "$60/month" ]
+                                    ]
+                                , if model.calculatedPrice /= Just 60 then
+                                    div [ class "flex items-center justify-between py-2 border-b border-gray-200" ]
+                                        [ span [ class "text-gray-600" ]
+                                            [ text <| "Additional contacts cost:" ]
+                                        , span [ class "font-medium text-gray-900" ]
+                                            [ text <| "$" ++ String.fromInt (Maybe.withDefault 0 model.calculatedPrice - 60) ++ "/month" ]
+                                        ]
 
-                              else
-                                text ""
-                            , div [ class "flex items-center justify-between py-2 mt-2" ]
-                                [ span [ class "text-lg font-semibold text-gray-900" ] [ text "Total:" ]
-                                , span [ class "text-xl font-bold text-indigo-600" ]
-                                    [ text <| "$" ++ String.fromInt (Maybe.withDefault 0 model.calculatedPrice) ++ "/month" ]
+                                  else
+                                    text ""
+                                , div [ class "flex items-center justify-between py-2 mt-2" ]
+                                    [ span [ class "text-lg font-semibold text-gray-900" ] [ text "Total:" ]
+                                    , span [ class "text-xl font-bold text-indigo-600" ]
+                                        [ text <| "$" ++ String.fromInt (Maybe.withDefault 0 model.calculatedPrice) ++ "/month" ]
+                                    ]
+                                ]
+                            ]
+                        ]
+                    ]
+                , div [ class "bg-white overflow-hidden shadow rounded-lg divide-y divide-gray-200" ]
+                    [ div [ class "px-4 py-5 sm:px-6 bg-indigo-50" ]
+                        [ h3 [ class "text-lg leading-6 font-medium text-gray-900" ]
+                            [ text "Revenue Calculator" ]
+                        ]
+                    , div [ class "px-4 py-5 sm:p-6" ]
+                        [ div [ class "space-y-4" ]
+                            [ div [ class "grid grid-cols-2 gap-4" ]
+                                [ div [ class "space-y-2" ]
+                                    [ label [ class "block text-sm font-medium text-gray-700", for "average-age" ]
+                                        [ text "Average Book Age (Years)" ]
+                                    , input
+                                        [ class "mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                                        , id "average-age"
+                                        , type_ "number"
+                                        , placeholder "Average age in years"
+                                        , value model.averageAge
+                                        , onInput AverageAgeChanged
+                                        , Html.Attributes.min "1"
+                                        , Html.Attributes.max "6"
+                                        , Html.Attributes.step "0.1"
+                                        ]
+                                        []
+                                    ]
+                                , div [ class "space-y-2" ]
+                                    [ label [ class "block text-sm font-medium text-gray-700", for "rollover-percent" ]
+                                        [ text "Annual Rollover (%)" ]
+                                    , input
+                                        [ class "mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                                        , id "rollover-percent"
+                                        , type_ "number"
+                                        , placeholder "Rollover percentage"
+                                        , value model.rolloverPercent
+                                        , onInput RolloverPercentChanged
+                                        , Html.Attributes.min "0"
+                                        , Html.Attributes.max "100"
+                                        , Html.Attributes.step "0.1"
+                                        ]
+                                        []
+                                    ]
+                                ]
+                            , div [ class "mt-4 p-3 bg-gray-50 rounded-md" ]
+                                [ div [ class "space-y-2" ]
+                                    [ div [ class "flex items-center justify-between pb-2 border-b border-gray-200" ]
+                                        [ span [ class "text-gray-600" ] [ text "Annual Commission Rate:" ]
+                                        , span [ class "font-medium text-gray-900" ] [ text "$350 per contact" ]
+                                        ]
+                                    , div [ class "flex items-center justify-between py-2 border-b border-gray-200" ]
+                                        [ span [ class "text-gray-600" ] [ text "First Year Additional Revenue:" ]
+                                        , span [ class "font-medium text-green-600" ]
+                                            [ text <| "$" ++ formatMoney (Maybe.withDefault 0 model.firstYearRevenue) ]
+                                        ]
+                                    , div [ class "flex items-center justify-between py-2 mt-2" ]
+                                        [ span [ class "text-lg font-semibold text-gray-900" ] [ text "Additional Revenue:" ]
+                                        , span [ class "text-xl font-bold text-green-600" ]
+                                            [ text <| "$" ++ formatMoney (Maybe.withDefault 0 model.calculatedRevenue) ]
+                                        ]
+                                    , div [ class "flex items-center justify-between py-2 mt-2 border-t border-gray-200" ]
+                                        [ span [ class "text-sm font-medium text-gray-700" ] [ text "Return on Investment:" ]
+                                        , let
+                                            roi =
+                                                case ( model.calculatedRevenue, model.calculatedPrice ) of
+                                                    ( Just rev, Just price ) ->
+                                                        if price > 0 then
+                                                            (rev / toFloat (price * 12)) * 100
+
+                                                        else
+                                                            0
+
+                                                    _ ->
+                                                        0
+                                          in
+                                          span [ class "text-sm font-bold text-indigo-700" ]
+                                            [ text <| String.fromFloat (round10 2 roi) ++ "%" ]
+                                        ]
+                                    ]
                                 ]
                             ]
                         ]
                     ]
                 ]
-            ]
-        , div
-            [ class "w-full max-w-3xl flex justify-center mt-8" ]
-            [ button
-                [ class "bg-indigo-900 text-white py-2 px-6 rounded-md hover:bg-indigo-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                , onClick ContinueClicked
+            , div [ class "w-full flex justify-center mt-8" ]
+                [ button
+                    [ class "bg-indigo-900 text-white py-2 px-6 rounded-md hover:bg-indigo-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                    , onClick ContinueClicked
+                    ]
+                    [ text "Continue to Payment" ]
                 ]
-                [ text "Continue to Payment" ]
             ]
         ]
 
@@ -557,3 +781,68 @@ buildUrl model frame =
                 absolute [ "onboarding" ] (baseParams ++ [ string "email" model.user.email ])
     in
     url
+
+
+
+-- Helper function to format money values
+
+
+formatMoney : Float -> String
+formatMoney value =
+    let
+        rounded =
+            round value
+    in
+    String.fromInt rounded |> addCommas
+
+
+
+-- Add commas to numbers for better readability
+
+
+addCommas : String -> String
+addCommas str =
+    let
+        parts =
+            String.split "." str
+
+        intPart =
+            List.head parts |> Maybe.withDefault ""
+
+        decPart =
+            List.drop 1 parts |> List.head |> Maybe.withDefault ""
+
+        formattedInt =
+            String.foldr
+                (\c ( result, count ) ->
+                    if count == 3 then
+                        ( String.cons c (String.cons ',' result), 1 )
+
+                    else
+                        ( String.cons c result, count + 1 )
+                )
+                ( "", 0 )
+                intPart
+                |> Tuple.first
+                |> String.reverse
+                |> String.dropLeft 1
+                |> String.reverse
+    in
+    if String.isEmpty decPart then
+        formattedInt
+
+    else
+        formattedInt ++ "." ++ decPart
+
+
+
+-- Helper function to round to specific decimal places
+
+
+round10 : Int -> Float -> Float
+round10 n value =
+    let
+        factor =
+            10 ^ n |> toFloat
+    in
+    (value * factor) |> round |> toFloat |> (\x -> x / factor)
