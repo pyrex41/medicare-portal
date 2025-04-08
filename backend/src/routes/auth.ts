@@ -41,7 +41,7 @@ export function createAuthRoutes() {
         const magicLink = await auth.createMagicLink(
           email,
           'default', // Default organization for now
-          { redirectUrl: '/walkthrough' }
+          { redirectUrl: '/dashboard' }
         );
 
         // Always send the email, but also log in development
@@ -52,6 +52,7 @@ export function createAuthRoutes() {
         // Send the email
         await emailService.sendMagicLink(email, magicLink, 'default');
 
+        set.status = 200;
         return { success: true };
 
       } catch (e) {

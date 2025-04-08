@@ -1105,7 +1105,14 @@ viewHealthStatusField maybeStatus questions =
                                 questions
                     in
                     div [ class "flex items-center" ]
-                        [ if hasYesAnswers then
+                        [ if List.isEmpty questions then
+                            -- No eligibility questions means not completed
+                            div [ class "flex items-center text-gray-500 text-sm" ]
+                                [ span [ class "mr-1" ] [ text "•" ]
+                                , text "Not Completed"
+                                ]
+
+                          else if hasYesAnswers then
                             div [ class "flex items-center text-red-600 text-sm" ]
                                 [ span [ class "mr-1" ] [ text "✕" ]
                                 , text "Issue Flagged"
@@ -1891,82 +1898,93 @@ viewHealthAssessmentModal model =
 
 viewHealthAssessmentContent : List EligibilityQuestion -> Html Msg
 viewHealthAssessmentContent questions =
-    let
-        mainQuestions =
-            List.filter (\q -> q.questionType == MainQuestion) questions
-                |> List.sortBy .id
+    if List.isEmpty questions then
+        div [ class "text-center p-8" ]
+            [ div [ class "inline-flex items-center justify-center w-12 h-12 rounded-full bg-gray-100 text-gray-500 mb-4" ]
+                [ text "!" ]
+            , h3 [ class "text-lg font-medium text-gray-700 mb-2" ]
+                [ text "Health Assessment Not Completed" ]
+            , p [ class "text-gray-600" ]
+                [ text "This contact has not yet completed their health assessment questionnaire." ]
+            ]
 
-        hasAnyYes =
-            List.any
-                (\q ->
-                    case q.answer of
-                        Just (Left True) ->
-                            q.questionType == MainQuestion
+    else
+        let
+            mainQuestions =
+                List.filter (\q -> q.questionType == MainQuestion) questions
+                    |> List.sortBy .id
 
-                        _ ->
-                            False
-                )
-                questions
+            hasAnyYes =
+                List.any
+                    (\q ->
+                        case q.answer of
+                            Just (Left True) ->
+                                q.questionType == MainQuestion
 
-        statusBorderClass =
-            if hasAnyYes then
-                "border-red-200 bg-red-50"
+                            _ ->
+                                False
+                    )
+                    questions
 
-            else
-                "border-green-200 bg-green-50"
+            statusBorderClass =
+                if hasAnyYes then
+                    "border-red-200 bg-red-50"
 
-        statusIconClass =
-            if hasAnyYes then
-                "bg-red-100 text-red-600"
+                else
+                    "border-green-200 bg-green-50"
 
-            else
-                "bg-green-100 text-green-600"
+            statusIconClass =
+                if hasAnyYes then
+                    "bg-red-100 text-red-600"
 
-        statusTitleClass =
-            if hasAnyYes then
-                "text-red-800"
+                else
+                    "bg-green-100 text-green-600"
 
-            else
-                "text-green-800"
+            statusTitleClass =
+                if hasAnyYes then
+                    "text-red-800"
 
-        statusTextClass =
-            if hasAnyYes then
-                "text-red-700"
+                else
+                    "text-green-800"
 
-            else
-                "text-green-700"
-    in
-    div []
-        [ div [ class ("mb-6 p-4 rounded-lg border " ++ statusBorderClass) ]
-            [ div [ class "flex items-center" ]
-                [ span [ class ("inline-flex items-center justify-center w-8 h-8 rounded-full " ++ statusIconClass) ]
-                    [ if hasAnyYes then
-                        text "!"
+            statusTextClass =
+                if hasAnyYes then
+                    "text-red-700"
 
-                      else
-                        text "✓"
-                    ]
-                , div [ class "ml-3" ]
-                    [ h3 [ class ("font-medium " ++ statusTitleClass) ]
+                else
+                    "text-green-700"
+        in
+        div []
+            [ div [ class ("mb-6 p-4 rounded-lg border " ++ statusBorderClass) ]
+                [ div [ class "flex items-center" ]
+                    [ span [ class ("inline-flex items-center justify-center w-8 h-8 rounded-full " ++ statusIconClass) ]
                         [ if hasAnyYes then
-                            text "Health Issues Identified"
+                            text "!"
 
                           else
-                            text "All Health Checks Passed"
+                            text "✓"
                         ]
-                    , p [ class ("text-sm " ++ statusTextClass) ]
-                        [ if hasAnyYes then
-                            text "This contact has flagged health conditions that may affect their eligibility."
+                    , div [ class "ml-3" ]
+                        [ h3 [ class ("font-medium " ++ statusTitleClass) ]
+                            [ if hasAnyYes then
+                                text "Health Issues Identified"
 
-                          else
-                            text "This contact has no health conditions that would affect their eligibility."
+                              else
+                                text "All Health Checks Passed"
+                            ]
+                        , p [ class ("text-sm " ++ statusTextClass) ]
+                            [ if hasAnyYes then
+                                text "This contact has flagged health conditions that may affect their eligibility."
+
+                              else
+                                text "This contact has no health conditions that would affect their eligibility."
+                            ]
                         ]
                     ]
                 ]
+            , div [ class "space-y-6" ]
+                (List.map (viewMainQuestionWithFollowups questions) mainQuestions)
             ]
-        , div [ class "space-y-6" ]
-            (List.map (viewMainQuestionWithFollowups questions) mainQuestions)
-        ]
 
 
 viewMainQuestionWithFollowups : List EligibilityQuestion -> EligibilityQuestion -> Html Msg

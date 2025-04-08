@@ -151,7 +151,7 @@ export const contactsRoutes = new Elysia({ prefix: '/api/contacts' })
       // Get organization database with retry logic
       let orgDb;
       try {
-        orgDb = await Database.getOrgDb(user.organization_id.toString());
+        orgDb = await Database.getOrInitOrgDb(user.organization_id.toString());
       } catch (error) {
         // If database not found, check if it exists in the list
         if (error instanceof Error && error.message.includes('database not configured')) {
@@ -173,7 +173,7 @@ export const contactsRoutes = new Elysia({ prefix: '/api/contacts' })
           }
 
           // Extract database name from URL
-          const dbName = orgData.turso_db_url.split('/').pop()?.split('.')[0];
+          const dbName = orgData.turso_db_url.split('/').pop()?.split('.')[0]?.replace(/-[^-]*$/, '');
           if (!dbName) {
             logger.error(`Could not extract database name from URL: ${orgData.turso_db_url}`);
             set.status = 500;
@@ -247,7 +247,7 @@ export const contactsRoutes = new Elysia({ prefix: '/api/contacts' })
         }
 
         // Extract database name from URL
-        const dbName = orgData.turso_db_url.split('/').pop()?.split('.')[0];
+        const dbName = orgData.turso_db_url.split('/').pop()?.split('.')[0]?.replace(/-[^-]*$/, '');
         if (!dbName) {
           logger.error(`Could not extract database name from URL: ${orgData.turso_db_url}`);
           set.status = 500;
@@ -474,7 +474,7 @@ export const contactsRoutes = new Elysia({ prefix: '/api/contacts' })
         const user = await getUserFromSession(request);
         
         // Check if request includes required fields
-        if (!user || !body) {
+        if (!user || !body || 'skip_auth' in user) {
           set.status = 400;
           return { 
             success: false, 
@@ -539,7 +539,7 @@ export const contactsRoutes = new Elysia({ prefix: '/api/contacts' })
         const user = await getUserFromSession(request);
         
         // Check if request includes required fields
-        if (!user || !body || !body.contacts || !Array.isArray(body.contacts)) {
+        if (!user || !body || !body.contacts || !Array.isArray(body.contacts) || 'skip_auth' in user) {
           set.status = 400;
           return { 
             success: false, 
@@ -598,7 +598,7 @@ export const contactsRoutes = new Elysia({ prefix: '/api/contacts' })
     try {
       const user = await getUserFromSession(request);
       
-      if (!user) {
+      if (!user || 'skip_auth' in user) {
         set.status = 401;
         return { 
           success: false, 
@@ -629,7 +629,7 @@ export const contactsRoutes = new Elysia({ prefix: '/api/contacts' })
         const user = await getUserFromSession(request);
         
         // Check if user is admin
-        if (!user || !user.is_admin) {
+        if (!user || 'skip_auth' in user || !user.is_admin) {
           set.status = 403;
           return { 
             success: false, 
@@ -687,4 +687,62 @@ export const contactsRoutes = new Elysia({ prefix: '/api/contacts' })
         reason: t.String()
       })
     }
-  );
+  )
+  
+  // Check if an email exists
+  .get('/check-email/:email', async ({ params, request, set }) => {
+    try {
+      const user = await getUserFromSession(request);
+      
+      if (!user || 'skip_auth' in user) {
+        set.status = 401;
+        return { 
+          success: false, 
+          error: 'Unauthorized' 
+        };
+      }
+      
+      const { email } = params;
+      
+      if (!email) {
+        set.status = 400;
+        return { 
+          success: false, 
+          error: 'Email is required' 
+        };
+      }
+      
+      try {
+        // Get the organization database
+        const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString());
+        
+        // Check if the email exists
+        const contact = await orgDb.fetchOne(
+          'SELECT id FROM contacts WHERE email = ?',
+          [email]
+        );
+        
+        logger.info(`Email check for "${email}" - exists: ${!!contact}`);
+        
+        return {
+          exists: !!contact
+        };
+      } catch (dbError) {
+        logger.error(`Database error checking email ${email}: ${dbError}`);
+        set.status = 500;
+        return { 
+          success: false, 
+          error: 'Database error checking email',
+          message: dbError instanceof Error ? dbError.message : 'Unknown database error'
+        };
+      }
+    } catch (error) {
+      logger.error(`Error checking email: ${error}`);
+      set.status = 500;
+      return { 
+        success: false, 
+        error: 'Failed to check email',
+        message: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  });

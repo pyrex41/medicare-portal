@@ -11,6 +11,7 @@ export interface ContactCreate {
   state: string
   zip_code: string
   agent_id?: number | null
+  contact_owner_id?: number | null
   phone_number: string
 }
 

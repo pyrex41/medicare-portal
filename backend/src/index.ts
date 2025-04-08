@@ -560,6 +560,12 @@ const startServer = async () => {
             throw new Error('A contact with this email already exists')
           }
           
+          // Map contact_owner_id to agent_id if it exists and agent_id is not set
+          if (contact.contact_owner_id && !contact.agent_id) {
+            contact.agent_id = contact.contact_owner_id
+            logger.info(`Mapped contact_owner_id: ${contact.contact_owner_id} to agent_id`)
+          }
+          
           const query = `
             INSERT INTO contacts (
               first_name, last_name, email, current_carrier, plan_type,

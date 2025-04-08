@@ -28,6 +28,7 @@ import Json.Decode as Decode exposing (Decoder, bool, int, nullable, string)
 import Json.Decode.Pipeline as Pipeline
 import Json.Encode as Encode
 import List.Extra
+import Process
 import Svg exposing (path, svg)
 import Svg.Attributes exposing (d, fill, stroke, viewBox)
 import Task
@@ -454,10 +455,12 @@ type Msg
     | UpdateSearchQuery String
     | UpdateAddForm ContactFormField String
     | UpdateEditForm ContactFormField String
+    | EmailBlur String -- New message for email blur events
     | SubmitAddForm
     | SubmitEditForm
     | CheckEmail String
     | EmailChecked (Result Http.Error { exists : Bool })
+    | EmailCheckTimeout
     | GotContacts (Result Http.Error ContactsResponse)
     | ContactAdded (Result Http.Error Contact)
     | ContactUpdated (Result Http.Error Contact)
@@ -644,12 +647,10 @@ update msg model =
                         PlanType ->
                             { form | planType = Just value }
 
+                -- Update the command logic to check emails properly
                 cmd =
                     if field == ZipCode && String.length value == 5 then
                         submitEditFormWithFlag updatedForm True
-
-                    else if field == Email && String.length value > 0 then
-                        checkEmail value
 
                     else
                         Cmd.none
@@ -661,7 +662,7 @@ update msg model =
                 AddModal ->
                     ( { model
                         | addForm = updatedForm
-                        , isCheckingEmail = field == Email && String.length value > 0
+                        , isCheckingEmail = field == Email && String.contains "@" value && String.length value > 5
                         , emailExists = False
                         , error = Nothing
                       }
@@ -729,14 +730,12 @@ update msg model =
                         PlanType ->
                             { form | planType = Just value }
 
+                -- Update the command logic
                 cmd =
                     if field == ZipCode && String.length value == 5 then
                         LookupZipCode value
                             |> Task.succeed
                             |> Task.perform identity
-
-                    else if field == Email && String.length value > 0 then
-                        checkEmail value
 
                     else
                         Cmd.none
@@ -746,10 +745,24 @@ update msg model =
                     ( model, Cmd.none )
 
                 AddModal ->
-                    ( { model | addForm = updatedForm }, cmd )
+                    ( { model
+                        | addForm = updatedForm
+                        , isCheckingEmail = field == Email && String.contains "@" value && String.length value > 5
+                        , emailExists = False
+                        , error = Nothing
+                      }
+                    , cmd
+                    )
 
                 EditModal _ ->
-                    ( { model | editForm = updatedForm }, cmd )
+                    ( { model
+                        | editForm = updatedForm
+                        , isCheckingEmail = field == Email && String.contains "@" value && String.length value > 5
+                        , emailExists = False
+                        , error = Nothing
+                      }
+                    , cmd
+                    )
 
                 NoModal ->
                     ( model, Cmd.none )
@@ -762,6 +775,15 @@ update msg model =
 
                 ReassignAgentModal ->
                     ( model, Cmd.none )
+
+        EmailBlur email ->
+            if isValidEmail email then
+                ( { model | isCheckingEmail = True }
+                , checkEmail email
+                )
+
+            else
+                ( model, Cmd.none )
 
         SubmitAddForm ->
             ( { model | isSubmittingForm = True }
@@ -795,10 +817,36 @@ update msg model =
             , Cmd.none
             )
 
-        EmailChecked (Err _) ->
+        EmailChecked (Err error) ->
+            let
+                errorMsg =
+                    case error of
+                        Http.BadUrl _ ->
+                            "Invalid URL for email check"
+
+                        Http.Timeout ->
+                            "Email check timed out"
+
+                        Http.NetworkError ->
+                            "Network error during email check"
+
+                        Http.BadStatus code ->
+                            "Server error: " ++ String.fromInt code
+
+                        Http.BadBody errBody ->
+                            "Invalid response: " ++ errBody
+            in
             ( { model
                 | isCheckingEmail = False
-                , error = Just "Failed to check email. Please try again."
+                , error = Just ("Failed to check email: " ++ errorMsg)
+              }
+            , Cmd.none
+            )
+
+        EmailCheckTimeout ->
+            ( { model
+                | isCheckingEmail = False
+                , error = Just "Email check timed out. Please continue."
               }
             , Cmd.none
             )
@@ -3423,6 +3471,7 @@ viewContactForm model form updateMsg submitMsg buttonText isSubmitting =
                             )
                         , value form.email
                         , onInput (updateMsg Email)
+                        , on "blur" (Decode.succeed (EmailBlur form.email)) -- Add onBlur handler
                         , required True
                         ]
                         []
@@ -3990,6 +4039,18 @@ isJust maybeValue =
             False
 
 
+
+-- Add the isValidEmail function here
+
+
+isValidEmail : String -> Bool
+isValidEmail email =
+    String.contains "@" email
+        && String.contains "." email
+        && String.length email
+        > 5
+
+
 fetchCarriers : Cmd Msg
 fetchCarriers =
     Http.get
@@ -4008,16 +4069,33 @@ fetchAgents =
 
 checkEmail : String -> Cmd Msg
 checkEmail email =
-    Http.get
-        { url = "/api/contacts/check-email/" ++ email
+    Http.request
+        { method = "GET"
+        , headers = []
+        , url = "/api/contacts/check-email/" ++ email
+        , body = Http.emptyBody
         , expect = Http.expectJson EmailChecked emailCheckDecoder
+        , timeout = Just 5000 -- 5 second timeout
+        , tracker = Nothing
         }
 
 
 emailCheckDecoder : Decode.Decoder { exists : Bool }
 emailCheckDecoder =
-    Decode.map (\exists -> { exists = exists })
-        (Decode.field "exists" Decode.bool)
+    Decode.oneOf
+        [ -- Try to decode the standard response
+          Decode.map (\exists -> { exists = exists })
+            (Decode.field "exists" Decode.bool)
+        , -- Try to decode success response wrapper with exists field
+          Decode.field "success" Decode.bool
+            |> Decode.andThen
+                (\_ ->
+                    Decode.map (\exists -> { exists = exists })
+                        (Decode.field "exists" Decode.bool)
+                )
+        , -- Fallback for any other structure
+          Decode.succeed { exists = False }
+        ]
 
 
 carrierDecoder : Decode.Decoder { name : String, aliases : List String }

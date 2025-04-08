@@ -295,7 +295,7 @@ update msg model =
                 5 ->
                     Cmd.batch
                         [ saveAgents model
-                        , Nav.pushUrl model.key "/dashboard" -- Go to dashboard after onboarding is complete
+                        , Nav.pushUrl model.key "/login" -- Go to dashboard after onboarding is complete
                         ]
 
                 _ ->

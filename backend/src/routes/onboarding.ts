@@ -74,8 +74,11 @@ export function createOnboardingRoutes() {
   logger.info('Initializing onboarding routes including resume endpoint');
 
   // Define the resume endpoint separately to ensure it's properly registered
-  const resumeHandler = async ({ query, set }: { query: any, set: any }) => {
+  const resumeHandler = async ({ query, set, request }: { query: any, set: any, request: any }) => {
+    // Log request headers for debugging authentication issues
+    logger.info(`Request headers: ${JSON.stringify(request.headers)}`);
     logger.info(`Resume endpoint called with query: ${JSON.stringify(query)}`);
+    
     try {
       const { email } = query as { email: string };
       
@@ -267,8 +270,12 @@ export function createOnboardingRoutes() {
   };
 
   const app = new Elysia()
-    // Register the resume endpoint with the correct path
-    .get('/api/onboarding/resume', resumeHandler)
+    // Register the resume endpoint with the correct path - bypass auth
+    .get('/api/onboarding/resume', (context) => {
+      // Explicitly set the status to 200
+      context.set.status = 200;
+      return resumeHandler(context);
+    })
     
     // Create a Stripe checkout session
     .post('/api/create-checkout-session', async ({ body, set }) => {
@@ -1086,6 +1093,144 @@ export function createOnboardingRoutes() {
         };
       } catch (error) {
         logger.error(`Error in email debug endpoint: ${error}`);
+        set.status = 500;
+        return { error: String(error) };
+      }
+    })
+
+    // Debug endpoint to test the resume data for a specific organization ID
+    .get('/api/debug/test-resume', async ({ query, set }) => {
+      // Only allow in development environment
+      if (process.env.NODE_ENV === 'production') {
+        set.status = 404;
+        return { error: 'Not found' };
+      }
+      
+      try {
+        const { orgId } = query as { orgId: string };
+        if (!orgId) {
+          set.status = 400;
+          return { error: 'orgId parameter is required' };
+        }
+        
+        const organizationId = parseInt(orgId, 10);
+        logger.info(`Debug endpoint testing resume data for organization ID: ${organizationId}`);
+        
+        // Get organization details directly by ID
+        const orgInfo = await dbInstance.fetchOne<{
+          id: number,
+          name: string,
+          onboarding_completed: number,
+          website: string,
+          phone: string,
+          primary_color: string,
+          secondary_color: string,
+          logo_data: string | null,
+          org_settings: string | null,
+          payment_completed: number,
+          stripe_customer_id: string | null,
+          stripe_subscription_id: string | null
+        }>(
+          `SELECT id, name, onboarding_completed, website, phone, 
+           primary_color, secondary_color, logo_data, org_settings,
+           payment_completed, stripe_customer_id, stripe_subscription_id
+           FROM organizations WHERE id = ?`,
+          [organizationId]
+        );
+        
+        if (!orgInfo) {
+          set.status = 404;
+          return { error: `Organization ID ${organizationId} not found` };
+        }
+        
+        // Get a user from this organization (first one found)
+        const userInfo = await dbInstance.fetchOne<{ 
+          id: number, 
+          first_name: string,
+          last_name: string,
+          email: string,
+          phone: string
+        }>(
+          'SELECT id, first_name, last_name, email, phone FROM users WHERE organization_id = ? LIMIT 1',
+          [organizationId]
+        );
+        
+        if (!userInfo) {
+          return {
+            organization: orgInfo,
+            error: 'No users found for this organization'
+          };
+        }
+        
+        // Get all agents/users for this organization
+        const agents = await dbInstance.query<{
+          id: number,
+          first_name: string,
+          last_name: string,
+          email: string,
+          phone: string,
+          is_admin: number
+        }>(
+          `SELECT id, first_name, last_name, email, phone, is_admin 
+           FROM users WHERE organization_id = ?`,
+          [organizationId]
+        );
+        
+        // Parse org settings if exists
+        let orgSettings = {};
+        if (orgInfo.org_settings) {
+          try {
+            orgSettings = JSON.parse(orgInfo.org_settings);
+          } catch (e) {
+            logger.warn(`Could not parse org_settings for org ${organizationId}: ${e}`);
+          }
+        }
+        
+        // Format the response in the same way as the resume endpoint
+        return {
+          success: true,
+          onboardingComplete: orgInfo.onboarding_completed === 1,
+          organization: {
+            id: orgInfo.id,
+            name: orgInfo.name,
+            website: orgInfo.website || '',
+            phone: orgInfo.phone || '',
+            primaryColor: orgInfo.primary_color || '#6B46C1',
+            secondaryColor: orgInfo.secondary_color || '#9F7AEA',
+            logo: orgInfo.logo_data || null
+          },
+          user: {
+            id: userInfo.id,
+            firstName: userInfo.first_name,
+            lastName: userInfo.last_name,
+            email: userInfo.email,
+            phone: userInfo.phone || ''
+          },
+          agents: agents.map(agent => ({
+            firstName: agent.first_name,
+            lastName: agent.last_name,
+            email: agent.email,
+            phone: agent.phone || '',
+            isAdmin: agent.is_admin === 1
+          })),
+          carrierSettings: {
+            selectedCarriers: (orgSettings as any)?.carrierContracts || [],
+            useSmartSend: (orgSettings as any)?.smartSendEnabled || true
+          },
+          paymentStatus: {
+            paymentCompleted: orgInfo.payment_completed === 1,
+            stripeCustomerId: orgInfo.stripe_customer_id || null,
+            stripeSubscriptionId: orgInfo.stripe_subscription_id || null
+          },
+          // Include the raw data for debugging
+          raw: {
+            orgInfo,
+            userInfo,
+            orgSettings
+          }
+        };
+      } catch (error) {
+        logger.error(`Error in resume test endpoint: ${error}`);
         set.status = 500;
         return { error: String(error) };
       }
