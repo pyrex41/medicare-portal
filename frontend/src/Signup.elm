@@ -23,6 +23,7 @@ type alias Model =
     , lastName : String
     , organizationName : String
     , email : String
+    , phone : String
     , formState : FormState
     , error : Maybe String
     , key : Nav.Key
@@ -53,6 +54,7 @@ init key =
       , lastName = ""
       , organizationName = ""
       , email = ""
+      , phone = ""
       , formState = Editing
       , error = Nothing
       , key = key
@@ -72,6 +74,7 @@ type Msg
     | UpdateLastName String
     | UpdateOrganizationName String
     | UpdateEmail String
+    | UpdatePhone String
     | CheckEmail Int
     | DebounceCheckEmail Int
     | GotEmailCheckResponse Int (Result Http.Error EmailCheckResponse)
@@ -130,6 +133,9 @@ update msg model =
               else
                 debounceEmailCheck counter
             )
+
+        UpdatePhone value ->
+            ( { model | phone = value }, Cmd.none )
 
         DebounceCheckEmail counter ->
             if counter == model.debounceCounter && model.emailStatus == Checking then
@@ -273,18 +279,32 @@ viewForm model =
                 ]
                 []
             ]
-        , div []
-            [ label [ for "email", class "block text-sm font-medium text-gray-700" ] [ text "Email" ]
-            , input
-                [ type_ "email"
-                , id "email"
-                , value model.email
-                , onInput UpdateEmail
-                , class "mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
-                , placeholder "you@example.com"
+        , div [ class "grid grid-cols-1 md:grid-cols-2 gap-4" ]
+            [ div []
+                [ label [ for "email", class "block text-sm font-medium text-gray-700" ] [ text "Email" ]
+                , input
+                    [ type_ "email"
+                    , id "email"
+                    , value model.email
+                    , onInput UpdateEmail
+                    , class "mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                    , placeholder "you@example.com"
+                    ]
+                    []
+                , viewEmailStatusMessage model.emailStatus
                 ]
-                []
-            , viewEmailStatusMessage model.emailStatus
+            , div []
+                [ label [ for "phone", class "block text-sm font-medium text-gray-700" ] [ text "Phone Number" ]
+                , input
+                    [ type_ "tel"
+                    , id "phone"
+                    , value model.phone
+                    , onInput UpdatePhone
+                    , class "mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                    , placeholder "(555) 555-5555"
+                    ]
+                    []
+                ]
             ]
         , case model.error of
             Just err ->
@@ -315,6 +335,7 @@ viewForm model =
                         , string "lastName" model.lastName
                         , string "organizationName" model.organizationName
                         , string "email" model.email
+                        , string "phone" model.phone
                         ]
             in
             a
@@ -358,6 +379,7 @@ isValidForm model =
     not (String.isEmpty model.firstName)
         && not (String.isEmpty model.lastName)
         && not (String.isEmpty model.organizationName)
+        && not (String.isEmpty model.phone)
         && (model.emailStatus == Available)
 
 
@@ -417,6 +439,7 @@ encodeSignupData model =
         , ( "lastName", Encode.string model.lastName )
         , ( "organizationName", Encode.string model.organizationName )
         , ( "email", Encode.string model.email )
+        , ( "phone", Encode.string model.phone )
         ]
 
 

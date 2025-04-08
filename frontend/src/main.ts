@@ -78,7 +78,7 @@ customElements.define('stripe-checkout', class extends HTMLElement {
 
     try {
       // Set the element to loading state
-      console.log(`Creating checkout session with priceId: ${priceId}, meteredPriceId: ${meteredPriceId || 'none'}`);
+      console.log(`Creating checkout session with priceId: ${priceId}, meteredPriceId: ${meteredPriceId || 'none'}, email: ${email}`);
       
       // Create a checkout session with the API
       const response = await fetch('/api/create-checkout-session', {
@@ -89,6 +89,8 @@ customElements.define('stripe-checkout', class extends HTMLElement {
         body: JSON.stringify({
           priceId,
           meteredPriceId,
+          customerEmail: email,
+          customerName: `${firstName} ${lastName}`
         }),
       });
 
@@ -114,15 +116,17 @@ customElements.define('stripe-checkout', class extends HTMLElement {
     }
   }
 
-  async createCheckoutSession(priceId: string, meteredPriceId: string | null, returnUrl: string) {
+  async createCheckoutSession(priceId: string, meteredPriceId: string | null, returnUrl: string, email?: string, name?: string) {
     try {
-      console.log(`Creating checkout session for base price: ${priceId}, metered price: ${meteredPriceId}`);
+      console.log(`Creating checkout session for base price: ${priceId}, metered price: ${meteredPriceId}, email: ${email || 'not provided'}`);
       const response = await fetch('/api/create-checkout-session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           priceId,
-          meteredPriceId
+          meteredPriceId,
+          customerEmail: email,
+          customerName: name
         })
       });
       

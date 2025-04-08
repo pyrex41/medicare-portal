@@ -23,6 +23,25 @@ const signupSchema = z.object({
   planType: z.string().optional(),
 });
 
+// Helper function to ensure emails are properly decoded before storing in the database
+function ensureEmailDecoded(email: string): string {
+  try {
+    // First check if email contains encoded characters
+    if (email.includes('%')) {
+      const decoded = decodeURIComponent(email);
+      // Check if decoding made a difference
+      if (decoded !== email) {
+        logger.info(`Decoded email from ${email} to ${decoded}`);
+        return decoded;
+      }
+    }
+    return email;
+  } catch (error) {
+    logger.warn(`Error decoding email ${email}: ${error}`);
+    return email; // Return original if decoding fails
+  }
+}
+
 // Enhanced slug generation with uniqueness check
 async function generateUniqueSlug(db: Database, name: string): Promise<string> {
   let slug = name
@@ -107,6 +126,9 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
       logger.info(`Attempting to create organization with data: ${JSON.stringify(body)}`);
       const data = signupSchema.parse(body);
       
+      // Decode email to ensure it's stored properly
+      const decodedEmail = ensureEmailDecoded(data.adminEmail);
+      
       // Generate unique slug
       const slug = await generateUniqueSlug(db, data.organizationName);
       logger.info(`Generated unique slug: ${slug}`);
@@ -114,13 +136,13 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
       // Check if email is already registered in any organization
       const existingUser = await db.query<{ count: number }>(
         'SELECT COUNT(*) as count FROM users WHERE LOWER(email) = LOWER(?)',
-        [data.adminEmail]
+        [decodedEmail]
       );
 
       logger.info(`Existing user check result: ${JSON.stringify(existingUser)}`);
 
       if (existingUser[0]?.count > 0) {
-        logger.warn(`Email ${data.adminEmail} is already registered`);
+        logger.warn(`Email ${decodedEmail} is already registered`);
         set.status = 400;
         return {
           success: false,
@@ -181,7 +203,7 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
             created_at
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           [
-            data.adminEmail,
+            decodedEmail,
             orgId,
             1, // is_admin
             1, // is_agent - Set to 1 for basic tier since admin is also an agent
@@ -264,7 +286,10 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
     const db = new Database();
 
     try {
-      const decodedEmail = decodeURIComponent(params.email);
+      const decodedEmailParam = decodeURIComponent(params.email);
+      // Ensure the email is fully decoded
+      const decodedEmail = ensureEmailDecoded(decodedEmailParam);
+      
       logger.info(`Checking email availability for: "${decodedEmail}"`);
       
       // Basic email format validation
@@ -991,6 +1016,50 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
       set.status = 500;
       return { success: false, error: 'Failed to process inquiry' };
     }
+  })
+  .post('/api/agents', async ({ body, request, set }) => {
+    try {
+      // Get current user from session to determine their org
+      const currentUser = await getUserFromSession(request)
+      if (!currentUser) {
+        set.status = 401
+        return {
+          success: false,
+          error: 'You must be logged in to perform this action'
+        }
+      }
+
+      // Check if user is an admin
+      if (!currentUser.is_admin) {
+        set.status = 403
+        return {
+          success: false,
+          error: 'Only administrators can create new agents'
+        }
+      }
+
+      const newAgent = body as NewAgentRequest
+      
+      // Decode the email to ensure it's stored properly
+      newAgent.email = ensureEmailDecoded(newAgent.email);
+      
+      logger.info(`Creating new agent: ${newAgent.email} (org: ${currentUser.organization_id})`)
+
+      // Ensure that the new user has at least one role
+      if (!newAgent.is_admin && !newAgent.is_agent) {
+        logger.warn(`Agent created without any roles. Defaulting to is_agent=true for: ${newAgent.email}`)
+        newAgent.is_agent = true
+      }
+
+      // ... rest of the function ...
+    } catch (error) {
+      logger.error(`Error creating new agent: ${error}`);
+      set.status = 500;
+      return {
+        success: false,
+        error: 'Failed to create new agent'
+      };
+    }
   });
 
 export function createOrganizationRoutes() {
@@ -1011,8 +1080,14 @@ export function createOrganizationRoutes() {
           planType?: string;
         };
 
+        // Decode email to ensure it's stored properly
+        const decodedEmail = ensureEmailDecoded(adminEmail);
+
         // Validate input
-        const validation = signupSchema.safeParse(body);
+        const validation = signupSchema.safeParse({
+          ...body,
+          adminEmail: decodedEmail // Use decoded email for validation
+        });
         if (!validation.success) {
           set.status = 400;
           return {
@@ -1024,7 +1099,7 @@ export function createOrganizationRoutes() {
         // Check if email already exists
         const existingUser = await dbInstance.query<{ count: number }>(
           'SELECT COUNT(*) as count FROM users WHERE LOWER(email) = LOWER(?)',
-          [adminEmail]
+          [decodedEmail]
         );
 
         if (existingUser[0]?.count > 0) {
@@ -1072,7 +1147,7 @@ export function createOrganizationRoutes() {
         const orgId = Number(orgResult.lastInsertRowid);
         logger.info(`Created organization: ${orgId} with slug: ${slug}`);
 
-        // Create admin user
+        // Create admin user with decoded email
         await dbInstance.execute(
           `INSERT INTO users (
             email, 
@@ -1085,10 +1160,10 @@ export function createOrganizationRoutes() {
             created_at,
             is_active
           ) VALUES (?, ?, ?, ?, 1, 1, ?, datetime('now'), 0)`,
-          [adminEmail, adminFirstName, adminLastName, phone || '', orgId]
+          [decodedEmail, adminFirstName, adminLastName, phone || '', orgId]
         );
 
-        logger.info(`Created admin user for org ${slug} - Name: ${adminFirstName} ${adminLastName}, Email: ${adminEmail}`);
+        logger.info(`Created admin user for org ${slug} - Name: ${adminFirstName} ${adminLastName}, Email: ${decodedEmail}`);
 
         // Generate a magic link for verification
         const magicLink = `${config.clientUrl}/auth/verify/${slug}/${tempSessionId}`;
@@ -1096,11 +1171,11 @@ export function createOrganizationRoutes() {
         // Send welcome email
         try {
           await sendMagicLink({
-            email: adminEmail,
+            email: decodedEmail,
             magicLink: magicLink,
             name: adminFirstName
           });
-          logger.info(`Sent welcome email to ${adminEmail}`);
+          logger.info(`Sent welcome email to ${decodedEmail}`);
         } catch (emailError) {
           logger.error(`Failed to send welcome email: ${emailError}`);
           // Continue even if email fails
@@ -1135,8 +1210,11 @@ export function createOrganizationRoutes() {
           };
         }
         
+        // Ensure email is fully decoded
+        const decodedEmail = ensureEmailDecoded(email);
+        
         // Basic email format validation
-        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(decodedEmail)) {
           return {
             available: false,
             message: 'Invalid email format'
@@ -1146,7 +1224,7 @@ export function createOrganizationRoutes() {
         // Check if email already exists
         const existingUser = await dbInstance.query<{ count: number }>(
           'SELECT COUNT(*) as count FROM users WHERE LOWER(email) = LOWER(?)',
-          [email]
+          [decodedEmail]
         );
         
         const count = existingUser[0]?.count || 0;

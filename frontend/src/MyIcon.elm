@@ -237,7 +237,69 @@ clipboardPlus size color =
         ]
 
 
-undo2 : Int -> String -> Svg msg
+clipboardList : Int -> String -> Svg msg
+clipboardList size color =
+    svg
+        [ width (String.fromInt size)
+        , height (String.fromInt size)
+        , viewBox "0 0 24 24"
+        , fill "none"
+        , stroke color
+        , strokeWidth "2"
+        , strokeLinecap "round"
+        , strokeLinejoin "round"
+        ]
+        [ Svg.rect [ width "8", height "4", x "8", y "2", rx "1", ry "1" ] []
+        , Svg.path [ d "M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" ] []
+        , Svg.path [ d "M12 11h4" ] []
+        , Svg.path [ d "M12 16h4" ] []
+        , Svg.path [ d "M8 11h.01" ] []
+        , Svg.path [ d "M8 16h.01" ] []
+        ]
+
+
+users : Int -> String -> Svg msg
+users size color =
+    svg
+        [ width (String.fromInt size)
+        , height (String.fromInt size)
+        , viewBox "0 0 24 24"
+        , fill "none"
+        , stroke color
+        , strokeWidth "2"
+        , strokeLinecap "round"
+        , strokeLinejoin "round"
+        ]
+        [ Svg.path [ d "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" ] []
+        , Svg.circle [ cx "9", cy "7", r "4" ] []
+        , Svg.path [ d "M22 21v-2a4 4 0 0 0-3-3.87" ] []
+        , Svg.path [ d "M16 3.13a4 4 0 0 1 0 7.75" ] []
+        ]
+
+
+brand : Int -> String -> Svg msg
+brand size color =
+    svg
+        [ width (String.fromInt size)
+        , height (String.fromInt size)
+        , viewBox "0 0 24 24"
+        , fill "none"
+        , stroke color
+        , strokeWidth "2"
+        , strokeLinecap "round"
+        , strokeLinejoin "round"
+        ]
+        [ Svg.rect [ width "3", height "8", x "13", y "2", rx "1.5" ] []
+        , Svg.path [ d "M19 8.5V10h1.5A1.5 1.5 0 1 0 19 8.5" ] []
+        , Svg.rect [ width "3", height "8", x "8", y "14", rx "1.5" ] []
+        , Svg.path [ d "M5 15.5V14H3.5A1.5 1.5 0 1 0 5 15.5" ] []
+        , Svg.rect [ width "8", height "3", x "14", y "13", rx "1.5" ] []
+        , Svg.path [ d "M15.5 19H14v1.5a1.5 1.5 0 1 0 1.5-1.5" ] []
+        , Svg.rect [ width "8", height "3", x "2", y "8", rx "1.5" ] []
+        , Svg.path [ d "M8.5 5H10V3.5A1.5 1.5 0 1 0 8.5 5" ] []
+        ]
+
+
 undo2 size color =
     svg
         [ width (String.fromInt size)
