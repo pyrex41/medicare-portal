@@ -34,6 +34,8 @@ type alias Model =
     , companyPhone : String
     , companyWebsite : String
     , key : Nav.Key
+    , contactCount : String
+    , calculatedPrice : Maybe Int
     }
 
 
@@ -100,6 +102,8 @@ init key url =
       , companyPhone = ""
       , companyWebsite = ""
       , key = key
+      , contactCount = "500"
+      , calculatedPrice = Just 60
       }
     , case maybeUser of
         Just _ ->
@@ -122,6 +126,7 @@ type Msg
     | WebsiteChanged String
     | ContinueClicked
     | BackClicked
+    | ContactCountChanged String -- New message for contact count input
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -170,6 +175,48 @@ update msg model =
                     Nav.pushUrl model.key (buildUrl model newFrame)
             )
 
+        ContactCountChanged count ->
+            let
+                maybeInt =
+                    if String.isEmpty count then
+                        Nothing
+
+                    else
+                        String.toInt count
+
+                calculatedPrice =
+                    maybeInt
+                        |> Maybe.map calculatePrice
+            in
+            ( { model
+                | contactCount = count
+                , calculatedPrice = calculatedPrice
+              }
+            , Cmd.none
+            )
+
+
+
+-- Calculate the price based on the number of contacts
+
+
+calculatePrice : Int -> Int
+calculatePrice contacts =
+    let
+        basePrice =
+            60
+
+        -- Base price for up to 500 contacts
+        additionalTiers =
+            Basics.max 0 (ceiling (toFloat (Basics.max 0 (contacts - 500)) / 500))
+
+        additionalPrice =
+            additionalTiers * 40
+
+        -- $40 for each additional 500 contacts
+    in
+    basePrice + additionalPrice
+
 
 
 -- Handle navigation if needed
@@ -212,7 +259,107 @@ view model =
 
 viewPricing : Model -> Html Msg
 viewPricing model =
-    div [] [ text "Pricing" ]
+    div [ class "flex flex-col items-center" ]
+        [ MyIcon.banknote 24 "#0F172A"
+        , h2 [ class "text-2xl font-semibold text-gray-900 mt-6" ] [ text "Subscription Pricing" ]
+        , p [ class "text-gray-500 mt-2 mb-6" ] [ text "Simple, transparent pricing for your Medicare portal." ]
+        , div [ class "w-full max-w-3xl mt-6" ]
+            [ div [ class "bg-white overflow-hidden shadow rounded-lg divide-y divide-gray-200" ]
+                [ div [ class "px-4 py-5 sm:px-6 bg-indigo-50" ]
+                    [ h3 [ class "text-lg leading-6 font-medium text-gray-900" ]
+                        [ text "Base Subscription" ]
+                    ]
+                , div [ class "px-4 py-5 sm:p-6" ]
+                    [ div [ class "flex items-center justify-between" ]
+                        [ div [ class "flex items-center" ]
+                            [ span [ class "text-3xl font-bold text-gray-900" ] [ text "$60" ]
+                            , span [ class "ml-2 text-gray-500" ] [ text "/month" ]
+                            ]
+                        , span [ class "bg-green-100 text-green-800 px-2 py-1 rounded-full text-sm font-medium" ]
+                            [ text "Up to 500 contacts included" ]
+                        ]
+                    , div [ class "mt-4" ]
+                        [ p [ class "text-sm text-gray-500" ]
+                            [ text "Our base subscription includes all features of the Medicare Max portal platform and allows you to manage up to 500 contacts." ]
+                        ]
+                    ]
+                ]
+            , div [ class "bg-white overflow-hidden shadow rounded-lg divide-y divide-gray-200 mt-6" ]
+                [ div [ class "px-4 py-5 sm:px-6 bg-indigo-50" ]
+                    [ h3 [ class "text-lg leading-6 font-medium text-gray-900" ]
+                        [ text "Additional Contacts" ]
+                    ]
+                , div [ class "px-4 py-5 sm:p-6" ]
+                    [ div [ class "flex items-center justify-between" ]
+                        [ div [ class "flex items-center" ]
+                            [ span [ class "text-3xl font-bold text-gray-900" ] [ text "$40" ]
+                            , span [ class "ml-2 text-gray-500" ] [ text "/month" ]
+                            ]
+                        , span [ class "bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-sm font-medium" ]
+                            [ text "per 500 additional contacts" ]
+                        ]
+                    , div [ class "mt-4" ]
+                        [ p [ class "text-sm text-gray-500" ]
+                            [ text "For every additional 500 contacts (or portion thereof), we charge $40 per month." ]
+                        ]
+                    ]
+                ]
+            , div [ class "bg-white overflow-hidden shadow rounded-lg divide-y divide-gray-200 mt-6" ]
+                [ div [ class "px-4 py-5 sm:px-6 bg-indigo-50" ]
+                    [ h3 [ class "text-lg leading-6 font-medium text-gray-900" ]
+                        [ text "Price Calculator" ]
+                    ]
+                , div [ class "px-4 py-5 sm:p-6" ]
+                    [ div [ class "space-y-4" ]
+                        [ div [ class "space-y-2" ]
+                            [ label [ class "block text-sm font-medium text-gray-700", for "contact-count" ]
+                                [ text "Number of Contacts" ]
+                            , input
+                                [ class "mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                                , id "contact-count"
+                                , type_ "number"
+                                , placeholder "Enter number of contacts"
+                                , value model.contactCount
+                                , onInput ContactCountChanged
+                                , Html.Attributes.min "0"
+                                , Html.Attributes.step "1"
+                                ]
+                                []
+                            ]
+                        , div [ class "pt-4" ]
+                            [ div [ class "flex items-center justify-between pb-2 border-b border-gray-200" ]
+                                [ span [ class "text-gray-600" ] [ text "Base subscription:" ]
+                                , span [ class "font-medium text-gray-900" ] [ text "$60/month" ]
+                                ]
+                            , if model.calculatedPrice /= Just 60 then
+                                div [ class "flex items-center justify-between py-2 border-b border-gray-200" ]
+                                    [ span [ class "text-gray-600" ]
+                                        [ text <| "Additional contacts cost:" ]
+                                    , span [ class "font-medium text-gray-900" ]
+                                        [ text <| "$" ++ String.fromInt (Maybe.withDefault 0 model.calculatedPrice - 60) ++ "/month" ]
+                                    ]
+
+                              else
+                                text ""
+                            , div [ class "flex items-center justify-between py-2 mt-2" ]
+                                [ span [ class "text-lg font-semibold text-gray-900" ] [ text "Total:" ]
+                                , span [ class "text-xl font-bold text-indigo-600" ]
+                                    [ text <| "$" ++ String.fromInt (Maybe.withDefault 0 model.calculatedPrice) ++ "/month" ]
+                                ]
+                            ]
+                        ]
+                    ]
+                ]
+            ]
+        , div
+            [ class "w-full max-w-3xl flex justify-center mt-8" ]
+            [ button
+                [ class "bg-indigo-900 text-white py-2 px-6 rounded-md hover:bg-indigo-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                , onClick ContinueClicked
+                ]
+                [ text "Continue to Payment" ]
+            ]
+        ]
 
 
 viewStripe : Model -> Html Msg

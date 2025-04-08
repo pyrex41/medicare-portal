@@ -514,3 +514,21 @@ chevronRight size color =
         ]
         [ Svg.path [ d "m9 18 6-6-6-6" ] []
         ]
+
+
+banknote : Int -> String -> Svg msg
+banknote size color =
+    svg
+        [ width (String.fromInt size)
+        , height (String.fromInt size)
+        , viewBox "0 0 24 24"
+        , fill "none"
+        , stroke color
+        , strokeWidth "2"
+        , strokeLinecap "round"
+        , strokeLinejoin "round"
+        ]
+        [ Svg.rect [ x "2", y "6", width "20", height "12", rx "2" ] []
+        , Svg.circle [ cx "12", cy "12", r "2" ] []
+        , Svg.path [ d "M6 12h.01M18 12h.01" ] []
+        ]
