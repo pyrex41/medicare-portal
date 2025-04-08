@@ -13,9 +13,9 @@ import { settingsRoutes } from './routes/settings'
 import { organizationRoutes } from './routes/organizations'
 import { createBrandRoutes } from './routes/brand'
 import { quotesRoutes } from './routes/quotes'
-import { createStripeRoutes } from './routes/stripe'
-import { createOnboardingRoutes, cleanupOldOrganizations } from './routes/onboarding'
+import { createOnboardingRoutes } from './routes/onboarding'
 import { createWaitlistRoutes } from './routes/waitlist'
+import { createSignupRoutes, checkEmailHandler } from './routes/signup'
 import { errorHandler } from './middleware/error'
 import { getUserFromSession } from './services/auth'
 import { join } from 'path'
@@ -30,6 +30,7 @@ import { contactsRoutes } from './routes/contacts'
 import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
+
 
 // At the top of the file, add interface for ZIP data
 export interface ZipInfo {
@@ -465,6 +466,8 @@ const startServer = async () => {
       })
       // Add health check endpoint
       .get('/health', () => ({ status: 'OK' }))
+      // Register public routes that shouldn't be auth-protected
+      .get('/api/signup/check-email/:email', checkEmailHandler)
       // GET /api/contacts is now handled by the contactsRoutes module
       .get('/api/contacts/check-email/:email', async ({ params: { email }, request }) => {
         try {
@@ -862,6 +865,11 @@ const startServer = async () => {
         logger.info('Registering auth routes...')
         return app.use(createAuthRoutes())
       })
+      // Add signup routes
+      .use(app => {
+        logger.info('Registering signup routes...')
+        return app.use(createSignupRoutes())
+      })
       // Add settings routes
       .use(settingsRoutes)
       // Add organization routes
@@ -870,8 +878,6 @@ const startServer = async () => {
       .use(createBrandRoutes())
       // Add quotes routes
       .use(quotesRoutes)
-      // Add Stripe routes
-      .use(createStripeRoutes())
       // Add onboarding routes
       .use(createOnboardingRoutes())
       // Add eligibility routes
@@ -2266,9 +2272,9 @@ const startServer = async () => {
     // Schedule the cleanup job to run daily at midnight
     cron.schedule('0 0 * * *', () => {
       logger.info('Running scheduled cleanup job for old organizations');
-      cleanupOldOrganizations().catch(error => {
-        logger.error(`Error in scheduled cleanup job: ${error}`);
-      });
+      // cleanupOldOrganizations().catch(error => {
+      //   logger.error(`Error in scheduled cleanup job: ${error}`);
+      // });
     });
     
     logger.info('Scheduled daily cleanup job for old organizations');

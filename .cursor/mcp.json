@@ -28,6 +28,17 @@
                 "TURSO_ORGANIZATION": "pyrex41",
                 "TURSO_DEFAULT_DATABASE": "medicare-portal"
             }
+        },
+        "stripe": {
+            "command": "bunx",
+            "args": [
+                "-y",
+                "@stripe/mcp",
+                "--tools=all"
+            ],
+            "env": {
+                "STRIPE_SECRET_KEY": "sk_test_51Qyh7RCBUPXAZKNGFySALjap1pDAtEwPtuY5TAzEuKKDq7cfAmHhmQIn8W1UMf2CuOvQ1umjiUrlpPauOc159fpM00nfohCZH3"
+            }
         }
     }
 }

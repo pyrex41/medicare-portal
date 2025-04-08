@@ -1,5 +1,5 @@
 // Load and manage the Stripe.js library
-let stripeInstance = null;
+let stripeInstance: any = null;
 
 // Load the Stripe.js script dynamically
 export function loadStripeScript() {
@@ -17,7 +17,7 @@ export function loadStripeScript() {
 }
 
 // Initialize Stripe with the provided publishable key
-function initializeStripe(publishableKey) {
+function initializeStripe(publishableKey: string) {
   try {
     if (!window.Stripe) {
       console.error('Stripe not loaded yet');
@@ -34,7 +34,7 @@ function initializeStripe(publishableKey) {
 }
 
 // Redirect to Stripe Checkout using sessionId
-async function redirectToCheckout(sessionId) {
+async function redirectToCheckout(sessionId: string) {
   try {
     if (!stripeInstance) {
       console.error('Stripe not initialized');
@@ -57,7 +57,7 @@ async function redirectToCheckout(sessionId) {
 }
 
 // Process a payment using Stripe Elements
-async function processPayment(clientSecret) {
+async function processPayment(clientSecret: string) {
   try {
     if (!stripeInstance) {
       console.error('Stripe not initialized');
@@ -111,7 +111,7 @@ function cleanupStripe() {
 }
 
 // Export the Stripe integration object to be attached to the window
-export const stripeIntegration = {
+const stripeIntegration = {
   initializeStripe,
   redirectToCheckout,
   processPayment,
@@ -120,5 +120,14 @@ export const stripeIntegration = {
 
 // Attach to window for access from Elm ports
 if (typeof window !== 'undefined') {
-  window.stripeIntegration = stripeIntegration;
+  (window as any).stripeIntegration = stripeIntegration;
+}
+
+export { stripeIntegration };
+
+// Add TypeScript declarations for Stripe
+declare global {
+  interface Window {
+    Stripe: any;
+  }
 } 

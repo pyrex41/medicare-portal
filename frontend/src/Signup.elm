@@ -1,17 +1,17 @@
-module Signup exposing (Model, Msg(..), init, subscriptions, update, view)
+module Signup exposing (Model, Msg, init, subscriptions, update, view)
 
 import Browser
 import Browser.Navigation as Nav
-import Components.ProgressIndicator as ProgressIndicator exposing (Step)
 import Html exposing (..)
 import Html.Attributes exposing (..)
-import Html.Events exposing (onBlur, onInput, onSubmit)
+import Html.Events exposing (..)
 import Http
-import Json.Decode as Decode
+import Json.Decode as Decode exposing (Decoder)
 import Json.Encode as Encode
-import Svg exposing (path, svg)
-import Svg.Attributes exposing (d, fill, stroke, strokeLinecap, strokeLinejoin, strokeWidth, viewBox)
+import Process
+import Task
 import Url
+import Url.Builder exposing (absolute, string)
 
 
 
@@ -19,43 +19,62 @@ import Url
 
 
 type alias Model =
-    { organizationName : String
-    , adminFirstName : String
-    , adminLastName : String
-    , adminEmail : String
+    { firstName : String
+    , lastName : String
+    , organizationName : String
+    , email : String
+    , formState : FormState
     , error : Maybe String
-    , isSubmitting : Bool
-    , submitted : Bool
-    , orgNameStatus : OrgNameStatus
-    , emailStatus : EmailStatus
-    , currentStep : SignupStep
     , key : Nav.Key
+    , emailStatus : EmailStatus
+    , debounceCounter : Int
     }
 
 
-type OrgNameStatus
-    = NotChecked
-    | Checking
-    | Valid
-    | Invalid String
+type FormState
+    = Editing
+    | Submitting
+    | LinkSent
+    | Success
+    | Error
 
 
 type EmailStatus
-    = EmailNotChecked
-    | EmailChecking
-    | EmailValid
-    | EmailInvalid String
+    = NotChecked
+    | Checking
+    | Available
+    | AlreadyRegistered String
+    | InvalidFormat
+
+
+init : Nav.Key -> ( Model, Cmd Msg )
+init key =
+    ( { firstName = ""
+      , lastName = ""
+      , organizationName = ""
+      , email = ""
+      , formState = Editing
+      , error = Nothing
+      , key = key
+      , emailStatus = NotChecked
+      , debounceCounter = 0
+      }
+    , Cmd.none
+    )
+
+
+
+-- UPDATE
 
 
 type Msg
-    = UpdateOrganizationName String
-    | CheckOrganizationName
-    | GotOrgNameResponse (Result Http.Error OrgNameResponse)
-    | UpdateAdminFirstName String
-    | UpdateAdminLastName String
-    | UpdateAdminEmail String
-    | CheckAdminEmail
-    | GotEmailResponse (Result Http.Error EmailResponse)
+    = UpdateFirstName String
+    | UpdateLastName String
+    | UpdateOrganizationName String
+    | UpdateEmail String
+    | CheckEmail Int
+    | DebounceCheckEmail Int
+    | GotEmailCheckResponse Int (Result Http.Error EmailCheckResponse)
     | SubmitForm
     | GotSignupResponse (Result Http.Error SignupResponse)
 
@@ -66,244 +85,114 @@ type alias SignupResponse =
     }
 
 
-type alias OrgNameResponse =
+type alias EmailCheckResponse =
     { available : Bool
     , message : String
     }
-
-
-type alias EmailResponse =
-    { available : Bool
-    , message : String
-    }
-
-
-type SignupStep
-    = AccountSetup
-    | CompanyDetails
-    | CompanyStyle
-    | SetupPayment
-
-
-init : Nav.Key -> ( Model, Cmd Msg )
-init key =
-    ( { organizationName = ""
-      , adminFirstName = ""
-      , adminLastName = ""
-      , adminEmail = ""
-      , error = Nothing
-      , isSubmitting = False
-      , submitted = False
-      , orgNameStatus = NotChecked
-      , emailStatus = EmailNotChecked
-      , currentStep = AccountSetup
-      , key = key
-      }
-    , Cmd.none
-    )
-
-
-
--- UPDATE
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+        UpdateFirstName value ->
+            ( { model | firstName = value }, Cmd.none )
+
+        UpdateLastName value ->
+            ( { model | lastName = value }, Cmd.none )
+
         UpdateOrganizationName value ->
-            ( { model
-                | organizationName = value
-                , orgNameStatus = NotChecked -- Clear status when typing
-              }
-            , Cmd.none
+            ( { model | organizationName = value }, Cmd.none )
+
+        UpdateEmail value ->
+            let
+                newModel =
+                    { model
+                        | email = value
+                        , emailStatus =
+                            if String.isEmpty value then
+                                NotChecked
+
+                            else if not (isValidEmailFormat value) then
+                                InvalidFormat
+
+                            else
+                                Checking
+                        , debounceCounter = model.debounceCounter + 1
+                    }
+
+                counter =
+                    newModel.debounceCounter
+            in
+            ( newModel
+            , if String.isEmpty value || not (isValidEmailFormat value) then
+                Cmd.none
+
+              else
+                debounceEmailCheck counter
             )
 
-        CheckOrganizationName ->
-            if String.length model.organizationName >= 1 then
-                ( { model | orgNameStatus = Checking }
-                  -- Show loading state
-                , checkOrgName model.organizationName
-                )
+        DebounceCheckEmail counter ->
+            if counter == model.debounceCounter && model.emailStatus == Checking then
+                ( model, checkEmailAvailability counter model.email )
 
             else
-                ( { model | orgNameStatus = NotChecked }
-                , Cmd.none
-                )
+                ( model, Cmd.none )
 
-        GotOrgNameResponse (Ok response) ->
-            ( { model
-                | orgNameStatus =
-                    if response.available then
-                        Valid
+        CheckEmail counter ->
+            ( model, checkEmailAvailability counter model.email )
 
-                    else
-                        Invalid response.message
-              }
-            , Cmd.none
-            )
-
-        GotOrgNameResponse (Err _) ->
-            ( { model
-                | orgNameStatus = Invalid "Failed to check organization name"
-              }
-            , Cmd.none
-            )
-
-        UpdateAdminFirstName value ->
-            ( { model | adminFirstName = value }, Cmd.none )
-
-        UpdateAdminLastName value ->
-            ( { model | adminLastName = value }, Cmd.none )
-
-        UpdateAdminEmail value ->
-            ( { model
-                | adminEmail = value
-                , emailStatus = EmailNotChecked
-              }
-            , Cmd.none
-            )
-
-        CheckAdminEmail ->
-            if String.isEmpty (String.trim model.adminEmail) then
-                ( { model | emailStatus = EmailNotChecked }
-                , Cmd.none
-                )
-
-            else if model.emailStatus == EmailChecking then
+        GotEmailCheckResponse counter result ->
+            if counter /= model.debounceCounter then
+                -- Ignore outdated responses
                 ( model, Cmd.none )
 
             else
-                ( { model | emailStatus = EmailChecking }
-                , checkEmail model.adminEmail
-                )
+                case result of
+                    Ok response ->
+                        ( { model
+                            | emailStatus =
+                                if response.available then
+                                    Available
 
-        GotEmailResponse result ->
-            case result of
-                Ok response ->
-                    ( { model
-                        | emailStatus =
-                            if response.available then
-                                EmailValid
+                                else
+                                    AlreadyRegistered response.message
+                          }
+                        , Cmd.none
+                        )
 
-                            else
-                                EmailInvalid response.message
-                      }
-                    , Cmd.none
-                    )
-
-                Err _ ->
-                    ( { model
-                        | emailStatus = EmailInvalid "Failed to check email availability"
-                      }
-                    , Cmd.none
-                    )
+                    Err _ ->
+                        ( { model | emailStatus = NotChecked }, Cmd.none )
 
         SubmitForm ->
-            if isFormValid model then
-                ( { model | isSubmitting = True }
-                , Nav.pushUrl model.key "/onboarding"
+            if isValidForm model then
+                ( { model | formState = Submitting }
+                , Cmd.none
+                  -- signup model
                 )
 
             else
-                ( { model | error = Just "Please fill out all fields and ensure email and organization name are valid" }
+                ( { model | error = Just "Please fill out all fields correctly" }
                 , Cmd.none
                 )
 
-        GotSignupResponse (Ok response) ->
-            if response.success then
-                ( { model
-                    | isSubmitting = False
-                    , submitted = True
-                    , error = Nothing
-                  }
-                , Cmd.none
-                )
+        GotSignupResponse result ->
+            case result of
+                Ok response ->
+                    if response.success then
+                        -- Show success message
+                        ( { model | formState = LinkSent }
+                        , Cmd.none
+                        )
 
-            else
-                ( { model
-                    | error = Just response.message
-                    , isSubmitting = False
-                  }
-                , Cmd.none
-                )
+                    else
+                        ( { model | formState = Error, error = Just response.message }
+                        , Cmd.none
+                        )
 
-        GotSignupResponse (Err _) ->
-            ( { model
-                | error = Just "Failed to create organization. Please try again."
-                , isSubmitting = False
-              }
-            , Cmd.none
-            )
-
-
-validateForm : Model -> Bool
-validateForm model =
-    not (String.isEmpty model.organizationName)
-        && not (String.isEmpty model.adminFirstName)
-        && not (String.isEmpty model.adminLastName)
-        && not (String.isEmpty model.adminEmail)
-
-
-submitForm : Model -> Cmd Msg
-submitForm model =
-    Http.post
-        { url = "/api/organizations/signup"
-        , body =
-            Http.jsonBody
-                (Encode.object
-                    [ ( "organizationName", Encode.string model.organizationName )
-                    , ( "adminFirstName", Encode.string model.adminFirstName )
-                    , ( "adminLastName", Encode.string model.adminLastName )
-                    , ( "adminEmail", Encode.string model.adminEmail )
-                    ]
-                )
-        , expect =
-            Http.expectJson GotSignupResponse
-                (Decode.map2 SignupResponse
-                    (Decode.field "success" Decode.bool)
-                    (Decode.field "message" Decode.string)
-                )
-        }
-
-
-
--- Add this function to check organization name
-
-
-checkOrgName : String -> Cmd Msg
-checkOrgName name =
-    if String.isEmpty (String.trim name) then
-        Cmd.none
-
-    else
-        Http.get
-            { url = "/api/organizations/check-name/" ++ Url.percentEncode (String.trim name)
-            , expect =
-                Http.expectJson GotOrgNameResponse
-                    (Decode.map2 OrgNameResponse
-                        (Decode.field "available" Decode.bool)
-                        (Decode.field "message" Decode.string)
+                Err _ ->
+                    ( { model | formState = Error, error = Just "Signup failed. Please try again." }
+                    , Cmd.none
                     )
-            }
-
-
-
--- Add this function to check email
-
-
-checkEmail : String -> Cmd Msg
-checkEmail email =
-    Http.get
-        { url = "/api/organizations/check-email/" ++ Url.percentEncode email
-        , expect = Http.expectJson GotEmailResponse emailResponseDecoder
-        }
-
-
-emailResponseDecoder : Decode.Decoder EmailResponse
-emailResponseDecoder =
-    Decode.map2 EmailResponse
-        (Decode.field "available" Decode.bool)
-        (Decode.field "message" Decode.string)
 
 
 
@@ -312,333 +201,236 @@ emailResponseDecoder =
 
 view : Model -> Browser.Document Msg
 view model =
-    { title = "Create Organization"
+    { title = "Get Started - Medicare Max"
     , body =
-        [ div [ class "min-h-screen bg-gray-50 flex" ]
-            [ viewProgress model
-            , div [ class "flex-1 ml-80" ]
-                [ div [ class "max-w-2xl mx-auto py-12 px-8" ]
-                    [ if model.submitted then
-                        viewSuccess
-
-                      else
-                        viewForm model
+        [ div [ class "min-h-screen bg-gray-50 flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8" ]
+            [ div [ class "max-w-md w-full space-y-8" ]
+                [ div [ class "text-center" ]
+                    [ img [ src "/images/medicare-max-logo.png", class "mx-auto h-12 w-auto", alt "Medicare Max Logo" ] []
+                    , h1 [ class "mt-6 text-3xl font-bold text-gray-900" ] [ text "Get Started" ]
+                    , p [ class "mt-2 text-sm text-gray-600" ] [ text "Sign up and start using Medicare Max" ]
                     ]
+                , case model.formState of
+                    LinkSent ->
+                        div [ class "text-center bg-green-50 p-6 rounded-lg border border-green-100" ]
+                            [ p [ class "text-green-800 mb-2 font-medium" ] [ text "Welcome to Medicare Max!" ]
+                            , p [ class "text-green-700 mb-4" ] [ text "We've sent you an email with a magic link to continue your account setup." ]
+                            , p [ class "text-green-700" ] [ text "Please check your inbox (and spam folder) to complete your registration." ]
+                            ]
+
+                    Success ->
+                        div [ class "text-center" ]
+                            [ p [ class "text-green-600" ] [ text "Account created successfully!" ]
+                            , div [ class "animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500 mx-auto mt-4" ] []
+                            ]
+
+                    _ ->
+                        viewForm model
                 ]
             ]
         ]
     }
 
 
-viewSuccess : Html Msg
-viewSuccess =
-    div [ class "text-center" ]
-        [ div [ class "mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-green-100" ]
-            [ -- Checkmark icon
-              svg
-                [ Svg.Attributes.class "h-6 w-6 text-green-600"
-                , Svg.Attributes.fill "none"
-                , Svg.Attributes.viewBox "0 0 24 24"
-                , Svg.Attributes.stroke "currentColor"
+viewForm : Model -> Html Msg
+viewForm model =
+    Html.form [ onSubmit SubmitForm, class "space-y-6" ]
+        [ div [ class "grid grid-cols-1 md:grid-cols-2 gap-4" ]
+            [ div []
+                [ label [ for "firstName", class "block text-sm font-medium text-gray-700" ] [ text "First Name" ]
+                , input
+                    [ type_ "text"
+                    , id "firstName"
+                    , value model.firstName
+                    , onInput UpdateFirstName
+                    , class "mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                    , placeholder "John"
+                    ]
+                    []
                 ]
-                [ path
-                    [ Svg.Attributes.strokeLinecap "round"
-                    , Svg.Attributes.strokeLinejoin "round"
-                    , Svg.Attributes.strokeWidth "2"
-                    , Svg.Attributes.d "M5 13l4 4L19 7"
+            , div []
+                [ label [ for "lastName", class "block text-sm font-medium text-gray-700" ] [ text "Last Name" ]
+                , input
+                    [ type_ "text"
+                    , id "lastName"
+                    , value model.lastName
+                    , onInput UpdateLastName
+                    , class "mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                    , placeholder "Doe"
                     ]
                     []
                 ]
             ]
-        , h3 [ class "mt-3 text-lg font-medium text-gray-900" ]
-            [ text "Check your email" ]
-        , p [ class "mt-2 text-sm text-gray-500" ]
-            [ text "We've sent you a magic link to verify your account and complete the setup." ]
-        ]
-
-
-viewForm : Model -> Html Msg
-viewForm model =
-    Html.form [ onSubmit SubmitForm, class "space-y-6 max-w-md" ]
-        [ h1 [ class "text-2xl font-semibold text-[#101828] mb-2" ]
-            [ text "Agent Details" ]
-        , p [ class "text-[#667085] text-base mb-8" ]
-            [ text "Let's get to know you" ]
-        , -- Form fields
-          div [ class "space-y-6" ]
-            [ -- Email field first
-              div []
-                [ label [ for "admin-email", class "block text-sm font-medium text-[#344054] mb-1.5" ]
-                    [ text "Email" ]
-                , div [ class "mt-1" ]
-                    [ input
-                        [ type_ "email"
-                        , id "admin-email"
-                        , value model.adminEmail
-                        , onInput UpdateAdminEmail
-                        , onBlur CheckAdminEmail
-                        , class "block w-full px-3.5 py-2.5 bg-white border border-[#d0d5dd] rounded-lg shadow-sm text-[#101828] focus:outline-none focus:ring-2 focus:ring-[#03045e] focus:border-[#03045e] sm:text-sm"
-                        , placeholder "Enter your email"
-                        ]
-                        []
-                    , viewEmailStatus model.emailStatus
-                    ]
+        , div []
+            [ label [ for "organizationName", class "block text-sm font-medium text-gray-700" ] [ text "Organization Name" ]
+            , input
+                [ type_ "text"
+                , id "organizationName"
+                , value model.organizationName
+                , onInput UpdateOrganizationName
+                , class "mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                , placeholder "ABC Healthcare"
                 ]
-
-            -- Organization name field second
-            , div []
-                [ label [ for "organization-name", class "block text-sm font-medium text-[#344054] mb-1.5" ]
-                    [ text "Organization name" ]
-                , div [ class "mt-1" ]
-                    [ input
-                        [ type_ "text"
-                        , id "organization-name"
-                        , value model.organizationName
-                        , onInput UpdateOrganizationName
-                        , onBlur CheckOrganizationName
-                        , class "block w-full px-3.5 py-2.5 bg-white border border-[#d0d5dd] rounded-lg shadow-sm text-[#101828] focus:outline-none focus:ring-2 focus:ring-[#03045e] focus:border-[#03045e] sm:text-sm"
-                        , placeholder "Enter organization name"
-                        ]
-                        []
-                    , viewOrgNameStatus model.orgNameStatus
-                    ]
-                ]
-
-            -- First Name field third
-            , div []
-                [ label [ for "admin-first-name", class "block text-sm font-medium text-[#344054] mb-1.5" ]
-                    [ text "First Name" ]
-                , div [ class "mt-1" ]
-                    [ input
-                        [ type_ "text"
-                        , id "admin-first-name"
-                        , value model.adminFirstName
-                        , onInput UpdateAdminFirstName
-                        , class "block w-full px-3 sm:px-3.5 py-3 sm:py-2.5 bg-white border border-[#d0d5dd] rounded-lg shadow-sm text-[#101828] focus:outline-none focus:ring-2 focus:ring-[#03045e] focus:border-[#03045e] sm:text-sm"
-                        , placeholder "Enter your first name"
-                        ]
-                        []
-                    ]
-                ]
-
-            -- Last Name field fourth
-            , div []
-                [ label [ for "admin-last-name", class "block text-sm font-medium text-[#344054] mb-1.5" ]
-                    [ text "Last Name" ]
-                , div [ class "mt-1" ]
-                    [ input
-                        [ type_ "text"
-                        , id "admin-last-name"
-                        , value model.adminLastName
-                        , onInput UpdateAdminLastName
-                        , class "block w-full px-3 sm:px-3.5 py-3 sm:py-2.5 bg-white border border-[#d0d5dd] rounded-lg shadow-sm text-[#101828] focus:outline-none focus:ring-2 focus:ring-[#03045e] focus:border-[#03045e] sm:text-sm"
-                        , placeholder "Enter your last name"
-                        ]
-                        []
-                    ]
-                ]
+                []
             ]
-        , -- Submit button
-          button
-            [ type_ "submit"
-            , class (submitButtonClass model)
-            , disabled (not (isFormValid model) || model.isSubmitting)
+        , div []
+            [ label [ for "email", class "block text-sm font-medium text-gray-700" ] [ text "Email" ]
+            , input
+                [ type_ "email"
+                , id "email"
+                , value model.email
+                , onInput UpdateEmail
+                , class "mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                , placeholder "you@example.com"
+                ]
+                []
+            , viewEmailStatusMessage model.emailStatus
             ]
-            [ if model.isSubmitting then
-                text "Creating Organization..."
+        , case model.error of
+            Just err ->
+                div [ class "text-red-600 text-sm" ] [ text err ]
 
-              else
-                text "Continue"
-            ]
-        ]
-
-
-viewOrgNameStatus : OrgNameStatus -> Html Msg
-viewOrgNameStatus status =
-    div [ class "mt-1 transition-all duration-200" ]
-        [ case status of
-            NotChecked ->
+            Nothing ->
                 text ""
+        , if model.formState == Submitting || not (isValidForm model) then
+            button
+                [ type_ "submit"
+                , class "w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-gray-400 cursor-not-allowed opacity-70"
+                , disabled True
+                ]
+                [ text
+                    (if model.formState == Submitting then
+                        "Creating Account..."
 
-            Checking ->
-                div [ class "text-blue-600 text-sm flex items-center" ]
-                    [ -- Loading spinner
-                      div [ class "animate-spin h-4 w-4 mr-2 border-2 border-blue-600 border-t-transparent rounded-full" ] []
-                    , text "Checking availability..."
-                    ]
+                     else
+                        "Sign Up"
+                    )
+                ]
 
-            Valid ->
-                div [ class "text-green-600 text-sm flex items-center" ]
-                    [ -- Checkmark icon
-                      svg
-                        [ Svg.Attributes.class "h-4 w-4 mr-1"
-                        , Svg.Attributes.fill "none"
-                        , Svg.Attributes.viewBox "0 0 24 24"
-                        , Svg.Attributes.stroke "currentColor"
+          else
+            let
+                uri =
+                    absolute [ "onboarding" ]
+                        [ string "firstName" model.firstName
+                        , string "lastName" model.lastName
+                        , string "organizationName" model.organizationName
+                        , string "email" model.email
                         ]
-                        [ path
-                            [ Svg.Attributes.strokeLinecap "round"
-                            , Svg.Attributes.strokeLinejoin "round"
-                            , Svg.Attributes.strokeWidth "2"
-                            , Svg.Attributes.d "M5 13l4 4L19 7"
-                            ]
-                            []
-                        ]
-                    , text "Organization name is available"
-                    ]
-
-            Invalid message ->
-                div [ class "text-red-600 text-sm flex items-center" ]
-                    [ -- X icon
-                      svg
-                        [ Svg.Attributes.class "h-4 w-4 mr-1"
-                        , Svg.Attributes.fill "none"
-                        , Svg.Attributes.viewBox "0 0 24 24"
-                        , Svg.Attributes.stroke "currentColor"
-                        ]
-                        [ path
-                            [ Svg.Attributes.strokeLinecap "round"
-                            , Svg.Attributes.strokeLinejoin "round"
-                            , Svg.Attributes.strokeWidth "2"
-                            , Svg.Attributes.d "M6 18L18 6M6 6l12 12"
-                            ]
-                            []
-                        ]
-                    , text message
-                    ]
+            in
+            a
+                [ href uri
+                , class "w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                ]
+                [ text "Sign Up" ]
+        , p [ class "mt-2 text-center text-sm text-gray-600" ]
+            [ text "Already have an account? "
+            , a [ href "/login", class "font-medium text-blue-600 hover:text-blue-500" ]
+                [ text "Log in" ]
+            ]
         ]
 
 
-viewEmailStatus : EmailStatus -> Html Msg
-viewEmailStatus status =
-    div [ class "mt-1 transition-all duration-200" ]
-        [ case status of
-            EmailNotChecked ->
-                text ""
+viewEmailStatusMessage : EmailStatus -> Html Msg
+viewEmailStatusMessage status =
+    case status of
+        NotChecked ->
+            text ""
 
-            EmailChecking ->
-                div [ class "text-blue-600 text-sm flex items-center" ]
-                    [ div [ class "animate-spin h-4 w-4 mr-2 border-2 border-blue-600 border-t-transparent rounded-full" ] []
-                    , text "Checking availability..."
-                    ]
+        Checking ->
+            p [ class "mt-1 text-blue-500 text-sm" ] [ text "Checking email..." ]
 
-            EmailValid ->
-                div [ class "text-green-600 text-sm flex items-center" ]
-                    [ -- Checkmark icon
-                      svg
-                        [ Svg.Attributes.class "h-4 w-4 mr-1"
-                        , Svg.Attributes.fill "none"
-                        , Svg.Attributes.viewBox "0 0 24 24"
-                        , Svg.Attributes.stroke "currentColor"
-                        ]
-                        [ path
-                            [ Svg.Attributes.strokeLinecap "round"
-                            , Svg.Attributes.strokeLinejoin "round"
-                            , Svg.Attributes.strokeWidth "2"
-                            , Svg.Attributes.d "M5 13l4 4L19 7"
-                            ]
-                            []
-                        ]
-                    , text "Email is available"
-                    ]
+        Available ->
+            p [ class "mt-1 text-green-500 text-sm" ] [ text "Email is available" ]
 
-            EmailInvalid message ->
-                div [ class "text-red-600 text-sm flex items-center" ]
-                    [ -- X icon
-                      svg
-                        [ Svg.Attributes.class "h-4 w-4 mr-1"
-                        , Svg.Attributes.fill "none"
-                        , Svg.Attributes.viewBox "0 0 24 24"
-                        , Svg.Attributes.stroke "currentColor"
-                        ]
-                        [ path
-                            [ Svg.Attributes.strokeLinecap "round"
-                            , Svg.Attributes.strokeLinejoin "round"
-                            , Svg.Attributes.strokeWidth "2"
-                            , Svg.Attributes.d "M6 18L18 6M6 6l12 12"
-                            ]
-                            []
-                        ]
-                    , text message
-                    ]
+        AlreadyRegistered message ->
+            p [ class "mt-1 text-red-500 text-sm" ] [ text message ]
+
+        InvalidFormat ->
+            p [ class "mt-1 text-red-500 text-sm" ] [ text "Please enter a valid email address" ]
+
+
+
+-- HELPERS
+
+
+isValidForm : Model -> Bool
+isValidForm model =
+    not (String.isEmpty model.firstName)
+        && not (String.isEmpty model.lastName)
+        && not (String.isEmpty model.organizationName)
+        && (model.emailStatus == Available)
+
+
+isValidEmailFormat : String -> Bool
+isValidEmailFormat email =
+    String.contains "@" email && String.contains "." email
+
+
+debounceEmailCheck : Int -> Cmd Msg
+debounceEmailCheck counter =
+    Process.sleep 500
+        |> Task.perform (\_ -> DebounceCheckEmail counter)
+
+
+
+-- API CALLS
+
+
+checkEmailAvailability : Int -> String -> Cmd Msg
+checkEmailAvailability counter email =
+    Http.get
+        { url = "/api/organizations/check-email/" ++ encodeUri email
+        , expect = Http.expectJson (GotEmailCheckResponse counter) emailCheckResponseDecoder
+        }
+
+
+
+-- Simple URI encoder for email parameter
+
+
+encodeUri : String -> String
+encodeUri string =
+    string
+        |> String.replace "%" "%25"
+        |> String.replace "+" "%2B"
+        |> String.replace " " "%20"
+        |> String.replace "/" "%2F"
+        |> String.replace "?" "%3F"
+        |> String.replace "#" "%23"
+        |> String.replace "@" "%40"
+        |> String.replace ":" "%3A"
+        |> String.replace "=" "%3D"
+        |> String.replace "&" "%26"
+
+
+emailCheckResponseDecoder : Decoder EmailCheckResponse
+emailCheckResponseDecoder =
+    Decode.map2 EmailCheckResponse
+        (Decode.field "available" Decode.bool)
+        (Decode.field "message" Decode.string)
+
+
+encodeSignupData : Model -> Encode.Value
+encodeSignupData model =
+    Encode.object
+        [ ( "firstName", Encode.string model.firstName )
+        , ( "lastName", Encode.string model.lastName )
+        , ( "organizationName", Encode.string model.organizationName )
+        , ( "email", Encode.string model.email )
         ]
+
+
+signupDecoder : Decoder SignupResponse
+signupDecoder =
+    Decode.map2 SignupResponse
+        (Decode.field "success" Decode.bool)
+        (Decode.field "message" Decode.string)
+
+
+
+-- SUBSCRIPTIONS
 
 
 subscriptions : Model -> Sub Msg
 subscriptions _ =
     Sub.none
-
-
-
--- Add this helper function
-
-
-isFormValid : Model -> Bool
-isFormValid model =
-    let
-        isEmailValid =
-            not (String.isEmpty (String.trim model.adminEmail))
-                && String.contains "@" model.adminEmail
-                && String.contains "." model.adminEmail
-                && model.emailStatus
-                == EmailValid
-
-        isOrgValid =
-            not (String.isEmpty (String.trim model.organizationName))
-                && model.orgNameStatus
-                == Valid
-
-        areNamesValid =
-            not (String.isEmpty (String.trim model.adminFirstName))
-                && not (String.isEmpty (String.trim model.adminLastName))
-    in
-    isEmailValid && isOrgValid && areNamesValid
-
-
-
--- Add helper function for submit button classes
-
-
-submitButtonClass : Model -> String
-submitButtonClass model =
-    "w-full flex justify-center py-3 sm:py-2.5 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium transition-colors "
-        ++ (if isFormValid model then
-                "text-white bg-[#03045e] hover:bg-[#03045e]/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#03045e]"
-
-            else
-                "text-white bg-[#03045e]/60 cursor-not-allowed"
-           )
-
-
-viewProgress : Model -> Html Msg
-viewProgress model =
-    let
-        currentStep =
-            case model.currentStep of
-                AccountSetup ->
-                    1
-
-                CompanyDetails ->
-                    2
-
-                CompanyStyle ->
-                    3
-
-                SetupPayment ->
-                    4
-
-        makeStep : Int -> String -> String -> String -> Step
-        makeStep stepNum icon title description =
-            { icon = icon
-            , title = title
-            , description = description
-            , isCompleted = stepNum < currentStep
-            , isActive = stepNum == currentStep
-            }
-    in
-    ProgressIndicator.view
-        [ makeStep 1 "👤" "Your Details" "Please provide your name and email"
-        , makeStep 2 "🏢" "Company Details" "General info for your Company"
-        , makeStep 3 "⚙️" "Company Style" "Style your platform"
-        , makeStep 4 "💳" "Setup Payment" "The final step to get started"
-        ]

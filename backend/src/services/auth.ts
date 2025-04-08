@@ -30,6 +30,13 @@ interface MagicLinkPayload {
   name?: string;
 }
 
+interface SignupLinkPayload {
+  email: string;
+  firstName: string;
+  lastName: string;
+  redirectUrl: string;
+}
+
 export class AuthService {
   constructor(private baseUrl?: string) {
     // If no baseUrl is provided, get it from config
@@ -41,6 +48,64 @@ export class AuthService {
     }
     
     logger.info(`AuthService initialized with baseUrl: ${this.baseUrl}`);
+  }
+
+  async createSignupLink(
+    email: string,
+    options?: {
+      redirectUrl?: string;
+      firstName?: string;
+      lastName?: string;
+    }
+  ): Promise<string> {
+    const payload: SignupLinkPayload = {
+      email,
+      firstName: options?.firstName || '',
+      lastName: options?.lastName || '',
+      redirectUrl: options?.redirectUrl || '/onboarding'
+    };
+
+    logger.info(`Creating signup link with payload: ${JSON.stringify(payload)}`);
+    logger.info(`redirectUrl: ${payload.redirectUrl}`);
+    const token = this.encrypt(JSON.stringify(payload));
+    // URL encode the entire token
+    const encodedToken = encodeURIComponent(token);
+    logger.info(`Generated magic link token: ${token}`);
+    
+    return `${this.baseUrl}/signup/verify/${encodedToken}`;
+  }
+
+  async verifySignupLink(token: string): Promise<{
+    valid: boolean;
+    email?: string;
+    redirectUrl?: string;
+  }> {
+    try { 
+      const decodedToken = decodeURIComponent(token);
+      const decrypted = this.decrypt(decodedToken);
+      const payload: SignupLinkPayload = JSON.parse(decrypted);
+
+      if (!payload.email) {
+        logger.warn('Missing email in signup link payload');
+        return { valid: false };
+      }
+
+      if (!payload.redirectUrl) {
+        logger.warn('Missing redirectUrl in signup link payload');
+        return { valid: false };  
+      }
+
+      logger.info('Signup link verification successful, returning payload');
+      return {
+        valid: true,
+        email: payload.email,
+        redirectUrl: payload.redirectUrl
+      };
+
+    } catch (error) {
+      logger.error(`Signup link verification failed: ${error}`);
+      return { valid: false };  
+    }
   }
 
   async createMagicLink(
@@ -62,6 +127,7 @@ export class AuthService {
     };
 
     logger.info(`Creating magic link with payload: ${JSON.stringify(payload)}`);
+    logger.info(`redirectUrl: ${payload.redirectUrl}`);
     const token = this.encrypt(JSON.stringify(payload));
     // URL encode the entire token
     const encodedToken = encodeURIComponent(token);
@@ -210,6 +276,13 @@ export function generateToken(): string {
 
 export async function getUserFromSession(request: Request) {
   try {
+    // Check if this is a call to the subscription/checkout endpoint (which should be public)
+    const url = new URL(request.url);
+    if (url.pathname === '/api/subscription/checkout') {
+      logger.info('Skipping auth check for subscription/checkout endpoint');
+      return { skip_auth: true }; // Return a dummy user that won't trigger auth failures
+    }
+
     // Get session cookie
     const sessionId = request.headers.get('cookie')?.split('session=')[1]?.split(';')[0];
     

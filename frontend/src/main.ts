@@ -1,6 +1,8 @@
 import './styles.css'
 import { Elm } from './Main.elm'
-import './stripe-integration.js'
+
+// Declare Stripe for TypeScript
+declare const Stripe: any;
 
 const root = document.querySelector('#app')
 if (!root) {
@@ -8,14 +10,148 @@ if (!root) {
   throw new Error('Could not find root element')
 }
 
+// Define the Stripe Checkout custom element
+customElements.define('stripe-checkout', class extends HTMLElement {
+  private stripe: any;
+  private checkout: any;
 
+  constructor() {
+    super();
+    this.stripe = null;
+    this.checkout = null;
+  }
 
-// Favicon is now set directly in index.html
+  async connectedCallback() {
+    // Apply a wider style to the element
+    this.style.width = '100%';
+    this.style.maxWidth = '800px';
+    this.style.minHeight = '500px';
+    
+    await this.initializeStripe();
+    await this.mountCheckout();
+  }
 
+  attributeChangedCallback() {
+    if (this.isConnected) {
+      this.mountCheckout();
+    }
+  }
+
+  static get observedAttributes() {
+    return ['price-id', 'metered-price-id', 'return-url', 'first-name', 'last-name', 'email'];
+  }
+
+  async initializeStripe() {
+    if (!this.stripe) {
+      const stripeScript = document.createElement('script');
+      stripeScript.src = 'https://js.stripe.com/v3/';
+      document.head.appendChild(stripeScript);
+      await new Promise(resolve => stripeScript.onload = resolve);
+      
+      // Use environment variable if available, otherwise fallback to the hardcoded key
+      const publishableKey = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || 
+        'pk_test_51Qyh7RCBUPXAZKNGAvsWikdxCCaV1R9Vc79IgPqCul8AJsln69ABDQZE0zzOtOlH5rqrlw2maRebndvPl8xDaIVl00Nn2OOBCX';
+      
+      console.log('Initializing Stripe with publishable key:', publishableKey.substring(0, 20) + '...');
+      this.stripe = Stripe(publishableKey);
+    }
+  }
+
+  async mountCheckout() {
+    const priceId = this.getAttribute('price-id');
+    const meteredPriceId = this.getAttribute('metered-price-id');
+    const returnUrl = this.getAttribute('return-url') || window.location.href;
+    const firstName = this.getAttribute('first-name');
+    const lastName = this.getAttribute('last-name');
+    const email = this.getAttribute('email');
+
+    if (!priceId) {
+      this.textContent = 'Error: Missing price-id attribute';
+      return;
+    }
+
+    // Check for required user information
+    if (!firstName || !lastName || !email) {
+      this.textContent = 'Error: Missing user information';
+      return;
+    }
+
+    try {
+      // Set the element to loading state
+      console.log(`Creating checkout session with priceId: ${priceId}, meteredPriceId: ${meteredPriceId || 'none'}`);
+      
+      // Create a checkout session with the API
+      const response = await fetch('/api/create-checkout-session', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          priceId,
+          meteredPriceId,
+        }),
+      });
+
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.message || 'Failed to create checkout session');
+      }
+
+      const { clientSecret } = data;
+
+      // Create the checkout form
+      const checkout = await this.stripe!.initEmbeddedCheckout({
+        clientSecret,
+      });
+
+      // Mount the checkout form to the element
+      await checkout.mount(this);
+
+    } catch (error) {
+      console.error('Error mounting checkout:', error);
+      this.textContent = `Error: ${error instanceof Error ? error.message : 'Failed to load payment form'}`;
+    }
+  }
+
+  async createCheckoutSession(priceId: string, meteredPriceId: string | null, returnUrl: string) {
+    try {
+      console.log(`Creating checkout session for base price: ${priceId}, metered price: ${meteredPriceId}`);
+      const response = await fetch('/api/create-checkout-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          priceId,
+          meteredPriceId
+        })
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`Checkout session creation failed with status ${response.status}:`, errorText);
+        throw new Error(`Failed to create checkout session: ${response.status} ${errorText}`);
+      }
+      
+      const data = await response.json();
+      console.log('Checkout session created successfully:', { success: data.success });
+      return data;
+    } catch (error: any) {
+      console.error('Error in createCheckoutSession:', error);
+      throw error;
+    }
+  }
+
+  disconnectedCallback() {
+    if (this.checkout) {
+      this.checkout.destroy();
+    }
+  }
+});
+
+// Initialize Elm app
 try {
   console.log('Initializing Elm application...');
   
-  // Verify the Elm object exists and has required properties
   if (!Elm) {
     throw new Error('Elm object is not defined');
   }
@@ -28,37 +164,27 @@ try {
     throw new Error('Elm.Main.init is not a function. The Elm application might not be correctly compiled.');
   }
   
-  // Log Elm details for debugging
   console.log('Elm available:', !!Elm);
   console.log('Elm.Main available:', !!Elm.Main);
   console.log('Elm.Main.init available:', !!(Elm.Main && typeof Elm.Main.init === 'function'));
   
-  // Create the flags object with only what's needed by Elm
-
-    
-  // @ts-ignore - Will be used for ports in the future
   const app = Elm.Main.init({
     node: root  
   });
   
-  // Expose app and Elm objects for debugging
   (window as any).elmApp = app;
   (window as any).elmDebug = Elm;
   
   // Setup IntersectionObserver for phone section
   if (app.ports && app.ports.viewingPhone) {
-    // Wait for the DOM to be fully rendered
     setTimeout(() => {
-      // Find the phone section container - being more specific with the selector
       const phoneSection = document.querySelector('.relative.h-\\[400px\\].w-\\[280px\\].rounded-\\[30px\\].overflow-hidden')
       
       if (phoneSection) {
         console.log('Found phone section, setting up IntersectionObserver')
         
-        // Create an observer
         const observer = new IntersectionObserver((entries) => {
           entries.forEach(entry => {
-            // When the section becomes visible, send true through the port
             if (entry.isIntersecting) {
               console.log('Phone section is now visible')
               app.ports.viewingPhone.send(true)
@@ -68,138 +194,60 @@ try {
             }
           })
         }, {
-          threshold: 0.2 // Fire when at least 20% of the element is visible
+          threshold: 0.2
         })
         
-        // Start observing the phone section
         observer.observe(phoneSection)
       } else {
         console.warn('Could not find phone section for carousel')
       }
-    }, 1000) // Give the app time to render
+    }, 1000)
   }
-  
-  // Stripe integration ports
-  if (app.ports) {
-    // Initialize Stripe
-    if (app.ports.initializeStripe) {
-      app.ports.initializeStripe.subscribe((publishableKey: string) => {
-        console.log('Initializing Stripe with key:', publishableKey.substring(0, 8) + '...')
-        try {
-          // @ts-ignore - stripeIntegration is attached to window
-          const initialized = window.stripeIntegration.initializeStripe(publishableKey)
-          if (app.ports.stripeInitialized) {
-            app.ports.stripeInitialized.send(initialized)
-          }
-        } catch (error) {
-          console.error('Failed to initialize Stripe:', error)
-          if (app.ports.stripeInitialized) {
-            app.ports.stripeInitialized.send(false)
-          }
-        }
-      })
-    }
 
-    // get org slug
-    if (app.ports.getOrgSlug) {
-      app.ports.getOrgSlug.subscribe(() => {
-        app.ports.receiveOrgSlug.send("")
-      })
-    }
-
-    // Process payment
-    if (app.ports.processPayment) {
-      app.ports.processPayment.subscribe((clientSecret: string) => {
-        console.log('Processing payment with client secret:', clientSecret.substring(0, 8) + '...')
-        try {
-          // @ts-ignore - stripeIntegration is attached to window
-          window.stripeIntegration.processPayment(clientSecret)
-            .then((result: any) => {
-              if (app.ports.paymentProcessed) {
-                app.ports.paymentProcessed.send(result)
-              }
-            })
-            .catch((error: Error) => {
-              console.error('Payment processing error:', error)
-              if (app.ports.paymentProcessed) {
-                app.ports.paymentProcessed.send({ success: false, error: error.message })
-              }
-            })
-        } catch (error) {
-          console.error('Failed to process payment:', error)
-          if (app.ports.paymentProcessed) {
-            app.ports.paymentProcessed.send({ success: false, error: 'Failed to process payment' })
-          }
-        }
-      })
-    }
-
-    // Clean up Stripe
-    if (app.ports.cleanupStripe) {
-      app.ports.cleanupStripe.subscribe(() => {
-        console.log('Cleaning up Stripe')
-        try {
-          // @ts-ignore - stripeIntegration is attached to window
-          window.stripeIntegration.cleanupStripe()
-        } catch (error) {
-          console.error('Failed to clean up Stripe:', error)
-        }
-      })
-    }
+  // Get org slug
+  if (app.ports && app.ports.getOrgSlug) {
+    app.ports.getOrgSlug.subscribe(() => {
+      app.ports.receiveOrgSlug.send("")
+    })
+  }
     
-    // Copy to clipboard
-    if (app.ports.copyToClipboard) {
-      app.ports.copyToClipboard.subscribe((text: string) => {
-        console.log('Copying to clipboard:', text.substring(0, 20) + '...')
-        try {
-          navigator.clipboard.writeText(text)
-            .then(() => {
-              console.log('Text copied to clipboard')
-              if (app.ports.onCopyResult) {
-                app.ports.onCopyResult.send(true)
-              }
-            })
-            .catch((error) => {
-              console.error('Failed to copy text to clipboard:', error)
-              if (app.ports.onCopyResult) {
-                app.ports.onCopyResult.send(false)
-              }
-            })
-        } catch (error) {
-          console.error('Clipboard API not available:', error)
-          if (app.ports.onCopyResult) {
-            app.ports.onCopyResult.send(false)
-          }
+  // Copy to clipboard
+  if (app.ports && app.ports.copyToClipboard) {
+    app.ports.copyToClipboard.subscribe((text: string) => {
+      console.log('Copying to clipboard:', text.substring(0, 20) + '...')
+      try {
+        navigator.clipboard.writeText(text)
+          .then(() => {
+            console.log('Text copied to clipboard')
+            if (app.ports.onCopyResult) {
+              app.ports.onCopyResult.send(true)
+            }
+          })
+          .catch((error) => {
+            console.error('Failed to copy text to clipboard:', error)
+            if (app.ports.onCopyResult) {
+              app.ports.onCopyResult.send(false)
+            }
+          })
+      } catch (error) {
+        console.error('Clipboard API not available:', error)
+        if (app.ports.onCopyResult) {
+          app.ports.onCopyResult.send(false)
         }
-      })
-    }
-
-    // Debug info ports
-    if (app.ports.saveDebugInfo) {
-      app.ports.saveDebugInfo.subscribe((debugInfo: string) => {
-        console.log('Debug info:', debugInfo);
-        localStorage.setItem('selfservice_debug_info', debugInfo);
-        
-        // Write to console with more details for better visibility
-        console.warn('SELF-SERVICE DEBUG:', debugInfo);
-        
-        // Also log to session storage in case localStorage is cleared
-        sessionStorage.setItem('selfservice_debug_info', debugInfo);
-      });
-    }
-
-    if (app.ports.clearDebugInfo) {
-      app.ports.clearDebugInfo.subscribe(() => {
-        console.log('Clearing debug info');
-        localStorage.removeItem('selfservice_debug_info');
-        sessionStorage.removeItem('selfservice_debug_info');
-      });
-    }
+      }
+    })
   }
+
+  // Listen for custom events from stripe-checkout
+  document.addEventListener('payment-completed', (e: any) => {
+    if (app.ports && app.ports.paymentCompleted) {
+      app.ports.paymentCompleted.send(e.detail.status);
+    }
+  });
+
 } catch (error) {
   console.error('Error initializing Elm application:', error);
   
-  // Display a user-friendly error message
   if (root) {
     root.innerHTML = `
       <div style="max-width: 800px; margin: 50px auto; padding: 20px; font-family: sans-serif; background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 5px;">

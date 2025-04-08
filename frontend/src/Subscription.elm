@@ -24,6 +24,10 @@ type alias Model =
     , isLoading : Bool
     , error : Maybe String
     , activeTab : Tab
+    , contactCount : Int
+    , autoUpgradeLimit : Int
+    , upgradeModalOpen : Bool
+    , selectedTier : Int
     }
 
 
@@ -34,10 +38,12 @@ type Tab
 
 
 type alias SubscriptionData =
-    { plan : String
+    { id : String
     , status : String
-    , nextBillingDate : String
-    , price : Float
+    , tier : Int
+    , contactLimit : Int
+    , currentPeriodEnd : String
+    , cancelAtPeriodEnd : Bool
     , features : List String
     }
 
@@ -70,6 +76,10 @@ init _ =
       , isLoading = True
       , error = Nothing
       , activeTab = PlanTab
+      , contactCount = 0
+      , autoUpgradeLimit = 0
+      , upgradeModalOpen = False
+      , selectedTier = 1
       }
     , Cmd.batch
         [ fetchSubscriptionData
@@ -84,25 +94,67 @@ init _ =
 
 
 type Msg
-    = GotSubscriptionData (Result Http.Error SubscriptionData)
+    = GotSubscriptionData (Result Http.Error SubscriptionDataResponse)
     | GotPaymentMethods (Result Http.Error (List PaymentMethod))
     | GotBillingHistory (Result Http.Error (List BillingRecord))
-    | ChangePlan String
-    | ChangePlanResult (Result Http.Error SubscriptionData)
+    | ChangeTier Int
+    | UpgradeTier Int
+    | UpgradeTierResult (Result Http.Error UpgradeResponse)
     | AddPaymentMethod
     | RemovePaymentMethod String
     | SetDefaultPaymentMethod String
     | PaymentMethodUpdated (Result Http.Error (List PaymentMethod))
     | DownloadInvoice String
     | ChangeTab Tab
+    | OpenUpgradeModal Int
+    | CloseUpgradeModal
+    | SetAutoUpgradeLimit Int
+    | AutoUpgradeLimitUpdated (Result Http.Error AutoUpgradeResponse)
+    | CreateCheckoutSession Int
+    | GotCheckoutSession (Result Http.Error CheckoutResponse)
     | NoOp
+
+
+type alias SubscriptionDataResponse =
+    { subscription : Maybe SubscriptionData
+    , contactCount : Int
+    , autoUpgradeLimit : Int
+    }
+
+
+type alias UpgradeResponse =
+    { success : Bool
+    , previousTier : Maybe Int
+    , newTier : Maybe Int
+    , contactLimit : Maybe Int
+    , message : Maybe String
+    }
+
+
+type alias AutoUpgradeResponse =
+    { success : Bool
+    , autoUpgradeLimit : Int
+    }
+
+
+type alias CheckoutResponse =
+    { clientSecret : String
+    , subscriptionId : String
+    }
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
-        GotSubscriptionData (Ok data) ->
-            ( { model | subscriptionData = Just data, isLoading = False }, Cmd.none )
+        GotSubscriptionData (Ok response) ->
+            ( { model
+                | subscriptionData = response.subscription
+                , contactCount = response.contactCount
+                , autoUpgradeLimit = response.autoUpgradeLimit
+                , isLoading = False
+              }
+            , Cmd.none
+            )
 
         GotSubscriptionData (Err _) ->
             ( { model | error = Just "Failed to load subscription data", isLoading = False }, Cmd.none )
@@ -119,14 +171,54 @@ update msg model =
         GotBillingHistory (Err _) ->
             ( { model | error = Just "Failed to load billing history", isLoading = False }, Cmd.none )
 
-        ChangePlan plan ->
-            ( { model | isLoading = True }, changeSubscriptionPlan plan )
+        ChangeTier tier ->
+            ( { model | selectedTier = tier }, Cmd.none )
 
-        ChangePlanResult (Ok data) ->
-            ( { model | subscriptionData = Just data, isLoading = False }, Cmd.none )
+        OpenUpgradeModal tier ->
+            ( { model | upgradeModalOpen = True, selectedTier = tier }, Cmd.none )
 
-        ChangePlanResult (Err _) ->
-            ( { model | error = Just "Failed to change subscription plan", isLoading = False }, Cmd.none )
+        CloseUpgradeModal ->
+            ( { model | upgradeModalOpen = False }, Cmd.none )
+
+        UpgradeTier tier ->
+            ( { model | isLoading = True, upgradeModalOpen = False }
+            , upgradeTier tier
+            )
+
+        UpgradeTierResult (Ok response) ->
+            if response.success then
+                case model.subscriptionData of
+                    Just subscription ->
+                        let
+                            updatedSubscription =
+                                { subscription
+                                    | tier = Maybe.withDefault subscription.tier response.newTier
+                                    , contactLimit = Maybe.withDefault subscription.contactLimit response.contactLimit
+                                }
+                        in
+                        ( { model
+                            | subscriptionData = Just updatedSubscription
+                            , isLoading = False
+                          }
+                        , Cmd.none
+                        )
+
+                    Nothing ->
+                        -- Should not happen, but handle it gracefully
+                        ( { model | isLoading = False }
+                        , fetchSubscriptionData
+                        )
+
+            else
+                ( { model
+                    | error = Just (Maybe.withDefault "Failed to upgrade subscription" response.message)
+                    , isLoading = False
+                  }
+                , Cmd.none
+                )
+
+        UpgradeTierResult (Err _) ->
+            ( { model | error = Just "Failed to upgrade subscription", isLoading = False }, Cmd.none )
 
         AddPaymentMethod ->
             -- In a real implementation, this would open a Stripe form or similar
@@ -150,6 +242,54 @@ update msg model =
 
         ChangeTab tab ->
             ( { model | activeTab = tab }, Cmd.none )
+
+        SetAutoUpgradeLimit limit ->
+            ( { model | isLoading = True }
+            , updateAutoUpgradeLimit limit
+            )
+
+        AutoUpgradeLimitUpdated (Ok response) ->
+            if response.success then
+                ( { model
+                    | autoUpgradeLimit = response.autoUpgradeLimit
+                    , isLoading = False
+                  }
+                , Cmd.none
+                )
+
+            else
+                ( { model
+                    | error = Just "Failed to update auto-upgrade limit"
+                    , isLoading = False
+                  }
+                , Cmd.none
+                )
+
+        AutoUpgradeLimitUpdated (Err _) ->
+            ( { model
+                | error = Just "Failed to update auto-upgrade limit"
+                , isLoading = False
+              }
+            , Cmd.none
+            )
+
+        CreateCheckoutSession tier ->
+            ( { model | isLoading = True }
+            , createCheckoutSession tier
+            )
+
+        GotCheckoutSession (Ok response) ->
+            -- In a real implementation, this would redirect to Stripe checkout
+            -- For now, we just update the state and let JavaScript handle it
+            ( model, Cmd.none )
+
+        GotCheckoutSession (Err _) ->
+            ( { model
+                | error = Just "Failed to create checkout session"
+                , isLoading = False
+              }
+            , Cmd.none
+            )
 
         NoOp ->
             ( model, Cmd.none )
@@ -175,6 +315,11 @@ view model =
                         [ viewTabs model
                         , viewTabContent model
                         ]
+                , if model.upgradeModalOpen then
+                    viewUpgradeModal model
+
+                  else
+                    text ""
                 ]
             ]
         ]
@@ -239,7 +384,7 @@ viewSubscriptionPlan model =
                             [ h2 [ class "text-lg font-medium text-gray-900" ]
                                 [ text "Current Plan" ]
                             , div [ class "mt-1 text-sm text-gray-500" ]
-                                [ text "You can change your subscription plan at any time" ]
+                                [ text "Contact-based subscription" ]
                             ]
                         , div [ class "px-3 py-1 bg-blue-50 text-blue-700 rounded-full text-sm font-medium" ]
                             [ text subscription.status ]
@@ -247,12 +392,14 @@ viewSubscriptionPlan model =
                     , div [ class "border-t border-gray-200 pt-4" ]
                         [ div [ class "flex items-baseline" ]
                             [ span [ class "text-3xl font-bold text-gray-900" ]
-                                [ text ("$" ++ String.fromFloat subscription.price) ]
-                            , span [ class "ml-1 text-gray-500" ]
-                                [ text "/month" ]
+                                [ text ("Tier " ++ String.fromInt subscription.tier) ]
+                            , span [ class "ml-3 text-gray-500" ]
+                                [ text (String.fromInt subscription.contactLimit ++ " contacts") ]
                             ]
                         , div [ class "mt-1 text-sm text-gray-500" ]
-                            [ text ("Next billing date: " ++ subscription.nextBillingDate) ]
+                            [ text ("Current usage: " ++ String.fromInt model.contactCount ++ " contacts") ]
+                        , div [ class "mt-1 text-sm text-gray-500" ]
+                            [ text ("Next billing date: " ++ subscription.currentPeriodEnd) ]
                         ]
                     , div [ class "border-t border-gray-200 pt-4" ]
                         [ h3 [ class "text-md font-medium text-gray-900 mb-2" ]
@@ -271,31 +418,80 @@ viewSubscriptionPlan model =
                         ]
                     , div [ class "border-t border-gray-200 pt-4" ]
                         [ h3 [ class "text-md font-medium text-gray-900 mb-3" ]
-                            [ text "Available Plans" ]
-                        , div [ class "grid grid-cols-3 gap-4" ]
-                            [ viewPlanCard "Basic" 29.99 [ "Up to 5 agents", "Email notifications", "Basic reporting" ] subscription.plan
-                            , viewPlanCard "Professional" 49.99 [ "Up to 15 agents", "All Basic features", "Advanced reporting", "API access" ] subscription.plan
-                            , viewPlanCard "Enterprise" 99.99 [ "Unlimited agents", "All Professional features", "Dedicated support", "Custom integrations" ] subscription.plan
+                            [ text "Auto-Upgrade Settings" ]
+                        , div [ class "flex items-center space-x-4" ]
+                            [ div [ class "text-sm text-gray-700" ]
+                                [ text "Automatically upgrade when contacts exceed limit up to: " ]
+                            , select
+                                [ class "form-select rounded-md border-gray-300 text-sm"
+                                , onInput (\value -> SetAutoUpgradeLimit (Maybe.withDefault 0 (String.toInt value)))
+                                , value (String.fromInt model.autoUpgradeLimit)
+                                ]
+                                [ option [ value "0" ] [ text "Disabled (require manual approval)" ]
+                                , option [ value "1000" ] [ text "1,000 contacts" ]
+                                , option [ value "1500" ] [ text "1,500 contacts" ]
+                                , option [ value "2000" ] [ text "2,000 contacts" ]
+                                , option [ value "2500" ] [ text "2,500 contacts" ]
+                                , option [ value "5000" ] [ text "5,000 contacts" ]
+                                ]
                             ]
+                        ]
+                    , div [ class "border-t border-gray-200 pt-4" ]
+                        [ h3 [ class "text-md font-medium text-gray-900 mb-3" ]
+                            [ text "Upgrade Your Plan" ]
+                        , div [ class "grid grid-cols-3 gap-4" ]
+                            (List.map
+                                (\tier ->
+                                    viewTierCard
+                                        tier
+                                        (tier * 500)
+                                        (if tier == 1 then
+                                            60
+
+                                         else
+                                            60 + ((tier - 1) * 40)
+                                        )
+                                        subscription.tier
+                                )
+                                [ 1, 2, 3, 4, 5, 10 ]
+                            )
                         ]
                     ]
 
             Nothing ->
-                div [ class "text-center text-gray-500 py-8" ]
-                    [ text "No subscription data available" ]
+                div [ class "space-y-6" ]
+                    [ div [ class "text-center text-gray-500 py-8" ]
+                        [ text "No subscription active. Subscribe to start using the service." ]
+                    , div [ class "grid grid-cols-3 gap-4" ]
+                        (List.map
+                            (\tier ->
+                                viewTierCard
+                                    tier
+                                    (tier * 500)
+                                    (if tier == 1 then
+                                        60
+
+                                     else
+                                        60 + ((tier - 1) * 40)
+                                    )
+                                    0
+                            )
+                            [ 1, 2, 3, 4, 5, 10 ]
+                        )
+                    ]
         ]
 
 
-viewPlanCard : String -> Float -> List String -> String -> Html Msg
-viewPlanCard plan price features currentPlan =
+viewTierCard : Int -> Int -> Int -> Int -> Html Msg
+viewTierCard tier contactLimit price currentTier =
     let
-        isCurrentPlan =
-            plan == currentPlan
+        isCurrentTier =
+            tier == currentTier
     in
     div
         [ class
             ("border rounded-lg p-4 "
-                ++ (if isCurrentPlan then
+                ++ (if isCurrentTier then
                         "border-[#03045E] bg-blue-50"
 
                     else
@@ -305,44 +501,116 @@ viewPlanCard plan price features currentPlan =
         ]
         [ div [ class "flex justify-between items-center mb-2" ]
             [ h4 [ class "font-medium text-gray-900" ]
-                [ text plan ]
-            , if isCurrentPlan then
+                [ text ("Tier " ++ String.fromInt tier) ]
+            , if isCurrentTier then
                 span [ class "px-2 py-1 bg-[#03045E] text-white text-xs rounded-full" ]
                     [ text "Current" ]
 
               else
                 text ""
             ]
-        , div [ class "flex items-baseline mb-4" ]
+        , div [ class "flex items-baseline mb-2" ]
             [ span [ class "text-xl font-bold text-gray-900" ]
-                [ text ("$" ++ String.fromFloat price) ]
+                [ text ("$" ++ String.fromInt price) ]
             , span [ class "ml-1 text-gray-500 text-sm" ]
                 [ text "/month" ]
             ]
-        , ul [ class "text-sm space-y-1 mb-4" ]
-            (List.map
-                (\feature ->
-                    li [ class "flex items-start" ]
-                        [ div [ class "mr-1 text-green-500 mt-0.5 flex-shrink-0" ]
-                            [ viewSmallCheckIcon ]
-                        , text feature
-                        ]
-                )
-                features
-            )
-        , if isCurrentPlan then
+        , div [ class "text-sm text-gray-600 mb-4" ]
+            [ text (String.fromInt contactLimit ++ " contacts") ]
+        , if isCurrentTier then
             button
                 [ class "w-full px-3 py-2 text-sm font-medium text-gray-500 bg-gray-100 rounded-md cursor-not-allowed"
                 , disabled True
                 ]
                 [ text "Current Plan" ]
 
-          else
+          else if currentTier == 0 then
             button
                 [ class "w-full px-3 py-2 text-sm font-medium text-white bg-[#03045E] rounded-md hover:bg-opacity-90"
-                , onClick (ChangePlan plan)
+                , onClick (CreateCheckoutSession tier)
                 ]
-                [ text "Switch to Plan" ]
+                [ text "Subscribe" ]
+
+          else if tier > currentTier then
+            button
+                [ class "w-full px-3 py-2 text-sm font-medium text-white bg-[#03045E] rounded-md hover:bg-opacity-90"
+                , onClick (OpenUpgradeModal tier)
+                ]
+                [ text "Upgrade" ]
+
+          else
+            button
+                [ class "w-full px-3 py-2 text-sm font-medium text-gray-500 bg-gray-100 rounded-md cursor-not-allowed"
+                , disabled True
+                ]
+                [ text "Lower Tier" ]
+        ]
+
+
+viewUpgradeModal : Model -> Html Msg
+viewUpgradeModal model =
+    let
+        currentTier =
+            case model.subscriptionData of
+                Just sub ->
+                    sub.tier
+
+                Nothing ->
+                    0
+
+        currentLimit =
+            case model.subscriptionData of
+                Just sub ->
+                    sub.contactLimit
+
+                Nothing ->
+                    0
+
+        newLimit =
+            model.selectedTier * 500
+
+        price =
+            if model.selectedTier == 1 then
+                60
+
+            else
+                60 + ((model.selectedTier - 1) * 40)
+
+        currentPrice =
+            if currentTier == 1 then
+                60
+
+            else
+                60 + ((currentTier - 1) * 40)
+
+        priceDifference =
+            price - currentPrice
+    in
+    div [ class "fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center z-50" ]
+        [ div [ class "bg-white rounded-lg max-w-lg w-full mx-4" ]
+            [ div [ class "p-6" ]
+                [ h3 [ class "text-lg font-medium text-gray-900 mb-4" ]
+                    [ text "Upgrade Subscription" ]
+                , p [ class "text-gray-600 mb-4" ]
+                    [ text ("You are upgrading from Tier " ++ String.fromInt currentTier ++ " (" ++ String.fromInt currentLimit ++ " contacts) to Tier " ++ String.fromInt model.selectedTier ++ " (" ++ String.fromInt newLimit ++ " contacts).") ]
+                , p [ class "text-gray-600 mb-4" ]
+                    [ text ("Your monthly price will increase by $" ++ String.fromInt priceDifference ++ ", from $" ++ String.fromInt currentPrice ++ " to $" ++ String.fromInt price ++ ".") ]
+                , p [ class "text-gray-600 mb-6" ]
+                    [ text "This change will take effect immediately, and you will be charged a prorated amount for the remainder of your billing cycle." ]
+                , div [ class "flex justify-end space-x-4" ]
+                    [ button
+                        [ class "px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200"
+                        , onClick CloseUpgradeModal
+                        ]
+                        [ text "Cancel" ]
+                    , button
+                        [ class "px-4 py-2 text-sm font-medium text-white bg-[#03045E] rounded-md hover:bg-opacity-90"
+                        , onClick (UpgradeTier model.selectedTier)
+                        ]
+                        [ text "Confirm Upgrade" ]
+                    ]
+                ]
+            ]
         ]
 
 
@@ -423,7 +691,7 @@ viewBillingHistory model =
                                 [ text "Amount" ]
                             , th [ class "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider" ]
                                 [ text "Status" ]
-                            , th [ class "px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider" ]
+                            , th [ class "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider" ]
                                 [ text "Actions" ]
                             ]
                         ]
@@ -437,40 +705,44 @@ viewBillingHistory model =
 viewBillingRecord : BillingRecord -> Html Msg
 viewBillingRecord record =
     tr []
-        [ td [ class "px-6 py-4 whitespace-nowrap text-sm text-gray-900" ]
+        [ td [ class "px-6 py-4 whitespace-nowrap text-sm text-gray-500" ]
             [ text record.date ]
         , td [ class "px-6 py-4 whitespace-nowrap text-sm text-gray-900" ]
             [ text record.description ]
-        , td [ class "px-6 py-4 whitespace-nowrap text-sm text-gray-900" ]
+        , td [ class "px-6 py-4 whitespace-nowrap text-sm text-gray-500" ]
             [ text ("$" ++ String.fromFloat record.amount) ]
         , td [ class "px-6 py-4 whitespace-nowrap" ]
             [ span
                 [ class
                     ("px-2 py-1 text-xs rounded-full "
-                        ++ (if record.status == "Paid" then
-                                "bg-green-100 text-green-800"
+                        ++ (case record.status of
+                                "Paid" ->
+                                    "bg-green-100 text-green-800"
 
-                            else if record.status == "Failed" then
-                                "bg-red-100 text-red-800"
+                                "Failed" ->
+                                    "bg-red-100 text-red-800"
 
-                            else
-                                "bg-yellow-100 text-yellow-800"
+                                "Pending" ->
+                                    "bg-yellow-100 text-yellow-800"
+
+                                _ ->
+                                    "bg-gray-100 text-gray-800"
                            )
                     )
                 ]
                 [ text record.status ]
             ]
-        , td [ class "px-6 py-4 whitespace-nowrap text-right text-sm font-medium" ]
+        , td [ class "px-6 py-4 whitespace-nowrap text-sm text-gray-500" ]
             [ case record.invoiceUrl of
                 Just url ->
                     button
-                        [ class "text-blue-600 hover:text-blue-900"
+                        [ class "text-blue-600 hover:text-blue-800"
                         , onClick (DownloadInvoice url)
                         ]
                         [ text "Download" ]
 
                 Nothing ->
-                    text ""
+                    text "—"
             ]
         ]
 
@@ -481,15 +753,33 @@ viewBillingRecord record =
 
 viewCheckIcon : Html msg
 viewCheckIcon =
-    svg [ viewBox "0 0 20 20", fill "currentColor", class "h-5 w-5" ]
-        [ path [ fillRule "evenodd", d "M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z", clipRule "evenodd" ] []
+    svg
+        [ Svg.Attributes.class "h-5 w-5"
+        , viewBox "0 0 20 20"
+        , fill "currentColor"
+        ]
+        [ path
+            [ fillRule "evenodd"
+            , clipRule "evenodd"
+            , d "M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+            ]
+            []
         ]
 
 
 viewSmallCheckIcon : Html msg
 viewSmallCheckIcon =
-    svg [ viewBox "0 0 20 20", fill "currentColor", class "h-4 w-4" ]
-        [ path [ fillRule "evenodd", d "M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z", clipRule "evenodd" ] []
+    svg
+        [ Svg.Attributes.class "h-4 w-4"
+        , viewBox "0 0 20 20"
+        , fill "currentColor"
+        ]
+        [ path
+            [ fillRule "evenodd"
+            , clipRule "evenodd"
+            , d "M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+            ]
+            []
         ]
 
 
@@ -499,42 +789,137 @@ viewSmallCheckIcon =
 
 fetchSubscriptionData : Cmd Msg
 fetchSubscriptionData =
-    -- In a real implementation, this would call an API
-    -- For now, return mock data
-    Cmd.none
+    Http.get
+        { url = "/api/subscription/status"
+        , expect = Http.expectJson GotSubscriptionData subscriptionDataDecoder
+        }
+
+
+subscriptionDataDecoder : Decoder SubscriptionDataResponse
+subscriptionDataDecoder =
+    Decode.succeed SubscriptionDataResponse
+        |> Pipeline.required "subscription" (Decode.nullable subscriptionDecoder)
+        |> Pipeline.required "contactCount" Decode.int
+        |> Pipeline.required "autoUpgradeLimit" Decode.int
+
+
+subscriptionDecoder : Decoder SubscriptionData
+subscriptionDecoder =
+    Decode.succeed SubscriptionData
+        |> Pipeline.required "id" Decode.string
+        |> Pipeline.required "status" Decode.string
+        |> Pipeline.required "tier" Decode.int
+        |> Pipeline.required "contactLimit" Decode.int
+        |> Pipeline.required "currentPeriodEnd" Decode.string
+        |> Pipeline.required "cancelAtPeriodEnd" Decode.bool
+        |> Pipeline.hardcoded [ "Contact-based pricing", "Email scheduling", "Analytics dashboard" ]
 
 
 fetchPaymentMethods : Cmd Msg
 fetchPaymentMethods =
-    -- In a real implementation, this would call an API
-    -- For now, return mock data
-    Cmd.none
+    Http.get
+        { url = "/api/payment-methods"
+        , expect = Http.expectJson GotPaymentMethods (Decode.list paymentMethodDecoder)
+        }
+
+
+paymentMethodDecoder : Decoder PaymentMethod
+paymentMethodDecoder =
+    Decode.succeed PaymentMethod
+        |> Pipeline.required "id" Decode.string
+        |> Pipeline.required "brand" Decode.string
+        |> Pipeline.required "last4" Decode.string
+        |> Pipeline.required "expiryMonth" Decode.int
+        |> Pipeline.required "expiryYear" Decode.int
+        |> Pipeline.required "isDefault" Decode.bool
 
 
 fetchBillingHistory : Cmd Msg
 fetchBillingHistory =
-    -- In a real implementation, this would call an API
-    -- For now, return mock data
-    Cmd.none
+    Http.get
+        { url = "/api/billing-history"
+        , expect = Http.expectJson GotBillingHistory (Decode.list billingRecordDecoder)
+        }
 
 
-changeSubscriptionPlan : String -> Cmd Msg
-changeSubscriptionPlan plan =
-    -- In a real implementation, this would call an API
-    -- For now, just return a success
-    Cmd.none
+billingRecordDecoder : Decoder BillingRecord
+billingRecordDecoder =
+    Decode.succeed BillingRecord
+        |> Pipeline.required "id" Decode.string
+        |> Pipeline.required "date" Decode.string
+        |> Pipeline.required "amount" Decode.float
+        |> Pipeline.required "status" Decode.string
+        |> Pipeline.required "description" Decode.string
+        |> Pipeline.optional "invoiceUrl" (Decode.nullable Decode.string) Nothing
+
+
+upgradeTier : Int -> Cmd Msg
+upgradeTier tier =
+    Http.post
+        { url = "/api/subscription/upgrade"
+        , body = Http.jsonBody (Encode.object [ ( "newTier", Encode.int tier ) ])
+        , expect = Http.expectJson UpgradeTierResult upgradeResponseDecoder
+        }
+
+
+upgradeResponseDecoder : Decoder UpgradeResponse
+upgradeResponseDecoder =
+    Decode.succeed UpgradeResponse
+        |> Pipeline.required "success" Decode.bool
+        |> Pipeline.optional "previousTier" (Decode.nullable Decode.int) Nothing
+        |> Pipeline.optional "newTier" (Decode.nullable Decode.int) Nothing
+        |> Pipeline.optional "contactLimit" (Decode.nullable Decode.int) Nothing
+        |> Pipeline.optional "message" (Decode.nullable Decode.string) Nothing
+
+
+updateAutoUpgradeLimit : Int -> Cmd Msg
+updateAutoUpgradeLimit limit =
+    Http.post
+        { url = "/api/subscription/auto-upgrade"
+        , body = Http.jsonBody (Encode.object [ ( "autoUpgradeLimit", Encode.int limit ) ])
+        , expect = Http.expectJson AutoUpgradeLimitUpdated autoUpgradeLimitDecoder
+        }
+
+
+autoUpgradeLimitDecoder : Decoder AutoUpgradeResponse
+autoUpgradeLimitDecoder =
+    Decode.succeed AutoUpgradeResponse
+        |> Pipeline.required "success" Decode.bool
+        |> Pipeline.required "autoUpgradeLimit" Decode.int
+
+
+createCheckoutSession : Int -> Cmd Msg
+createCheckoutSession tier =
+    Http.post
+        { url = "/api/subscription/checkout"
+        , body = Http.jsonBody (Encode.object [ ( "contactTier", Encode.int tier ) ])
+        , expect = Http.expectJson GotCheckoutSession checkoutResponseDecoder
+        }
+
+
+checkoutResponseDecoder : Decoder CheckoutResponse
+checkoutResponseDecoder =
+    Decode.succeed CheckoutResponse
+        |> Pipeline.required "clientSecret" Decode.string
+        |> Pipeline.required "subscriptionId" Decode.string
 
 
 removePaymentMethod : String -> Cmd Msg
 removePaymentMethod id =
-    -- In a real implementation, this would call an API
-    Cmd.none
+    Http.post
+        { url = "/api/payment-methods/remove"
+        , body = Http.jsonBody (Encode.object [ ( "id", Encode.string id ) ])
+        , expect = Http.expectJson PaymentMethodUpdated (Decode.list paymentMethodDecoder)
+        }
 
 
 setDefaultPaymentMethod : String -> Cmd Msg
 setDefaultPaymentMethod id =
-    -- In a real implementation, this would call an API
-    Cmd.none
+    Http.post
+        { url = "/api/payment-methods/set-default"
+        , body = Http.jsonBody (Encode.object [ ( "id", Encode.string id ) ])
+        , expect = Http.expectJson PaymentMethodUpdated (Decode.list paymentMethodDecoder)
+        }
 
 
 

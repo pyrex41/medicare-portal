@@ -1,4 +1,4 @@
-module Main exposing (main)
+port module Main exposing (main)
 
 import AddAgent
 import Browser exposing (Document)
@@ -22,7 +22,7 @@ import Json.Decode.Pipeline as Pipeline
 import Json.Encode as E
 import Login
 import Logout
-import Onboarding.Onboarding as Onboarding
+import Onboarding
 import Process
 import Profile
 import Quote
@@ -42,22 +42,13 @@ import Walkthrough
 
 
 
--- ONBOARDING STEP TYPES
-
-
-type OnboardingStep
-    = PlanStep
-    | PersonalStep
-    | CompanyStep
-    | LicensingStep
-    | AgentsStep
-    | PaymentStep
-    | EnterpriseStep
-
-
-
 -- PORTS
 -- Send a message to JavaScript to clear the session cookie
+
+
+port redirectToStripe :
+    String
+    -> Cmd msg -- ADDED: Port for Stripe redirection
 
 
 type alias VerificationResponse =
@@ -353,19 +344,19 @@ init flags url key =
             case initialSession of
                 Verified _ ->
                     -- If we have a session, also fetch the current user immediately
-                    Cmd.batch [ checkSession, fetchCurrentUser, directPageUpdate ]
+                    [ fetchCurrentUser, directPageUpdate ]
 
                 _ ->
-                    Cmd.batch [ checkSession, directPageUpdate ]
+                    [ directPageUpdate ]
     in
     -- For public routes, immediately try to render without waiting for session
     if isPublicRoute then
         -- Try to render public route immediately
-        updatePageForcePublic url ( model, cmds )
+        updatePageForcePublic url ( model, Cmd.batch cmds )
 
     else
         -- For protected routes, wait for session verification
-        ( model, cmds )
+        ( model, Cmd.batch (cmds ++ [ checkSession ]) )
 
 
 type alias CompareParams =
@@ -406,7 +397,7 @@ type PublicPage
     = HomeRoute
     | LoginRoute
     | SignupRoute
-    | OnboardingRoute OnboardingStep
+    | OnboardingRoute
     | VerifyRoute VerifyParams
     | CompareRoute CompareParams
     | QuoteRoute { quoteId : Maybe String, trackingId : Maybe String, planType : Maybe String, orgId : Maybe String }
@@ -485,14 +476,7 @@ routeParser =
         , map (PublicRoute WaitlistRoute) (s "waitlist")
         , map (PublicRoute LoginRoute) (s "login")
         , map (PublicRoute SignupRoute) (s "signup")
-        , map (PublicRoute (OnboardingRoute PlanStep)) (s "onboarding" </> s "plan")
-        , map (PublicRoute (OnboardingRoute PersonalStep)) (s "onboarding" </> s "personal")
-        , map (PublicRoute (OnboardingRoute CompanyStep)) (s "onboarding" </> s "company")
-        , map (PublicRoute (OnboardingRoute LicensingStep)) (s "onboarding" </> s "licensing")
-        , map (PublicRoute (OnboardingRoute AgentsStep)) (s "onboarding" </> s "agents")
-        , map (PublicRoute (OnboardingRoute PaymentStep)) (s "onboarding" </> s "payment")
-        , map (PublicRoute (OnboardingRoute EnterpriseStep)) (s "onboarding" </> s "enterprise")
-        , map (PublicRoute (OnboardingRoute PlanStep)) (s "onboarding") -- Default to plan step
+        , map (PublicRoute OnboardingRoute) (s "onboarding")
         , map (\orgSlug token -> PublicRoute (VerifyRoute (VerifyParams orgSlug token)))
             (s "auth" </> s "verify" </> string </> string)
         , map (PublicRoute << CompareRoute) (s "compare" <?> compareParamsParser)
@@ -1169,7 +1153,7 @@ view model =
                             Signup.view signupModel
                     in
                     { title = signupView.title
-                    , body = [ viewWithNav model (Html.map SignupMsg (div [] signupView.body)) ]
+                    , body = List.map (Html.map SignupMsg) signupView.body
                     }
 
                 ChoosePlanPage choosePlanModel ->
@@ -1298,7 +1282,9 @@ view model =
                             Onboarding.view pageModel
                     in
                     { title = onboardingView.title
-                    , body = [ Html.map OnboardingMsg (div [] onboardingView.body) ]
+
+                    -- Use the body from the Onboarding.view Document directly
+                    , body = List.map (Html.map OnboardingMsg) onboardingView.body
                     }
 
                 WalkthroughPage pageModel ->
@@ -1967,78 +1953,30 @@ updatePage url ( model, cmd ) =
                                         , Cmd.map SignupMsg signupCmd
                                         )
 
-                                    PublicRoute (OnboardingRoute step) ->
-                                        -- Check if we already have an onboarding page
-                                        case model.page of
-                                            OnboardingPage existingModel ->
-                                                -- We already have an onboarding model, update the step and reset initialization flags
-                                                let
-                                                    newStep =
-                                                        onboardingStepToStep step
+                                    PublicRoute OnboardingRoute ->
+                                        let
+                                            -- Extract the query parameters from the URL
+                                            queryParams =
+                                                url.query
+                                                    |> Maybe.map (\q -> String.split "&" q)
+                                                    |> Maybe.withDefault []
+                                                    |> List.filterMap
+                                                        (\param ->
+                                                            case String.split "=" param of
+                                                                key :: value :: [] ->
+                                                                    Just ( key, value )
 
-                                                    updatedModel =
-                                                        { existingModel
-                                                            | step = newStep
+                                                                _ ->
+                                                                    Nothing
+                                                        )
 
-                                                            -- Reset initialization flags based on the new step
-                                                            , userDetailsInitialized =
-                                                                if newStep == Onboarding.UserDetailsStep then
-                                                                    False
-
-                                                                else
-                                                                    existingModel.userDetailsInitialized
-                                                            , companyDetailsInitialized =
-                                                                if newStep == Onboarding.CompanyDetailsStep then
-                                                                    False
-
-                                                                else
-                                                                    existingModel.companyDetailsInitialized
-                                                            , licensingSettingsInitialized =
-                                                                if newStep == Onboarding.LicensingSettingsStep then
-                                                                    False
-
-                                                                else
-                                                                    existingModel.licensingSettingsInitialized
-                                                            , addAgentsInitialized =
-                                                                if newStep == Onboarding.AddAgentsStep then
-                                                                    False
-
-                                                                else
-                                                                    existingModel.addAgentsInitialized
-                                                            , paymentInitialized =
-                                                                if newStep == Onboarding.PaymentStep then
-                                                                    False
-
-                                                                else
-                                                                    existingModel.paymentInitialized
-                                                            , enterpriseFormInitialized =
-                                                                if newStep == Onboarding.EnterpriseFormStep then
-                                                                    False
-
-                                                                else
-                                                                    existingModel.enterpriseFormInitialized
-                                                        }
-                                                in
-                                                ( { model | page = OnboardingPage updatedModel }
-                                                , Cmd.map OnboardingMsg (Task.perform (\_ -> Onboarding.InitializeCurrentStep) (Task.succeed ()))
-                                                )
-
-                                            _ ->
-                                                -- Initialize onboarding without authenticated calls for new users
-                                                let
-                                                    ( onboardingModel, onboardingCmd ) =
-                                                        Onboarding.init
-                                                            model.key
-                                                            (model.currentUser
-                                                                |> Maybe.map .organizationSlug
-                                                                |> Maybe.withDefault ""
-                                                            )
-                                                            (extractSession model.session)
-                                                            (onboardingStepToStep step)
-                                                in
-                                                ( { model | page = OnboardingPage onboardingModel }
-                                                , Cmd.map OnboardingMsg onboardingCmd
-                                                )
+                                            -- Initialize the new onboarding module with query params
+                                            ( onboardingModel, onboardingCmd ) =
+                                                Onboarding.init modelWithUpdatedSetup.key url
+                                        in
+                                        ( { modelWithUpdatedSetup | page = OnboardingPage onboardingModel }
+                                        , Cmd.map OnboardingMsg onboardingCmd
+                                        )
 
                                     PublicRoute (VerifyRoute params) ->
                                         -- For verification, we need to make an API call
@@ -2570,35 +2508,6 @@ updateIsSetup model route =
 
 
 
--- Convert Main.OnboardingStep to Onboarding.Step
-
-
-onboardingStepToStep : OnboardingStep -> Onboarding.Step
-onboardingStepToStep step =
-    case step of
-        PlanStep ->
-            Onboarding.PlanSelectionStep
-
-        PersonalStep ->
-            Onboarding.UserDetailsStep
-
-        CompanyStep ->
-            Onboarding.CompanyDetailsStep
-
-        LicensingStep ->
-            Onboarding.LicensingSettingsStep
-
-        AgentsStep ->
-            Onboarding.AddAgentsStep
-
-        PaymentStep ->
-            Onboarding.PaymentStep
-
-        EnterpriseStep ->
-            Onboarding.EnterpriseFormStep
-
-
-
 -- Add a new function to force update public routes
 
 
@@ -2643,35 +2552,30 @@ updatePageForcePublic url ( model, cmd ) =
                     , Cmd.map SignupMsg signupCmd
                     )
 
-                PublicRoute (OnboardingRoute step) ->
-                    case model.page of
-                        OnboardingPage existingModel ->
-                            let
-                                newStep =
-                                    onboardingStepToStep step
+                PublicRoute OnboardingRoute ->
+                    let
+                        -- Extract the query parameters from the URL
+                        queryParams =
+                            url.query
+                                |> Maybe.map (\q -> String.split "&" q)
+                                |> Maybe.withDefault []
+                                |> List.filterMap
+                                    (\param ->
+                                        case String.split "=" param of
+                                            key :: value :: [] ->
+                                                Just ( key, value )
 
-                                updatedModel =
-                                    { existingModel | step = newStep }
-                            in
-                            ( { model | page = OnboardingPage updatedModel }
-                            , Cmd.map OnboardingMsg (Task.perform (\_ -> Onboarding.InitializeCurrentStep) (Task.succeed ()))
-                            )
+                                            _ ->
+                                                Nothing
+                                    )
 
-                        _ ->
-                            let
-                                ( onboardingModel, onboardingCmd ) =
-                                    Onboarding.init
-                                        model.key
-                                        (model.currentUser
-                                            |> Maybe.map .organizationSlug
-                                            |> Maybe.withDefault ""
-                                        )
-                                        (extractSession model.session)
-                                        (onboardingStepToStep step)
-                            in
-                            ( { model | page = OnboardingPage onboardingModel }
-                            , Cmd.map OnboardingMsg onboardingCmd
-                            )
+                        -- Initialize the new onboarding module with query params
+                        ( onboardingModel, onboardingCmd ) =
+                            Onboarding.init model.key url
+                    in
+                    ( { model | page = OnboardingPage onboardingModel }
+                    , Cmd.map OnboardingMsg onboardingCmd
+                    )
 
                 PublicRoute (VerifyRoute params) ->
                     let
@@ -2723,7 +2627,7 @@ updatePageForcePublic url ( model, cmd ) =
                                 , gender = Nothing
                                 , quoteId = params.quoteId
                                 , planType = params.planType
-                                , orgId = params.orgId
+                                , orgId = params.orgId -- Pass orgId even if it's Nothing
                                 }
 
                             ( quoteModel, quoteCmd ) =

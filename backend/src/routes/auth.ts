@@ -64,6 +64,43 @@ export function createAuthRoutes() {
       }
     })
 
+    .get('/api/signup/verify/:token', async ({ params, cookie, setCookie }) => {
+      const { token } = params;
+      logger.info(`Starting verification for token: ${token}`);
+
+      try {
+        const result = await auth.verifySignupLink(token);
+        logger.info(`Signup verification result: ${JSON.stringify(result)}`);
+
+        if (!result.valid) {
+          logger.error('Signup verification failed');
+          return {
+            success: false, 
+            redirectUrl: "/signup",
+            session: "",
+            email: ""
+          };
+        }
+
+        logger.info(`Signup verification successful`);
+
+        return {
+          success: true,
+          redirectUrl: result.redirectUrl || '/onboarding',
+          session: "",
+          email: result.email
+        };
+      } catch (error) {
+        logger.error(`Signup verification error: ${error}`);
+        return {
+          success: false,
+          redirectUrl: "/signup",
+          session: "",  
+          email: ""
+        };
+      }
+    })
+
     .get('/api/auth/verify/:organizationSlug/:token', async ({ params, cookie, setCookie }) => {
       const { token, organizationSlug } = params;
       
@@ -131,7 +168,7 @@ export function createAuthRoutes() {
 
         const verificationResult = {
           success: true,
-          redirectUrl: '/walkthrough',  // Always redirect to walkthrough page instead of dashboard
+          redirectUrl: result.redirectUrl || '/walkthrough',  // Use the redirectUrl from magic link payload
           session: sessionId,
           email: result.email,
           orgSlug: user.organization_id.toString()  // Use organization_id since organization_slug may not exist

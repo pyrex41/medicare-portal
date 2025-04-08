@@ -36,7 +36,7 @@ Notes:
 ------
 - Some files may have been excluded based on .gitignore rules and Repomix's configuration
 - Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
-- Only files matching these patterns are included: **/*.ts, **/*.elm
+- Only files matching these patterns are included: **/*.elm, **/*.ts
 - Files matching these patterns are excluded: node_modules/
 - Files matching patterns in .gitignore are excluded
 - Files matching default ignore patterns are excluded
@@ -10825,18 +10825,20 @@ subscriptions model =
 ================
 File: src/ChoosePlan.elm
 ================
-module ChoosePlan exposing (Model, Msg(..), init, subscriptions, update, view, viewChangePlan)
+port module ChoosePlan exposing (Model, Msg(..), init, subscriptions, update, view, viewChangePlan)
 
 import Browser exposing (Document)
 import Browser.Navigation as Nav
 import Components.LimitBanner as LimitBanner exposing (LimitWarning(..))
 import Components.SetupLayout as SetupLayout
-import Html exposing (Html, button, div, h1, h2, h3, input, label, li, p, span, text, ul)
-import Html.Attributes exposing (class, type_, value)
+import Html exposing (Html, button, div, h1, h2, h3, h4, input, label, li, node, p, span, text, ul)
+import Html.Attributes exposing (attribute, class, disabled, type_, value)
 import Html.Events exposing (onClick, onInput)
 import Http
 import Json.Decode as Decode exposing (Decoder, field, int, list, string)
 import Json.Encode as Encode
+import Svg exposing (path, svg)
+import Svg.Attributes exposing (clipRule, d, fill, fillRule, viewBox)
 
 
 type SetupStep
@@ -10850,6 +10852,15 @@ type alias SubscriptionTier =
     , name : String
     , price : String
     , agentLimit : Int
+    , contactLimit : Int
+    , features : List String
+    }
+
+
+type alias CustomTierPricing =
+    { price : String
+    , agentLimit : Int
+    , tierName : String
     , contactLimit : Int
     , features : List String
     }
@@ -10872,6 +10883,9 @@ type alias Model =
     , currentAgentLimit : Int
     , currentContactLimit : Int
     , showTrialBanner : Bool
+    , customContactCount : String
+    , isLoadingCustomTier : Bool
+    , customTierPricing : Maybe CustomTierPricing
     }
 
 
@@ -10895,6 +10909,11 @@ type Msg
     | NoOp
     | NavigateTo String
     | CloseBanner
+    | SetCustomContactCount String
+    | CalculateCustomTier
+    | GotCustomTierPricing (Result Http.Error CustomTierPricing)
+    | SelectCustomTier
+    | StripeTableSelection String
 
 
 init : String -> String -> Nav.Key -> Bool -> ( Model, Cmd Msg )
@@ -10915,6 +10934,9 @@ init orgSlug session key showChangePlan =
       , currentAgentLimit = 0
       , currentContactLimit = 0
       , showTrialBanner = True
+      , customContactCount = ""
+      , isLoadingCustomTier = False
+      , customTierPricing = Nothing
       }
     , Cmd.batch
         [ fetchSubscriptionTiers
@@ -11012,13 +11034,7 @@ update msg model =
                 PlanSelection ->
                     case model.selectedPlan of
                         Just planId ->
-                            if planId == "enterprise" then
-                                -- For Enterprise, redirect to contact form
-                                ( model
-                                , Nav.pushUrl model.key "/enterprise-contact"
-                                )
-
-                            else if model.showChangePlan then
+                            if model.showChangePlan then
                                 -- For change plan, we go directly to payment
                                 ( { model | currentStep = Payment, isProcessingPayment = True }
                                 , createStripeCheckoutSession model.orgSlug planId model.extraAgents model.extraContacts
@@ -11175,18 +11191,6 @@ update msg model =
                         , Cmd.none
                         )
 
-                    else if planId == "enterprise" then
-                        -- For Enterprise plans, always redirect to contact form
-                        ( model
-                        , Nav.pushUrl model.key "/enterprise-contact"
-                        )
-
-                    else if model.showChangePlan && not (hasChanges model) then
-                        -- No changes, show an error (only for non-enterprise plans)
-                        ( { model | error = Just "No changes made to your subscription." }
-                        , Cmd.none
-                        )
-
                     else
                         -- Process payment for changes
                         ( { model | isProcessingPayment = True }
@@ -11260,6 +11264,28 @@ update msg model =
 
         CloseBanner ->
             ( { model | showTrialBanner = False }, Cmd.none )
+
+        SetCustomContactCount value ->
+            ( { model | customContactCount = value }, Cmd.none )
+
+        CalculateCustomTier ->
+            ( { model | isLoadingCustomTier = True }, calculateCustomTier model )
+
+        GotCustomTierPricing result ->
+            case result of
+                Ok pricing ->
+                    ( { model | customTierPricing = Just pricing, isLoadingCustomTier = False }, Cmd.none )
+
+                Err error ->
+                    ( { model | error = Just "Failed to calculate custom tier pricing", isLoadingCustomTier = False }, Cmd.none )
+
+        SelectCustomTier ->
+            ( model, selectCustomTier model )
+
+        StripeTableSelection priceId ->
+            ( { model | selectedPlan = Just priceId, error = Nothing }
+            , Cmd.none
+            )
 
         _ ->
             ( model, Cmd.none )
@@ -11370,6 +11396,66 @@ viewChangePlan model =
                             )
                             model.tiers
                         )
+
+                    -- Add custom tier calculator section
+                    , div [ class "mt-8 p-6 bg-gray-50 rounded-lg border border-gray-200" ]
+                        [ h3 [ class "text-lg font-semibold text-gray-900 mb-4" ]
+                            [ text "Need a custom plan?" ]
+                        , p [ class "text-gray-600 mb-4" ]
+                            [ text "Enter your expected number of contacts to calculate a custom tier." ]
+                        , div [ class "flex items-end space-x-4" ]
+                            [ div [ class "flex-grow" ]
+                                [ label [ class "block text-sm font-medium text-gray-700 mb-1" ]
+                                    [ text "Number of Contacts" ]
+                                , input
+                                    [ type_ "number"
+                                    , class "w-full px-4 py-2 border border-gray-300 rounded-md"
+                                    , value model.customContactCount
+                                    , onInput SetCustomContactCount
+                                    , Html.Attributes.placeholder "Enter contact count (e.g. 15000)"
+                                    ]
+                                    []
+                                ]
+                            , button
+                                [ class "px-4 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700"
+                                , onClick CalculateCustomTier
+                                ]
+                                [ if model.isLoadingCustomTier then
+                                    text "Calculating..."
+
+                                  else
+                                    text "Calculate"
+                                ]
+                            ]
+
+                        -- Display custom tier result if available
+                        , case model.customTierPricing of
+                            Just pricing ->
+                                div [ class "mt-6 p-4 bg-white rounded-lg border border-blue-200" ]
+                                    [ div [ class "flex items-center justify-between mb-3" ]
+                                        [ h4 [ class "text-lg font-semibold text-gray-900" ]
+                                            [ text pricing.tierName ]
+                                        , div [ class "rounded-full px-3 py-1 text-sm font-medium bg-blue-50 text-blue-700" ]
+                                            [ text pricing.price ]
+                                        ]
+                                    , p [ class "text-gray-600 mb-3" ]
+                                        [ text ("Up to " ++ String.fromInt pricing.contactLimit ++ " contacts with " ++ String.fromInt pricing.agentLimit ++ " agent accounts") ]
+                                    , div [ class "mt-3" ]
+                                        [ ul [ class "space-y-2" ]
+                                            (List.map viewFeature pricing.features)
+                                        ]
+                                    , div [ class "mt-4" ]
+                                        [ button
+                                            [ class "px-4 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700 w-full"
+                                            , onClick (SelectPlan ("tier-custom-" ++ String.fromInt pricing.contactLimit))
+                                            ]
+                                            [ text "Select This Plan" ]
+                                        ]
+                                    ]
+
+                            Nothing ->
+                                text ""
+                        ]
                     , if canAddExtraResources model.selectedPlan then
                         div [ class "mt-8 p-4 bg-gray-50 rounded-lg border border-gray-200" ]
                             [ h3 [ class "text-lg font-semibold text-gray-900 mb-4" ]
@@ -11500,108 +11586,45 @@ viewPlanSelection model =
             [ h1 [ class "text-2xl font-semibold text-gray-900" ]
                 [ text "Choose your plan" ]
             , p [ class "text-gray-600 mt-2" ]
-                [ text "Select a plan that best fits your organization's needs" ]
+                [ text "Select a plan that fits your organization's needs" ]
             ]
-        , div [ class "grid grid-cols-1 md:grid-cols-3 gap-4" ]
-            (List.map
-                (\tier ->
-                    viewPlanOption
-                        tier.id
-                        tier.name
-                        tier.price
-                        tier.features
-                        tier.agentLimit
-                        tier.contactLimit
-                        model.selectedPlan
-                )
-                model.tiers
-            )
-        , if canAddExtraResources model.selectedPlan then
-            div [ class "mt-8 p-4 bg-gray-50 rounded-lg border border-gray-200" ]
-                [ h3 [ class "text-lg font-semibold text-gray-900 mb-4" ]
-                    [ text "Additional Resources" ]
-                , div [ class "grid grid-cols-1 md:grid-cols-2 gap-6" ]
-                    [ div [ class "space-y-2" ]
-                        [ label [ class "block text-sm font-medium text-gray-700" ]
-                            [ text "Extra Agents" ]
-                        , p [ class "text-xs text-gray-500" ]
-                            [ text "Add more agent seats beyond your plan's included limit ($20/agent seat/month)" ]
-                        , div [ class "flex items-center" ]
-                            [ button
-                                [ class "bg-gray-200 px-3 py-1 rounded-l-md hover:bg-gray-300"
-                                , onClick (SetExtraAgents (String.fromInt (max 0 (model.extraAgents - 1))))
-                                ]
-                                [ text "-" ]
-                            , input
-                                [ type_ "number"
-                                , class "w-16 text-center border-y border-gray-200 py-1"
-                                , value (String.fromInt model.extraAgents)
-                                , onInput SetExtraAgents
-                                ]
-                                []
-                            , button
-                                [ class "bg-gray-200 px-3 py-1 rounded-r-md hover:bg-gray-300"
-                                , onClick (SetExtraAgents (String.fromInt (model.extraAgents + 1)))
-                                ]
-                                [ text "+" ]
-                            , span [ class "ml-2 text-sm font-medium" ]
-                                [ text ("$" ++ String.fromInt (model.extraAgents * 20) ++ "/mo") ]
-                            ]
-                        ]
-                    , div [ class "space-y-2" ]
-                        [ label [ class "block text-sm font-medium text-gray-700" ]
-                            [ text "Extra Clients" ]
-                        , p [ class "text-xs text-gray-500" ]
-                            [ text "Add more clients beyond your plan's included limit ($50/5,000 clients/month)" ]
-                        , div [ class "flex items-center" ]
-                            [ button
-                                [ class "bg-gray-200 px-3 py-1 rounded-l-md hover:bg-gray-300"
-                                , onClick (SetExtraContacts (String.fromInt (max 0 (model.extraContacts - 5000))))
-                                ]
-                                [ text "-" ]
-                            , input
-                                [ type_ "number"
-                                , class "w-20 text-center border-y border-gray-200 py-1"
-                                , value (String.fromInt model.extraContacts)
-                                , onInput SetExtraContacts
-                                , Html.Attributes.step "5000"
-                                ]
-                                []
-                            , button
-                                [ class "bg-gray-200 px-3 py-1 rounded-r-md hover:bg-gray-300"
-                                , onClick (SetExtraContacts (String.fromInt (model.extraContacts + 5000)))
-                                ]
-                                [ text "+" ]
-                            , span [ class "ml-2 text-sm font-medium" ]
-                                [ text ("$" ++ String.fromInt (model.extraContacts // 5000 * 50) ++ "/mo") ]
-                            ]
-                        ]
+        , div [ class "w-full" ]
+            [ -- Embedded Stripe pricing table
+              node "stripe-pricing-table"
+                [ attribute "pricing-table-id" "prctbl_1RAfz9CBUPXAZKNG0EyV8bRU"
+                , attribute "publishable-key" "pk_test_51Qyh7RCBUPXAZKNGAvsWikdxCCaV1R9Vc79IgPqCul8AJsln69ABDQZE0zzOtOlH5rqrlw2maRebndvPl8xDaIVl00Nn2OOBCX"
+                ]
+                []
+            , div [ class "mt-4 p-4 bg-gray-50 rounded-lg border border-gray-200" ]
+                [ h3 [ class "text-lg font-semibold text-gray-900 mb-2" ]
+                    [ text "Usage-Based Pricing" ]
+                , p [ class "text-gray-600" ]
+                    [ text "Our subscription includes the following:" ]
+                , ul [ class "list-disc list-inside mt-2 space-y-1 text-gray-600" ]
+                    [ li [] [ text "Base plan includes 500 contacts" ]
+                    , li [] [ text "$40 for each additional 500 contacts used" ]
+                    , li [] [ text "You will only be billed for the contacts you actually have" ]
+                    , li [] [ text "We'll automatically adjust your billing as your contact count changes" ]
                     ]
                 ]
+            ]
 
-          else
-            text ""
-        , if model.error /= Nothing then
-            div [ class "mt-4 text-red-500" ]
-                [ text (Maybe.withDefault "" model.error) ]
-
-          else
-            text ""
+        -- Add a button to continue after selection
         , div [ class "mt-8 flex justify-center" ]
             [ button
                 [ class
                     ("px-6 py-3 rounded-lg transition-colors duration-200 "
                         ++ (if model.selectedPlan == Nothing then
-                                "bg-[#2563EB]/50 cursor-not-allowed text-white"
+                                "bg-blue-400 cursor-not-allowed text-white"
 
                             else
-                                "bg-[#2563EB] hover:bg-[#1D4ED8] text-white"
+                                "bg-blue-600 hover:bg-blue-700 text-white"
                            )
                     )
                 , onClick NextStep
-                , Html.Attributes.disabled (model.selectedPlan == Nothing)
+                , disabled (model.selectedPlan == Nothing)
                 ]
-                [ text "Select" ]
+                [ text "Continue" ]
             ]
         ]
 
@@ -11672,7 +11695,7 @@ viewPlanOption id name price features agentLimit contactLimit selectedPlan =
                 , ul [ class "space-y-2" ]
                     (List.map
                         (\feature ->
-                            li [ class "flex items-center text-sm text-gray-600" ]
+                            li [ class "flex items-start" ]
                                 [ span [ class "text-[#059669] mr-2" ] [ text "✓" ]
                                 , text feature
                                 ]
@@ -11684,9 +11707,104 @@ viewPlanOption id name price features agentLimit contactLimit selectedPlan =
         ]
 
 
+viewFeature : String -> Html Msg
+viewFeature feature =
+    li [ class "flex items-start" ]
+        [ div [ class "flex-shrink-0 h-5 w-5 text-green-500" ]
+            [ viewSmallCheckIcon ]
+        , div [ class "ml-3 text-sm text-gray-500" ]
+            [ text feature ]
+        ]
+
+
+viewCheckIcon : Html Msg
+viewCheckIcon =
+    svg
+        [ Svg.Attributes.class "h-5 w-5"
+        , viewBox "0 0 20 20"
+        , fill "currentColor"
+        ]
+        [ path
+            [ fillRule "evenodd"
+            , clipRule "evenodd"
+            , d "M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+            ]
+            []
+        ]
+
+
+viewSmallCheckIcon : Html Msg
+viewSmallCheckIcon =
+    svg
+        [ Svg.Attributes.class "h-4 w-4"
+        , viewBox "0 0 20 20"
+        , fill "currentColor"
+        ]
+        [ path
+            [ fillRule "evenodd"
+            , clipRule "evenodd"
+            , d "M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+            ]
+            []
+        ]
+
+
+calculateCustomTier : Model -> Cmd Msg
+calculateCustomTier model =
+    case String.toInt model.customContactCount of
+        Just contactCount ->
+            if contactCount > 0 then
+                Http.get
+                    { url = "/api/subscription/calculate-tier/" ++ String.fromInt contactCount
+                    , expect = Http.expectJson GotCustomTierPricing customTierPricingDecoder
+                    }
+
+            else
+                Cmd.none
+
+        Nothing ->
+            Cmd.none
+
+
+customTierPricingDecoder : Decoder CustomTierPricing
+customTierPricingDecoder =
+    field "success" Decode.bool
+        |> Decode.andThen
+            (\success ->
+                if success then
+                    field "pricing"
+                        (Decode.map5 CustomTierPricing
+                            (field "price" string)
+                            (field "agentLimit" int)
+                            (field "tierName" string)
+                            (field "contactLimit" int)
+                            (field "features" (list string))
+                        )
+
+                else
+                    Decode.fail "API returned error"
+            )
+
+
+selectCustomTier : Model -> Cmd Msg
+selectCustomTier model =
+    case model.customTierPricing of
+        Just pricing ->
+            -- Create a custom tier ID based on the contact limit
+            let
+                customTierId =
+                    "tier-custom-" ++ String.fromInt pricing.contactLimit
+            in
+            -- Simulate selecting this plan
+            Cmd.none
+
+        Nothing ->
+            Cmd.none
+
+
 subscriptions : Model -> Sub Msg
 subscriptions _ =
-    Sub.none
+    stripeTableSelected StripeTableSelection
 
 
 subscriptionTiersDecoder : Decoder (List SubscriptionTier)
@@ -11769,65 +11887,8 @@ encodeStripeCheckoutRequest orgSlug tierId extraAgents extraContacts =
 
 filterTiers : List SubscriptionTier -> List SubscriptionTier
 filterTiers tiers =
-    let
-        -- Keep only the $99 Pro plan (filter out any other Pro plans)
-        filteredTiers =
-            tiers
-                |> List.filter
-                    (\tier ->
-                        -- Keep Basic and Enterprise tiers
-                        tier.id
-                            == "basic"
-                            || tier.id
-                            == "enterprise"
-                            || -- Keep any Pro plan
-                               tier.id
-                            == "pro"
-                    )
-
-        -- Make sure we have the base tiers
-        hasBasic =
-            List.any (\t -> t.id == "basic") filteredTiers
-
-        hasPro =
-            List.any (\t -> t.id == "pro") filteredTiers
-
-        hasEnterprise =
-            List.any (\t -> t.id == "enterprise") filteredTiers
-
-        -- Default tiers to add if missing
-        defaultBasic =
-            SubscriptionTier "basic" "Solo" "$49/mo" 1 1000 [ "1 Agent Seat", "Up to 1,000 Clients", "Analytics Dashboard", "Quote Tool", "Customizable Booking Options", "Access to our Smart Send Technology" ]
-
-        defaultPro =
-            SubscriptionTier "pro" "Agency / Solo+" "$99/mo" 5 5000 [ "Everything in the Solo package plus:", "5 Agent Seats", "Up to 5,000 Clients", "Admin and Organization Settings", "Organization Wide Analytics" ]
-
-        defaultEnterprise =
-            SubscriptionTier "enterprise" "Enterprise" "Contact Us" 10 30000 [ "Everything in Solo & Agency Packages", "10+ Agent Seats", "Up to 30,000+ Clients", "24/7 Platform Support", "White-Labeled Quote Tool and Dashboard" ]
-
-        -- Add default tiers if missing
-        tiersWithDefaults =
-            (if not hasBasic then
-                [ defaultBasic ]
-
-             else
-                []
-            )
-                ++ (if not hasPro then
-                        [ defaultPro ]
-
-                    else
-                        []
-                   )
-                ++ (if not hasEnterprise then
-                        [ defaultEnterprise ]
-
-                    else
-                        []
-                   )
-                ++ filteredTiers
-    in
-    tiersWithDefaults
+    -- No need to filter out enterprise options with the new contact-based pricing model
+    tiers
 
 
 canAddExtraResources : Maybe String -> Bool
@@ -11839,10 +11900,6 @@ canAddExtraResources selectedPlan =
         -- Only Pro plan can add extra resources
         Nothing ->
             False
-
-
-
--- Add this function after filterTiers function
 
 
 hasChanges : Model -> Bool
@@ -11864,19 +11921,11 @@ hasChanges model =
     planChanged || resourcesChanged
 
 
-
--- Add the confirmation decoder
-
-
 confirmationDecoder : Decoder { success : Bool, redirectUrl : String }
 confirmationDecoder =
     Decode.map2 (\success redirectUrl -> { success = success, redirectUrl = redirectUrl })
         (Decode.field "success" Decode.bool)
         (Decode.field "redirectUrl" Decode.string)
-
-
-
--- New function to provide the appropriate banner based on subscription context
 
 
 getPlanLimitBanner : Model -> Html Msg
@@ -11907,6 +11956,73 @@ getPlanLimitBanner model =
         LimitBanner.viewLimitBanner
             (TrialEnding "June 15, 2024")
             CloseBanner
+
+
+viewPlan : Maybe String -> SubscriptionTier -> Html Msg
+viewPlan selectedPlan tier =
+    let
+        isSelected =
+            selectedPlan == Just tier.id
+
+        selectedClass =
+            if isSelected then
+                "border-[#03045E] ring-2 ring-[#03045E]"
+
+            else
+                "border-gray-200 hover:border-gray-300"
+    in
+    div
+        [ class ("border rounded-lg p-6 cursor-pointer " ++ selectedClass)
+        , onClick (SelectPlan tier.id)
+        ]
+        [ -- Plan header with tier name
+          div [ class "flex items-center justify-between" ]
+            [ div [ class "flex items-center" ]
+                [ h3 [ class "text-lg font-semibold text-gray-900" ]
+                    [ text tier.name ]
+                , if isSelected then
+                    -- Checkmark for selected plan
+                    div [ class "ml-2 text-[#03045E]" ]
+                        [ viewCheckIcon ]
+
+                  else
+                    text ""
+                ]
+            , div [ class "rounded-full px-3 py-1 text-sm font-medium bg-blue-50 text-blue-700" ]
+                [ text tier.price ]
+            ]
+
+        -- Limits
+        , div [ class "mt-4 space-y-3" ]
+            [ div [ class "flex items-start" ]
+                [ div [ class "flex-shrink-0 h-5 w-5 text-green-500" ]
+                    [ viewSmallCheckIcon ]
+                , div [ class "ml-3 text-sm text-gray-500" ]
+                    [ text ("Up to " ++ String.fromInt tier.contactLimit ++ " contacts") ]
+                ]
+            , div [ class "flex items-start" ]
+                [ div [ class "flex-shrink-0 h-5 w-5 text-green-500" ]
+                    [ viewSmallCheckIcon ]
+                , div [ class "ml-3 text-sm text-gray-500" ]
+                    [ text ("Up to " ++ String.fromInt tier.agentLimit ++ " agents") ]
+                ]
+            ]
+
+        -- Features
+        , div [ class "mt-6" ]
+            [ h4 [ class "text-sm font-medium text-gray-900" ]
+                [ text "Includes:" ]
+            , ul [ class "mt-2 space-y-2" ]
+                (List.map viewFeature tier.features)
+            ]
+        ]
+
+
+
+-- Add this port for the embedded Stripe pricing table
+
+
+port stripeTableSelected : (String -> msg) -> Sub msg
 
 ================
 File: src/Compare.elm
@@ -12528,8 +12644,35 @@ update msg model =
                     )
 
                 Err error ->
+                    let
+                        detailedError =
+                            case error of
+                                Http.BadStatus 401 ->
+                                    "Authentication error: Please check your session and try again."
+
+                                Http.BadStatus 403 ->
+                                    "Access forbidden: You don't have permission to access these quotes."
+
+                                Http.BadStatus 500 ->
+                                    "Server error: The quote service is experiencing issues. Please try again later."
+
+                                Http.NetworkError ->
+                                    "Network error: Please check your internet connection and try again."
+
+                                Http.Timeout ->
+                                    "Request timed out: The quote service took too long to respond. Please try again."
+
+                                Http.BadUrl url ->
+                                    "Invalid URL: " ++ url
+
+                                Http.BadBody message ->
+                                    "Invalid response format: " ++ message
+
+                                _ ->
+                                    httpErrorToString error
+                    in
                     ( { model
-                        | error = Just (httpErrorToString error)
+                        | error = Just detailedError
                         , isLoading = False
                       }
                     , Cmd.none
@@ -13035,11 +13178,11 @@ viewPersonalInfo model =
                             , p [ class "text-[16px] font-medium" ] [ text (Maybe.withDefault "Loading..." model.name) ]
                             , p [ class "text-[12px] text-[#667085]" ]
                                 [ text
-                                    (if Maybe.withDefault "" model.gender == "M" then
-                                        "M"
+                                    (if String.contains "F" (model.gender |> Maybe.withDefault "" |> String.toUpper) then
+                                        "F"
 
                                      else
-                                        "F"
+                                        "M"
                                     )
                                 , span [ class "text-[#475569] mx-2 font-medium" ] [ text "│" ]
                                 , text
@@ -27217,6 +27360,7 @@ File: src/main.ts
 import './styles.css'
 import { Elm } from './Main.elm'
 import './stripe-integration.js'
+import { loadStripeScript } from './stripe-integration'
 
 const root = document.querySelector('#app')
 if (!root) {
@@ -27411,7 +27555,73 @@ try {
         sessionStorage.removeItem('selfservice_debug_info');
       });
     }
+
+    // Handle checkout session for contact-based pricing
+    if (app.ports.createContactBasedCheckout) {
+      app.ports.createContactBasedCheckout.subscribe(async (checkoutData: any) => {
+        try {
+          // Make the API call to create a checkout session
+          const response = await fetch('/api/subscription/checkout', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ contactTier: checkoutData.tier })
+          });
+          
+          if (!response.ok) {
+            throw new Error(`Error ${response.status}: ${await response.text()}`);
+          }
+          
+          const data = await response.json();
+          
+          if (data.clientSecret) {
+            // Initialize the Stripe Elements instance and confirm the payment
+            console.log('Processing payment with Stripe Elements');
+            // @ts-ignore - stripeIntegration is attached to window
+            window.stripeIntegration.processPayment(data.clientSecret)
+              .then((result: any) => {
+                if (app.ports.checkoutCompleted) {
+                  app.ports.checkoutCompleted.send({
+                    success: result.success,
+                    error: result.error,
+                    subscriptionId: data.subscriptionId
+                  });
+                }
+              })
+              .catch((error: Error) => {
+                console.error('Error processing checkout:', error);
+                if (app.ports.checkoutCompleted) {
+                  app.ports.checkoutCompleted.send({
+                    success: false,
+                    error: error.message
+                  });
+                }
+              });
+          } else {
+            throw new Error('No client secret in response');
+          }
+        } catch (error) {
+          console.error('Error creating checkout session:', error);
+          if (app.ports.checkoutCompleted) {
+            app.ports.checkoutCompleted.send({
+              success: false,
+              error: error instanceof Error ? error.message : 'Unknown error'
+            });
+          }
+        }
+      });
+    }
+
+    // Add this listener in the ports section to handle Stripe pricing table selection
+    document.addEventListener('priceSelected', (e: any) => {
+      if (app.ports.stripeTableSelected) {
+        // Send the selected price ID to Elm
+        app.ports.stripeTableSelected.send(e.detail.priceId);
+      }
+    });
   }
+
+  // Add this line to the initialization part
+  loadStripeScript();
 } catch (error) {
   console.error('Error initializing Elm application:', error);
   
@@ -31037,10 +31247,15 @@ allCarriers =
 File: src/Ports.elm
 ================
 port module Ports exposing
-    ( copyToClipboard
+    ( checkoutCompleted
+    , clearDebugInfo
+    , copyToClipboard
+    , createContactBasedCheckout
     , getOrgSlug
     , onCopyResult
     , receiveOrgSlug
+    , saveDebugInfo
+    , viewingPhone
     )
 
 -- Port for requesting the orgSlug from JavaScript
@@ -31049,10 +31264,12 @@ port module Ports exposing
 port getOrgSlug : () -> Cmd msg
 
 
+
 -- Port for receiving the orgSlug from JavaScript
 
 
 port receiveOrgSlug : (String -> msg) -> Sub msg
+
 
 
 -- Port for copying text to clipboard
@@ -31061,10 +31278,46 @@ port receiveOrgSlug : (String -> msg) -> Sub msg
 port copyToClipboard : String -> Cmd msg
 
 
+
 -- Port for receiving copy result from JavaScript
 
 
 port onCopyResult : (Bool -> msg) -> Sub msg
+
+
+
+-- Port for creating a contact-based checkout session
+
+
+port createContactBasedCheckout : { tier : Int } -> Cmd msg
+
+
+
+-- Port for receiving checkout completion result from JavaScript
+
+
+port checkoutCompleted : ({ success : Bool, error : Maybe String, subscriptionId : Maybe String } -> msg) -> Sub msg
+
+
+
+-- Port for saving debug info
+
+
+port saveDebugInfo : String -> Cmd msg
+
+
+
+-- Port for clearing debug info
+
+
+port clearDebugInfo : () -> Cmd msg
+
+
+
+-- Port for tracking when the user is viewing the phone preview
+
+
+port viewingPhone : (Bool -> msg) -> Sub msg
 
 ================
 File: src/Profile.elm
@@ -32975,13 +33228,7 @@ type alias Model =
     , selectedCounty : Maybe String
     , isLoadingZipData : Bool
     , zipError : Maybe String
-    , formStep : FormStep
     }
-
-
-type FormStep
-    = SingleStep
-    | ConfirmSubmit
 
 
 
@@ -33048,7 +33295,6 @@ init key url =
             , selectedCounty = Nothing
             , isLoadingZipData = False
             , zipError = Nothing
-            , formStep = SingleStep
             }
 
         commands =
@@ -33260,8 +33506,6 @@ type Msg
     | GotZipInfo (Result Http.Error ZipInfo)
     | GotSignupResponse (Result Http.Error SignupResponse)
     | GotQuoteResponse (Result Http.Error QuoteResponse)
-    | NextStep
-    | PrevStep
     | GoToQuote
 
 
@@ -33573,34 +33817,6 @@ update msg model =
         GotCurrentDate date ->
             ( { model | currentDate = Just date }, Cmd.none )
 
-        NextStep ->
-            let
-                nextStep =
-                    case model.formStep of
-                        SingleStep ->
-                            if isFormValid model then
-                                ConfirmSubmit
-
-                            else
-                                SingleStep
-
-                        ConfirmSubmit ->
-                            ConfirmSubmit
-            in
-            ( { model | formStep = nextStep, error = Nothing }, Cmd.none )
-
-        PrevStep ->
-            let
-                prevStep =
-                    case model.formStep of
-                        SingleStep ->
-                            SingleStep
-
-                        ConfirmSubmit ->
-                            SingleStep
-            in
-            ( { model | formStep = prevStep, error = Nothing }, Cmd.none )
-
         SubmitForm ->
             if isFormValid model then
                 ( { model | isSubmitting = True, error = Nothing }
@@ -33743,6 +33959,23 @@ update msg model =
 
 isFormValid : Model -> Bool
 isFormValid model =
+    let
+        isValidDate str =
+            case String.split "-" str of
+                [ year, month, day ] ->
+                    String.length year
+                        == 4
+                        && String.length month
+                        == 2
+                        && String.length day
+                        == 2
+                        && String.all Char.isDigit year
+                        && String.all Char.isDigit month
+                        && String.all Char.isDigit day
+
+                _ ->
+                    False
+    in
     -- Contact info (required)
     not (String.isEmpty model.email)
         && not (String.isEmpty model.firstName)
@@ -33753,6 +33986,7 @@ isFormValid model =
         && String.length model.zipCode
         == 5
         && not (String.isEmpty model.dateOfBirth)
+        && isValidDate model.dateOfBirth
         && not (String.isEmpty model.gender)
         -- Tobacco status is now explicitly required
         && (model.tobacco == True || model.tobacco == False)
@@ -33993,15 +34227,18 @@ view model =
 viewForm : Model -> Html Msg
 viewForm model =
     div [ class "max-w-4xl mx-auto bg-white rounded-xl shadow-md p-4 sm:p-8" ]
-        [ if model.success then
-            div []
-                [ if model.isGeneratingQuote then
-                    div [ class "p-4 mb-4 bg-blue-100 border border-blue-400 text-blue-700 rounded" ]
-                        [ text "Your profile has been updated! Generating your quote..." ]
+        [ if model.isSubmitting || model.isGeneratingQuote then
+            div [ class "fixed inset-0 bg-white flex flex-col items-center justify-center gap-4 text-center" ]
+                [ div [ class "animate-spin rounded-full h-12 w-12 border-4 border-[#03045E] border-t-transparent" ] []
+                , p [ class "text-center text-lg font-medium text-gray-600" ]
+                    [ text
+                        (if model.isSubmitting then
+                            "Submitting your information..."
 
-                  else
-                    div [ class "p-4 mb-4 bg-green-100 border border-green-400 text-green-700 rounded" ]
-                        [ text "Profile updated successfully! Redirecting to your quote..." ]
+                         else
+                            "Generating your quote..."
+                        )
+                    ]
                 ]
 
           else if model.orgId == Nothing && model.error == Nothing then
@@ -34018,52 +34255,29 @@ viewForm model =
 
 viewFormStep : Model -> Html Msg
 viewFormStep model =
-    case model.formStep of
-        SingleStep ->
-            div []
-                [ viewHeader model.logo model.orgName
-                , div [ class "text-center mb-6 px-2 sm:px-0" ]
-                    [ h1 [ class "text-2xl sm:text-3xl font-bold text-[#101828]" ] [ text "Let's Get Some Details" ]
-                    , p [ class "text-[#475467] mt-2 text-sm sm:text-base" ] [ text "We use this information to get you the most accurate quote for your area." ]
-                    ]
-                , viewCombinedForm model
-                , viewError model.error
-                , button
-                    [ type_ "button"
-                    , class "w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-[#03045E] hover:bg-[#02034e] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#3DBDEC] mt-6"
-                    , onClick NextStep
-                    , disabled (not (isFormValid model))
-                    ]
-                    [ text "Continue" ]
-                ]
+    div []
+        [ viewHeader model.logo model.orgName
+        , div [ class "text-center mb-6 px-2 sm:px-0" ]
+            [ h1 [ class "text-2xl sm:text-3xl font-bold text-[#101828]" ] [ text "Let's Get Some Details" ]
+            , p [ class "text-[#475467] mt-2 text-sm sm:text-base" ] [ text "We use this information to get you the most accurate quote for your area." ]
+            ]
+        , viewCombinedForm model
+        , viewError model.error
+        , button
+            [ type_ "button"
+            , class "w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-[#03045E] hover:bg-[#02034e] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#3DBDEC] mt-6"
+            , onClick SubmitForm
+            , disabled (model.isSubmitting || not (isFormValid model))
+            ]
+            [ text
+                (if model.isSubmitting then
+                    "Submitting..."
 
-        ConfirmSubmit ->
-            div []
-                [ viewFormSummary model
-                , viewError model.error
-                , div [ class "flex flex-col sm:flex-row justify-between gap-3 sm:gap-0 mt-4" ]
-                    [ button
-                        [ type_ "button"
-                        , class "w-full sm:w-auto flex justify-center py-2 px-4 border border-[#D0D5DD] rounded-md shadow-sm text-sm font-medium text-[#344054] bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#3DBDEC]"
-                        , onClick PrevStep
-                        ]
-                        [ text "Back" ]
-                    , button
-                        [ type_ "button"
-                        , class "w-full sm:w-auto flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-[#03045E] hover:bg-[#02034e] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#3DBDEC]"
-                        , onClick SubmitForm
-                        , disabled (model.isSubmitting || not (isFormValid model))
-                        ]
-                        [ text
-                            (if model.isSubmitting then
-                                "Submitting..."
-
-                             else
-                                "Submit"
-                            )
-                        ]
-                    ]
-                ]
+                 else
+                    "Submit"
+                )
+            ]
+        ]
 
 
 viewCombinedForm : Model -> Html Msg
@@ -34079,12 +34293,12 @@ viewCombinedForm model =
             [ div [ class "col-span-1" ]
                 [ label [ class "block text-sm font-medium text-gray-700 mb-1" ] [ text "Date of Birth" ]
                 , input
-                    [ type_ "text"
+                    [ type_ "date"
                     , class "w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-sky-500 focus:border-sky-500"
-                    , placeholder "MM-DD-YYYY"
                     , Html.Attributes.value model.dateOfBirth
                     , onInput UpdateDateOfBirth
                     , required True
+                    , Html.Attributes.max (model.currentDate |> Maybe.map Date.toIsoString |> Maybe.withDefault "")
                     ]
                     []
                 ]
@@ -36398,6 +36612,10 @@ type alias Model =
     , isLoading : Bool
     , error : Maybe String
     , activeTab : Tab
+    , contactCount : Int
+    , autoUpgradeLimit : Int
+    , upgradeModalOpen : Bool
+    , selectedTier : Int
     }
 
 
@@ -36408,10 +36626,12 @@ type Tab
 
 
 type alias SubscriptionData =
-    { plan : String
+    { id : String
     , status : String
-    , nextBillingDate : String
-    , price : Float
+    , tier : Int
+    , contactLimit : Int
+    , currentPeriodEnd : String
+    , cancelAtPeriodEnd : Bool
     , features : List String
     }
 
@@ -36444,6 +36664,10 @@ init _ =
       , isLoading = True
       , error = Nothing
       , activeTab = PlanTab
+      , contactCount = 0
+      , autoUpgradeLimit = 0
+      , upgradeModalOpen = False
+      , selectedTier = 1
       }
     , Cmd.batch
         [ fetchSubscriptionData
@@ -36458,25 +36682,67 @@ init _ =
 
 
 type Msg
-    = GotSubscriptionData (Result Http.Error SubscriptionData)
+    = GotSubscriptionData (Result Http.Error SubscriptionDataResponse)
     | GotPaymentMethods (Result Http.Error (List PaymentMethod))
     | GotBillingHistory (Result Http.Error (List BillingRecord))
-    | ChangePlan String
-    | ChangePlanResult (Result Http.Error SubscriptionData)
+    | ChangeTier Int
+    | UpgradeTier Int
+    | UpgradeTierResult (Result Http.Error UpgradeResponse)
     | AddPaymentMethod
     | RemovePaymentMethod String
     | SetDefaultPaymentMethod String
     | PaymentMethodUpdated (Result Http.Error (List PaymentMethod))
     | DownloadInvoice String
     | ChangeTab Tab
+    | OpenUpgradeModal Int
+    | CloseUpgradeModal
+    | SetAutoUpgradeLimit Int
+    | AutoUpgradeLimitUpdated (Result Http.Error AutoUpgradeResponse)
+    | CreateCheckoutSession Int
+    | GotCheckoutSession (Result Http.Error CheckoutResponse)
     | NoOp
+
+
+type alias SubscriptionDataResponse =
+    { subscription : Maybe SubscriptionData
+    , contactCount : Int
+    , autoUpgradeLimit : Int
+    }
+
+
+type alias UpgradeResponse =
+    { success : Bool
+    , previousTier : Maybe Int
+    , newTier : Maybe Int
+    , contactLimit : Maybe Int
+    , message : Maybe String
+    }
+
+
+type alias AutoUpgradeResponse =
+    { success : Bool
+    , autoUpgradeLimit : Int
+    }
+
+
+type alias CheckoutResponse =
+    { clientSecret : String
+    , subscriptionId : String
+    }
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
-        GotSubscriptionData (Ok data) ->
-            ( { model | subscriptionData = Just data, isLoading = False }, Cmd.none )
+        GotSubscriptionData (Ok response) ->
+            ( { model
+                | subscriptionData = response.subscription
+                , contactCount = response.contactCount
+                , autoUpgradeLimit = response.autoUpgradeLimit
+                , isLoading = False
+              }
+            , Cmd.none
+            )
 
         GotSubscriptionData (Err _) ->
             ( { model | error = Just "Failed to load subscription data", isLoading = False }, Cmd.none )
@@ -36493,14 +36759,54 @@ update msg model =
         GotBillingHistory (Err _) ->
             ( { model | error = Just "Failed to load billing history", isLoading = False }, Cmd.none )
 
-        ChangePlan plan ->
-            ( { model | isLoading = True }, changeSubscriptionPlan plan )
+        ChangeTier tier ->
+            ( { model | selectedTier = tier }, Cmd.none )
 
-        ChangePlanResult (Ok data) ->
-            ( { model | subscriptionData = Just data, isLoading = False }, Cmd.none )
+        OpenUpgradeModal tier ->
+            ( { model | upgradeModalOpen = True, selectedTier = tier }, Cmd.none )
 
-        ChangePlanResult (Err _) ->
-            ( { model | error = Just "Failed to change subscription plan", isLoading = False }, Cmd.none )
+        CloseUpgradeModal ->
+            ( { model | upgradeModalOpen = False }, Cmd.none )
+
+        UpgradeTier tier ->
+            ( { model | isLoading = True, upgradeModalOpen = False }
+            , upgradeTier tier
+            )
+
+        UpgradeTierResult (Ok response) ->
+            if response.success then
+                case model.subscriptionData of
+                    Just subscription ->
+                        let
+                            updatedSubscription =
+                                { subscription
+                                    | tier = Maybe.withDefault subscription.tier response.newTier
+                                    , contactLimit = Maybe.withDefault subscription.contactLimit response.contactLimit
+                                }
+                        in
+                        ( { model
+                            | subscriptionData = Just updatedSubscription
+                            , isLoading = False
+                          }
+                        , Cmd.none
+                        )
+
+                    Nothing ->
+                        -- Should not happen, but handle it gracefully
+                        ( { model | isLoading = False }
+                        , fetchSubscriptionData
+                        )
+
+            else
+                ( { model
+                    | error = Just (Maybe.withDefault "Failed to upgrade subscription" response.message)
+                    , isLoading = False
+                  }
+                , Cmd.none
+                )
+
+        UpgradeTierResult (Err _) ->
+            ( { model | error = Just "Failed to upgrade subscription", isLoading = False }, Cmd.none )
 
         AddPaymentMethod ->
             -- In a real implementation, this would open a Stripe form or similar
@@ -36524,6 +36830,54 @@ update msg model =
 
         ChangeTab tab ->
             ( { model | activeTab = tab }, Cmd.none )
+
+        SetAutoUpgradeLimit limit ->
+            ( { model | isLoading = True }
+            , updateAutoUpgradeLimit limit
+            )
+
+        AutoUpgradeLimitUpdated (Ok response) ->
+            if response.success then
+                ( { model
+                    | autoUpgradeLimit = response.autoUpgradeLimit
+                    , isLoading = False
+                  }
+                , Cmd.none
+                )
+
+            else
+                ( { model
+                    | error = Just "Failed to update auto-upgrade limit"
+                    , isLoading = False
+                  }
+                , Cmd.none
+                )
+
+        AutoUpgradeLimitUpdated (Err _) ->
+            ( { model
+                | error = Just "Failed to update auto-upgrade limit"
+                , isLoading = False
+              }
+            , Cmd.none
+            )
+
+        CreateCheckoutSession tier ->
+            ( { model | isLoading = True }
+            , createCheckoutSession tier
+            )
+
+        GotCheckoutSession (Ok response) ->
+            -- In a real implementation, this would redirect to Stripe checkout
+            -- For now, we just update the state and let JavaScript handle it
+            ( model, Cmd.none )
+
+        GotCheckoutSession (Err _) ->
+            ( { model
+                | error = Just "Failed to create checkout session"
+                , isLoading = False
+              }
+            , Cmd.none
+            )
 
         NoOp ->
             ( model, Cmd.none )
@@ -36549,6 +36903,11 @@ view model =
                         [ viewTabs model
                         , viewTabContent model
                         ]
+                , if model.upgradeModalOpen then
+                    viewUpgradeModal model
+
+                  else
+                    text ""
                 ]
             ]
         ]
@@ -36613,7 +36972,7 @@ viewSubscriptionPlan model =
                             [ h2 [ class "text-lg font-medium text-gray-900" ]
                                 [ text "Current Plan" ]
                             , div [ class "mt-1 text-sm text-gray-500" ]
-                                [ text "You can change your subscription plan at any time" ]
+                                [ text "Contact-based subscription" ]
                             ]
                         , div [ class "px-3 py-1 bg-blue-50 text-blue-700 rounded-full text-sm font-medium" ]
                             [ text subscription.status ]
@@ -36621,12 +36980,14 @@ viewSubscriptionPlan model =
                     , div [ class "border-t border-gray-200 pt-4" ]
                         [ div [ class "flex items-baseline" ]
                             [ span [ class "text-3xl font-bold text-gray-900" ]
-                                [ text ("$" ++ String.fromFloat subscription.price) ]
-                            , span [ class "ml-1 text-gray-500" ]
-                                [ text "/month" ]
+                                [ text ("Tier " ++ String.fromInt subscription.tier) ]
+                            , span [ class "ml-3 text-gray-500" ]
+                                [ text (String.fromInt subscription.contactLimit ++ " contacts") ]
                             ]
                         , div [ class "mt-1 text-sm text-gray-500" ]
-                            [ text ("Next billing date: " ++ subscription.nextBillingDate) ]
+                            [ text ("Current usage: " ++ String.fromInt model.contactCount ++ " contacts") ]
+                        , div [ class "mt-1 text-sm text-gray-500" ]
+                            [ text ("Next billing date: " ++ subscription.currentPeriodEnd) ]
                         ]
                     , div [ class "border-t border-gray-200 pt-4" ]
                         [ h3 [ class "text-md font-medium text-gray-900 mb-2" ]
@@ -36645,31 +37006,80 @@ viewSubscriptionPlan model =
                         ]
                     , div [ class "border-t border-gray-200 pt-4" ]
                         [ h3 [ class "text-md font-medium text-gray-900 mb-3" ]
-                            [ text "Available Plans" ]
-                        , div [ class "grid grid-cols-3 gap-4" ]
-                            [ viewPlanCard "Basic" 29.99 [ "Up to 5 agents", "Email notifications", "Basic reporting" ] subscription.plan
-                            , viewPlanCard "Professional" 49.99 [ "Up to 15 agents", "All Basic features", "Advanced reporting", "API access" ] subscription.plan
-                            , viewPlanCard "Enterprise" 99.99 [ "Unlimited agents", "All Professional features", "Dedicated support", "Custom integrations" ] subscription.plan
+                            [ text "Auto-Upgrade Settings" ]
+                        , div [ class "flex items-center space-x-4" ]
+                            [ div [ class "text-sm text-gray-700" ]
+                                [ text "Automatically upgrade when contacts exceed limit up to: " ]
+                            , select
+                                [ class "form-select rounded-md border-gray-300 text-sm"
+                                , onInput (\value -> SetAutoUpgradeLimit (Maybe.withDefault 0 (String.toInt value)))
+                                , value (String.fromInt model.autoUpgradeLimit)
+                                ]
+                                [ option [ value "0" ] [ text "Disabled (require manual approval)" ]
+                                , option [ value "1000" ] [ text "1,000 contacts" ]
+                                , option [ value "1500" ] [ text "1,500 contacts" ]
+                                , option [ value "2000" ] [ text "2,000 contacts" ]
+                                , option [ value "2500" ] [ text "2,500 contacts" ]
+                                , option [ value "5000" ] [ text "5,000 contacts" ]
+                                ]
                             ]
+                        ]
+                    , div [ class "border-t border-gray-200 pt-4" ]
+                        [ h3 [ class "text-md font-medium text-gray-900 mb-3" ]
+                            [ text "Upgrade Your Plan" ]
+                        , div [ class "grid grid-cols-3 gap-4" ]
+                            (List.map
+                                (\tier ->
+                                    viewTierCard
+                                        tier
+                                        (tier * 500)
+                                        (if tier == 1 then
+                                            60
+
+                                         else
+                                            60 + ((tier - 1) * 40)
+                                        )
+                                        subscription.tier
+                                )
+                                [ 1, 2, 3, 4, 5, 10 ]
+                            )
                         ]
                     ]
 
             Nothing ->
-                div [ class "text-center text-gray-500 py-8" ]
-                    [ text "No subscription data available" ]
+                div [ class "space-y-6" ]
+                    [ div [ class "text-center text-gray-500 py-8" ]
+                        [ text "No subscription active. Subscribe to start using the service." ]
+                    , div [ class "grid grid-cols-3 gap-4" ]
+                        (List.map
+                            (\tier ->
+                                viewTierCard
+                                    tier
+                                    (tier * 500)
+                                    (if tier == 1 then
+                                        60
+
+                                     else
+                                        60 + ((tier - 1) * 40)
+                                    )
+                                    0
+                            )
+                            [ 1, 2, 3, 4, 5, 10 ]
+                        )
+                    ]
         ]
 
 
-viewPlanCard : String -> Float -> List String -> String -> Html Msg
-viewPlanCard plan price features currentPlan =
+viewTierCard : Int -> Int -> Int -> Int -> Html Msg
+viewTierCard tier contactLimit price currentTier =
     let
-        isCurrentPlan =
-            plan == currentPlan
+        isCurrentTier =
+            tier == currentTier
     in
     div
         [ class
             ("border rounded-lg p-4 "
-                ++ (if isCurrentPlan then
+                ++ (if isCurrentTier then
                         "border-[#03045E] bg-blue-50"
 
                     else
@@ -36679,44 +37089,116 @@ viewPlanCard plan price features currentPlan =
         ]
         [ div [ class "flex justify-between items-center mb-2" ]
             [ h4 [ class "font-medium text-gray-900" ]
-                [ text plan ]
-            , if isCurrentPlan then
+                [ text ("Tier " ++ String.fromInt tier) ]
+            , if isCurrentTier then
                 span [ class "px-2 py-1 bg-[#03045E] text-white text-xs rounded-full" ]
                     [ text "Current" ]
 
               else
                 text ""
             ]
-        , div [ class "flex items-baseline mb-4" ]
+        , div [ class "flex items-baseline mb-2" ]
             [ span [ class "text-xl font-bold text-gray-900" ]
-                [ text ("$" ++ String.fromFloat price) ]
+                [ text ("$" ++ String.fromInt price) ]
             , span [ class "ml-1 text-gray-500 text-sm" ]
                 [ text "/month" ]
             ]
-        , ul [ class "text-sm space-y-1 mb-4" ]
-            (List.map
-                (\feature ->
-                    li [ class "flex items-start" ]
-                        [ div [ class "mr-1 text-green-500 mt-0.5 flex-shrink-0" ]
-                            [ viewSmallCheckIcon ]
-                        , text feature
-                        ]
-                )
-                features
-            )
-        , if isCurrentPlan then
+        , div [ class "text-sm text-gray-600 mb-4" ]
+            [ text (String.fromInt contactLimit ++ " contacts") ]
+        , if isCurrentTier then
             button
                 [ class "w-full px-3 py-2 text-sm font-medium text-gray-500 bg-gray-100 rounded-md cursor-not-allowed"
                 , disabled True
                 ]
                 [ text "Current Plan" ]
 
-          else
+          else if currentTier == 0 then
             button
                 [ class "w-full px-3 py-2 text-sm font-medium text-white bg-[#03045E] rounded-md hover:bg-opacity-90"
-                , onClick (ChangePlan plan)
+                , onClick (CreateCheckoutSession tier)
                 ]
-                [ text "Switch to Plan" ]
+                [ text "Subscribe" ]
+
+          else if tier > currentTier then
+            button
+                [ class "w-full px-3 py-2 text-sm font-medium text-white bg-[#03045E] rounded-md hover:bg-opacity-90"
+                , onClick (OpenUpgradeModal tier)
+                ]
+                [ text "Upgrade" ]
+
+          else
+            button
+                [ class "w-full px-3 py-2 text-sm font-medium text-gray-500 bg-gray-100 rounded-md cursor-not-allowed"
+                , disabled True
+                ]
+                [ text "Lower Tier" ]
+        ]
+
+
+viewUpgradeModal : Model -> Html Msg
+viewUpgradeModal model =
+    let
+        currentTier =
+            case model.subscriptionData of
+                Just sub ->
+                    sub.tier
+
+                Nothing ->
+                    0
+
+        currentLimit =
+            case model.subscriptionData of
+                Just sub ->
+                    sub.contactLimit
+
+                Nothing ->
+                    0
+
+        newLimit =
+            model.selectedTier * 500
+
+        price =
+            if model.selectedTier == 1 then
+                60
+
+            else
+                60 + ((model.selectedTier - 1) * 40)
+
+        currentPrice =
+            if currentTier == 1 then
+                60
+
+            else
+                60 + ((currentTier - 1) * 40)
+
+        priceDifference =
+            price - currentPrice
+    in
+    div [ class "fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center z-50" ]
+        [ div [ class "bg-white rounded-lg max-w-lg w-full mx-4" ]
+            [ div [ class "p-6" ]
+                [ h3 [ class "text-lg font-medium text-gray-900 mb-4" ]
+                    [ text "Upgrade Subscription" ]
+                , p [ class "text-gray-600 mb-4" ]
+                    [ text ("You are upgrading from Tier " ++ String.fromInt currentTier ++ " (" ++ String.fromInt currentLimit ++ " contacts) to Tier " ++ String.fromInt model.selectedTier ++ " (" ++ String.fromInt newLimit ++ " contacts).") ]
+                , p [ class "text-gray-600 mb-4" ]
+                    [ text ("Your monthly price will increase by $" ++ String.fromInt priceDifference ++ ", from $" ++ String.fromInt currentPrice ++ " to $" ++ String.fromInt price ++ ".") ]
+                , p [ class "text-gray-600 mb-6" ]
+                    [ text "This change will take effect immediately, and you will be charged a prorated amount for the remainder of your billing cycle." ]
+                , div [ class "flex justify-end space-x-4" ]
+                    [ button
+                        [ class "px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200"
+                        , onClick CloseUpgradeModal
+                        ]
+                        [ text "Cancel" ]
+                    , button
+                        [ class "px-4 py-2 text-sm font-medium text-white bg-[#03045E] rounded-md hover:bg-opacity-90"
+                        , onClick (UpgradeTier model.selectedTier)
+                        ]
+                        [ text "Confirm Upgrade" ]
+                    ]
+                ]
+            ]
         ]
 
 
@@ -36797,7 +37279,7 @@ viewBillingHistory model =
                                 [ text "Amount" ]
                             , th [ class "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider" ]
                                 [ text "Status" ]
-                            , th [ class "px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider" ]
+                            , th [ class "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider" ]
                                 [ text "Actions" ]
                             ]
                         ]
@@ -36811,40 +37293,44 @@ viewBillingHistory model =
 viewBillingRecord : BillingRecord -> Html Msg
 viewBillingRecord record =
     tr []
-        [ td [ class "px-6 py-4 whitespace-nowrap text-sm text-gray-900" ]
+        [ td [ class "px-6 py-4 whitespace-nowrap text-sm text-gray-500" ]
             [ text record.date ]
         , td [ class "px-6 py-4 whitespace-nowrap text-sm text-gray-900" ]
             [ text record.description ]
-        , td [ class "px-6 py-4 whitespace-nowrap text-sm text-gray-900" ]
+        , td [ class "px-6 py-4 whitespace-nowrap text-sm text-gray-500" ]
             [ text ("$" ++ String.fromFloat record.amount) ]
         , td [ class "px-6 py-4 whitespace-nowrap" ]
             [ span
                 [ class
                     ("px-2 py-1 text-xs rounded-full "
-                        ++ (if record.status == "Paid" then
-                                "bg-green-100 text-green-800"
+                        ++ (case record.status of
+                                "Paid" ->
+                                    "bg-green-100 text-green-800"
 
-                            else if record.status == "Failed" then
-                                "bg-red-100 text-red-800"
+                                "Failed" ->
+                                    "bg-red-100 text-red-800"
 
-                            else
-                                "bg-yellow-100 text-yellow-800"
+                                "Pending" ->
+                                    "bg-yellow-100 text-yellow-800"
+
+                                _ ->
+                                    "bg-gray-100 text-gray-800"
                            )
                     )
                 ]
                 [ text record.status ]
             ]
-        , td [ class "px-6 py-4 whitespace-nowrap text-right text-sm font-medium" ]
+        , td [ class "px-6 py-4 whitespace-nowrap text-sm text-gray-500" ]
             [ case record.invoiceUrl of
                 Just url ->
                     button
-                        [ class "text-blue-600 hover:text-blue-900"
+                        [ class "text-blue-600 hover:text-blue-800"
                         , onClick (DownloadInvoice url)
                         ]
                         [ text "Download" ]
 
                 Nothing ->
-                    text ""
+                    text "—"
             ]
         ]
 
@@ -36855,15 +37341,33 @@ viewBillingRecord record =
 
 viewCheckIcon : Html msg
 viewCheckIcon =
-    svg [ viewBox "0 0 20 20", fill "currentColor", class "h-5 w-5" ]
-        [ path [ fillRule "evenodd", d "M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z", clipRule "evenodd" ] []
+    svg
+        [ Svg.Attributes.class "h-5 w-5"
+        , viewBox "0 0 20 20"
+        , fill "currentColor"
+        ]
+        [ path
+            [ fillRule "evenodd"
+            , clipRule "evenodd"
+            , d "M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+            ]
+            []
         ]
 
 
 viewSmallCheckIcon : Html msg
 viewSmallCheckIcon =
-    svg [ viewBox "0 0 20 20", fill "currentColor", class "h-4 w-4" ]
-        [ path [ fillRule "evenodd", d "M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z", clipRule "evenodd" ] []
+    svg
+        [ Svg.Attributes.class "h-4 w-4"
+        , viewBox "0 0 20 20"
+        , fill "currentColor"
+        ]
+        [ path
+            [ fillRule "evenodd"
+            , clipRule "evenodd"
+            , d "M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+            ]
+            []
         ]
 
 
@@ -36873,42 +37377,137 @@ viewSmallCheckIcon =
 
 fetchSubscriptionData : Cmd Msg
 fetchSubscriptionData =
-    -- In a real implementation, this would call an API
-    -- For now, return mock data
-    Cmd.none
+    Http.get
+        { url = "/api/subscription/status"
+        , expect = Http.expectJson GotSubscriptionData subscriptionDataDecoder
+        }
+
+
+subscriptionDataDecoder : Decoder SubscriptionDataResponse
+subscriptionDataDecoder =
+    Decode.succeed SubscriptionDataResponse
+        |> Pipeline.required "subscription" (Decode.nullable subscriptionDecoder)
+        |> Pipeline.required "contactCount" Decode.int
+        |> Pipeline.required "autoUpgradeLimit" Decode.int
+
+
+subscriptionDecoder : Decoder SubscriptionData
+subscriptionDecoder =
+    Decode.succeed SubscriptionData
+        |> Pipeline.required "id" Decode.string
+        |> Pipeline.required "status" Decode.string
+        |> Pipeline.required "tier" Decode.int
+        |> Pipeline.required "contactLimit" Decode.int
+        |> Pipeline.required "currentPeriodEnd" Decode.string
+        |> Pipeline.required "cancelAtPeriodEnd" Decode.bool
+        |> Pipeline.hardcoded [ "Contact-based pricing", "Email scheduling", "Analytics dashboard" ]
 
 
 fetchPaymentMethods : Cmd Msg
 fetchPaymentMethods =
-    -- In a real implementation, this would call an API
-    -- For now, return mock data
-    Cmd.none
+    Http.get
+        { url = "/api/payment-methods"
+        , expect = Http.expectJson GotPaymentMethods (Decode.list paymentMethodDecoder)
+        }
+
+
+paymentMethodDecoder : Decoder PaymentMethod
+paymentMethodDecoder =
+    Decode.succeed PaymentMethod
+        |> Pipeline.required "id" Decode.string
+        |> Pipeline.required "brand" Decode.string
+        |> Pipeline.required "last4" Decode.string
+        |> Pipeline.required "expiryMonth" Decode.int
+        |> Pipeline.required "expiryYear" Decode.int
+        |> Pipeline.required "isDefault" Decode.bool
 
 
 fetchBillingHistory : Cmd Msg
 fetchBillingHistory =
-    -- In a real implementation, this would call an API
-    -- For now, return mock data
-    Cmd.none
+    Http.get
+        { url = "/api/billing-history"
+        , expect = Http.expectJson GotBillingHistory (Decode.list billingRecordDecoder)
+        }
 
 
-changeSubscriptionPlan : String -> Cmd Msg
-changeSubscriptionPlan plan =
-    -- In a real implementation, this would call an API
-    -- For now, just return a success
-    Cmd.none
+billingRecordDecoder : Decoder BillingRecord
+billingRecordDecoder =
+    Decode.succeed BillingRecord
+        |> Pipeline.required "id" Decode.string
+        |> Pipeline.required "date" Decode.string
+        |> Pipeline.required "amount" Decode.float
+        |> Pipeline.required "status" Decode.string
+        |> Pipeline.required "description" Decode.string
+        |> Pipeline.optional "invoiceUrl" (Decode.nullable Decode.string) Nothing
+
+
+upgradeTier : Int -> Cmd Msg
+upgradeTier tier =
+    Http.post
+        { url = "/api/subscription/upgrade"
+        , body = Http.jsonBody (Encode.object [ ( "newTier", Encode.int tier ) ])
+        , expect = Http.expectJson UpgradeTierResult upgradeResponseDecoder
+        }
+
+
+upgradeResponseDecoder : Decoder UpgradeResponse
+upgradeResponseDecoder =
+    Decode.succeed UpgradeResponse
+        |> Pipeline.required "success" Decode.bool
+        |> Pipeline.optional "previousTier" (Decode.nullable Decode.int) Nothing
+        |> Pipeline.optional "newTier" (Decode.nullable Decode.int) Nothing
+        |> Pipeline.optional "contactLimit" (Decode.nullable Decode.int) Nothing
+        |> Pipeline.optional "message" (Decode.nullable Decode.string) Nothing
+
+
+updateAutoUpgradeLimit : Int -> Cmd Msg
+updateAutoUpgradeLimit limit =
+    Http.post
+        { url = "/api/subscription/auto-upgrade"
+        , body = Http.jsonBody (Encode.object [ ( "autoUpgradeLimit", Encode.int limit ) ])
+        , expect = Http.expectJson AutoUpgradeLimitUpdated autoUpgradeLimitDecoder
+        }
+
+
+autoUpgradeLimitDecoder : Decoder AutoUpgradeResponse
+autoUpgradeLimitDecoder =
+    Decode.succeed AutoUpgradeResponse
+        |> Pipeline.required "success" Decode.bool
+        |> Pipeline.required "autoUpgradeLimit" Decode.int
+
+
+createCheckoutSession : Int -> Cmd Msg
+createCheckoutSession tier =
+    Http.post
+        { url = "/api/subscription/checkout"
+        , body = Http.jsonBody (Encode.object [ ( "contactTier", Encode.int tier ) ])
+        , expect = Http.expectJson GotCheckoutSession checkoutResponseDecoder
+        }
+
+
+checkoutResponseDecoder : Decoder CheckoutResponse
+checkoutResponseDecoder =
+    Decode.succeed CheckoutResponse
+        |> Pipeline.required "clientSecret" Decode.string
+        |> Pipeline.required "subscriptionId" Decode.string
 
 
 removePaymentMethod : String -> Cmd Msg
 removePaymentMethod id =
-    -- In a real implementation, this would call an API
-    Cmd.none
+    Http.post
+        { url = "/api/payment-methods/remove"
+        , body = Http.jsonBody (Encode.object [ ( "id", Encode.string id ) ])
+        , expect = Http.expectJson PaymentMethodUpdated (Decode.list paymentMethodDecoder)
+        }
 
 
 setDefaultPaymentMethod : String -> Cmd Msg
 setDefaultPaymentMethod id =
-    -- In a real implementation, this would call an API
-    Cmd.none
+    Http.post
+        { url = "/api/payment-methods/set-default"
+        , body = Http.jsonBody (Encode.object [ ( "id", Encode.string id ) ])
+        , expect = Http.expectJson PaymentMethodUpdated (Decode.list paymentMethodDecoder)
+        }
 
 
 

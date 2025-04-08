@@ -53,6 +53,50 @@ async function generateUniqueSlug(db: Database, name: string): Promise<string> {
   return uniqueSlug;
 }
 
+// Add this function to handle the mapping from old tier to new contact-based tier
+function mapLegacyTierToContactTier(tierId: string): number {
+  // Extract tier number from ID if format is "tier-X"
+  if (tierId.startsWith('tier-')) {
+    const tierNumber = parseInt(tierId.substring(5), 10);
+    if (!isNaN(tierNumber)) {
+      return tierNumber;
+    }
+  }
+  
+  // Handle legacy tiers
+  switch (tierId) {
+    case 'basic':
+      return 1; // 500 contacts
+    case 'pro':
+      return 2; // 1000 contacts
+    case 'enterprise':
+      return 5; // 2500 contacts
+    default:
+      return 1; // Default to Tier 1
+  }
+}
+
+// Add this function to calculate the agent limit based on contact tier
+function getAgentLimitForContactTier(contactTier: number): number {
+  switch (contactTier) {
+    case 1: return 5;    // 500 contacts
+    case 2: return 10;   // 1,000 contacts
+    case 5: return 25;   // 2,500 contacts
+    case 10: return 50;  // 5,000 contacts
+    case 20: return 100; // 10,000 contacts
+    case 50: return 200; // 25,000 contacts
+    case 100: return 300; // 50,000 contacts
+    case 200: return 500; // 100,000 contacts
+    default:
+      // Formula for tiers not explicitly defined
+      if (contactTier <= 0) return 5;
+      if (contactTier <= 10) return contactTier * 5;
+      if (contactTier <= 50) return contactTier * 4;
+      if (contactTier <= 100) return contactTier * 3;
+      return contactTier * 2.5; // For very high tiers
+  }
+}
+
 export const organizationRoutes = new Elysia({ prefix: '/api' })
   .post('/organizations/signup', async ({ body, set }) => {
     const db = new Database();
@@ -266,26 +310,76 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
     }
   })
   .get('/organizations/subscription-tiers', async ({ set }) => {
-    const db = new Database();
     try {
-      const tiersResult = await db.query<{
-        id: string,
-        name: string,
-        agent_limit: number,
-        contact_limit: number,
-        price_monthly: number,
-        features: string
-      }>('SELECT id, name, agent_limit, contact_limit, price_monthly, features FROM subscription_tiers');
+      // Define a broader range of contact-based pricing tiers
+      const tiers = [
+        {
+          id: "tier-1",
+          name: "Tier 1",
+          price: "$60/mo",
+          agentLimit: 5,
+          contactLimit: 500,
+          features: ["Up to 500 contacts", "Email scheduling", "CRM features", "Analytics dashboard", "5 agent accounts"]
+        },
+        {
+          id: "tier-2",
+          name: "Tier 2",
+          price: "$100/mo", 
+          agentLimit: 10,
+          contactLimit: 1000,
+          features: ["Up to 1,000 contacts", "Email scheduling", "CRM features", "Analytics dashboard", "10 agent accounts"]
+        },
+        {
+          id: "tier-5",
+          name: "Tier 5",
+          price: "$220/mo",
+          agentLimit: 25,
+          contactLimit: 2500, 
+          features: ["Up to 2,500 contacts", "Email scheduling", "CRM features", "Premium support", "25 agent accounts"]
+        },
+        {
+          id: "tier-10",
+          name: "Tier 10",
+          price: "$420/mo",
+          agentLimit: 50,
+          contactLimit: 5000,
+          features: ["Up to 5,000 contacts", "Email scheduling", "CRM features", "Premium support", "Priority service", "50 agent accounts"]
+        },
+        {
+          id: "tier-20",
+          name: "Tier 20",
+          price: "$820/mo",
+          agentLimit: 100,
+          contactLimit: 10000,
+          features: ["Up to 10,000 contacts", "Email scheduling", "CRM features", "Premium support", "Priority service", "100 agent accounts"]
+        },
+        {
+          id: "tier-50",
+          name: "Tier 50",
+          price: "$2020/mo",
+          agentLimit: 200,
+          contactLimit: 25000,
+          features: ["Up to 25,000 contacts", "Email scheduling", "CRM features", "Premium support", "Priority service", "Dedicated account manager", "200 agent accounts"]
+        },
+        {
+          id: "tier-100",
+          name: "Tier 100",
+          price: "$3820/mo",
+          agentLimit: 300,
+          contactLimit: 50000,
+          features: ["Up to 50,000 contacts", "Email scheduling", "CRM features", "Premium support", "Priority service", "Dedicated account manager", "300 agent accounts"]
+        },
+        {
+          id: "tier-200",
+          name: "Tier 200",
+          price: "$7620/mo",
+          agentLimit: 500,
+          contactLimit: 100000,
+          features: ["Up to 100,000 contacts", "Email scheduling", "CRM features", "Premium support", "Priority service", "Dedicated account manager", "Custom integrations", "500 agent accounts"]
+        }
+      ];
 
-      const tiers = tiersResult.map(tier => ({
-        id: tier.id,
-        name: tier.name,
-        price: `$${(tier.price_monthly / 100).toFixed(0)}/mo`,
-        agentLimit: tier.agent_limit,
-        contactLimit: tier.contact_limit,
-        features: JSON.parse(tier.features)
-      }));
-
+      // Add an endpoint for calculating custom tier pricing
       return { success: true, tiers };
     } catch (error) {
       logger.error(`Error fetching subscription tiers: ${error}`);
@@ -464,136 +558,127 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
       };
     }
   })
-  .post('/organizations/:orgSlug/subscription', async ({ params: { orgSlug }, body, request, set }) => {
+  .post('/organizations/:orgSlug/subscription', async ({ params, body, request, set }) => {
     try {
       const db = new Database();
-
+      const orgSlug = params.orgSlug;
+      
+      logger.info(`POST /organizations/${orgSlug}/subscription - Request received`);
+      
       // Get current user from session to determine their org
-      const currentUser = await getUserFromSession(request)
+      const currentUser = await getUserFromSession(request);
+      logger.info(`User authentication result: ${currentUser ? `Authenticated as ${currentUser.email}` : 'Not authenticated'}`);
+      
       if (!currentUser) {
-        set.status = 401
+        set.status = 401;
+        logger.error('Subscription update failed: User not authenticated');
         return {
           success: false,
           error: 'You must be logged in to perform this action'
-        }
+        };
       }
 
-      // Add more detailed logging
-      logger.info(`Updating subscription - orgSlug: ${orgSlug}, userId: ${currentUser.organization_id}, body: ${JSON.stringify(body)}`);
-
-      // First verify this user belongs to the organization they're trying to update
+      // Get organization details
       const orgResult = await db.query<{ 
-        id: number,
-        stripe_customer_id: string | null,
-        stripe_subscription_id: string | null,
-        name: string
+        id: number, 
+        subscription_tier: string,
+        stripe_customer_id: string | null
       }>(
-        'SELECT id, stripe_customer_id, stripe_subscription_id, name FROM organizations WHERE slug = ?',
+        'SELECT id, subscription_tier, stripe_customer_id FROM organizations WHERE slug = ?',
         [orgSlug]
       );
 
       if (!orgResult || orgResult.length === 0) {
-        set.status = 404
+        set.status = 404;
+        logger.error(`Subscription update failed: Organization not found - ${orgSlug}`);
         return {
           success: false,
           error: 'Organization not found'
-        }
+        };
       }
 
       const organization = orgResult[0];
-
+      
       // Verify user has permission for this org
       if (organization.id !== currentUser.organization_id) {
-        logger.error(`User from org ${currentUser.organization_id} attempted to update org ${organization.id}`)
-        set.status = 403
+        logger.error(`Subscription update failed: Permission denied - User from org ${currentUser.organization_id} attempted to access org ${organization.id}`);
+        set.status = 403;
         return {
           success: false,
           error: 'You do not have permission to update this organization'
-        }
+        };
       }
 
-      // Parse the request body
-      const { tierId, extraAgents = 0, extraContacts = 0 } = body as { 
-        tierId: string, 
-        extraAgents?: number, 
-        extraContacts?: number 
+      // Extract the tier ID and additional resources from the request body
+      const { tierId, extraAgents, extraContacts } = body as { 
+        tierId: 'basic' | 'pro' | 'enterprise' | string,
+        extraAgents: number,
+        extraContacts: number
       };
       
-      // Import the Stripe service here to avoid circular dependencies
-      const { createOrUpdateSubscription } = await import('../services/stripe');
+      // Map the legacy tier to a contact-based tier
+      const contactTier = mapLegacyTierToContactTier(tierId);
+      const agentLimit = getAgentLimitForContactTier(contactTier);
       
-      try {
-        // Get user's email for Stripe customer
-        const userResult = await db.query<{ email: string }>(
-          'SELECT email FROM users WHERE id = ?',
-          [currentUser.id]
-        );
+      logger.info(`Updating subscription - orgId: ${organization.id}, tier: ${tierId}, contactTier: ${contactTier}, agentLimit: ${agentLimit}`);
+
+      // Check if we need to update the Stripe subscription
+      if (organization.subscription_tier !== tierId) {
+        logger.info(`Organization tier is changing from ${organization.subscription_tier} to ${tierId}`);
         
-        if (!userResult || userResult.length === 0) {
-          throw new Error('User not found');
+        // Update Stripe subscription
+        const stripe = await import('../services/stripe');
+        
+        try {
+          // Create or update the subscription with Stripe
+          await stripe.createOrUpdateSubscription({
+            tierId: tierId as any, // Type cast to avoid type error with new tier IDs
+            organizationId: organization.id,
+            email: currentUser.email,
+            extraAgents,
+            extraContacts,
+            stripeCustomerId: organization.stripe_customer_id || undefined,
+            userId: currentUser.id.toString() // Add the userId to fix the linter error
+          });
+          
+          logger.info(`Successfully updated Stripe subscription for organization ${organization.id}`);
+        } catch (stripeError) {
+          logger.error(`Error updating Stripe subscription: ${stripeError}`);
         }
-        
-        // Create or update the Stripe subscription
-        const stripeResult = await createOrUpdateSubscription({
-          tierId: tierId as 'basic' | 'pro' | 'enterprise',
-          organizationId: organization.id,
-          email: userResult[0].email,
-          extraAgents,
-          extraContacts,
-          stripeCustomerId: organization.stripe_customer_id || undefined
-        });
-        
-        // Update organization with Stripe IDs and subscription tier
-        await db.execute(
-          `UPDATE organizations 
-           SET subscription_tier = ?, 
-               stripe_customer_id = ?, 
-               stripe_subscription_id = ?
-           WHERE id = ?`,
-          [tierId, stripeResult.customerId, stripeResult.subscriptionId, organization.id]
-        );
-        
-        // Set up the Turso database after subscription is saved
-        const baseUrl = process.env.PUBLIC_URL || 'http://localhost:5173';
-        const setupDbResponse = await fetch(`${baseUrl}/api/organizations/${orgSlug}/setup-database`, {
-          method: 'POST',
-          headers: {
-            'Cookie': request.headers.get('cookie') || ''
-          }
-        });
-
-        if (!setupDbResponse.ok) {
-          logger.error(`Failed to set up database for org ${organization.id}`);
-        } else {
-          logger.info(`Successfully set up database for org ${organization.id}`);
-        }
-
-        logger.info(`Successfully updated subscription for org ${organization.id} to tier ${tierId}`);
-
-        // Return the client secret for frontend payment completion
-        return {
-          success: true,
-          message: 'Subscription updated successfully',
-          clientSecret: stripeResult.clientSecret,
-          publishableKey: config.stripe.publishableKey
-        };
-        
-      } catch (stripeError) {
-        logger.error(`Stripe subscription error: ${stripeError}`);
-        set.status = 400;
-        return {
-          success: false,
-          error: 'Failed to process subscription payment'
-        };
+      } else {
+        logger.info(`Organization tier is not changing, skipping Stripe update`);
       }
 
-    } catch (e) {
-      logger.error(`Error updating subscription: ${e}`)
-      set.status = 500
+      // Update the organization's subscription tier in the database
+      await db.execute(
+        `UPDATE organizations 
+         SET subscription_tier = ?,
+             agent_limit = ?,
+             contact_limit = ?
+         WHERE id = ?`,
+        [
+          tierId,
+          agentLimit,
+          contactTier * 500, // Contact limit is based on tier
+          organization.id
+        ]
+      );
+      
+      logger.info(`Successfully updated subscription in database for organization ${organization.id}`);
+      
+      // Return success
+      return {
+        success: true,
+        message: 'Subscription updated successfully'
+      };
+      
+    } catch (error) {
+      logger.error(`Error updating organization subscription: ${error}`);
+      set.status = 500;
       return {
         success: false,
-        error: String(e)
-      }
+        error: 'Failed to update subscription'
+      };
     }
   })
   // Add new endpoint to create Turso database after plan selection

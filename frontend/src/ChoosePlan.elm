@@ -1,15 +1,17 @@
-module ChoosePlan exposing (Model, Msg(..), init, subscriptions, update, view, viewChangePlan)
+port module ChoosePlan exposing (Model, Msg(..), init, subscriptions, update, view, viewChangePlan)
 
 import Browser exposing (Document)
 import Browser.Navigation as Nav
 import Components.LimitBanner as LimitBanner exposing (LimitWarning(..))
 import Components.SetupLayout as SetupLayout
-import Html exposing (Html, button, div, h1, h2, h3, input, label, li, p, span, text, ul)
-import Html.Attributes exposing (class, type_, value)
+import Html exposing (Html, button, div, h1, h2, h3, h4, input, label, li, node, p, span, text, ul)
+import Html.Attributes exposing (attribute, class, disabled, type_, value)
 import Html.Events exposing (onClick, onInput)
 import Http
 import Json.Decode as Decode exposing (Decoder, field, int, list, string)
 import Json.Encode as Encode
+import Svg exposing (path, svg)
+import Svg.Attributes exposing (clipRule, d, fill, fillRule, viewBox)
 
 
 type SetupStep
@@ -23,6 +25,15 @@ type alias SubscriptionTier =
     , name : String
     , price : String
     , agentLimit : Int
+    , contactLimit : Int
+    , features : List String
+    }
+
+
+type alias CustomTierPricing =
+    { price : String
+    , agentLimit : Int
+    , tierName : String
     , contactLimit : Int
     , features : List String
     }
@@ -45,6 +56,9 @@ type alias Model =
     , currentAgentLimit : Int
     , currentContactLimit : Int
     , showTrialBanner : Bool
+    , customContactCount : String
+    , isLoadingCustomTier : Bool
+    , customTierPricing : Maybe CustomTierPricing
     }
 
 
@@ -68,6 +82,11 @@ type Msg
     | NoOp
     | NavigateTo String
     | CloseBanner
+    | SetCustomContactCount String
+    | CalculateCustomTier
+    | GotCustomTierPricing (Result Http.Error CustomTierPricing)
+    | SelectCustomTier
+    | StripeTableSelection String
 
 
 init : String -> String -> Nav.Key -> Bool -> ( Model, Cmd Msg )
@@ -88,6 +107,9 @@ init orgSlug session key showChangePlan =
       , currentAgentLimit = 0
       , currentContactLimit = 0
       , showTrialBanner = True
+      , customContactCount = ""
+      , isLoadingCustomTier = False
+      , customTierPricing = Nothing
       }
     , Cmd.batch
         [ fetchSubscriptionTiers
@@ -185,13 +207,7 @@ update msg model =
                 PlanSelection ->
                     case model.selectedPlan of
                         Just planId ->
-                            if planId == "enterprise" then
-                                -- For Enterprise, redirect to contact form
-                                ( model
-                                , Nav.pushUrl model.key "/enterprise-contact"
-                                )
-
-                            else if model.showChangePlan then
+                            if model.showChangePlan then
                                 -- For change plan, we go directly to payment
                                 ( { model | currentStep = Payment, isProcessingPayment = True }
                                 , createStripeCheckoutSession model.orgSlug planId model.extraAgents model.extraContacts
@@ -348,18 +364,6 @@ update msg model =
                         , Cmd.none
                         )
 
-                    else if planId == "enterprise" then
-                        -- For Enterprise plans, always redirect to contact form
-                        ( model
-                        , Nav.pushUrl model.key "/enterprise-contact"
-                        )
-
-                    else if model.showChangePlan && not (hasChanges model) then
-                        -- No changes, show an error (only for non-enterprise plans)
-                        ( { model | error = Just "No changes made to your subscription." }
-                        , Cmd.none
-                        )
-
                     else
                         -- Process payment for changes
                         ( { model | isProcessingPayment = True }
@@ -433,6 +437,28 @@ update msg model =
 
         CloseBanner ->
             ( { model | showTrialBanner = False }, Cmd.none )
+
+        SetCustomContactCount value ->
+            ( { model | customContactCount = value }, Cmd.none )
+
+        CalculateCustomTier ->
+            ( { model | isLoadingCustomTier = True }, calculateCustomTier model )
+
+        GotCustomTierPricing result ->
+            case result of
+                Ok pricing ->
+                    ( { model | customTierPricing = Just pricing, isLoadingCustomTier = False }, Cmd.none )
+
+                Err error ->
+                    ( { model | error = Just "Failed to calculate custom tier pricing", isLoadingCustomTier = False }, Cmd.none )
+
+        SelectCustomTier ->
+            ( model, selectCustomTier model )
+
+        StripeTableSelection priceId ->
+            ( { model | selectedPlan = Just priceId, error = Nothing }
+            , Cmd.none
+            )
 
         _ ->
             ( model, Cmd.none )
@@ -543,6 +569,66 @@ viewChangePlan model =
                             )
                             model.tiers
                         )
+
+                    -- Add custom tier calculator section
+                    , div [ class "mt-8 p-6 bg-gray-50 rounded-lg border border-gray-200" ]
+                        [ h3 [ class "text-lg font-semibold text-gray-900 mb-4" ]
+                            [ text "Need a custom plan?" ]
+                        , p [ class "text-gray-600 mb-4" ]
+                            [ text "Enter your expected number of contacts to calculate a custom tier." ]
+                        , div [ class "flex items-end space-x-4" ]
+                            [ div [ class "flex-grow" ]
+                                [ label [ class "block text-sm font-medium text-gray-700 mb-1" ]
+                                    [ text "Number of Contacts" ]
+                                , input
+                                    [ type_ "number"
+                                    , class "w-full px-4 py-2 border border-gray-300 rounded-md"
+                                    , value model.customContactCount
+                                    , onInput SetCustomContactCount
+                                    , Html.Attributes.placeholder "Enter contact count (e.g. 15000)"
+                                    ]
+                                    []
+                                ]
+                            , button
+                                [ class "px-4 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700"
+                                , onClick CalculateCustomTier
+                                ]
+                                [ if model.isLoadingCustomTier then
+                                    text "Calculating..."
+
+                                  else
+                                    text "Calculate"
+                                ]
+                            ]
+
+                        -- Display custom tier result if available
+                        , case model.customTierPricing of
+                            Just pricing ->
+                                div [ class "mt-6 p-4 bg-white rounded-lg border border-blue-200" ]
+                                    [ div [ class "flex items-center justify-between mb-3" ]
+                                        [ h4 [ class "text-lg font-semibold text-gray-900" ]
+                                            [ text pricing.tierName ]
+                                        , div [ class "rounded-full px-3 py-1 text-sm font-medium bg-blue-50 text-blue-700" ]
+                                            [ text pricing.price ]
+                                        ]
+                                    , p [ class "text-gray-600 mb-3" ]
+                                        [ text ("Up to " ++ String.fromInt pricing.contactLimit ++ " contacts with " ++ String.fromInt pricing.agentLimit ++ " agent accounts") ]
+                                    , div [ class "mt-3" ]
+                                        [ ul [ class "space-y-2" ]
+                                            (List.map viewFeature pricing.features)
+                                        ]
+                                    , div [ class "mt-4" ]
+                                        [ button
+                                            [ class "px-4 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700 w-full"
+                                            , onClick (SelectPlan ("tier-custom-" ++ String.fromInt pricing.contactLimit))
+                                            ]
+                                            [ text "Select This Plan" ]
+                                        ]
+                                    ]
+
+                            Nothing ->
+                                text ""
+                        ]
                     , if canAddExtraResources model.selectedPlan then
                         div [ class "mt-8 p-4 bg-gray-50 rounded-lg border border-gray-200" ]
                             [ h3 [ class "text-lg font-semibold text-gray-900 mb-4" ]
@@ -673,108 +759,45 @@ viewPlanSelection model =
             [ h1 [ class "text-2xl font-semibold text-gray-900" ]
                 [ text "Choose your plan" ]
             , p [ class "text-gray-600 mt-2" ]
-                [ text "Select a plan that best fits your organization's needs" ]
+                [ text "Select a plan that fits your organization's needs" ]
             ]
-        , div [ class "grid grid-cols-1 md:grid-cols-3 gap-4" ]
-            (List.map
-                (\tier ->
-                    viewPlanOption
-                        tier.id
-                        tier.name
-                        tier.price
-                        tier.features
-                        tier.agentLimit
-                        tier.contactLimit
-                        model.selectedPlan
-                )
-                model.tiers
-            )
-        , if canAddExtraResources model.selectedPlan then
-            div [ class "mt-8 p-4 bg-gray-50 rounded-lg border border-gray-200" ]
-                [ h3 [ class "text-lg font-semibold text-gray-900 mb-4" ]
-                    [ text "Additional Resources" ]
-                , div [ class "grid grid-cols-1 md:grid-cols-2 gap-6" ]
-                    [ div [ class "space-y-2" ]
-                        [ label [ class "block text-sm font-medium text-gray-700" ]
-                            [ text "Extra Agents" ]
-                        , p [ class "text-xs text-gray-500" ]
-                            [ text "Add more agent seats beyond your plan's included limit ($20/agent seat/month)" ]
-                        , div [ class "flex items-center" ]
-                            [ button
-                                [ class "bg-gray-200 px-3 py-1 rounded-l-md hover:bg-gray-300"
-                                , onClick (SetExtraAgents (String.fromInt (max 0 (model.extraAgents - 1))))
-                                ]
-                                [ text "-" ]
-                            , input
-                                [ type_ "number"
-                                , class "w-16 text-center border-y border-gray-200 py-1"
-                                , value (String.fromInt model.extraAgents)
-                                , onInput SetExtraAgents
-                                ]
-                                []
-                            , button
-                                [ class "bg-gray-200 px-3 py-1 rounded-r-md hover:bg-gray-300"
-                                , onClick (SetExtraAgents (String.fromInt (model.extraAgents + 1)))
-                                ]
-                                [ text "+" ]
-                            , span [ class "ml-2 text-sm font-medium" ]
-                                [ text ("$" ++ String.fromInt (model.extraAgents * 20) ++ "/mo") ]
-                            ]
-                        ]
-                    , div [ class "space-y-2" ]
-                        [ label [ class "block text-sm font-medium text-gray-700" ]
-                            [ text "Extra Clients" ]
-                        , p [ class "text-xs text-gray-500" ]
-                            [ text "Add more clients beyond your plan's included limit ($50/5,000 clients/month)" ]
-                        , div [ class "flex items-center" ]
-                            [ button
-                                [ class "bg-gray-200 px-3 py-1 rounded-l-md hover:bg-gray-300"
-                                , onClick (SetExtraContacts (String.fromInt (max 0 (model.extraContacts - 5000))))
-                                ]
-                                [ text "-" ]
-                            , input
-                                [ type_ "number"
-                                , class "w-20 text-center border-y border-gray-200 py-1"
-                                , value (String.fromInt model.extraContacts)
-                                , onInput SetExtraContacts
-                                , Html.Attributes.step "5000"
-                                ]
-                                []
-                            , button
-                                [ class "bg-gray-200 px-3 py-1 rounded-r-md hover:bg-gray-300"
-                                , onClick (SetExtraContacts (String.fromInt (model.extraContacts + 5000)))
-                                ]
-                                [ text "+" ]
-                            , span [ class "ml-2 text-sm font-medium" ]
-                                [ text ("$" ++ String.fromInt (model.extraContacts // 5000 * 50) ++ "/mo") ]
-                            ]
-                        ]
+        , div [ class "w-full" ]
+            [ -- Embedded Stripe pricing table
+              node "stripe-pricing-table"
+                [ attribute "pricing-table-id" "prctbl_1RAfz9CBUPXAZKNG0EyV8bRU"
+                , attribute "publishable-key" "pk_test_51Qyh7RCBUPXAZKNGAvsWikdxCCaV1R9Vc79IgPqCul8AJsln69ABDQZE0zzOtOlH5rqrlw2maRebndvPl8xDaIVl00Nn2OOBCX"
+                ]
+                []
+            , div [ class "mt-4 p-4 bg-gray-50 rounded-lg border border-gray-200" ]
+                [ h3 [ class "text-lg font-semibold text-gray-900 mb-2" ]
+                    [ text "Usage-Based Pricing" ]
+                , p [ class "text-gray-600" ]
+                    [ text "Our subscription includes the following:" ]
+                , ul [ class "list-disc list-inside mt-2 space-y-1 text-gray-600" ]
+                    [ li [] [ text "Base plan includes 500 contacts" ]
+                    , li [] [ text "$40 for each additional 500 contacts used" ]
+                    , li [] [ text "You will only be billed for the contacts you actually have" ]
+                    , li [] [ text "We'll automatically adjust your billing as your contact count changes" ]
                     ]
                 ]
+            ]
 
-          else
-            text ""
-        , if model.error /= Nothing then
-            div [ class "mt-4 text-red-500" ]
-                [ text (Maybe.withDefault "" model.error) ]
-
-          else
-            text ""
+        -- Add a button to continue after selection
         , div [ class "mt-8 flex justify-center" ]
             [ button
                 [ class
                     ("px-6 py-3 rounded-lg transition-colors duration-200 "
                         ++ (if model.selectedPlan == Nothing then
-                                "bg-[#2563EB]/50 cursor-not-allowed text-white"
+                                "bg-blue-400 cursor-not-allowed text-white"
 
                             else
-                                "bg-[#2563EB] hover:bg-[#1D4ED8] text-white"
+                                "bg-blue-600 hover:bg-blue-700 text-white"
                            )
                     )
                 , onClick NextStep
-                , Html.Attributes.disabled (model.selectedPlan == Nothing)
+                , disabled (model.selectedPlan == Nothing)
                 ]
-                [ text "Select" ]
+                [ text "Continue" ]
             ]
         ]
 
@@ -845,7 +868,7 @@ viewPlanOption id name price features agentLimit contactLimit selectedPlan =
                 , ul [ class "space-y-2" ]
                     (List.map
                         (\feature ->
-                            li [ class "flex items-center text-sm text-gray-600" ]
+                            li [ class "flex items-start" ]
                                 [ span [ class "text-[#059669] mr-2" ] [ text "✓" ]
                                 , text feature
                                 ]
@@ -857,9 +880,104 @@ viewPlanOption id name price features agentLimit contactLimit selectedPlan =
         ]
 
 
+viewFeature : String -> Html Msg
+viewFeature feature =
+    li [ class "flex items-start" ]
+        [ div [ class "flex-shrink-0 h-5 w-5 text-green-500" ]
+            [ viewSmallCheckIcon ]
+        , div [ class "ml-3 text-sm text-gray-500" ]
+            [ text feature ]
+        ]
+
+
+viewCheckIcon : Html Msg
+viewCheckIcon =
+    svg
+        [ Svg.Attributes.class "h-5 w-5"
+        , viewBox "0 0 20 20"
+        , fill "currentColor"
+        ]
+        [ path
+            [ fillRule "evenodd"
+            , clipRule "evenodd"
+            , d "M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+            ]
+            []
+        ]
+
+
+viewSmallCheckIcon : Html Msg
+viewSmallCheckIcon =
+    svg
+        [ Svg.Attributes.class "h-4 w-4"
+        , viewBox "0 0 20 20"
+        , fill "currentColor"
+        ]
+        [ path
+            [ fillRule "evenodd"
+            , clipRule "evenodd"
+            , d "M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+            ]
+            []
+        ]
+
+
+calculateCustomTier : Model -> Cmd Msg
+calculateCustomTier model =
+    case String.toInt model.customContactCount of
+        Just contactCount ->
+            if contactCount > 0 then
+                Http.get
+                    { url = "/api/subscription/calculate-tier/" ++ String.fromInt contactCount
+                    , expect = Http.expectJson GotCustomTierPricing customTierPricingDecoder
+                    }
+
+            else
+                Cmd.none
+
+        Nothing ->
+            Cmd.none
+
+
+customTierPricingDecoder : Decoder CustomTierPricing
+customTierPricingDecoder =
+    field "success" Decode.bool
+        |> Decode.andThen
+            (\success ->
+                if success then
+                    field "pricing"
+                        (Decode.map5 CustomTierPricing
+                            (field "price" string)
+                            (field "agentLimit" int)
+                            (field "tierName" string)
+                            (field "contactLimit" int)
+                            (field "features" (list string))
+                        )
+
+                else
+                    Decode.fail "API returned error"
+            )
+
+
+selectCustomTier : Model -> Cmd Msg
+selectCustomTier model =
+    case model.customTierPricing of
+        Just pricing ->
+            -- Create a custom tier ID based on the contact limit
+            let
+                customTierId =
+                    "tier-custom-" ++ String.fromInt pricing.contactLimit
+            in
+            -- Simulate selecting this plan
+            Cmd.none
+
+        Nothing ->
+            Cmd.none
+
+
 subscriptions : Model -> Sub Msg
 subscriptions _ =
-    Sub.none
+    stripeTableSelected StripeTableSelection
 
 
 subscriptionTiersDecoder : Decoder (List SubscriptionTier)
@@ -942,65 +1060,8 @@ encodeStripeCheckoutRequest orgSlug tierId extraAgents extraContacts =
 
 filterTiers : List SubscriptionTier -> List SubscriptionTier
 filterTiers tiers =
-    let
-        -- Keep only the $99 Pro plan (filter out any other Pro plans)
-        filteredTiers =
-            tiers
-                |> List.filter
-                    (\tier ->
-                        -- Keep Basic and Enterprise tiers
-                        tier.id
-                            == "basic"
-                            || tier.id
-                            == "enterprise"
-                            || -- Keep any Pro plan
-                               tier.id
-                            == "pro"
-                    )
-
-        -- Make sure we have the base tiers
-        hasBasic =
-            List.any (\t -> t.id == "basic") filteredTiers
-
-        hasPro =
-            List.any (\t -> t.id == "pro") filteredTiers
-
-        hasEnterprise =
-            List.any (\t -> t.id == "enterprise") filteredTiers
-
-        -- Default tiers to add if missing
-        defaultBasic =
-            SubscriptionTier "basic" "Solo" "$49/mo" 1 1000 [ "1 Agent Seat", "Up to 1,000 Clients", "Analytics Dashboard", "Quote Tool", "Customizable Booking Options", "Access to our Smart Send Technology" ]
-
-        defaultPro =
-            SubscriptionTier "pro" "Agency / Solo+" "$99/mo" 5 5000 [ "Everything in the Solo package plus:", "5 Agent Seats", "Up to 5,000 Clients", "Admin and Organization Settings", "Organization Wide Analytics" ]
-
-        defaultEnterprise =
-            SubscriptionTier "enterprise" "Enterprise" "Contact Us" 10 30000 [ "Everything in Solo & Agency Packages", "10+ Agent Seats", "Up to 30,000+ Clients", "24/7 Platform Support", "White-Labeled Quote Tool and Dashboard" ]
-
-        -- Add default tiers if missing
-        tiersWithDefaults =
-            (if not hasBasic then
-                [ defaultBasic ]
-
-             else
-                []
-            )
-                ++ (if not hasPro then
-                        [ defaultPro ]
-
-                    else
-                        []
-                   )
-                ++ (if not hasEnterprise then
-                        [ defaultEnterprise ]
-
-                    else
-                        []
-                   )
-                ++ filteredTiers
-    in
-    tiersWithDefaults
+    -- No need to filter out enterprise options with the new contact-based pricing model
+    tiers
 
 
 canAddExtraResources : Maybe String -> Bool
@@ -1012,10 +1073,6 @@ canAddExtraResources selectedPlan =
         -- Only Pro plan can add extra resources
         Nothing ->
             False
-
-
-
--- Add this function after filterTiers function
 
 
 hasChanges : Model -> Bool
@@ -1037,19 +1094,11 @@ hasChanges model =
     planChanged || resourcesChanged
 
 
-
--- Add the confirmation decoder
-
-
 confirmationDecoder : Decoder { success : Bool, redirectUrl : String }
 confirmationDecoder =
     Decode.map2 (\success redirectUrl -> { success = success, redirectUrl = redirectUrl })
         (Decode.field "success" Decode.bool)
         (Decode.field "redirectUrl" Decode.string)
-
-
-
--- New function to provide the appropriate banner based on subscription context
 
 
 getPlanLimitBanner : Model -> Html Msg
@@ -1080,3 +1129,70 @@ getPlanLimitBanner model =
         LimitBanner.viewLimitBanner
             (TrialEnding "June 15, 2024")
             CloseBanner
+
+
+viewPlan : Maybe String -> SubscriptionTier -> Html Msg
+viewPlan selectedPlan tier =
+    let
+        isSelected =
+            selectedPlan == Just tier.id
+
+        selectedClass =
+            if isSelected then
+                "border-[#03045E] ring-2 ring-[#03045E]"
+
+            else
+                "border-gray-200 hover:border-gray-300"
+    in
+    div
+        [ class ("border rounded-lg p-6 cursor-pointer " ++ selectedClass)
+        , onClick (SelectPlan tier.id)
+        ]
+        [ -- Plan header with tier name
+          div [ class "flex items-center justify-between" ]
+            [ div [ class "flex items-center" ]
+                [ h3 [ class "text-lg font-semibold text-gray-900" ]
+                    [ text tier.name ]
+                , if isSelected then
+                    -- Checkmark for selected plan
+                    div [ class "ml-2 text-[#03045E]" ]
+                        [ viewCheckIcon ]
+
+                  else
+                    text ""
+                ]
+            , div [ class "rounded-full px-3 py-1 text-sm font-medium bg-blue-50 text-blue-700" ]
+                [ text tier.price ]
+            ]
+
+        -- Limits
+        , div [ class "mt-4 space-y-3" ]
+            [ div [ class "flex items-start" ]
+                [ div [ class "flex-shrink-0 h-5 w-5 text-green-500" ]
+                    [ viewSmallCheckIcon ]
+                , div [ class "ml-3 text-sm text-gray-500" ]
+                    [ text ("Up to " ++ String.fromInt tier.contactLimit ++ " contacts") ]
+                ]
+            , div [ class "flex items-start" ]
+                [ div [ class "flex-shrink-0 h-5 w-5 text-green-500" ]
+                    [ viewSmallCheckIcon ]
+                , div [ class "ml-3 text-sm text-gray-500" ]
+                    [ text ("Up to " ++ String.fromInt tier.agentLimit ++ " agents") ]
+                ]
+            ]
+
+        -- Features
+        , div [ class "mt-6" ]
+            [ h4 [ class "text-sm font-medium text-gray-900" ]
+                [ text "Includes:" ]
+            , ul [ class "mt-2 space-y-2" ]
+                (List.map viewFeature tier.features)
+            ]
+        ]
+
+
+
+-- Add this port for the embedded Stripe pricing table
+
+
+port stripeTableSelected : (String -> msg) -> Sub msg

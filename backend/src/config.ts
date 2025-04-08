@@ -39,6 +39,10 @@ if (fs.existsSync(path.join(process.cwd(), '.env'))) {
   dotenv.config()
 }
 
+// Look for mockStripe: true in the environment, if not found, default to true in development and false in production
+const useMockStripe = process.env.USE_MOCK_STRIPE === 'true' || 
+  (process.env.NODE_ENV === 'development' && process.env.USE_REAL_STRIPE !== 'true');
+
 export const config = {
   TURSO_DATABASE_URL: process.env.TURSO_DATABASE_URL,
   TURSO_AUTH_TOKEN: process.env.TURSO_AUTH_TOKEN,
@@ -57,15 +61,20 @@ export const config = {
     ? 'http://localhost:5173'
     : 'http://localhost:3000'),
   stripe: {
-    secretKey: process.env.STRIPE_SECRET_KEY || '',
-    publishableKey: process.env.STRIPE_PUBLISHABLE_KEY || '',
-    webhookSecret: process.env.STRIPE_WEBHOOK_SECRET || '',
+    secretKey: process.env.STRIPE_SECRET_KEY,
+    publishableKey: process.env.STRIPE_PUBLISHABLE_KEY,
+    webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
+    useMock: useMockStripe,
+    pricingTableId: process.env.STRIPE_PRICING_TABLE_ID || 'prctbl_1RAfz9CBUPXAZKNG0EyV8bRU',
     prices: {
-      basic: process.env.STRIPE_PRICE_BASIC || '',
-      pro: process.env.STRIPE_PRICE_PRO || '',
-      enterprise: process.env.STRIPE_PRICE_ENTERPRISE || '',
-      extraAgent: process.env.STRIPE_PRICE_EXTRA_AGENT || '',
-      extraContact: process.env.STRIPE_PRICE_EXTRA_CONTACT || '',
+      basic: process.env.STRIPE_PRICE_BASIC || 'price_basic',
+      pro: process.env.STRIPE_PRICE_PRO || 'price_pro',
+      enterprise: process.env.STRIPE_PRICE_ENTERPRISE || 'price_enterprise',
+      contactBaseTier: process.env.STRIPE_PRICE_CONTACT_BASE_TIER || 'price_contact_base',
+      additionalContacts: process.env.STRIPE_PRICE_ADDITIONAL_CONTACTS || 'price_additional_contacts',
+      // Optional price IDs for legacy support
+      extraAgent: process.env.STRIPE_PRICE_EXTRA_AGENT,
+      extraContact: process.env.STRIPE_PRICE_EXTRA_CONTACT,
     },
     publicKey: process.env.STRIPE_PUBLIC_KEY,
     connectAccount: process.env.STRIPE_CONNECT_ACCOUNT,
