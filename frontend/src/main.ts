@@ -60,7 +60,6 @@ customElements.define('stripe-checkout', class extends HTMLElement {
   async mountCheckout() {
     const priceId = this.getAttribute('price-id');
     const meteredPriceId = this.getAttribute('metered-price-id');
-    const returnUrl = this.getAttribute('return-url') || window.location.href;
     const firstName = this.getAttribute('first-name');
     const lastName = this.getAttribute('last-name');
     const email = this.getAttribute('email');
@@ -116,7 +115,7 @@ customElements.define('stripe-checkout', class extends HTMLElement {
     }
   }
 
-  async createCheckoutSession(priceId: string, meteredPriceId: string | null, returnUrl: string, email?: string, name?: string) {
+  async createCheckoutSession(priceId: string, meteredPriceId: string | null, email?: string, name?: string) {
     try {
       console.log(`Creating checkout session for base price: ${priceId}, metered price: ${meteredPriceId}, email: ${email || 'not provided'}`);
       const response = await fetch('/api/create-checkout-session', {

@@ -3,7 +3,6 @@ module Onboarding exposing (Model, Msg, init, subscriptions, update, view)
 import Browser
 import Browser.Navigation as Nav
 import CarrierNaic exposing (Carrier(..), allCarriers, carrierToString)
-import Debug
 import Dict exposing (Dict)
 import File exposing (File)
 import File.Select as Select
@@ -550,24 +549,6 @@ update msg model =
 
                 Err err ->
                     -- Error fetching resume data, continue with current model
-                    let
-                        _ =
-                            case err of
-                                Http.BadUrl url ->
-                                    Debug.log "Resume API Error" ("Bad URL: " ++ url)
-
-                                Http.Timeout ->
-                                    Debug.log "Resume API Error" "Network timeout"
-
-                                Http.NetworkError ->
-                                    Debug.log "Resume API Error" "Network error"
-
-                                Http.BadStatus status ->
-                                    Debug.log "Resume API Error" ("Bad status: " ++ String.fromInt status)
-
-                                Http.BadBody message ->
-                                    Debug.log "Resume API Error" ("Bad response body: " ++ message)
-                    in
                     ( { model | loadingResumeData = False }, Cmd.none )
 
 
