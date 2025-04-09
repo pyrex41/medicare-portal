@@ -365,11 +365,11 @@ buildPlansBody contact =
         , ( "age", E.int contact.age )
         , ( "gender"
           , E.string
-                (if contact.gender == "Male" then
-                    "M"
+                (if String.contains "f" (String.toLower contact.gender) then
+                    "F"
 
                  else
-                    "F"
+                    "M"
                 )
           )
         , ( "tobacco", E.bool contact.tobacco )
@@ -802,7 +802,7 @@ update msg model =
                                 , carrierContracts = response.carrierContracts
                                 , loadingContact = False
                                 , name = Just (response.contact.firstName ++ " " ++ response.contact.lastName)
-                                , gender = Just response.contact.gender
+                                , gender = Just response.contact.gender |> Debug.log "Gender"
                                 , tobacco = Just response.contact.tobacco
                                 , state = Just response.contact.state
                                 , zip = Just response.contact.zipCode
