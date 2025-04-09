@@ -297,7 +297,7 @@ export const quotesRoutes = (app: Elysia) => {
             const requestBody: QuoteRequest = {
                 zip_code: body.zip_code,
                 state: body.state,
-                age: Number(body.age),
+                age: Math.max(65, Math.min(110, Number(body.age))),
                 tobacco: body.tobacco === 'true' || body.tobacco === true,
                 gender: body.gender,
                 plans: ['G', 'N'],
