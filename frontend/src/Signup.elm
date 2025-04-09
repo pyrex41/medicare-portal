@@ -2,6 +2,7 @@ module Signup exposing (Model, Msg, init, subscriptions, update, view)
 
 import Browser
 import Browser.Navigation as Nav
+import Char
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (..)
@@ -135,7 +136,33 @@ update msg model =
             )
 
         UpdatePhone value ->
-            ( { model | phone = value }, Cmd.none )
+            let
+                -- Filter out non-digit characters
+                digitsOnly =
+                    String.filter Char.isDigit value
+
+                -- Limit to 10 digits
+                limitedDigits =
+                    String.left 10 digitsOnly
+
+                -- Format the phone number as needed
+                formattedPhone =
+                    if String.length limitedDigits == 10 then
+                        "(" ++ String.left 3 limitedDigits ++ ") " ++ String.slice 3 6 limitedDigits ++ "-" ++ String.slice 6 10 limitedDigits
+
+                    else if String.length limitedDigits >= 7 then
+                        "(" ++ String.left 3 limitedDigits ++ ") " ++ String.slice 3 6 limitedDigits ++ "-" ++ String.slice 6 10 limitedDigits
+
+                    else if String.length limitedDigits >= 4 then
+                        "(" ++ String.left 3 limitedDigits ++ ") " ++ String.slice 3 10 limitedDigits
+
+                    else if String.length limitedDigits > 0 then
+                        "(" ++ limitedDigits
+
+                    else
+                        ""
+            in
+            ( { model | phone = formattedPhone }, Cmd.none )
 
         DebounceCheckEmail counter ->
             if counter == model.debounceCounter && model.emailStatus == Checking then
@@ -380,6 +407,7 @@ isValidForm model =
         && not (String.isEmpty model.lastName)
         && not (String.isEmpty model.organizationName)
         && not (String.isEmpty model.phone)
+        && (String.length (String.filter Char.isDigit model.phone) == 10)
         && (model.emailStatus == Available)
 
 

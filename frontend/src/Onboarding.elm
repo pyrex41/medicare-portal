@@ -14,6 +14,7 @@ import Json.Decode as Decode exposing (Decoder)
 import Json.Decode.Pipeline as Pipeline
 import Json.Encode as Encode
 import MyIcon
+import PriceModel
 import Task
 import Url exposing (Url)
 import Url.Builder exposing (absolute, int, string)
@@ -52,12 +53,7 @@ type alias Model =
     , logo : Maybe String
     , uploadingLogo : Bool
     , key : Nav.Key
-    , contactCount : String
-    , calculatedPrice : Maybe Int
-    , rolloverPercent : String
-    , commissionRate : String
-    , calculatedRevenue : Maybe Float
-    , firstYearRevenue : Maybe Float
+    , calculationInputs : PriceModel.CalculationInputs
     , calculatorExpanded : Bool
     , selectedCarriers : List Carrier
     , useSmartSend : Bool
@@ -154,6 +150,14 @@ init key url =
               }
             ]
 
+        calculationInputs : PriceModel.CalculationInputs
+        calculationInputs =
+            { contacts = 1000
+            , averageAge = 3.0
+            , rolloverPercent = 7
+            , commissionRate = 300
+            }
+
         initialModel =
             { user = currentUser
             , paymentStatus = ReadyToComplete
@@ -166,12 +170,7 @@ init key url =
             , logo = Nothing
             , uploadingLogo = False
             , key = key
-            , contactCount = "500"
-            , calculatedPrice = Just 60
-            , rolloverPercent = "3"
-            , commissionRate = "350"
-            , calculatedRevenue = Just 175000
-            , firstYearRevenue = Just 8750
+            , calculationInputs = calculationInputs
             , calculatorExpanded = False
             , selectedCarriers = []
             , useSmartSend = True
@@ -214,9 +213,9 @@ type Msg
     | GotLogoUrl String
     | ContinueClicked
     | BackClicked
-    | ContactCountChanged String
-    | RolloverPercentChanged String
-    | CommissionRateChanged String
+    | ContactCountChanged Int
+    | RolloverPercentChanged Float
+    | CommissionRateChanged Float
     | ToggleCalculator
     | ToggleCarrier Carrier
     | ToggleSmartSend
@@ -317,91 +316,42 @@ update msg model =
 
         ContactCountChanged count ->
             let
-                maybeInt =
-                    if String.isEmpty count then
-                        Nothing
+                oldCalculationInputs =
+                    model.calculationInputs
 
-                    else
-                        String.toInt count
-
-                calculatedPrice =
-                    maybeInt
-                        |> Maybe.map calculatePrice
-
-                -- Create a temporary model with the new count for parsing
-                tempModel =
-                    { model | contactCount = count }
-
-                maybeInputs =
-                    parseCalculationInputs tempModel
-
-                ( calculatedRevenue, firstYearRevenue ) =
-                    case maybeInputs of
-                        Just inputs ->
-                            let
-                                ( rev, firstYear ) =
-                                    calculateRevenue inputs
-                            in
-                            ( Just rev, Just firstYear )
-
-                        Nothing ->
-                            ( Nothing, Nothing )
+                newCalculationInputs =
+                    { oldCalculationInputs | contacts = count }
             in
             ( { model
-                | contactCount = count
-                , calculatedPrice = calculatedPrice
-                , calculatedRevenue = calculatedRevenue
-                , firstYearRevenue = firstYearRevenue
+                | calculationInputs = newCalculationInputs
               }
             , Cmd.none
             )
 
         RolloverPercentChanged percent ->
             let
-                maybeInputs =
-                    parseCalculationInputsWithRollover model percent
+                oldCalculationInputs =
+                    model.calculationInputs
 
-                ( calculatedRevenue, firstYearRevenue ) =
-                    case maybeInputs of
-                        Just inputs ->
-                            let
-                                ( rev, firstYear ) =
-                                    calculateRevenue inputs
-                            in
-                            ( Just rev, Just firstYear )
-
-                        Nothing ->
-                            ( Nothing, Nothing )
+                newCalculationInputs =
+                    { oldCalculationInputs | rolloverPercent = percent }
             in
             ( { model
-                | rolloverPercent = percent
-                , calculatedRevenue = calculatedRevenue
-                , firstYearRevenue = firstYearRevenue
+                | calculationInputs = newCalculationInputs
               }
             , Cmd.none
             )
 
         CommissionRateChanged rate ->
             let
-                maybeInputs =
-                    parseCalculationInputsWithCommission model rate
+                oldCalculationInputs =
+                    model.calculationInputs
 
-                ( calculatedRevenue, firstYearRevenue ) =
-                    case maybeInputs of
-                        Just inputs ->
-                            let
-                                ( rev, firstYear ) =
-                                    calculateRevenue inputs
-                            in
-                            ( Just rev, Just firstYear )
-
-                        Nothing ->
-                            ( Nothing, Nothing )
+                newCalculationInputs =
+                    { oldCalculationInputs | commissionRate = rate }
             in
             ( { model
-                | commissionRate = rate
-                , calculatedRevenue = calculatedRevenue
-                , firstYearRevenue = firstYearRevenue
+                | calculationInputs = newCalculationInputs
               }
             , Cmd.none
             )
@@ -576,75 +526,6 @@ calculatePrice contacts =
 
 
 -- Calculate revenue based on contacts, average age, and rollover percent
-
-
-calculateRevenue : CalculationInputs -> ( Float, Float )
-calculateRevenue inputs =
-    let
-        -- Constants
-        maxYears =
-            6.0
-
-        ltvDiscount =
-            0.75
-
-        -- account for cancellations
-        -- Calculate LTV metrics
-        ltvPerContact =
-            inputs.commissionRate * maxYears * ltvDiscount
-
-        -- Average remaining LTV based on current age
-        avgLtv =
-            ltvPerContact * (maxYears - inputs.averageAge) / maxYears
-
-        -- Average LTV after rollover (adds another cycle)
-        avgLtvNew =
-            ltvPerContact * (maxYears - inputs.averageAge + maxYears) / maxYears
-
-        -- Convert percentage to fraction
-        rolloverFraction =
-            inputs.rolloverPercent / 100.0
-
-        -- Calculate future revenue
-        oldFutureRevenue =
-            avgLtv * toFloat inputs.contacts
-
-        -- New future revenue (non-rollovers + rollovers)
-        newFutureRevenue =
-            (avgLtv * toFloat inputs.contacts * (1 - rolloverFraction))
-                + (avgLtvNew * toFloat inputs.contacts * rolloverFraction)
-
-        -- Additional revenue from rollovers
-        additionalRevenue =
-            newFutureRevenue - oldFutureRevenue
-
-        -- First year additional revenue
-        -- Based on the proportion of contacts at or beyond max age
-        -- that would generate immediate additional revenue
-        contactsAtMaxAge =
-            if inputs.averageAge >= maxYears / 2 then
-                -- Calculate percentage of contacts at or beyond max age
-                -- based on even distribution assumption
-                let
-                    percentAtMaxAge =
-                        (inputs.averageAge + (maxYears / 2))
-                            / maxYears
-                            |> Basics.min 1.0
-                            |> Basics.max 0.0
-                in
-                percentAtMaxAge * toFloat inputs.contacts * rolloverFraction
-
-            else
-                -- Few or no contacts at max age yet
-                0
-
-        firstYearAdditional =
-            contactsAtMaxAge * inputs.commissionRate
-    in
-    ( additionalRevenue, firstYearAdditional )
-
-
-
 -- Handle navigation if needed
 -- VIEW
 
@@ -711,7 +592,7 @@ viewPricing model =
                             ]
                         , div [ class "mt-4" ]
                             [ p [ class "text-sm text-gray-500" ]
-                                [ text "Our base subscription includes all features of the Medicare Max portal platform and allows you to manage up to 500 contacts." ]
+                                [ text "Our base subscription includes all features of the Medicare Max portal platform and allows you to automate retention of up to 500 contacts." ]
                             ]
                         ]
                     ]
@@ -775,8 +656,8 @@ viewPricing model =
                                                 , id "contact-count"
                                                 , type_ "number"
                                                 , placeholder "Enter number"
-                                                , value model.contactCount
-                                                , onInput ContactCountChanged
+                                                , value (String.fromInt model.calculationInputs.contacts)
+                                                , onInput (\str -> ContactCountChanged (String.toInt str |> Maybe.withDefault 0))
                                                 , Html.Attributes.min "0"
                                                 , Html.Attributes.step "1"
                                                 ]
@@ -797,8 +678,8 @@ viewPricing model =
                                                 , id "commission-rate"
                                                 , type_ "number"
                                                 , placeholder "Commission"
-                                                , value model.commissionRate
-                                                , onInput CommissionRateChanged
+                                                , value (String.fromFloat model.calculationInputs.commissionRate)
+                                                , onInput (\str -> CommissionRateChanged (String.toFloat str |> Maybe.withDefault 0))
                                                 , Html.Attributes.min "0"
                                                 , Html.Attributes.step "5"
                                                 ]
@@ -819,8 +700,8 @@ viewPricing model =
                                                 , id "rollover-percent"
                                                 , type_ "number"
                                                 , placeholder "Rollover"
-                                                , value model.rolloverPercent
-                                                , onInput RolloverPercentChanged
+                                                , value (String.fromFloat model.calculationInputs.rolloverPercent)
+                                                , onInput (\str -> RolloverPercentChanged (String.toFloat str |> Maybe.withDefault 0))
                                                 , Html.Attributes.min "0"
                                                 , Html.Attributes.max "100"
                                                 , Html.Attributes.step "0.1"
@@ -830,138 +711,7 @@ viewPricing model =
                                         ]
                                     ]
                                 ]
-                            , div [ class "bg-white p-4 rounded-md shadow-sm border border-gray-200" ]
-                                [ h4 [ class "text-md font-medium text-gray-800 mb-4" ] [ text "Subscription Cost" ]
-                                , table [ class "w-full text-sm" ]
-                                    [ tbody []
-                                        [ tr [ class "border-b border-gray-200" ]
-                                            [ td [ class "py-2 text-gray-600" ] [ text "Base subscription:" ]
-                                            , td [ class "py-2 text-right font-medium" ] [ text "$60/month" ]
-                                            ]
-                                        , if model.calculatedPrice /= Just 60 then
-                                            tr [ class "border-b border-gray-200" ]
-                                                [ td [ class "py-2 text-gray-600" ] [ text "Additional contacts cost:" ]
-                                                , td [ class "py-2 text-right font-medium" ]
-                                                    [ text <| "$" ++ String.fromInt (Maybe.withDefault 0 model.calculatedPrice - 60) ++ "/month" ]
-                                                ]
-
-                                          else
-                                            text ""
-                                        , tr [ class "border-b border-gray-200" ]
-                                            [ td [ class "py-2 font-medium" ] [ text "Monthly total:" ]
-                                            , td [ class "py-2 text-right font-bold text-indigo-600" ]
-                                                [ text <| "$" ++ String.fromInt (Maybe.withDefault 0 model.calculatedPrice) ]
-                                            ]
-                                        , tr []
-                                            [ td [ class "py-2 font-medium" ] [ text "Annual total:" ]
-                                            , td [ class "py-2 text-right font-bold text-indigo-600" ]
-                                                [ text <| "$" ++ String.fromInt (Maybe.withDefault 0 model.calculatedPrice * 12) ]
-                                            ]
-                                        ]
-                                    ]
-                                ]
-                            , div [ class "bg-white p-4 rounded-md shadow-sm border border-gray-200" ]
-                                [ h4 [ class "text-md font-medium text-gray-800 mb-4" ] [ text "Revenue Impact" ]
-                                , p [ class "text-xs text-gray-600 mb-4 italic" ]
-                                    [ text "Calculations assume an average book age of 3 years, discounted to account for cancellations." ]
-                                , let
-                                    inputs =
-                                        case parseCalculationInputs model of
-                                            Just i ->
-                                                i
-
-                                            Nothing ->
-                                                { contacts = 0
-                                                , averageAge = 0
-                                                , rolloverPercent = 0
-                                                , commissionRate = 0
-                                                }
-
-                                    -- Constants
-                                    maxYears =
-                                        6.0
-
-                                    ltvDiscountMultiplier =
-                                        0.75
-
-                                    -- Basic calculations
-                                    ltvPerContact =
-                                        inputs.commissionRate * maxYears * ltvDiscountMultiplier
-
-                                    rolloverFraction =
-                                        inputs.rolloverPercent / 100.0
-
-                                    contactsRolledOver =
-                                        toFloat inputs.contacts * rolloverFraction
-
-                                    -- LTV calculations
-                                    remainingYears =
-                                        maxYears - inputs.averageAge
-
-                                    additionalYearsForRolled =
-                                        maxYears - remainingYears
-
-                                    additionalYearsDiscount =
-                                        (1 - ltvDiscountMultiplier) * additionalYearsForRolled / maxYears
-
-                                    additionalYearsDiscountMultiplier =
-                                        1 - additionalYearsDiscount
-
-                                    ltvGainPerContact =
-                                        inputs.commissionRate * additionalYearsForRolled * additionalYearsDiscountMultiplier
-
-                                    ltvGainPerYear =
-                                        ltvGainPerContact * contactsRolledOver
-
-                                    contactsAtMaxAge =
-                                        -- assumes equal distribution across 6 years
-                                        toFloat inputs.contacts / 6.0
-
-                                    firstYearPayout =
-                                        contactsAtMaxAge * inputs.commissionRate * rolloverFraction
-
-                                    -- Return on investment
-                                    annualCost =
-                                        toFloat (Maybe.withDefault 0 model.calculatedPrice * 12)
-
-                                    roi =
-                                        (ltvGainPerYear / annualCost) |> (\x -> toFloat (Basics.round (x * 10)) / 10)
-                                  in
-                                  div [ class "space-y-4" ]
-                                    [ div [ class "grid grid-cols-1 gap-2" ]
-                                        [ div [ class "flex justify-between items-center border-b border-gray-200 py-2" ]
-                                            [ div [ class "text-gray-600 truncate pr-4" ] [ text "Lifetime Revenue Per Contact:" ]
-                                            , div [ class "text-right font-medium whitespace-nowrap" ]
-                                                [ text <| "$" ++ formatPreciseMoney ltvPerContact ]
-                                            ]
-                                        , div [ class "flex justify-between items-center border-b border-gray-200 py-2" ]
-                                            [ div [ class "text-gray-600 truncate pr-4" ] [ text "Lifetime Gain Per Contact Rolled Over:" ]
-                                            , div [ class "text-right font-medium whitespace-nowrap" ]
-                                                [ text <| "$" ++ formatPreciseMoney ltvGainPerContact ]
-                                            ]
-                                        , div [ class "flex justify-between items-center border-b border-gray-200 py-2" ]
-                                            [ div [ class "text-gray-600 truncate pr-4" ] [ text "Contacts Rolled Over Per Year:" ]
-                                            , div [ class "text-right font-medium whitespace-nowrap" ]
-                                                [ text <| formatNumber contactsRolledOver ]
-                                            ]
-                                        , div [ class "flex justify-between items-center border-b border-gray-200 py-2" ]
-                                            [ div [ class "text-gray-600 truncate pr-4" ] [ text "Average First Year Payout:" ]
-                                            , div [ class "text-right font-medium text-green-600 whitespace-nowrap" ]
-                                                [ text <| "$" ++ formatPreciseMoney firstYearPayout ]
-                                            ]
-                                        , div [ class "flex justify-between items-center border-b border-gray-200 py-2" ]
-                                            [ div [ class "text-gray-600 truncate pr-4" ] [ text "Lifetime Revenue Added Per Year:" ]
-                                            , div [ class "text-right font-medium text-green-600 whitespace-nowrap" ]
-                                                [ text <| "$" ++ formatPreciseMoney ltvGainPerYear ]
-                                            ]
-                                        , div [ class "flex justify-between items-center py-2" ]
-                                            [ div [ class "font-medium text-gray-700 truncate pr-4" ] [ text "Return on Investment:" ]
-                                            , div [ class "text-right font-bold text-indigo-700 whitespace-nowrap" ]
-                                                [ text <| String.fromFloat roi ++ "x" ]
-                                            ]
-                                        ]
-                                    ]
-                                ]
+                            , PriceModel.view model.calculationInputs
                             ]
                         ]
 
@@ -1518,218 +1268,6 @@ buildUrl model frame =
 
 
 -- Helper function to format precise money values with 2 decimal places
-
-
-formatPreciseMoney : Float -> String
-formatPreciseMoney value =
-    let
-        -- Round to 2 decimal places
-        roundedValue =
-            round10 2 value
-
-        -- Format the number with commas and 2 decimal places
-        valueStr =
-            String.fromFloat roundedValue
-    in
-    formatMoney valueStr
-
-
-
--- Helper function to format money values
-
-
-formatMoney : String -> String
-formatMoney valueStr =
-    let
-        parts =
-            String.split "." valueStr
-
-        intPart =
-            List.head parts |> Maybe.withDefault ""
-
-        decPart =
-            List.drop 1 parts
-                |> List.head
-                |> Maybe.withDefault ""
-                |> (\s ->
-                        if String.length s == 0 then
-                            "00"
-
-                        else if String.length s == 1 then
-                            s ++ "0"
-
-                        else
-                            String.left 2 s
-                   )
-
-        -- Format integer part with commas
-        formattedInt =
-            addCommas intPart
-    in
-    formattedInt ++ "." ++ decPart
-
-
-
--- Add commas to numbers for better readability
-
-
-addCommas : String -> String
-addCommas str =
-    if String.length str <= 3 then
-        str
-
-    else
-        let
-            -- Recursively add commas
-            addCommasHelper : String -> String -> String
-            addCommasHelper acc remaining =
-                if String.length remaining <= 3 then
-                    remaining ++ acc
-
-                else
-                    let
-                        len =
-                            String.length remaining
-
-                        front =
-                            String.dropRight 3 remaining
-
-                        back =
-                            String.right 3 remaining
-                    in
-                    addCommasHelper ("," ++ back ++ acc) front
-        in
-        addCommasHelper "" str
-
-
-
--- Helper function to round to specific decimal places
-
-
-round10 : Int -> Float -> Float
-round10 n value =
-    let
-        factor =
-            10 ^ n |> toFloat
-    in
-    (value * factor) |> round |> toFloat |> (\x -> x / factor)
-
-
-
--- Helper function to parse calculation inputs from the model
-
-
-parseCalculationInputs : Model -> Maybe CalculationInputs
-parseCalculationInputs model =
-    let
-        maybeContacts =
-            String.toInt model.contactCount
-
-        -- Fixed average age value
-        averageAge =
-            3.0
-
-        maybeRollover =
-            String.toFloat model.rolloverPercent
-
-        maybeCommission =
-            String.toFloat model.commissionRate
-    in
-    Maybe.map3
-        (\c r rate ->
-            { contacts = c
-            , averageAge = averageAge
-            , rolloverPercent = r
-            , commissionRate = rate
-            }
-        )
-        maybeContacts
-        maybeRollover
-        maybeCommission
-
-
-
--- Helper to parse with a specific rollover override
-
-
-parseCalculationInputsWithRollover : Model -> String -> Maybe CalculationInputs
-parseCalculationInputsWithRollover model rolloverStr =
-    let
-        maybeContacts =
-            String.toInt model.contactCount
-
-        -- Fixed average age value
-        averageAge =
-            3.0
-
-        maybeRollover =
-            String.toFloat rolloverStr
-
-        maybeCommission =
-            String.toFloat model.commissionRate
-    in
-    Maybe.map3
-        (\c r rate ->
-            { contacts = c
-            , averageAge = averageAge
-            , rolloverPercent = r
-            , commissionRate = rate
-            }
-        )
-        maybeContacts
-        maybeRollover
-        maybeCommission
-
-
-
--- Helper to parse with a specific commission rate override
-
-
-parseCalculationInputsWithCommission : Model -> String -> Maybe CalculationInputs
-parseCalculationInputsWithCommission model commissionStr =
-    let
-        maybeContacts =
-            String.toInt model.contactCount
-
-        -- Fixed average age value
-        averageAge =
-            3.0
-
-        maybeRollover =
-            String.toFloat model.rolloverPercent
-
-        maybeCommission =
-            String.toFloat commissionStr
-    in
-    Maybe.map3
-        (\c r rate ->
-            { contacts = c
-            , averageAge = averageAge
-            , rolloverPercent = r
-            , commissionRate = rate
-            }
-        )
-        maybeContacts
-        maybeRollover
-        maybeCommission
-
-
-
--- Format a number with appropriate precision
-
-
-formatNumber : Float -> String
-formatNumber value =
-    if value == toFloat (round value) then
-        -- It's a whole number - show no decimals
-        String.fromInt (round value)
-
-    else
-        -- Show with appropriate precision
-        String.fromFloat (round10 1 value)
-
-
-
 -- Save company details to the API
 
 
