@@ -198,14 +198,7 @@ isStateActive schedule =
 -}
 getScheduledEmails : EmailSchedule -> List ScheduledEmail
 getScheduledEmails schedule =
-    if not (isStateActive schedule) then
-        [ { emailType = NoEmails
-          , scheduledTime = schedule.currentDate
-          , status = Skipped "Contact's state is not active"
-          }
-        ]
-
-    else if isInContinuousOpenEnrollment schedule.state then
+    if isInContinuousOpenEnrollment schedule.state then
         [ { emailType = NoEmails
           , scheduledTime = schedule.currentDate
           , status = Skipped "Contact's state has continuous open enrollment"
@@ -240,51 +233,54 @@ getScheduledEmails schedule =
                         else
                             currentYear
 
-                    -- Calculate next New Year's date
-                    nextNewYearDate : Date
-                    nextNewYearDate =
-                        let
-                            nextJan1 =
-                                Date.fromCalendarDate (currentYear + 1) Jan 1
-                        in
-                        nextJan1
+                    -- For September blast (previously October), use current year if September hasn't passed yet
+                    septemberThisYear : Date
+                    septemberThisYear =
+                        Date.fromCalendarDate currentYear Sep 1
 
-                    -- For October blast, use current year if October hasn't passed yet
-                    octoberThisYear : Date
-                    octoberThisYear =
-                        Date.fromCalendarDate currentYear Oct 1
-
-                    shouldUseNextYearForOctober : Bool
-                    shouldUseNextYearForOctober =
-                        Date.compare octoberThisYear schedule.currentDate == LT
+                    shouldUseNextYearForSeptember : Bool
+                    shouldUseNextYearForSeptember =
+                        Date.compare septemberThisYear schedule.currentDate == LT
 
                     result =
                         case emailType of
                             Birthday ->
-                                Date.fromCalendarDate
-                                    (nextBirthdayOrAnniversaryYear baseDate)
-                                    (Date.month baseDate)
-                                    (Date.day baseDate)
+                                -- Calculate birthday date then subtract 14 days
+                                let
+                                    nextBirthday =
+                                        Date.fromCalendarDate
+                                            (nextBirthdayOrAnniversaryYear baseDate)
+                                            (Date.month baseDate)
+                                            (Date.day baseDate)
+                                in
+                                Date.add Date.Days -14 nextBirthday
 
                             Anniversary ->
-                                Date.fromCalendarDate
-                                    (nextBirthdayOrAnniversaryYear baseDate)
-                                    (Date.month baseDate)
-                                    (Date.day baseDate)
-
-                            NewYear ->
-                                nextNewYearDate
+                                -- Calculate anniversary date then subtract 30 days
+                                let
+                                    nextAnniversary =
+                                        Date.fromCalendarDate
+                                            (nextBirthdayOrAnniversaryYear baseDate)
+                                            (Date.month baseDate)
+                                            (Date.day baseDate)
+                                in
+                                Date.add Date.Days -30 nextAnniversary
 
                             OctoberBlast ->
+                                -- Now using September 1st instead of October 1st
                                 Date.fromCalendarDate
-                                    (if shouldUseNextYearForOctober then
+                                    (if shouldUseNextYearForSeptember then
                                         currentYear + 1
 
                                      else
                                         currentYear
                                     )
-                                    Oct
+                                    Sep
                                     1
+
+                            NewYear ->
+                                -- Not used but keeping for type safety
+                                schedule.currentDate
 
                             NoEmails ->
                                 schedule.currentDate
@@ -441,8 +437,9 @@ getScheduledEmails schedule =
             emails =
                 [ planSpecificEmail Birthday
                 , planSpecificEmail Anniversary
-                , planSpecificEmail NewYear
                 , planSpecificEmail OctoberBlast
+
+                -- New Year email removed from the list
                 ]
         in
         -- Include both scheduled and delayed emails, but filter out skipped ones
@@ -551,16 +548,16 @@ scheduledEmailTypeToString : ScheduledEmailType -> String
 scheduledEmailTypeToString emailType =
     case emailType of
         Birthday ->
-            "Birthday"
+            "Birthday (14 days before)"
 
         Anniversary ->
-            "Anniversary"
+            "Anniversary (30 days before)"
 
         NewYear ->
             "New Year"
 
         OctoberBlast ->
-            "AEP Blast"
+            "AEP Reminder"
 
         NoEmails ->
             "No Scheduled Emails"

@@ -218,7 +218,7 @@ export class TursoService {
         },
         body: JSON.stringify({
           name: dbName,
-          group: 'default',
+          group: TURSO_CONFIG.GROUP_NAME,
         }),
       })
 

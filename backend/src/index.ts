@@ -1845,7 +1845,55 @@ const startServer = async () => {
           }
         }
       })
-      
+
+      .get('/api/contacts/email-tracking/:contactId', async ({ params, request }) => {
+        try {
+          logger.info(`Fetching email tracking records for contact ID: ${params.contactId}`);
+          
+          const user = await getUserFromSession(request);
+          if (!user) {
+            logger.warn(`Authentication failed when fetching email tracking for contact ID: ${params.contactId}`);
+            return {
+              success: false,
+              message: 'Authentication required'
+            };
+          }
+
+          const contactId = Number(params.contactId);
+          if (isNaN(contactId)) {
+            logger.warn(`Invalid contact ID provided: ${params.contactId}`);
+            return {
+              success: false,
+              message: 'Invalid contact ID'
+            };
+          }
+
+          logger.info(`User requesting email tracking for contact ID: ${contactId}`);
+          const orgDb = await Database.getOrgDb(user.organization_id.toString());
+          logger.info(`Fetching email tracking records from organization database`);
+
+          const trackingRecords = await orgDb.fetchAll(
+            `SELECT email_type,scheduled_date,send_status,send_mode FROM email_send_tracking 
+             WHERE contact_id = ? 
+             ORDER BY created_at DESC`,
+            [contactId.toString()]
+          );
+          
+          logger.info(`Found ${trackingRecords.length} email tracking records for contact ID: ${contactId}`);
+
+          return {
+            success: true,
+            trackingRecords
+          };
+        } catch (error) {
+          logger.error(`Error fetching email tracking records: ${error}`);
+          return {
+            success: false,
+            message: 'Failed to fetch email tracking records',
+            error: String(error)
+          };
+        }
+      })
       // Send quote email to contact
       .post('/api/contacts/:contactId/send-quote-email', async ({ params, request, body }) => {
         try {
@@ -1886,20 +1934,39 @@ const startServer = async () => {
           
           // Calculate base URL
           const baseUrl = process.env.PUBLIC_URL || 'http://localhost:5173';
-          let quoteUrl = `${baseUrl}/quote?id=${quoteId}&planType=${contact.plan_type}`;
+          let quoteUrl = `${baseUrl}/compare?id=${quoteId}&planType=${contact.plan_type}`;
 
           // Add organization ID to URL
           quoteUrl += `&orgId=${user.organization_id}`;
 
           // Send the email via SendGrid
           const emailService = new EmailService();
-          await emailService.sendQuoteEmail({
+          const result = await emailService.sendQuoteEmail({
             email: contact.email,
             firstName: contact.first_name,
             lastName: contact.last_name,
             quoteUrl,
             planType: contact.plan_type
           });
+
+          // Record in email tracking table
+          const now = new Date().toISOString();
+          const batchId = `manual-${Date.now()}-${contactId}`;
+          
+          await emailService.recordEmailSend(orgDb, {
+            orgId: user.organization_id,
+            contactId: contactId,
+            emailType: 'quote_email',
+            sendStatus: 'sent',
+            sendMode: 'production',
+            batchId: batchId,
+            messageId: result.messageId
+          });
+
+          const trackingRecord = await orgDb.fetchOne<{id: number, email_type: string, scheduled_date: string, send_status: string, send_mode: string}>(
+            'SELECT id, email_type, scheduled_date, send_status, send_mode FROM email_send_tracking WHERE batch_id = ?',
+            [batchId]
+          );
 
           // Update last_emailed timestamp
           await orgDb.execute(
@@ -1909,7 +1976,14 @@ const startServer = async () => {
 
           return {
             success: true,
-            message: 'Quote email sent successfully'
+            message: 'Quote email sent successfully',
+            trackingRecords: trackingRecord ? {
+              id: trackingRecord.id,
+              email_type: trackingRecord.email_type,
+              scheduled_date: trackingRecord.scheduled_date,
+              send_status: trackingRecord.send_status,
+              send_mode: trackingRecord.send_mode
+            } : null
           };
         } catch (error) {
           logger.error(`Error sending quote email: ${error}`);

@@ -441,6 +441,44 @@ export class Database {
         indexStatements: [
           `CREATE INDEX IF NOT EXISTS idx_leads_email ON leads(email)`
         ]
+      },
+      {
+        name: 'email_send_tracking',
+        createStatement: `CREATE TABLE IF NOT EXISTS email_send_tracking (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          org_id INTEGER NOT NULL,
+          contact_id TEXT NOT NULL,
+          email_type TEXT NOT NULL,
+          scheduled_date TEXT NOT NULL,
+          send_status TEXT NOT NULL CHECK(send_status IN ('pending', 'processing', 'accepted', 'delivered', 'sent', 'deferred', 'bounced', 'dropped', 'failed', 'skipped')) DEFAULT 'pending',
+          send_mode TEXT NOT NULL CHECK(send_mode IN ('test', 'production')) DEFAULT 'test',
+          test_email TEXT,
+          send_attempt_count INTEGER NOT NULL DEFAULT 0,
+          last_attempt_date TEXT,
+          last_error TEXT,
+          batch_id TEXT NOT NULL,
+          message_id TEXT,
+          delivery_status TEXT,
+          status_checked_at TEXT,
+          status_details TEXT,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )`,
+        indexStatements: [
+          `CREATE INDEX IF NOT EXISTS idx_email_tracking_batch_id ON email_send_tracking(batch_id)`,
+          `CREATE INDEX IF NOT EXISTS idx_email_tracking_send_status ON email_send_tracking(send_status)`,
+          `CREATE INDEX IF NOT EXISTS idx_email_tracking_send_mode ON email_send_tracking(send_mode)`,
+          `CREATE INDEX IF NOT EXISTS idx_email_tracking_contact_id ON email_send_tracking(contact_id)`,
+          `CREATE INDEX IF NOT EXISTS idx_email_tracking_contact_type ON email_send_tracking(contact_id, email_type)`,
+          `CREATE INDEX IF NOT EXISTS idx_email_tracking_status_date ON email_send_tracking(send_status, scheduled_date)`,
+          `CREATE INDEX IF NOT EXISTS idx_email_tracking_message_id ON email_send_tracking(message_id)`,
+          `CREATE INDEX IF NOT EXISTS idx_email_tracking_delivery_status ON email_send_tracking(delivery_status)`,
+          `CREATE TRIGGER IF NOT EXISTS update_email_tracking_timestamp 
+            AFTER UPDATE ON email_send_tracking 
+            BEGIN
+                UPDATE email_send_tracking SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id; 
+            END;`
+        ]
       }
     ];
     
@@ -758,6 +796,45 @@ export class Database {
         );
 
         CREATE INDEX idx_eligibility_answers_contact_id ON eligibility_answers(contact_id);
+        
+        -- Create email tracking table
+        CREATE TABLE email_send_tracking (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          org_id INTEGER NOT NULL,
+          contact_id TEXT NOT NULL,
+          email_type TEXT NOT NULL,
+          scheduled_date TEXT NOT NULL,
+          send_status TEXT NOT NULL CHECK(send_status IN ('pending', 'processing', 'accepted', 'delivered', 'sent', 'deferred', 'bounced', 'dropped', 'failed', 'skipped')) DEFAULT 'pending',
+          send_mode TEXT NOT NULL CHECK(send_mode IN ('test', 'production')) DEFAULT 'test',
+          test_email TEXT,
+          send_attempt_count INTEGER NOT NULL DEFAULT 0,
+          last_attempt_date TEXT,
+          last_error TEXT,
+          batch_id TEXT NOT NULL,
+          message_id TEXT,
+          delivery_status TEXT,
+          status_checked_at TEXT,
+          status_details TEXT,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        
+        -- Add indexes for email tracking table
+        CREATE INDEX idx_email_tracking_batch_id ON email_send_tracking(batch_id);
+        CREATE INDEX idx_email_tracking_send_status ON email_send_tracking(send_status);
+        CREATE INDEX idx_email_tracking_send_mode ON email_send_tracking(send_mode);
+        CREATE INDEX idx_email_tracking_contact_id ON email_send_tracking(contact_id);
+        CREATE INDEX idx_email_tracking_contact_type ON email_send_tracking(contact_id, email_type);
+        CREATE INDEX idx_email_tracking_status_date ON email_send_tracking(send_status, scheduled_date);
+        CREATE INDEX idx_email_tracking_message_id ON email_send_tracking(message_id);
+        CREATE INDEX idx_email_tracking_delivery_status ON email_send_tracking(delivery_status);
+        
+        -- Create trigger for email tracking updated_at
+        CREATE TRIGGER update_email_tracking_timestamp 
+        AFTER UPDATE ON email_send_tracking 
+        BEGIN 
+          UPDATE email_send_tracking SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id; 
+        END;
       `);
       
       // Read the CSV file
@@ -997,7 +1074,7 @@ export class Database {
     try {
       // Get all existing tables at once
       const existingTables = await orgDb.fetchAll(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('contacts', 'contact_events', 'leads', 'eligibility_answers')"
+        "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('contacts', 'contact_events', 'leads', 'eligibility_answers', 'email_send_tracking')"
       );
 
       // Create a set of existing table names for faster lookup
@@ -1086,6 +1163,42 @@ export class Database {
           `,
           indexSqls: [
             `CREATE INDEX IF NOT EXISTS idx_eligibility_answers_contact_id ON eligibility_answers(contact_id)`
+          ]
+        },
+        {
+          name: 'email_send_tracking',
+          createSql: `
+            CREATE TABLE IF NOT EXISTS email_send_tracking (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              org_id INTEGER NOT NULL,
+              contact_id TEXT NOT NULL,
+              email_type TEXT NOT NULL,
+              scheduled_date TEXT NOT NULL,
+              send_status TEXT NOT NULL CHECK(send_status IN ('pending', 'processing', 'accepted', 'delivered', 'sent', 'deferred', 'bounced', 'dropped', 'failed', 'skipped')) DEFAULT 'pending',
+              send_mode TEXT NOT NULL CHECK(send_mode IN ('test', 'production')) DEFAULT 'test',
+              test_email TEXT,
+              send_attempt_count INTEGER NOT NULL DEFAULT 0,
+              last_attempt_date TEXT,
+              last_error TEXT,
+              batch_id TEXT NOT NULL,
+              message_id TEXT,
+              delivery_status TEXT,
+              status_checked_at TEXT,
+              status_details TEXT,
+              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+          `,
+          indexSqls: [
+            `CREATE INDEX IF NOT EXISTS idx_email_tracking_batch_id ON email_send_tracking(batch_id)`,
+            `CREATE INDEX IF NOT EXISTS idx_email_tracking_send_status ON email_send_tracking(send_status)`,
+            `CREATE INDEX IF NOT EXISTS idx_email_tracking_send_mode ON email_send_tracking(send_mode)`,
+            `CREATE INDEX IF NOT EXISTS idx_email_tracking_contact_id ON email_send_tracking(contact_id)`,
+            `CREATE INDEX IF NOT EXISTS idx_email_tracking_contact_type ON email_send_tracking(contact_id, email_type)`,
+            `CREATE INDEX IF NOT EXISTS idx_email_tracking_status_date ON email_send_tracking(send_status, scheduled_date)`,
+            `CREATE INDEX IF NOT EXISTS idx_email_tracking_message_id ON email_send_tracking(message_id)`,
+            `CREATE INDEX IF NOT EXISTS idx_email_tracking_delivery_status ON email_send_tracking(delivery_status)`,
+            `CREATE TRIGGER IF NOT EXISTS update_email_tracking_timestamp AFTER UPDATE ON email_send_tracking BEGIN UPDATE email_send_tracking SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id; END`
           ]
         }
       ];

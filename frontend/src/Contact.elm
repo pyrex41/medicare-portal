@@ -139,6 +139,14 @@ type Modal
     | HealthAssessmentModal
 
 
+type alias EmailTrackingRecord =
+    { emailType : String
+    , scheduledDate : String
+    , sendStatus : String
+    , sendMode : String
+    }
+
+
 type alias Model =
     { key : Nav.Key
     , contact : Maybe Contact
@@ -146,7 +154,7 @@ type alias Model =
     , editForm : ContactForm
     , isSubmittingForm : Bool
     , error : Maybe String
-    , activities : List Activity
+    , emailTrackingRecords : List EmailTrackingRecord
     , isCheckingEmail : Bool
     , emailExists : Bool
     , isDeletingContact : Bool
@@ -279,6 +287,15 @@ stateCarrierSettingDecoder =
         (Decode.field "targetGI" Decode.bool)
 
 
+emailTrackingDecoder : Decoder EmailTrackingRecord
+emailTrackingDecoder =
+    Decode.succeed EmailTrackingRecord
+        |> Pipeline.required "email_type" Decode.string
+        |> Pipeline.required "scheduled_date" Decode.string
+        |> Pipeline.required "send_status" Decode.string
+        |> Pipeline.required "send_mode" Decode.string
+
+
 
 -- INIT
 
@@ -301,12 +318,8 @@ init key contactId =
                 (Date.fromCalendarDate 2024 Jan 1)
                 NoPlan
                 ""
-                -- Empty initial state
                 []
-                -- Empty initial state carrier settings
                 []
-
-        -- Empty initial state licenses
     in
     ( { key = key
       , contact = Nothing
@@ -314,7 +327,7 @@ init key contactId =
       , editForm = emptyForm
       , isSubmittingForm = False
       , error = Nothing
-      , activities = []
+      , emailTrackingRecords = []
       , isCheckingEmail = False
       , emailExists = False
       , isDeletingContact = False
@@ -333,6 +346,15 @@ init key contactId =
         [ Http.get
             { url = "/api/contacts/" ++ contactId
             , expect = Http.expectJson GotContact contactDecoder
+            }
+        , Http.get
+            { url = "/api/contacts/email-tracking/" ++ contactId
+            , expect =
+                Http.expectJson GotEmailTracking
+                    (Decode.map2 (\s r -> { success = s, trackingRecords = r })
+                        (Decode.field "success" Decode.bool)
+                        (Decode.field "trackingRecords" (Decode.list emailTrackingDecoder))
+                    )
             }
         , Http.get
             { url = "/api/contacts/" ++ contactId ++ "/eligibility"
@@ -378,7 +400,8 @@ type Msg
     | ToggleFollowUps
     | GotOrgSettings (Result Http.Error Settings)
     | SendQuoteEmail
-    | QuoteEmailSent (Result Http.Error { success : Bool, message : String })
+    | QuoteEmailSent (Result Http.Error { success : Bool, message : String, trackingRecord : Maybe EmailTrackingRecord })
+    | GotEmailTracking (Result Http.Error { success : Bool, trackingRecords : List EmailTrackingRecord })
     | ResetEmailSendState
 
 
@@ -836,9 +859,10 @@ update msg model =
                         , body = Http.jsonBody encodedBody
                         , expect =
                             Http.expectJson QuoteEmailSent
-                                (Decode.map2 (\s m -> { success = s, message = m })
+                                (Decode.map3 (\s m r -> { success = s, message = m, trackingRecord = r })
                                     (Decode.field "success" Decode.bool)
                                     (Decode.field "message" Decode.string)
+                                    (Decode.field "trackingRecord" (Decode.nullable emailTrackingDecoder))
                                 )
                         }
                     )
@@ -847,6 +871,15 @@ update msg model =
                     ( model, Cmd.none )
 
         QuoteEmailSent (Ok response) ->
+            let
+                updatedRecords =
+                    case response.trackingRecord of
+                        Just record ->
+                            record :: model.emailTrackingRecords
+
+                        Nothing ->
+                            model.emailTrackingRecords
+            in
             ( { model
                 | isGeneratingQuote = False
                 , emailSendSuccess = response.success
@@ -856,6 +889,7 @@ update msg model =
 
                     else
                         Just response.message
+                , emailTrackingRecords = updatedRecords
               }
             , if response.success then
                 Process.sleep 5000
@@ -873,6 +907,12 @@ update msg model =
               }
             , Cmd.none
             )
+
+        GotEmailTracking (Ok response) ->
+            ( { model | emailTrackingRecords = response.trackingRecords }, Cmd.none )
+
+        GotEmailTracking (Err _) ->
+            ( model, Cmd.none )
 
         ResetEmailSendState ->
             ( { model | emailSendSuccess = False }, Cmd.none )
@@ -894,7 +934,7 @@ view model =
                         div []
                             [ viewHeader contact model
                             , viewContactSummary contact model.quoteUrl model.isGeneratingQuote model.healthStatus model.eligibilityQuestions model.followUps model.timeZone model.showAllFollowUps
-                            , if model.orgSettings /= Nothing && isStateActive model.emailSchedule then
+                            , if model.orgSettings /= Nothing then
                                 div [ class "bg-white rounded-lg border border-gray-200 p-6 mb-8" ]
                                     [ viewFutureActivity (getScheduledEmails model.emailSchedule) ]
 
@@ -906,7 +946,7 @@ view model =
                                         , span [ class "ml-3 text-gray-500" ] [ text "Loading future activities..." ]
                                         ]
                                     ]
-                            , viewActivity model.activities
+                            , viewActivity model.emailTrackingRecords
                             ]
 
                     Nothing ->
@@ -947,7 +987,7 @@ viewHeader contact model =
         [ div [ class "flex items-center gap-4" ]
             [ h1 [ class "text-2xl font-semibold" ]
                 [ text (contact.firstName ++ " " ++ contact.lastName) ]
-            , viewStatus contact.status
+            , viewEmailStatus contact.status
             ]
         , div [ class "flex gap-2" ]
             [ button
@@ -1145,86 +1185,95 @@ viewField label value =
         ]
 
 
-viewActivity : List Activity -> Html Msg
-viewActivity activities =
+viewActivity : List EmailTrackingRecord -> Html Msg
+viewActivity records =
     div [ class "bg-white rounded-lg border border-gray-200 p-6" ]
-        [ h2 [ class "text-lg font-medium mb-6" ] [ text "Past Activity" ]
+        [ h2 [ class "text-lg font-medium mb-6" ] [ text "Email Activity" ]
         , table [ class "min-w-full" ]
             [ thead [ class "bg-gray-50" ]
                 [ tr []
-                    [ th [ class "px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase" ] [ text "Submission Date" ]
+                    [ th [ class "px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase" ] [ text "Date" ]
+                    , th [ class "px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase" ] [ text "Email Type" ]
                     , th [ class "px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase" ] [ text "Status" ]
-                    , th [ class "px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase" ] [ text "Carrier Selected" ]
-                    , th [ class "px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase" ] [ text "Plan Selected" ]
-                    , th [ class "px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase" ] [ text "Quote Amount" ]
+                    , th [ class "px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase" ] [ text "Mode" ]
                     ]
                 ]
             , tbody [ class "divide-y divide-gray-200" ]
-                (List.map viewActivityRow activities)
+                (List.map viewEmailTrackingRow records)
             ]
         ]
 
 
-viewActivityRow : Activity -> Html Msg
-viewActivityRow activity =
+viewEmailTrackingRow : EmailTrackingRecord -> Html Msg
+viewEmailTrackingRow record =
     tr [ class "hover:bg-gray-50" ]
-        [ td [ class "px-3 py-2 text-sm text-gray-900" ] [ text activity.submissionDate ]
-        , td [ class "px-3 py-2 text-sm" ] [ viewActivityStatus activity.status ]
-        , td [ class "px-3 py-2 text-sm text-gray-900" ] [ text (Maybe.withDefault "-" activity.carrierSelected) ]
-        , td [ class "px-3 py-2 text-sm text-gray-900" ] [ text (Maybe.withDefault "-" activity.planSelected) ]
-        , td [ class "px-3 py-2 text-sm text-gray-900" ]
-            [ text
-                (activity.quoteAmount
-                    |> Maybe.map (\amount -> "$" ++ String.fromFloat amount)
-                    |> Maybe.withDefault "-"
-                )
-            ]
+        [ td [ class "px-3 py-2 text-sm text-gray-900" ] [ text record.scheduledDate ]
+        , td [ class "px-3 py-2 text-sm text-gray-900" ] [ text (formatEmailType record.emailType) ]
+        , td [ class "px-3 py-2 text-sm" ] [ viewEmailStatus record.sendStatus ]
+        , td [ class "px-3 py-2 text-sm text-gray-900" ] [ text (formatSendMode record.sendMode) ]
         ]
 
 
-viewActivityStatus : ActivityStatus -> Html Msg
-viewActivityStatus status =
+formatEmailType : String -> String
+formatEmailType emailType =
+    case emailType of
+        "quote_email" ->
+            "Quote Email"
+
+        "follow_up_1" ->
+            "Follow-up #1"
+
+        "follow_up_2" ->
+            "Follow-up #2"
+
+        "follow_up_3" ->
+            "Follow-up #3"
+
+        "birthday" ->
+            "Birthday Email"
+
+        "anniversary" ->
+            "Anniversary Email"
+
+        _ ->
+            emailType
+
+
+formatSendMode : String -> String
+formatSendMode mode =
+    case mode of
+        "production" ->
+            "Production"
+
+        "test" ->
+            "Test"
+
+        _ ->
+            mode
+
+
+viewEmailStatus : String -> Html Msg
+viewEmailStatus status =
     let
         ( bgColor, textColor, statusText ) =
             case status of
-                QuoteCreated ->
-                    ( "bg-green-50", "text-green-700", "Quote Created" )
+                "sent" ->
+                    ( "bg-green-50", "text-green-700", "Sent" )
 
-                EmailOpened ->
-                    ( "bg-red-50", "text-red-700", "Email Opened" )
+                "scheduled" ->
+                    ( "bg-blue-50", "text-blue-700", "Scheduled" )
 
-                EmailSent n ->
-                    ( "bg-blue-50", "text-blue-700", "Email #" ++ String.fromInt n ++ " Sent" )
+                "failed" ->
+                    ( "bg-red-50", "text-red-700", "Failed" )
+
+                "opened" ->
+                    ( "bg-purple-50", "text-purple-700", "Opened" )
+
+                _ ->
+                    ( "bg-gray-50", "text-gray-700", status )
     in
     div [ class ("inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium " ++ bgColor ++ " " ++ textColor) ]
         [ text statusText ]
-
-
-viewStatus : String -> Html Msg
-viewStatus status =
-    let
-        ( bgColor, textColor ) =
-            case status of
-                "Quote Created" ->
-                    ( "bg-green-50", "text-green-700" )
-
-                "Opened Email" ->
-                    ( "bg-red-50", "text-red-700" )
-
-                "Email #2 Sent" ->
-                    ( "bg-blue-50", "text-blue-700" )
-
-                "Email #1 Sent" ->
-                    ( "bg-blue-50", "text-blue-700" )
-
-                "In Queue" ->
-                    ( "bg-orange-50", "text-orange-700" )
-
-                _ ->
-                    ( "bg-gray-50", "text-gray-700" )
-    in
-    div [ class ("inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium " ++ bgColor ++ " " ++ textColor) ]
-        [ text status ]
 
 
 viewModals : Model -> Html Msg
