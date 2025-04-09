@@ -1941,12 +1941,35 @@ const startServer = async () => {
 
           // Send the email via SendGrid
           const emailService = new EmailService();
+          
+          // Fetch organization data
+          const organization = await db.fetchOne<{
+            name: string;
+            logo_data: string;
+            primary_color: string;
+            phone: string;
+            website: string;
+          }>(
+            'SELECT name, logo_data, primary_color, phone, website FROM organizations WHERE id = ?',
+            [user.organization_id]
+          );
+          
+          // Log more details about the logo data
+          if (organization?.logo_data) {
+            const logoDataPrefix = organization.logo_data.substring(0, 50);
+            logger.info(`Logo data prefix: ${logoDataPrefix}...`);
+          }
+          
+          // Log the presence of logo data
+          logger.info(`Sending quote email for org ${user.organization_id} with logo: ${organization?.logo_data ? 'Present' : 'Missing'}`);
+          
           const result = await emailService.sendQuoteEmail({
             email: contact.email,
             firstName: contact.first_name,
             lastName: contact.last_name,
             quoteUrl,
-            planType: contact.plan_type
+            planType: contact.plan_type,
+            organization: organization || undefined
           });
 
           // Record in email tracking table
