@@ -1,0 +1,9 @@
+ALTER TABLE contacts
+ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP;
+
+CREATE TRIGGER update_contacts_updated_at
+AFTER UPDATE ON contacts
+FOR EACH ROW
+BEGIN
+  UPDATE contacts SET updated_at = CURRENT_TIMESTAMP WHERE id = OLD.id;
+END;

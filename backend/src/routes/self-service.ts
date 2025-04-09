@@ -336,6 +336,7 @@ export function createSelfServiceRoutes() {
         };
 
         logger.info(`Output: ${JSON.stringify(output)}`);
+        set.status = 200;
         return output;
 
       } catch (error) {
@@ -430,7 +431,9 @@ export function createSelfServiceRoutes() {
         // For the 'latest' slug, get the current user's organization
         if (orgSlug === 'latest') {
           const userFromSession = await getUserFromSession(request);
-          if (!userFromSession || !userFromSession.organization_id) {
+          
+          // Add type guard to check for organization_id
+          if (!userFromSession || !('organization_id' in userFromSession) || !userFromSession.organization_id) {
             set.status = 401;
             return { success: false, error: 'Unauthorized' };
           }
