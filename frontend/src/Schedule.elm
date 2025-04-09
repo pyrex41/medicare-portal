@@ -516,7 +516,7 @@ viewDeclineButtons model info =
             [ h3 [ class "text-[#03045E] font-bold text-base mb-3" ]
                 [ text "Interested in an Advantage Plan?" ]
             , p [ class "text-[#03045E] text-sm mb-6 leading-relaxed" ]
-                [ text "We can switch you to an Advantage Plan during the Annual Enrollment Period (Oct. 7 - Dec. 7) - Click below so we know to contact you during AEP." ]
+                [ text "We can switch you to an Advantage Plan during the Annual Enrollment Period (Oct. 15 - Dec. 7) - Click below and we will be sure to reach out at the end of September to to begin the Advantage Plan Process." ]
             , if model.isSubmittingAEP then
                 button
                     [ class "flex items-center justify-center w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] transition cursor-wait"
