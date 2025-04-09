@@ -1479,7 +1479,7 @@ viewGvsNModal : Model -> Html Msg
 viewGvsNModal model =
     if model.showGvsNVideo then
         div [ class "fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4 backdrop-blur-sm" ]
-            [ div [ class "bg-white rounded-lg p-4 sm:p-6 w-[95%] max-w-5xl mx-auto shadow-lg relative max-h-[90vh] overflow-y-auto" ]
+            [ div [ class "bg-white rounded-lg p-4 sm:p-6 w-[95%] max-w-5xl mx-auto shadow-lg relative h-[90vh] overflow-y-auto flex flex-col" ]
                 [ button
                     [ class "absolute top-2 right-2 text-gray-500 hover:text-gray-700 text-xl p-1 z-10"
                     , onClick CloseGvsNVideo
@@ -1488,8 +1488,8 @@ viewGvsNModal model =
                 , h2 [ class "text-lg sm:text-2xl font-bold mb-1 sm:mb-2 text-center" ] [ text "Plan G vs. Plan N" ]
                 , p [ class "mb-1 sm:mb-2 text-center text-xs sm:text-base" ] [ text "Understanding the differences" ]
                 , p [ class "mb-2 sm:mb-4 text-center text-xs sm:text-base" ] [ text "Watch this video to learn about the key differences between Plan G and Plan N" ]
-                , div [ class "w-full max-w-3xl mx-auto" ]
-                    [ div [ class "relative", style "padding-top" "56.25%" ]
+                , div [ class "w-full max-w-3xl mx-auto flex-grow flex flex-col justify-center" ]
+                    [ div [ class "relative w-full", style "padding-top" "min(75%, 65vh)" ]
                         [ iframe
                             [ src "https://player.vimeo.com/video/1018402330?autoplay=0&title=0&byline=0&portrait=0&responsive=1"
                             , class "w-full h-full absolute top-0 left-0"
@@ -1511,17 +1511,17 @@ viewQualificationModal : Model -> Html Msg
 viewQualificationModal model =
     if model.showQualificationVideo then
         div [ class "fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4 backdrop-blur-sm" ]
-            [ div [ class "bg-white rounded-lg p-4 sm:p-6 w-[95%] max-w-5xl mx-auto shadow-lg max-h-[90vh] overflow-y-auto" ]
+            [ div [ class "bg-white rounded-lg p-4 sm:p-6 w-[95%] max-w-5xl mx-auto shadow-lg h-[90vh] overflow-y-auto flex flex-col" ]
                 [ button
-                    [ class "absolute top-2 right-2 text-gray-500 hover:text-gray-700 text-xl p-1"
+                    [ class "absolute top-2 right-2 text-gray-500 hover:text-gray-700 text-xl p-1 z-10"
                     , onClick CloseQualificationVideo
                     ]
                     [ text "×" ]
                 , h1 [ class "text-lg sm:text-2xl font-bold mb-1 sm:mb-2 text-center" ] [ text "Great Choice!" ]
                 , h2 [ class "text-base sm:text-xl font-bold mb-1 sm:mb-2 text-center" ] [ text "Now let's see if you qualify" ]
                 , p [ class "mb-2 sm:mb-4 text-center text-xs sm:text-base" ] [ text "Watch this video to understand the process of qualifying for the plan you selected" ]
-                , div [ class "w-full max-w-3xl mx-auto" ]
-                    [ div [ class "relative", style "padding-top" "56.25%" ]
+                , div [ class "w-full max-w-3xl mx-auto flex-grow flex flex-col justify-center" ]
+                    [ div [ class "relative w-full", style "padding-top" "min(75%, 65vh)" ]
                         [ iframe
                             [ src "https://player.vimeo.com/video/1018421414?autoplay=0&title=0&byline=0&portrait=0&responsive=1"
                             , class "w-full h-full absolute top-0 left-0"
@@ -1573,9 +1573,9 @@ viewRatesModal model =
                         "Plan N"
         in
         div [ class "fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4 backdrop-blur-sm" ]
-            [ div [ class "bg-white rounded-lg p-4 sm:p-6 w-[95%] max-w-5xl mx-auto shadow-lg max-h-[90vh] overflow-y-auto" ]
+            [ div [ class "bg-white rounded-lg p-4 sm:p-6 w-[95%] max-w-5xl mx-auto shadow-lg h-[90vh] overflow-y-auto flex flex-col" ]
                 [ button
-                    [ class "absolute top-2 right-2 text-gray-500 hover:text-gray-700 text-xl p-1"
+                    [ class "absolute top-2 right-2 text-gray-500 hover:text-gray-700 text-xl p-1 z-10"
                     , onClick CloseRatesVideo
                     ]
                     [ text "×" ]
@@ -1583,8 +1583,8 @@ viewRatesModal model =
                 , h2 [ class "text-xs sm:text-base font-bold mb-1 sm:mb-2 text-center leading-tight" ]
                     [ text ("We found " ++ planTypeText ++ " options as low as " ++ rateText ++ " in " ++ countyText ++ " County, " ++ stateText) ]
                 , p [ class "mb-2 sm:mb-4 text-center text-xs sm:text-base" ] [ text "Watch this quick video for 3 things to consider while reviewing your quotes" ]
-                , div [ class "w-full max-w-3xl mx-auto" ]
-                    [ div [ class "relative", style "padding-top" "56.25%" ]
+                , div [ class "w-full max-w-3xl mx-auto flex-grow flex flex-col justify-center" ]
+                    [ div [ class "relative w-full", style "padding-top" "min(75%, 65vh)" ]
                         [ iframe
                             [ src "https://player.vimeo.com/video/1018421439?autoplay=0&title=0&byline=0&portrait=0&responsive=1"
                             , class "w-full h-full absolute top-0 left-0"
