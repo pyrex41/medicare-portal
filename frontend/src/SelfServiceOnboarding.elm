@@ -2,7 +2,7 @@ port module SelfServiceOnboarding exposing (..)
 
 import Browser
 import Browser.Navigation as Nav
-import CarrierNaic exposing (Carrier, carrierDecoder)
+import CarrierNaic exposing (Carrier, allCarriers, carrierDecoder, carrierToString)
 import Date exposing (Date)
 import Dict
 import Html exposing (..)
@@ -48,6 +48,7 @@ type alias Model =
     , phoneNumber : String
     , currentPremium : String
     , currentCarrier : String
+    , planType : String
     , optInQuarterlyUpdates : Bool
     , emailReadOnly : Bool
     , isSubmitting : Bool
@@ -115,6 +116,7 @@ init key url =
             , phoneNumber = ""
             , currentPremium = ""
             , currentCarrier = ""
+            , planType = ""
             , optInQuarterlyUpdates = True
             , emailReadOnly = False
             , isSubmitting = False
@@ -333,6 +335,7 @@ type Msg
     | UpdatePhoneNumber String
     | UpdateCurrentPremium String
     | UpdateCurrentCarrier String
+    | UpdatePlanType String
     | UpdateSelectedCounty String
     | SubmitForm
     | GotCurrentDate Date
@@ -466,6 +469,7 @@ update msg model =
                         , tobacco = Maybe.map .tobacco contact |> Maybe.withDefault model.tobacco
                         , zipCode = Maybe.map .zipCode contact |> Maybe.withDefault model.zipCode
                         , currentCarrier = Maybe.map .currentCarrier contact |> Maybe.withDefault Nothing |> Maybe.withDefault model.currentCarrier
+                        , planType = Maybe.map .planType contact |> Maybe.withDefault Nothing |> Maybe.withDefault model.planType
                         , optInQuarterlyUpdates = Maybe.map .optInQuarterlyUpdates contact |> Maybe.withDefault model.optInQuarterlyUpdates
                         , error = Nothing
                       }
@@ -647,6 +651,9 @@ update msg model =
         UpdateCurrentCarrier carrier ->
             ( { model | currentCarrier = carrier }, Cmd.none )
 
+        UpdatePlanType planType ->
+            ( { model | planType = planType }, Cmd.none )
+
         GotCurrentDate date ->
             ( { model | currentDate = Just date }, Cmd.none )
 
@@ -767,6 +774,7 @@ update msg model =
                         , tobacco = contact.tobacco
                         , zipCode = contact.zipCode
                         , currentCarrier = Maybe.withDefault "" contact.currentCarrier
+                        , planType = Maybe.withDefault "" contact.planType
                         , optInQuarterlyUpdates = contact.optInQuarterlyUpdates
                         , error = Nothing
                       }
@@ -921,6 +929,7 @@ encodeForm model =
         , ( "phoneNumber", Encode.string model.phoneNumber )
         , ( "currentPremium", Encode.string model.currentPremium )
         , ( "currentCarrier", Encode.string model.currentCarrier )
+        , ( "planType", Encode.string model.planType )
         , ( "state", Encode.string (Maybe.withDefault "" model.state) )
         , ( "county", Encode.string (Maybe.withDefault "" model.selectedCounty) )
         , ( "optInQuarterlyUpdates", Encode.bool model.optInQuarterlyUpdates )
@@ -1270,17 +1279,27 @@ viewCombinedForm model =
         , div [ class "grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-4" ]
             [ div [ class "col-span-1" ]
                 [ label [ class "block text-sm font-medium text-gray-700 mb-1" ] [ text "Current Carrier (optional)" ]
-                , div [ class "relative" ]
-                    [ input
-                        [ type_ "text"
-                        , class "w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-sky-500 focus:border-sky-500"
-                        , Html.Attributes.value model.currentCarrier
-                        , onInput UpdateCurrentCarrier
-                        ]
-                        []
-                    , div [ class "absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none" ]
-                        [ span [ class "text-gray-500" ] [ text "▼" ] ]
+                , select
+                    [ class "w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-sky-500 focus:border-sky-500"
+                    , onInput UpdateCurrentCarrier
                     ]
+                    ([ option [ value "" ] [ text "Select Current Carrier" ] ]
+                        ++ List.map
+                            (\carrier ->
+                                option
+                                    [ value (carrierToString carrier)
+                                    , selected (model.currentCarrier == carrierToString carrier)
+                                    ]
+                                    [ text (carrierToString carrier) ]
+                            )
+                            (List.sortBy carrierToString allCarriers)
+                        ++ [ option
+                                [ value "Other"
+                                , selected (model.currentCarrier == "Other")
+                                ]
+                                [ text "Other" ]
+                           ]
+                    )
                 ]
             , div [ class "col-span-1" ]
                 [ label [ class "block text-sm font-medium text-gray-700 mb-1" ] [ text "Current Monthly Premium (optional)" ]
@@ -1297,6 +1316,20 @@ viewCombinedForm model =
                         , placeholder "0.00"
                         ]
                         []
+                    ]
+                ]
+            ]
+        , div [ class "grid grid-cols-1 sm:grid-cols-1 gap-4 sm:gap-4" ]
+            [ div [ class "col-span-1" ]
+                [ label [ class "block text-sm font-medium text-gray-700 mb-1" ] [ text "Plan Type (optional)" ]
+                , select
+                    [ class "w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-sky-500 focus:border-sky-500"
+                    , onInput UpdatePlanType
+                    ]
+                    [ option [ value "" ] [ text "Select Plan Type" ]
+                    , option [ value "G", selected (model.planType == "G") ] [ text "Plan G" ]
+                    , option [ value "N", selected (model.planType == "N") ] [ text "Plan N" ]
+                    , option [ value "Other", selected (model.planType == "Other") ] [ text "Other" ]
                     ]
                 ]
             ]
@@ -1407,6 +1440,24 @@ viewFormSummary model =
             text ""
         , if not (String.isEmpty model.currentCarrier) then
             summaryItem "Current Carrier" model.currentCarrier
+
+          else
+            text ""
+        , if not (String.isEmpty model.planType) then
+            summaryItem "Plan Type"
+                (case model.planType of
+                    "G" ->
+                        "Plan G"
+
+                    "N" ->
+                        "Plan N"
+
+                    "Other" ->
+                        "Other"
+
+                    _ ->
+                        model.planType
+                )
 
           else
             text ""

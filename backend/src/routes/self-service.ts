@@ -13,6 +13,22 @@ interface ZipInfo {
   counties: string[];
 }
 
+// Import Contact type
+type Contact = {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  dateOfBirth: string;
+  gender: string;
+  tobacco: boolean;
+  state: string;
+  zipCode: string;
+  currentCarrier: string | null;
+  planType: string | null;
+  optInQuarterlyUpdates: boolean;
+};
+
 // Load ZIP data
 let ZIP_DATA: Record<string, ZipInfo> = {};
 try {
@@ -102,7 +118,7 @@ export function createSelfServiceRoutes() {
       logger.info('Starting signup process with detailed logging...');
       logger.info(`Request body: ${JSON.stringify(body, null, 2)}`);
       
-      const { orgId, email, firstName, lastName, optInQuarterlyUpdates, zipCode, dateOfBirth, gender, tobacco, phoneNumber, currentPremium, currentCarrier, state, county } = body as {
+      const { orgId, email, firstName, lastName, optInQuarterlyUpdates, zipCode, dateOfBirth, gender, tobacco, phoneNumber, currentPremium, currentCarrier, planType, state, county } = body as {
         orgId: string;
         email: string;
         firstName: string;
@@ -115,6 +131,7 @@ export function createSelfServiceRoutes() {
         phoneNumber: string;
         currentPremium: string;
         currentCarrier: string;
+        planType: string;
         state: string;
         county: string;
       };
@@ -183,7 +200,8 @@ export function createSelfServiceRoutes() {
                     gender = ?,
                     birth_date = ?,
                     tobacco_user = ?,
-                    current_carrier = ?
+                    current_carrier = ?,
+                    plan_type = ?
                     WHERE id = ?`,
               args: [
                 firstName, 
@@ -195,12 +213,14 @@ export function createSelfServiceRoutes() {
                 dateOfBirth,
                 tobacco ? 1 : 0,
                 currentCarrier || '', 
+                planType || null,
                 contactId
               ]
             });
             
             logger.info(`Successfully updated contact ${contactId}`);
             
+            set.status = 200;
             return { 
               success: true,
               contactId,
@@ -226,8 +246,9 @@ export function createSelfServiceRoutes() {
                     birth_date,
                     tobacco_user,
                     current_carrier,
+                    plan_type,
                     effective_date
-                  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
               args: [
                 email, 
                 firstName, 
@@ -239,6 +260,7 @@ export function createSelfServiceRoutes() {
                 dateOfBirth,
                 tobacco ? 1 : 0,
                 currentCarrier || null,
+                planType || null,
                 new Date().toISOString().split('T')[0]
               ]
             });
@@ -254,6 +276,7 @@ export function createSelfServiceRoutes() {
             const contactId = newContactResult.rows[0]?.id;
             logger.info(`Got new contact ID: ${contactId}`);
             
+            set.status = 200;
             return { 
               success: true,
               contactId,
@@ -394,6 +417,9 @@ export function createSelfServiceRoutes() {
           
           if (planTypeResult.rows.length > 0 && planTypeResult.rows[0].plan_type) {
             planType = planTypeResult.rows[0].plan_type;
+          } else {
+            // Default to MedSupp if no plan type is set
+            planType = 'MedSupp';
           }
           logger.info(`Found plan type ${planType} for contact ${contactId}`);
         } catch (error) {
@@ -409,6 +435,7 @@ export function createSelfServiceRoutes() {
         logger.info(`Redirect URL: ${redirectUrl}`);
 
         // Return successful response with quote information
+        set.status = 200;
         return {
           success: true,
           contactId,

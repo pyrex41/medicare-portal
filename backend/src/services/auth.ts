@@ -276,10 +276,18 @@ export function generateToken(): string {
 
 export async function getUserFromSession(request: Request) {
   try {
-    // Check if this is a call to the subscription/checkout endpoint (which should be public)
+    // Check if this is a public endpoint that should bypass auth
     const url = new URL(request.url);
+    
+    // Skip auth for subscription/checkout endpoint
     if (url.pathname === '/api/subscription/checkout') {
       logger.info('Skipping auth check for subscription/checkout endpoint');
+      return { skip_auth: true }; // Return a dummy user that won't trigger auth failures
+    }
+    
+    // Skip auth for all self-service endpoints
+    if (url.pathname.startsWith('/api/self-service/')) {
+      logger.info(`Skipping auth check for self-service endpoint: ${url.pathname}`);
       return { skip_auth: true }; // Return a dummy user that won't trigger auth failures
     }
 

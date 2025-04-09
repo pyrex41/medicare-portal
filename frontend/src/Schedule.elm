@@ -387,39 +387,37 @@ view model =
 
                       else
                         div [ class "flex flex-col max-w-xl mx-auto" ]
-                            [ div [ class "text-center" ]
-                                [ div [ class "border border-[#DCE2E5] shadow-sm overflow-hidden rounded-lg" ]
-                                    [ div [ class "bg-[#F9F5FF] p-6" ]
-                                        [ h1 [ class "text-3xl sm:text-4xl font-extrabold text-black mb-6" ]
-                                            [ text (getHeading model.status) ]
-                                        , p [ class "text-black text-base sm:text-lg leading-relaxed" ]
-                                            [ text (getMessage model.status) ]
-                                        ]
-                                    , div [ class "bg-white p-6 sm:p-8" ]
-                                        [ p [ class "text-[#667085] text-sm font-medium mb-6" ]
-                                            [ text "Select an Option Below" ]
-                                        , case model.error of
-                                            Just error ->
-                                                div [ class "bg-red-50 border border-red-400 text-red-700 px-4 py-3 rounded mb-6 text-base" ]
-                                                    [ text error ]
+                            [ div [ class "border border-[#DCE2E5] shadow-sm overflow-hidden rounded-lg" ]
+                                [ div [ class "bg-[#F9F5FF] p-6" ]
+                                    [ h1 [ class "text-2xl sm:text-3xl font-extrabold text-black mb-4" ]
+                                        [ text (getHeading model.status) ]
+                                    , p [ class "text-black text-base leading-relaxed" ]
+                                        [ text (getMessage model.status) ]
+                                    ]
+                                , div [ class "bg-white p-6 sm:p-8" ]
+                                    [ p [ class "text-[#667085] text-sm mb-6" ]
+                                        [ text "Select an Option Below" ]
+                                    , case model.error of
+                                        Just error ->
+                                            div [ class "bg-red-50 border border-red-400 text-red-700 px-4 py-3 rounded mb-6 text-base" ]
+                                                [ text error ]
 
-                                            Nothing ->
-                                                text ""
-                                        , case model.scheduleInfo of
-                                            Just info ->
-                                                case model.status of
-                                                    Accept ->
-                                                        viewAcceptButtons model info
+                                        Nothing ->
+                                            text ""
+                                    , case model.scheduleInfo of
+                                        Just info ->
+                                            case model.status of
+                                                Accept ->
+                                                    viewAcceptButtons model info
 
-                                                    Decline ->
-                                                        viewDeclineButtons model info
+                                                Decline ->
+                                                    viewDeclineButtons model info
 
-                                                    Generic ->
-                                                        viewGenericButtons model info
+                                                Generic ->
+                                                    viewGenericButtons model info
 
-                                            Nothing ->
-                                                text ""
-                                        ]
+                                        Nothing ->
+                                            text ""
                                     ]
                                 ]
                             ]
@@ -460,17 +458,21 @@ viewAcceptButtons model info =
                 ]
                 [ div [ class "flex items-center space-x-3" ]
                     [ span [ class "w-6 h-6 flex items-center justify-center" ]
-                        [ MyIcon.phoneOutgoing 24 "#03045E" ]
+                        [ MyIcon.phoneIncoming 24 "#03045E" ]
                     , span [ class "font-semibold text-base" ]
                         [ text ("Request a Call from " ++ info.agent.firstName) ]
                     ]
                 ]
         , if not (String.isEmpty info.agent.phone) then
-            div [ class "text-center text-[#03045E] font-bold text-base mt-6 space-y-2" ]
-                [ div [] [ text ("or give " ++ info.agent.firstName ++ " a call at:") ]
-                , div []
-                    [ a [ href ("tel:" ++ info.agent.phone), class "text-[#03045E]" ]
-                        [ text (formatPhoneNumber info.agent.phone) ]
+            a
+                [ href ("tel:" ++ info.agent.phone)
+                , class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
+                ]
+                [ div [ class "flex items-center space-x-3" ]
+                    [ span [ class "w-6 h-6 flex items-center justify-center" ]
+                        [ MyIcon.phoneOutgoing 24 "#03045E" ]
+                    , span [ class "font-semibold text-base" ]
+                        [ text ("Give " ++ info.agent.firstName ++ " a call: " ++ formatPhoneNumber info.agent.phone) ]
                     ]
                 ]
 
@@ -495,6 +497,21 @@ viewDeclineButtons model info =
                     [ text ("Schedule a Call with " ++ info.agent.firstName) ]
                 ]
             ]
+        , if not (String.isEmpty info.agent.phone) then
+            a
+                [ href ("tel:" ++ info.agent.phone)
+                , class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
+                ]
+                [ div [ class "flex items-center space-x-3" ]
+                    [ span [ class "w-6 h-6 flex items-center justify-center" ]
+                        [ MyIcon.phoneOutgoing 24 "#03045E" ]
+                    , span [ class "font-semibold text-base" ]
+                        [ text ("Give " ++ info.agent.firstName ++ " a call: " ++ formatPhoneNumber info.agent.phone) ]
+                    ]
+                ]
+
+          else
+            text ""
         , div [ class "mt-8 mb-4" ]
             [ h3 [ class "text-[#03045E] font-bold text-base mb-3" ]
                 [ text "Interested in an Advantage Plan?" ]
@@ -521,17 +538,6 @@ viewDeclineButtons model info =
                         ]
                     ]
             ]
-        , if not (String.isEmpty info.agent.phone) then
-            div [ class "text-center text-[#03045E] font-bold text-base mt-6 space-y-2" ]
-                [ div [] [ text ("or give " ++ info.agent.firstName ++ " a call at:") ]
-                , div []
-                    [ a [ href ("tel:" ++ info.agent.phone), class "text-[#03045E]" ]
-                        [ text (formatPhoneNumber info.agent.phone) ]
-                    ]
-                ]
-
-          else
-            text ""
         ]
 
 
@@ -566,17 +572,21 @@ viewGenericButtons model info =
                 ]
                 [ div [ class "flex items-center space-x-3" ]
                     [ span [ class "w-6 h-6 flex items-center justify-center" ]
-                        [ MyIcon.phoneOutgoing 24 "#03045E" ]
+                        [ MyIcon.phoneIncoming 24 "#03045E" ]
                     , span [ class "font-semibold text-base" ]
                         [ text ("Request a Call from " ++ info.agent.firstName) ]
                     ]
                 ]
         , if not (String.isEmpty info.agent.phone) then
-            div [ class "text-center text-[#03045E] font-bold text-base mt-6 space-y-2" ]
-                [ div [] [ text ("or give " ++ info.agent.firstName ++ " a call at:") ]
-                , div []
-                    [ a [ href ("tel:" ++ info.agent.phone), class "text-[#03045E]" ]
-                        [ text (formatPhoneNumber info.agent.phone) ]
+            a
+                [ href ("tel:" ++ info.agent.phone)
+                , class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
+                ]
+                [ div [ class "flex items-center space-x-3" ]
+                    [ span [ class "w-6 h-6 flex items-center justify-center" ]
+                        [ MyIcon.phoneOutgoing 24 "#03045E" ]
+                    , span [ class "font-semibold text-base" ]
+                        [ text ("Give " ++ info.agent.firstName ++ " a call: " ++ formatPhoneNumber info.agent.phone) ]
                     ]
                 ]
 
