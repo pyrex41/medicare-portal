@@ -1105,19 +1105,21 @@ viewFormStep model =
             ]
         , viewCombinedForm model
         , viewError model.error
-        , button
-            [ type_ "button"
-            , class "w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-[#03045E] hover:bg-[#02034e] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#3DBDEC] mt-6"
-            , onClick SubmitForm
-            , disabled (model.isSubmitting || not (isFormValid model))
-            ]
-            [ text
-                (if model.isSubmitting then
-                    "Submitting..."
+        , div [ class "flex justify-center mt-8" ]
+            [ button
+                [ type_ "button"
+                , class "w-48 flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-[#03045E] hover:bg-[#02034e] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#3DBDEC]"
+                , onClick SubmitForm
+                , disabled (model.isSubmitting || not (isFormValid model))
+                ]
+                [ text
+                    (if model.isSubmitting then
+                        "Submitting..."
 
-                 else
-                    "Submit"
-                )
+                     else
+                        "Submit"
+                    )
+                ]
             ]
         ]
 
@@ -1275,6 +1277,8 @@ viewCombinedForm model =
                     ]
                 ]
             ]
+
+        {--
         , h3 [ class "font-medium text-base sm:text-lg mb-4 text-gray-700" ] [ text "Current Coverage" ]
         , div [ class "grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-4" ]
             [ div [ class "col-span-1" ]
@@ -1337,6 +1341,7 @@ viewCombinedForm model =
             [ p [ class "text-sm text-[#475467]" ]
                 [ text "By clicking below, you agree to receive Medicare Supplement plan updates that can help you save money." ]
             ]
+        --}
         ]
 
 

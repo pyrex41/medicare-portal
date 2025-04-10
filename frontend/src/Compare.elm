@@ -1396,8 +1396,21 @@ viewPlansSection model =
                 (List.map (viewPlanCard model "G") (getTopPlans model model.plans.planG 3))
             ]
 
+        -- Mobile video button (between G and N plans)
+        , div [ class "block sm:hidden py-4 px-3 bg-white border-t border-[#DCE2E5]" ]
+            [ div [ class "mx-auto max-w-[280px] bg-[#F9F5FF] rounded-[10px] p-4 flex flex-row items-center cursor-pointer gap-4 border border-[#DCE2E5]", onClick OpenGvsNVideo ]
+                [ div [ class "w-[33px] h-[33px] rounded-full border border-[#03045E] flex items-center justify-center flex-shrink-0" ]
+                    [ div [ class "w-0 h-0 border-t-[8px] border-t-transparent border-l-[12px] border-l-[#03045E] border-b-[8px] border-b-transparent ml-1" ] []
+                    ]
+                , div [ class "flex flex-col items-start" ]
+                    [ p [ class "text-[16px] font-bold text-[#03045E] -tracking-[0.03em] leading-[1.21] text-left" ] [ text "Learn About Plan G vs N" ]
+                    , p [ class "text-[12px] text-[#667085] -tracking-[0.03em] leading-[1.21]" ] [ text "Watch the Video" ]
+                    ]
+                ]
+            ]
+
         -- Plan N Section
-        , div [ class "px-3 sm:px-4 py-6 bg-white" ]
+        , div [ class "px-3 sm:px-4 py-6 bg-white border-t border-[#DCE2E5]" ]
             [ h3 [ class "text-xl font-extrabold -tracking-[0.02em] mb-6 text-[#101828]" ] [ text "Plan N Monthly Premiums" ]
             , div [ class "flex flex-wrap gap-8 justify-center sm:justify-start sm:pl-8" ]
                 (List.map (viewPlanCard model "N") (getTopPlans model model.plans.planN 3))
@@ -1419,20 +1432,7 @@ view model =
                     [ -- Personal Quote Card
                       viewPersonalInfo model
 
-                    -- Mobile video button
-                    , div [ class "block sm:hidden mt-8 sm:mt-0" ]
-                        [ div [ class "mx-auto max-w-[280px] bg-[#F9F5FF] rounded-[10px] p-4 flex flex-row items-center cursor-pointer gap-4 border border-[#DCE2E5]", onClick OpenGvsNVideo ]
-                            [ div [ class "w-[33px] h-[33px] rounded-full border border-[#03045E] flex items-center justify-center flex-shrink-0" ]
-                                [ div [ class "w-0 h-0 border-t-[8px] border-t-transparent border-l-[12px] border-l-[#03045E] border-b-[8px] border-b-transparent ml-1" ] []
-                                ]
-                            , div [ class "flex flex-col items-start" ]
-                                [ p [ class "text-[16px] font-bold text-[#03045E] -tracking-[0.03em] leading-[1.21] text-left" ] [ text "Learn About Plan G vs N" ]
-                                , p [ class "text-[12px] text-[#667085] -tracking-[0.03em] leading-[1.21]" ] [ text "Watch the Video" ]
-                                ]
-                            ]
-                        ]
-
-                    -- Plans Section
+                    -- Plans Section (mobile video button moved inside viewPlansSection)
                     , viewPlansSection model
                     ]
             ]

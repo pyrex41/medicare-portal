@@ -6,6 +6,7 @@ import { config } from '../config';
 import { generateQuoteId, decodeQuoteId } from '../utils/quoteId';
 import { getUserFromSession } from '../services/auth';
 import { readFileSync } from 'fs';
+import { EmailService } from '../services/email';
 
 // Import ZIP_DATA
 interface ZipInfo {
@@ -184,9 +185,12 @@ export function createSelfServiceRoutes() {
         });
         logger.info(`[5.5/6] Existing contact check complete. Found: ${existingContact.rows.length > 0}`);
 
+        let contactId: number;
+        let isNewContact = false;
+
         if (existingContact.rows.length > 0) {
           // Update existing contact
-          const contactId = existingContact.rows[0].id;
+          contactId = existingContact.rows[0].id;
           logger.info(`[6/6] Updating existing contact ${contactId}`);
           
           try {
@@ -220,12 +224,6 @@ export function createSelfServiceRoutes() {
             
             logger.info(`Successfully updated contact ${contactId}`);
             
-            set.status = 200;
-            return { 
-              success: true,
-              contactId,
-              email
-            };
           } catch (updateError) {
             logger.error(`Error updating existing contact: ${updateError}`);
             throw updateError;
@@ -233,6 +231,7 @@ export function createSelfServiceRoutes() {
         } else {
           // Create new contact
           logger.info('[6/6] Creating new contact');
+          isNewContact = true;
           try {
             const result = await client.execute({
               sql: `INSERT INTO contacts (
@@ -273,20 +272,78 @@ export function createSelfServiceRoutes() {
               args: [email]
             });
             
-            const contactId = newContactResult.rows[0]?.id;
+            contactId = newContactResult.rows[0]?.id;
             logger.info(`Got new contact ID: ${contactId}`);
             
-            set.status = 200;
-            return { 
-              success: true,
-              contactId,
-              email
-            };
           } catch (insertError) {
             logger.error(`Error creating new contact: ${insertError}`);
             throw insertError;
           }
         }
+        
+        // Send email to the contact
+        try {
+          logger.info(`[7/6] Sending welcome email to contact ${contactId}`);
+
+          const mainDb = new Database();  
+          const mainClient = mainDb.getClient();
+          
+          // Get organization name
+          const orgResult = await mainClient.execute({
+            sql: 'SELECT name, logo_data, primary_color, phone, website FROM organizations WHERE id = ?',
+            args: [orgId]
+          });
+          
+          const orgInfo = orgResult.rows.length > 0 ? {
+            name: orgResult.rows[0].name,
+            logo_data: orgResult.rows[0].logo_data,
+            primary_color: orgResult.rows[0].primary_color, 
+            phone: orgResult.rows[0].phone,
+            website: orgResult.rows[0].website
+          } : undefined;
+          
+          // Initialize email service
+          const emailService = new EmailService();
+
+          // Generate quote ID
+          const quoteId = generateQuoteId(parseInt(orgId), contactId);
+          
+          // Create welcome email with quote link
+          const baseUrl = process.env.PUBLIC_URL || 'https://medicaremax.ai';
+          const quoteUrl = `${baseUrl}/compare?id=${quoteId}`;
+          await emailService.sendQuoteEmail({
+            email,
+            firstName,
+            lastName,
+            quoteUrl,
+            planType: planType || 'G',
+            organization: orgInfo
+          });
+          
+          // Record the email in tracking table
+          await emailService.recordEmailSend(orgDb, {
+            orgId: parseInt(orgId),
+            contactId,
+            emailType: 'onboarding_welcome',
+            sendStatus: 'sent',
+            sendMode: 'production',
+            batchId: crypto.randomUUID()
+          });
+          
+          logger.info(`Welcome email sent successfully to ${email}`);
+        } catch (emailError) {
+          // Log but don't fail if email sending fails
+          logger.error(`Error sending welcome email: ${emailError}`);
+          // We still want to return success for the signup even if email fails
+        }
+        
+        // Return success response
+        set.status = 200;
+        return { 
+          success: true,
+          contactId,
+          email
+        };
       } catch (error) {
         logger.error(`[ERROR] Error in self-service signup endpoint: ${error}`);
         if (error instanceof Error) {
