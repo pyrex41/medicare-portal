@@ -1374,31 +1374,34 @@ viewPlanCard model planTypeCode plan =
 
 viewPlansSection : Model -> Html Msg
 viewPlansSection model =
-    div [ class "bg-white rounded-[10px] border border-[#DCE2E5] shadow-[0_1px_2px_rgba(16,24,40,0.05)]" ]
-        [ -- Header (desktop only)
-          div [ class "hidden sm:flex px-4 sm:px-6 py-4 flex-row items-center justify-between border-b border-[#DCE2E5] bg-[#F9F5FF] rounded-t-[10px]" ]
-            [ div [ class "flex items-end gap-3" ]
-                [ h2 [ class "text-2xl font-extrabold -tracking-[0.04em] text-[#101828] leading-[1.2]" ] [ text "Recommended Plans for You" ]
-                , p [ class "text-[16px] font-medium text-[#667085] -tracking-[0.04em] leading-[1.2] pb-[2px]" ] [ text "Select one to see if you qualify" ]
+    div [ class "flex flex-col gap-4 sm:gap-0" ]
+        [ -- Plan G Section - Desktop and Mobile
+          div [ class "bg-white rounded-[10px] border border-[#DCE2E5] shadow-[0_1px_2px_rgba(16,24,40,0.05)]" ]
+            [ -- Header (desktop only)
+              div [ class "hidden sm:flex px-4 sm:px-6 py-4 flex-row items-center justify-between border-b border-[#DCE2E5] bg-[#F9F5FF] rounded-t-[10px]" ]
+                [ div [ class "flex items-end gap-3" ]
+                    [ h2 [ class "text-2xl font-extrabold -tracking-[0.04em] text-[#101828] leading-[1.2]" ] [ text "Recommended Plans for You" ]
+                    , p [ class "text-[16px] font-medium text-[#667085] -tracking-[0.04em] leading-[1.2] pb-[2px]" ] [ text "Select one to see if you qualify" ]
+                    ]
+                ]
+
+            -- Mobile header
+            , div [ class "block sm:hidden px-4 py-4 border-b border-[#DCE2E5] bg-[#F9F5FF] rounded-t-[10px]" ]
+                [ h2 [ class "text-2xl font-extrabold -tracking-[0.04em] text-[#101828] leading-[1.2]" ] [ text "Recommended Plans" ]
+                , p [ class "text-[16px] font-medium text-[#667085] -tracking-[0.04em] leading-[1.2]" ] [ text "Select one to continue" ]
+                ]
+
+            -- Plan G Section
+            , div [ class "px-3 sm:px-4 py-6 bg-white" ]
+                [ h3 [ class "text-xl font-extrabold -tracking-[0.02em] mb-6 text-[#101828]" ] [ text "Plan G Monthly Premiums" ]
+                , div [ class "flex flex-wrap gap-8 justify-center sm:justify-start sm:pl-8" ]
+                    (List.map (viewPlanCard model "G") (getTopPlans model model.plans.planG 3))
                 ]
             ]
 
-        -- Mobile header
-        , div [ class "block sm:hidden px-4 py-4 border-b border-[#DCE2E5] bg-[#F9F5FF] rounded-t-[10px]" ]
-            [ h2 [ class "text-2xl font-extrabold -tracking-[0.04em] text-[#101828] leading-[1.2]" ] [ text "Recommended Plans" ]
-            , p [ class "text-[16px] font-medium text-[#667085] -tracking-[0.04em] leading-[1.2]" ] [ text "Select one to continue" ]
-            ]
-
-        -- Plan G Section
-        , div [ class "px-3 sm:px-4 py-6 bg-white" ]
-            [ h3 [ class "text-xl font-extrabold -tracking-[0.02em] mb-6 text-[#101828]" ] [ text "Plan G Monthly Premiums" ]
-            , div [ class "flex flex-wrap gap-8 justify-center sm:justify-start sm:pl-8" ]
-                (List.map (viewPlanCard model "G") (getTopPlans model model.plans.planG 3))
-            ]
-
-        -- Mobile video button (between G and N plans)
-        , div [ class "block sm:hidden py-4 px-3 bg-white border-t border-[#DCE2E5]" ]
-            [ div [ class "mx-auto max-w-[280px] bg-[#F9F5FF] rounded-[10px] p-4 flex flex-row items-center cursor-pointer gap-4 border border-[#DCE2E5]", onClick OpenGvsNVideo ]
+        -- Mobile video button (standalone between Plan G and Plan N)
+        , div [ class "block sm:hidden py-4 px-3" ]
+            [ div [ class "mx-auto max-w-[280px] bg-[#F9F5FF] rounded-[10px] p-4 flex flex-row items-center cursor-pointer gap-4", onClick OpenGvsNVideo ]
                 [ div [ class "w-[33px] h-[33px] rounded-full border border-[#03045E] flex items-center justify-center flex-shrink-0" ]
                     [ div [ class "w-0 h-0 border-t-[8px] border-t-transparent border-l-[12px] border-l-[#03045E] border-b-[8px] border-b-transparent ml-1" ] []
                     ]
@@ -1409,11 +1412,19 @@ viewPlansSection model =
                 ]
             ]
 
-        -- Plan N Section
-        , div [ class "px-3 sm:px-4 py-6 bg-white border-t border-[#DCE2E5]" ]
-            [ h3 [ class "text-xl font-extrabold -tracking-[0.02em] mb-6 text-[#101828]" ] [ text "Plan N Monthly Premiums" ]
-            , div [ class "flex flex-wrap gap-8 justify-center sm:justify-start sm:pl-8" ]
-                (List.map (viewPlanCard model "N") (getTopPlans model model.plans.planN 3))
+        -- Plan N Section (separate container for mobile)
+        , div [ class "bg-white rounded-[10px] border border-[#DCE2E5] shadow-[0_1px_2px_rgba(16,24,40,0.05)]" ]
+            [ -- Plan N Section Header (Mobile only)
+              div [ class "block sm:hidden px-4 py-4 border-b border-[#DCE2E5] bg-[#F9F5FF] rounded-t-[10px]" ]
+                [ h2 [ class "text-2xl font-extrabold -tracking-[0.04em] text-[#101828] leading-[1.2]" ] [ text "Plan N Options" ]
+                ]
+
+            -- Plan N Content
+            , div [ class "px-3 sm:px-4 py-6 bg-white" ]
+                [ h3 [ class "text-xl font-extrabold -tracking-[0.02em] mb-6 text-[#101828]" ] [ text "Plan N Monthly Premiums" ]
+                , div [ class "flex flex-wrap gap-8 justify-center sm:justify-start sm:pl-8" ]
+                    (List.map (viewPlanCard model "N") (getTopPlans model model.plans.planN 3))
+                ]
             ]
         ]
 
