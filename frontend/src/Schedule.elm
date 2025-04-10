@@ -66,6 +66,8 @@ type alias Model =
     , redirectUrl : Maybe String
     , scheduleInfo : Maybe ScheduleInfo
     , isLoading : Bool
+    , demoMode : Bool
+    , demoRedirectUrl : Maybe String
     }
 
 
@@ -129,6 +131,8 @@ init key maybeQuoteId maybeStatus =
       , redirectUrl = Just "https://calendly.com/medicareschool-max/30min"
       , scheduleInfo = Nothing
       , isLoading = True
+      , demoMode = True -- sets CTA to demo mode always
+      , demoRedirectUrl = Just "https://calendly.com/medicareschool-max/30min"
       }
     , Cmd.batch commands
     )
@@ -385,46 +389,94 @@ view model =
                                 ]
                             ]
 
+                      else if model.demoMode then
+                        viewDemoCTA model
+
                       else
-                        div [ class "flex flex-col max-w-xl mx-auto" ]
-                            [ div [ class "border border-[#DCE2E5] shadow-sm overflow-hidden rounded-lg" ]
-                                [ div [ class "bg-[#F9F5FF] p-6" ]
-                                    [ h1 [ class "text-2xl sm:text-3xl font-extrabold text-black mb-4" ]
-                                        [ text (getHeading model.status) ]
-                                    , p [ class "text-black text-base leading-relaxed" ]
-                                        [ text (getMessage model.status) ]
-                                    ]
-                                , div [ class "bg-white p-6 sm:p-8" ]
-                                    [ p [ class "text-[#667085] text-sm mb-6" ]
-                                        [ text "Select an Option Below" ]
-                                    , case model.error of
-                                        Just error ->
-                                            div [ class "bg-red-50 border border-red-400 text-red-700 px-4 py-3 rounded mb-6 text-base" ]
-                                                [ text error ]
-
-                                        Nothing ->
-                                            text ""
-                                    , case model.scheduleInfo of
-                                        Just info ->
-                                            case model.status of
-                                                Accept ->
-                                                    viewAcceptButtons model info
-
-                                                Decline ->
-                                                    viewDeclineButtons model info
-
-                                                Generic ->
-                                                    viewGenericButtons model info
-
-                                        Nothing ->
-                                            text ""
-                                    ]
-                                ]
-                            ]
+                        viewCTA model
                     ]
                 ]
         ]
     }
+
+
+viewDemoCTA : Model -> Html Msg
+viewDemoCTA model =
+    div [ class "flex flex-col max-w-xl mx-auto" ]
+        [ div [ class "border border-[#DCE2E5] shadow-sm overflow-hidden rounded-lg" ]
+            [ div [ class "bg-[#F9F5FF] p-6" ]
+                [ h1 [ class "text-2xl sm:text-3xl font-extrabold text-black mb-4" ]
+                    [ text "Let's Connect" ]
+                , p [ class "text-black text-base leading-relaxed" ]
+                    [ text "Interested in learning how you can use Medicare Max for your clients? Discover how our platform can help your agency maximize client retention, freeing up time to focus on what matters most." ]
+                ]
+            , div [ class "bg-white p-6 sm:p-8" ]
+                [ p [ class "text-[#475467] text-sm mb-6" ]
+                    [ text "Book a call with us to learn more" ]
+                , case model.error of
+                    Just error ->
+                        div [ class "bg-red-50 border border-red-400 text-red-700 px-4 py-3 rounded mb-6 text-base" ]
+                            [ text error ]
+
+                    Nothing ->
+                        text ""
+                , div [ class "space-y-4" ]
+                    [ a
+                        [ class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
+                        , href (makeDemoCalendlyUrl model)
+                        , target "_blank"
+                        , onClick CalendlyOpened
+                        ]
+                        [ div [ class "flex items-center space-x-3" ]
+                            [ span [ class "w-6 h-6 flex items-center justify-center" ]
+                                [ MyIcon.calendarDays 24 "#03045E" ]
+                            , span [ class "font-semibold text-base" ]
+                                [ text "Schedule a Demo Call" ]
+                            ]
+                        ]
+                    ]
+                ]
+            ]
+        ]
+
+
+viewCTA : Model -> Html Msg
+viewCTA model =
+    div [ class "flex flex-col max-w-xl mx-auto" ]
+        [ div [ class "border border-[#DCE2E5] shadow-sm overflow-hidden rounded-lg" ]
+            [ div [ class "bg-[#F9F5FF] p-6" ]
+                [ h1 [ class "text-2xl sm:text-3xl font-extrabold text-black mb-4" ]
+                    [ text (getHeading model.status) ]
+                , p [ class "text-black text-base leading-relaxed" ]
+                    [ text (getMessage model.status) ]
+                ]
+            , div [ class "bg-white p-6 sm:p-8" ]
+                [ p [ class "text-[#667085] text-sm mb-6" ]
+                    [ text "Select an Option Below" ]
+                , case model.error of
+                    Just error ->
+                        div [ class "bg-red-50 border border-red-400 text-red-700 px-4 py-3 rounded mb-6 text-base" ]
+                            [ text error ]
+
+                    Nothing ->
+                        text ""
+                , case model.scheduleInfo of
+                    Just info ->
+                        case model.status of
+                            Accept ->
+                                viewAcceptButtons model info
+
+                            Decline ->
+                                viewDeclineButtons model info
+
+                            Generic ->
+                                viewGenericButtons model info
+
+                    Nothing ->
+                        text ""
+                ]
+            ]
+        ]
 
 
 viewAcceptButtons : Model -> ScheduleInfo -> Html Msg
@@ -604,9 +656,19 @@ viewLoading =
         ]
 
 
+makeDemoCalendlyUrl : Model -> String
+makeDemoCalendlyUrl model =
+    makeCalendlyUrlHelper model model.demoRedirectUrl
+
+
 makeCalendlyUrl : Model -> String
 makeCalendlyUrl model =
-    case model.redirectUrl of
+    makeCalendlyUrlHelper model model.redirectUrl
+
+
+makeCalendlyUrlHelper : Model -> Maybe String -> String
+makeCalendlyUrlHelper model redirectUrl =
+    case redirectUrl of
         Just url ->
             List.Extra.zip
                 [ "email", "name", "location" ]
