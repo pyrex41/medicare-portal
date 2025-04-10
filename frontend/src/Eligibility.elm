@@ -341,7 +341,7 @@ update msg model =
                             if q.id == id then
                                 { q
                                     | answer = Just answer
-                                    , isExpanded = answer -- Auto-expand when answered Yes
+                                    , isExpanded = answer && not (List.isEmpty q.followUpQuestions) -- Only expand if there are followup questions
                                 }
 
                             else
@@ -845,7 +845,7 @@ viewQuestion question =
             colorToClasses question.color (question.answer == Just True)
 
         shouldShowFollowUps =
-            question.answer == Just True && question.isExpanded
+            question.answer == Just True && question.isExpanded && not (List.isEmpty question.followUpQuestions)
 
         hasFollowUps =
             not (List.isEmpty question.followUpQuestions)
