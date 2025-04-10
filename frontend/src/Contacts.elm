@@ -4393,48 +4393,50 @@ viewPaginationControls model =
                     ]
                     [ text (String.fromInt page) ]
     in
-    div [ class "mt-4 flex items-center justify-between border-t border-gray-200 bg-white px-4 py-3 sm:px-6" ]
-        [ div [ class "flex flex-1 justify-between sm:hidden" ]
-            [ button
-                [ class "relative inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-                , onClick (ChangePage (currentPage - 1))
-                , Html.Attributes.disabled (currentPage == 1)
-                ]
-                [ text "Previous" ]
-            , button
-                [ class "relative ml-3 inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-                , onClick (ChangePage (currentPage + 1))
-                , Html.Attributes.disabled (currentPage == totalPages)
-                ]
-                [ text "Next" ]
-            ]
-        , div [ class "hidden sm:flex sm:flex-1 sm:items-center sm:justify-between" ]
-            [ div [ class "text-sm text-gray-700" ]
-                [ span [] [ text "Showing " ]
-                , span [ class "font-medium" ] [ text (String.fromInt startItem) ]
-                , span [] [ text " to " ]
-                , span [ class "font-medium" ] [ text (String.fromInt endItem) ]
-                , span [] [ text " of " ]
-                , span [ class "font-medium" ] [ text (String.fromInt totalItems) ]
-                , span [] [ text " results" ]
-                ]
-            , div [ class "flex items-center space-x-4" ]
-                [ div [ class "relative" ]
-                    [ select
-                        [ class "block w-full rounded-md border-gray-300 py-1.5 pl-3 pr-10 text-base focus:border-purple-500 focus:outline-none focus:ring-purple-500 sm:text-sm"
-                        , onInput (\val -> ChangeItemsPerPage (Maybe.withDefault 100 (String.toInt val)))
-                        , value (String.fromInt itemsPerPage)
-                        ]
-                        [ option [ value "50" ] [ text "50 per page" ]
-                        , option [ value "100" ] [ text "100 per page" ]
-                        , option [ value "250" ] [ text "250 per page" ]
-                        ]
+    div [ class "max-w-7xl mx-auto" ]
+        [ div [ class "mt-4 flex items-center justify-between border-t border-gray-200 bg-white px-4 py-3 sm:px-6" ]
+            [ div [ class "flex flex-1 justify-between sm:hidden" ]
+                [ button
+                    [ class "relative inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                    , onClick (ChangePage (currentPage - 1))
+                    , Html.Attributes.disabled (currentPage == 1)
                     ]
-                , nav
-                    [ class "isolate inline-flex -space-x-px rounded-md shadow-sm"
-                    , Html.Attributes.attribute "aria-label" "Pagination"
+                    [ text "Previous" ]
+                , button
+                    [ class "relative ml-3 inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                    , onClick (ChangePage (currentPage + 1))
+                    , Html.Attributes.disabled (currentPage == totalPages)
                     ]
-                    (List.map pageButton pageNumbers)
+                    [ text "Next" ]
+                ]
+            , div [ class "hidden sm:flex sm:flex-1 sm:items-center sm:justify-between" ]
+                [ div [ class "text-sm text-gray-700" ]
+                    [ span [] [ text "Showing " ]
+                    , span [ class "font-medium" ] [ text (String.fromInt startItem) ]
+                    , span [] [ text " to " ]
+                    , span [ class "font-medium" ] [ text (String.fromInt endItem) ]
+                    , span [] [ text " of " ]
+                    , span [ class "font-medium" ] [ text (String.fromInt totalItems) ]
+                    , span [] [ text " results" ]
+                    ]
+                , div [ class "flex items-center space-x-4" ]
+                    [ div [ class "relative" ]
+                        [ select
+                            [ class "block w-full rounded-md border-gray-300 py-1.5 pl-3 pr-10 text-base focus:border-purple-500 focus:outline-none focus:ring-purple-500 sm:text-sm"
+                            , onInput (\val -> ChangeItemsPerPage (Maybe.withDefault 100 (String.toInt val)))
+                            , value (String.fromInt itemsPerPage)
+                            ]
+                            [ option [ value "50" ] [ text "50 per page" ]
+                            , option [ value "100" ] [ text "100 per page" ]
+                            , option [ value "250" ] [ text "250 per page" ]
+                            ]
+                        ]
+                    , nav
+                        [ class "isolate inline-flex -space-x-px rounded-md shadow-sm"
+                        , Html.Attributes.attribute "aria-label" "Pagination"
+                        ]
+                        (List.map pageButton pageNumbers)
+                    ]
                 ]
             ]
         ]
