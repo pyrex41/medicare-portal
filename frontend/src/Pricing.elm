@@ -83,7 +83,9 @@ view : Model -> Html Msg
 view model =
     div [ class "min-h-screen bg-gray-50 flex flex-col items-center py-12 px-4 sm:px-6 lg:px-8" ]
         [ div [ class "flex flex-col items-center w-full mb-8" ]
-            [ img [ Html.Attributes.src "/images/medicare-max-logo.png", class "h-10 w-auto" ] [] ]
+            [ Html.a [ Html.Attributes.href "/" ]
+                [ img [ Html.Attributes.src "/images/medicare-max-logo.png", class "h-10 w-auto" ] [] ]
+            ]
         , div [ class "max-w-6xl w-full space-y-8 bg-white p-8 rounded-lg shadow-md" ]
             [ div [ class "flex flex-col items-center" ]
                 [ MyIcon.banknote 32 "#0F172A"
