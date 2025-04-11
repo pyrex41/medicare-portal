@@ -711,7 +711,7 @@ update msg model =
                         ( { model | isGeneratingQuote = False }
                         , Cmd.batch
                             [ saveDebugInfo <| "QuoteResponse: quoteId=" ++ response.quoteId ++ ", redirectUrl=" ++ response.redirectUrl
-                            , Nav.pushUrl model.key (Builder.absolute [ "compare" ] [ Builder.string "id" response.quoteId ])
+                            , Nav.pushUrl model.key (Builder.absolute [ "landing" ] [ Builder.string "id" response.quoteId ])
                             ]
                         )
 

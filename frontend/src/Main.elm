@@ -20,6 +20,7 @@ import Http
 import Json.Decode as Decode exposing (Decoder)
 import Json.Decode.Pipeline as Pipeline
 import Json.Encode as E
+import Landing
 import Login
 import Logout
 import Onboarding
@@ -183,6 +184,7 @@ type Page
     | WalkthroughPage Walkthrough.Model
     | SelfOnboardingPage SelfServiceOnboarding.Model
     | WaitlistPage Waitlist.Model
+    | LandingPage Landing.Model
 
 
 type Msg
@@ -225,6 +227,7 @@ type Msg
     | DirectPageUpdate
     | SelfOnboardingMsg SelfServiceOnboarding.Msg
     | WaitlistMsg Waitlist.Msg
+    | LandingMsg Landing.Msg
 
 
 type alias Flags =
@@ -401,10 +404,11 @@ type PublicPage
     | VerifyRoute VerifyParams
     | CompareRoute CompareParams
     | QuoteRoute { quoteId : Maybe String, trackingId : Maybe String, planType : Maybe String, orgId : Maybe String }
-    | EligibilityRoute ( Maybe String, Maybe String, Maybe String ) -- Change from String to Maybe String
+    | EligibilityRoute ( Maybe String, Maybe String, Maybe String )
     | ScheduleRoute ( Maybe String, Maybe String, Maybe String )
     | SelfOnboardingRoute String
     | WaitlistRoute
+    | LandingRoute { quoteId : Maybe String }
 
 
 type ProtectedPage
@@ -510,6 +514,11 @@ routeParser =
             )
         , map (\orgSlug -> PublicRoute (SelfOnboardingRoute orgSlug))
             (s "self-onboarding" </> string)
+        , map (PublicRoute << LandingRoute)
+            (s "landing"
+                <?> Query.map (\id -> { quoteId = id })
+                        (Query.string "id")
+            )
         , map (ProtectedRoute ChangePlanRoute) (s "change-plan")
         , map (ProtectedRoute ContactsRoute) (s "contacts")
         , map (AdminRoute SettingsRoute) (s "settings")
@@ -1097,6 +1106,18 @@ update msg model =
         ToggleStatusBanner ->
             ( { model | showStatusBanner = not model.showStatusBanner }, Cmd.none )
 
+        LandingMsg subMsg ->
+            case model.page of
+                LandingPage landingModel ->
+                    case subMsg of
+                        Landing.NavigateTo path ->
+                            ( model
+                            , Nav.pushUrl model.key path
+                            )
+
+                _ ->
+                    ( model, Cmd.none )
+
 
 view : Model -> Browser.Document Msg
 view model =
@@ -1304,6 +1325,15 @@ view model =
                     { title = selfOnboardingView.title
                     , body = [ viewWithNav model (Html.map SelfOnboardingMsg (div [] selfOnboardingView.body)) ]
                     }
+
+                LandingPage landingModel ->
+                    let
+                        landingView =
+                            Landing.view landingModel
+                    in
+                    { title = landingView.title
+                    , body = [ viewWithNav model (Html.map LandingMsg (div [] landingView.body)) ]
+                    }
     in
     viewPage
 
@@ -1347,6 +1377,9 @@ viewNavHeader model =
 
                 WaitlistPage _ ->
                     -- not quote flow, but should have simplified header
+                    True
+
+                LandingPage _ ->
                     True
 
                 _ ->
@@ -1616,6 +1649,9 @@ subscriptions model =
 
                 SelfOnboardingPage _ ->
                     Sub.none
+
+                LandingPage landingModel ->
+                    Sub.map LandingMsg (Landing.subscriptions landingModel)
     in
     Sub.batch [ dropdownSub, pageSubs ]
 
@@ -2394,6 +2430,15 @@ updatePage url ( model, cmd ) =
                                         , Cmd.map SelfOnboardingMsg selfOnboardingCmd
                                         )
 
+                                    PublicRoute (LandingRoute params) ->
+                                        let
+                                            ( landingModel, landingCmd ) =
+                                                Landing.init params
+                                        in
+                                        ( { model | page = LandingPage landingModel }
+                                        , Cmd.map LandingMsg landingCmd
+                                        )
+
                 Nothing ->
                     ( { model | page = NotFoundPage }
                     , cmd
@@ -2692,6 +2737,15 @@ updatePageForcePublic url ( model, cmd ) =
 
                 NotFound ->
                     ( { model | page = NotFoundPage }, cmd )
+
+                PublicRoute (LandingRoute params) ->
+                    let
+                        ( landingModel, landingCmd ) =
+                            Landing.init params
+                    in
+                    ( { model | page = LandingPage landingModel }
+                    , Cmd.map LandingMsg landingCmd
+                    )
 
         Nothing ->
             ( { model | page = NotFoundPage }
