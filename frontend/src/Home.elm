@@ -50,6 +50,7 @@ type Msg
     = CheckSession
     | GotSessionResponse (Result Http.Error SessionResponse)
     | NavigateSignup
+    | NavigateTryItOut
     | SetExperienceTab ExperienceTab
     | StartCarousel
     | StopCarousel
@@ -125,6 +126,11 @@ update msg model =
         NavigateSignup ->
             ( model
             , Nav.pushUrl model.key "/waitlist"
+            )
+
+        NavigateTryItOut ->
+            ( model
+            , Nav.pushUrl model.key "/self-onboarding/demo-org"
             )
 
         SetExperienceTab tab ->
@@ -225,9 +231,14 @@ view model =
                     , div [ class "flex items-center" ]
                         [ button
                             [ onClick NavigateSignup
-                            , class "bg-[#03045E] text-white px-4 sm:px-6 py-2 rounded-lg text-sm font-medium hover:bg-[#1a1f5f] transition-colors duration-200"
+                            , class "bg-[#03045E] text-white border-2 border-[#03045E] px-6 sm:px-8 py-2 rounded-lg text-sm font-medium hover:bg-[#1a1f5f] transition-colors duration-200 mr-3 w-[200px] text-center"
                             ]
                             [ text "Get Early Access" ]
+                        , button
+                            [ onClick NavigateTryItOut
+                            , class "bg-white text-[#03045E] border-2 border-[#03045E] px-6 sm:px-8 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors duration-200 w-[200px] text-center"
+                            ]
+                            [ text "Try It Out" ]
                         ]
                     ]
                 ]
@@ -246,10 +257,10 @@ view model =
                                     ]
                                 , div [ class "flex items-center" ]
                                     [ button
-                                        [ onClick NavigateSignup
-                                        , class "bg-[#03045E] text-white px-4 sm:px-6 py-2 rounded-lg text-sm font-medium hover:bg-[#1a1f5f] transition-colors duration-200"
+                                        [ onClick NavigateTryItOut
+                                        , class "bg-[#03045E] text-white px-6 sm:px-8 py-2 rounded-lg text-sm font-medium hover:bg-[#1a1f5f] transition-colors duration-200"
                                         ]
-                                        [ text "Get Early Access" ]
+                                        [ text "Try It Out" ]
                                     ]
                                 ]
                             ]
@@ -270,12 +281,17 @@ view model =
                         , p
                             [ class "mt-4 sm:mt-6 text-base sm:text-lg text-[#475467] leading-[1.5] text-center sm:text-left" ]
                             [ text "Our AI-powered system handles client outreach, quotes, health underwriting, and e-apps — magically resetting your residuals so you can focus on growing your book." ]
-                        , div [ class "mt-6 sm:mt-10 flex justify-center sm:justify-start" ]
+                        , div [ class "mt-6 sm:mt-10 flex justify-center sm:justify-start gap-4" ]
                             [ button
                                 [ onClick NavigateSignup
-                                , class "w-full sm:w-auto inline-flex items-center justify-center px-4 sm:px-6 py-3 sm:py-4 rounded-lg text-base sm:text-lg font-semibold text-white bg-[#03045E] hover:bg-[#1a1f5f] transition-colors duration-200"
+                                , class "w-[180px] sm:w-[180px] inline-flex items-center justify-center px-3 sm:px-4 py-2 sm:py-2.5 rounded-lg text-sm font-semibold text-white bg-[#03045E] hover:bg-[#1a1f5f] transition-colors duration-200"
                                 ]
                                 [ text "Get Early Access" ]
+                            , button
+                                [ onClick NavigateTryItOut
+                                , class "w-[180px] sm:w-[180px] inline-flex items-center justify-center px-2 sm:px-4 py-2 sm:py-2.5 rounded-lg text-sm font-semibold text-[#03045E] bg-white border-2 border-[#03045E] hover:bg-gray-50 transition-colors duration-200"
+                                ]
+                                [ text "Try It Out" ]
                             ]
                         ]
                     , div [ class "relative" ]
