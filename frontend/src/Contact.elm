@@ -32,13 +32,13 @@ type alias Contact =
     , state : String
     , contactOwnerId : Maybe Int
     , contactOwner : Maybe User
-    , currentCarrier : String
+    , currentCarrier : Maybe String
     , effectiveDate : String
     , birthDate : String
     , tobaccoUser : Bool
     , gender : String
     , zipCode : String
-    , planType : String
+    , planType : Maybe String
     , status : String
     , agentId : Maybe Int
     , lastEmailed : Maybe String
@@ -219,13 +219,13 @@ contactDecoder =
         |> Pipeline.required "state" Decode.string
         |> Pipeline.optional "contact_owner_id" (Decode.nullable Decode.int) Nothing
         |> Pipeline.optional "contact_owner" (Decode.nullable userDecoder) Nothing
-        |> Pipeline.required "current_carrier" Decode.string
+        |> Pipeline.optional "current_carrier" (Decode.nullable Decode.string) Nothing
         |> Pipeline.required "effective_date" Decode.string
         |> Pipeline.required "birth_date" Decode.string
         |> Pipeline.required "tobacco_user" Decode.bool
         |> Pipeline.required "gender" Decode.string
         |> Pipeline.required "zip_code" Decode.string
-        |> Pipeline.required "plan_type" Decode.string
+        |> Pipeline.optional "plan_type" (Decode.nullable Decode.string) Nothing
         |> Pipeline.optional "status" Decode.string "New"
         |> Pipeline.required "agent_id" (Decode.nullable Decode.int)
         |> Pipeline.optional "last_emailed_date" (Decode.nullable Decode.string) Nothing
@@ -280,11 +280,11 @@ settingsObjectDecoder =
 
 stateCarrierSettingDecoder : Decoder StateCarrierSetting
 stateCarrierSettingDecoder =
-    Decode.map4 StateCarrierSetting
-        (Decode.field "state" Decode.string)
-        (Decode.field "carrier" Decode.string)
-        (Decode.field "active" Decode.bool)
-        (Decode.field "targetGI" Decode.bool)
+    Decode.succeed StateCarrierSetting
+        |> Pipeline.optional "state" Decode.string ""
+        |> Pipeline.required "carrier" Decode.string
+        |> Pipeline.required "active" Decode.bool
+        |> Pipeline.required "targetGI" Decode.bool
 
 
 emailTrackingDecoder : Decoder EmailTrackingRecord
@@ -450,19 +450,24 @@ update msg model =
                             let
                                 planType =
                                     case contact.planType of
-                                        "Plan N" ->
-                                            PlanN
+                                        Just s ->
+                                            case String.toLower s of
+                                                "plan n" ->
+                                                    PlanN
 
-                                        "N" ->
-                                            PlanN
+                                                "n" ->
+                                                    PlanN
 
-                                        "Plan G" ->
-                                            PlanG
+                                                "plan g" ->
+                                                    PlanG
 
-                                        "G" ->
-                                            PlanG
+                                                "g" ->
+                                                    PlanG
 
-                                        _ ->
+                                                _ ->
+                                                    NoPlan
+
+                                        Nothing ->
                                             NoPlan
 
                                 ( stateCarrierSettings, stateLicenses ) =
@@ -543,13 +548,13 @@ update msg model =
                             , phoneNumber = contact.phoneNumber
                             , state = contact.state
                             , contactOwnerId = contact.contactOwnerId
-                            , currentCarrier = contact.currentCarrier
+                            , currentCarrier = Maybe.withDefault "" contact.currentCarrier
                             , effectiveDate = contact.effectiveDate
                             , birthDate = contact.birthDate
                             , tobaccoUser = contact.tobaccoUser
                             , gender = contact.gender
                             , zipCode = contact.zipCode
-                            , planType = contact.planType
+                            , planType = contact.planType |> Maybe.withDefault ""
                             }
                       }
                     , Cmd.none
@@ -559,7 +564,14 @@ update msg model =
                     ( model, Cmd.none )
 
         CloseModal ->
-            ( { model | showModal = NoModal }, Cmd.none )
+            ( { model | showModal = NoModal }
+            , case model.contact of
+                Just contact ->
+                    Nav.pushUrl model.key ("/contact/" ++ String.fromInt contact.id)
+
+                Nothing ->
+                    Cmd.none
+            )
 
         BackToContacts ->
             ( model, Nav.pushUrl model.key "/contacts" )
@@ -1079,7 +1091,7 @@ viewContactSummary contact quoteUrl isGeneratingQuote healthStatus eligibilityQu
                 , viewField "Contact Owner" (Maybe.map .firstName contact.contactOwner |> Maybe.withDefault "Default")
                 , viewField "Phone Number" (formatPhoneNumber contact.phoneNumber)
                 , viewField "Email" contact.email
-                , viewField "Current Carrier" contact.currentCarrier
+                , viewField "Current Carrier" (Maybe.withDefault "" contact.currentCarrier)
                 , viewField "Gender" contact.gender
                 , viewField "Tobacco Use"
                     (if contact.tobaccoUser then
@@ -1091,7 +1103,7 @@ viewContactSummary contact quoteUrl isGeneratingQuote healthStatus eligibilityQu
                 , viewField "State" contact.state
                 , viewField "Zip Code" contact.zipCode
                 , viewField "Effective Date" contact.effectiveDate
-                , viewField "Plan Type" contact.planType
+                , viewField "Plan Type" (Maybe.withDefault "" contact.planType)
                 , viewQuoteField quoteUrl isGeneratingQuote
                 , viewHealthStatusField healthStatus eligibilityQuestions
                 ]

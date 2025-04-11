@@ -38,6 +38,7 @@ type alias Model =
     , orgSlug : Maybe String
     , logo : Maybe String
     , orgName : Maybe String
+    , agentId : Maybe String
     , email : String
     , firstName : String
     , lastName : String
@@ -92,6 +93,7 @@ type alias UrlParams =
     , email : Maybe String
     , hash : Maybe String
     , quoteId : Maybe String
+    , agentId : Maybe String
     }
 
 
@@ -106,6 +108,7 @@ init key url =
             , orgSlug = Nothing
             , logo = Nothing
             , orgName = Nothing
+            , agentId = Nothing
             , email = ""
             , firstName = ""
             , lastName = ""
@@ -151,6 +154,9 @@ init key url =
                 quoteId =
                     params.quoteId
 
+                agentId =
+                    params.agentId
+
                 debugInfo =
                     "Initializing with slug="
                         ++ slug
@@ -189,7 +195,10 @@ init key url =
                             }
                         ]
             in
-            ( { initialModel | orgSlug = Just slug }
+            ( { initialModel
+                | orgSlug = Just slug
+                , agentId = agentId
+              }
             , Cmd.batch
                 (clearCmd
                     :: saveDebugInfo debugInfo
@@ -291,6 +300,7 @@ parseUrlParams url =
     , email = getParam "email"
     , hash = getParam "hash"
     , quoteId = getParam "id"
+    , agentId = getParam "agentId"
     }
 
 
@@ -917,23 +927,34 @@ generateQuote maybeOrgId contactId email =
 
 encodeForm : Model -> Encode.Value
 encodeForm model =
-    Encode.object
-        [ ( "orgId", Encode.string (Maybe.withDefault "" model.orgId) )
-        , ( "email", Encode.string model.email )
-        , ( "firstName", Encode.string model.firstName )
-        , ( "lastName", Encode.string model.lastName )
-        , ( "zipCode", Encode.string model.zipCode )
-        , ( "dateOfBirth", Encode.string model.dateOfBirth )
-        , ( "gender", Encode.string model.gender )
-        , ( "tobacco", Encode.bool model.tobacco )
-        , ( "phoneNumber", Encode.string model.phoneNumber )
-        , ( "currentPremium", Encode.string model.currentPremium )
-        , ( "currentCarrier", Encode.string model.currentCarrier )
-        , ( "planType", Encode.string model.planType )
-        , ( "state", Encode.string (Maybe.withDefault "" model.state) )
-        , ( "county", Encode.string (Maybe.withDefault "" model.selectedCounty) )
-        , ( "optInQuarterlyUpdates", Encode.bool model.optInQuarterlyUpdates )
-        ]
+    let
+        ls0 =
+            [ ( "orgId", Encode.string (Maybe.withDefault "" model.orgId) )
+            , ( "email", Encode.string model.email )
+            , ( "firstName", Encode.string model.firstName )
+            , ( "lastName", Encode.string model.lastName )
+            , ( "zipCode", Encode.string model.zipCode )
+            , ( "dateOfBirth", Encode.string model.dateOfBirth )
+            , ( "gender", Encode.string model.gender )
+            , ( "tobacco", Encode.bool model.tobacco )
+            , ( "phoneNumber", Encode.string model.phoneNumber )
+            , ( "currentPremium", Encode.string model.currentPremium )
+            , ( "currentCarrier", Encode.string model.currentCarrier )
+            , ( "planType", Encode.string model.planType )
+            , ( "state", Encode.string (Maybe.withDefault "" model.state) )
+            , ( "county", Encode.string (Maybe.withDefault "" model.selectedCounty) )
+            , ( "optInQuarterlyUpdates", Encode.bool model.optInQuarterlyUpdates )
+            ]
+
+        ls1 =
+            case model.agentId of
+                Just agentId ->
+                    [ ( "agentId", Encode.string agentId ) ]
+
+                Nothing ->
+                    []
+    in
+    Encode.object (ls0 ++ ls1)
 
 
 

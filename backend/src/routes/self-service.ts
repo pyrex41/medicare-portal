@@ -119,7 +119,7 @@ export function createSelfServiceRoutes() {
       logger.info('Starting signup process with detailed logging...');
       logger.info(`Request body: ${JSON.stringify(body, null, 2)}`);
       
-      const { orgId, email, firstName, lastName, optInQuarterlyUpdates, zipCode, dateOfBirth, gender, tobacco, phoneNumber, currentPremium, currentCarrier, planType, state, county } = body as {
+      const { orgId, email, firstName, lastName, optInQuarterlyUpdates, zipCode, dateOfBirth, gender, tobacco, phoneNumber, currentPremium, currentCarrier, planType, state, county, agentId } = body as {
         orgId: string;
         email: string;
         firstName: string;
@@ -135,6 +135,7 @@ export function createSelfServiceRoutes() {
         planType: string;
         state: string;
         county: string;
+        agentId?: number;
       };
 
       logger.info(`[1/6] Validating input parameters...`);
@@ -177,6 +178,15 @@ export function createSelfServiceRoutes() {
         const client = orgDb.getClient();
         logger.info('[4.5/6] Successfully got database client');
         
+        // Get default agent ID from organization if not provided
+        const mainDb = new Database();
+        const defaultAgentResult = await mainDb.fetchOne<{ default_agent_id: number }>(
+          'SELECT default_agent_id FROM organizations WHERE id = ?',
+          [parseInt(orgId)]
+        );
+        const finalAgentId = agentId || defaultAgentResult?.default_agent_id || null;
+        logger.info(`Using agent ID: ${finalAgentId}`);
+        
         // Check if contact already exists
         logger.info(`[5/6] Checking for existing contact with email: ${email}`);
         const existingContact = await client.execute({
@@ -205,7 +215,8 @@ export function createSelfServiceRoutes() {
                     birth_date = ?,
                     tobacco_user = ?,
                     current_carrier = ?,
-                    plan_type = ?
+                    plan_type = ?,
+                    agent_id = ?
                     WHERE id = ?`,
               args: [
                 firstName, 
@@ -218,6 +229,7 @@ export function createSelfServiceRoutes() {
                 tobacco ? 1 : 0,
                 currentCarrier || '', 
                 planType || null,
+                finalAgentId,
                 contactId
               ]
             });
@@ -246,8 +258,9 @@ export function createSelfServiceRoutes() {
                     tobacco_user,
                     current_carrier,
                     plan_type,
-                    effective_date
-                  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                    effective_date,
+                    agent_id
+                  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
               args: [
                 email, 
                 firstName, 
@@ -260,7 +273,8 @@ export function createSelfServiceRoutes() {
                 tobacco ? 1 : 0,
                 currentCarrier || null,
                 planType || null,
-                new Date().toISOString().split('T')[0]
+                new Date().toISOString().split('T')[0],
+                finalAgentId
               ]
             });
             logger.info('Successfully inserted new contact');

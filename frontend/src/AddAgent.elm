@@ -92,14 +92,25 @@ allCarriers =
     ]
 
 
+type alias Settings =
+    { carrierContracts : List String
+    , stateLicenses : List String
+    }
+
+
+settingsObjectDecoder : Decoder Settings
+settingsObjectDecoder =
+    Decode.map2 Settings
+        (Decode.field "carrierContracts" (Decode.list Decode.string))
+        (Decode.field "stateLicenses" (Decode.list Decode.string))
+
+
 type alias Model =
     { email : String
     , firstName : String
     , lastName : String
     , rawPhone : String
     , displayPhone : String
-    , isAdmin : Bool
-    , isAgent : Bool
     , carriers : List String
     , stateLicenses : List String
     , error : Maybe String
@@ -117,6 +128,7 @@ type alias Model =
     , reassignAgentId : Maybe String
     , contacts : List ContactSummary
     , emailStatus : EmailStatus
+    , defaultAgentId : Maybe String
     }
 
 
@@ -125,8 +137,6 @@ type alias User =
     , email : String
     , firstName : String
     , lastName : String
-    , isAdmin : Bool
-    , isAgent : Bool
     , phone : String
     }
 
@@ -137,8 +147,6 @@ type alias Agent =
     , lastName : String
     , email : String
     , phone : String
-    , isAdmin : Bool
-    , isAgent : Bool
     , carriers : List String
     , stateLicenses : List String
     , expanded : Bool
@@ -150,8 +158,6 @@ type alias CurrentUser =
     , email : String
     , firstName : String
     , lastName : String
-    , isAdmin : Bool
-    , isAgent : Bool
     , phone : String
     }
 
@@ -175,11 +181,7 @@ type Msg
     | UpdateFirstName String
     | UpdateLastName String
     | UpdatePhone String
-    | ToggleAdmin String
-    | ToggleAgent String
     | UpdateField String String
-    | UpdateAdminCheckbox Bool
-    | UpdateAgentCheckbox Bool
     | SaveAgent
     | AgentSaved (Result Http.Error ())
     | NavigateTo String
@@ -203,7 +205,6 @@ type Msg
     | FetchAgents
     | GotAgents (Result Http.Error (List Agent))
     | GotCurrentUser (Result Http.Error CurrentUserResponse)
-    | ToggleAgentRole String String
     | UpdateAgentField String String String
     | ToggleAgentExpanded String
     | UpdateAgentCarrier String String Bool
@@ -219,6 +220,8 @@ type Msg
     | EditAgent Agent
     | CheckAgentEmail
     | GotEmailResponse (Result Http.Error EmailResponse)
+    | SetDefaultAgent String
+    | SetDefaultAgentResult (Result Http.Error ())
 
 
 type alias CurrentUserResponse =
@@ -233,7 +236,7 @@ type alias EmailResponse =
     }
 
 
-init : Bool -> Nav.Key -> Maybe CurrentUser -> String -> ( Model, Cmd Msg )
+init : Bool -> Nav.Key -> Maybe { id : String, email : String, firstName : String, lastName : String, phone : String, isAdmin : Bool, isAgent : Bool } -> String -> ( Model, Cmd Msg )
 init isSetup key currentUser planType =
     let
         initialAgents =
@@ -247,11 +250,18 @@ init isSetup key currentUser planType =
                             , lastName = user.lastName
                             , email = user.email
                             , phone = user.phone
-                            , isAdmin = user.isAdmin
-                            , isAgent = user.isAgent -- Use actual agent status
                             , carriers = []
                             , stateLicenses = []
                             , expanded = False
+                            }
+
+                        -- Convert old user type to new CurrentUser type
+                        convertedUser =
+                            { id = user.id
+                            , email = user.email
+                            , firstName = user.firstName
+                            , lastName = user.lastName
+                            , phone = user.phone
                             }
                     in
                     if isSetup then
@@ -262,14 +272,25 @@ init isSetup key currentUser planType =
 
                 Nothing ->
                     []
+
+        -- Convert old user type to new CurrentUser type
+        convertedCurrentUser =
+            currentUser
+                |> Maybe.map
+                    (\user ->
+                        { id = user.id
+                        , email = user.email
+                        , firstName = user.firstName
+                        , lastName = user.lastName
+                        , phone = user.phone
+                        }
+                    )
     in
     ( { email = ""
       , firstName = ""
       , lastName = ""
       , rawPhone = ""
       , displayPhone = ""
-      , isAdmin = False
-      , isAgent = True -- Default to agent role being checked
       , carriers = []
       , stateLicenses = []
       , error = Nothing
@@ -278,7 +299,7 @@ init isSetup key currentUser planType =
       , isLoading = True
       , agents = initialAgents
       , showAddForm = False
-      , currentUser = currentUser
+      , currentUser = convertedCurrentUser
       , isLoadingForAgent = Nothing
       , orgSettings = Nothing
       , pendingSave = Nothing
@@ -287,6 +308,7 @@ init isSetup key currentUser planType =
       , reassignAgentId = Nothing
       , contacts = []
       , emailStatus = NotChecked
+      , defaultAgentId = Nothing
       }
     , fetchAgents
     )
@@ -463,24 +485,6 @@ viewBasicInfo model =
                     []
                 ]
             ]
-        , div [ class "mt-4" ]
-            [ label [ class "block text-sm font-medium text-gray-700 mb-2" ]
-                [ text "Administrator Status" ]
-            , div [ class "flex items-center space-x-6" ]
-                [ label
-                    [ class "inline-flex items-center" ]
-                    [ input
-                        [ type_ "checkbox"
-                        , class "rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                        , checked model.isAdmin
-                        , onClick (UpdateAdminCheckbox (not model.isAdmin))
-                        ]
-                        []
-                    , span [ class "ml-2 text-sm text-gray-700" ]
-                        [ text "Admin" ]
-                    ]
-                ]
-            ]
         ]
 
 
@@ -504,8 +508,18 @@ viewAgentsList model =
 
                                 Nothing ->
                                     False
+
+                        isDefault =
+                            model.defaultAgentId == Just agent.id
+
+                        cardBackgroundClass =
+                            if isDefault then
+                                "bg-blue-50"
+
+                            else
+                                "bg-white"
                     in
-                    div [ class "bg-white shadow rounded-lg p-6" ]
+                    div [ class (cardBackgroundClass ++ " shadow rounded-lg p-6") ]
                         [ div [ class "flex items-center justify-between" ]
                             [ div [ class "flex items-center" ]
                                 [ div [ class "ml-4" ]
@@ -516,7 +530,17 @@ viewAgentsList model =
                                     ]
                                 ]
                             , div [ class "flex items-center space-x-4" ]
-                                [ button
+                                [ if not isDefault then
+                                    button
+                                        [ class "px-3 py-1 text-sm text-blue-600 hover:text-blue-800 font-medium border border-blue-600 rounded-md hover:bg-blue-50"
+                                        , onClick (SetDefaultAgent agent.id)
+                                        ]
+                                        [ text "Set as Default" ]
+
+                                  else
+                                    div [ class "px-3 py-1 text-sm text-blue-600 font-medium" ]
+                                        [ text "Default Agent" ]
+                                , button
                                     [ class "text-blue-600 hover:text-blue-800 font-medium"
                                     , onClick (ToggleAgentExpanded agent.id)
                                     ]
@@ -735,34 +759,6 @@ viewAgentDetails model agent =
                     ]
                 ]
             ]
-        , div [ class "mt-4" ]
-            [ label [ class "block text-sm font-medium text-gray-700 mb-2" ]
-                [ text "Administrator Status" ]
-            , div [ class "flex items-center space-x-6" ]
-                [ label
-                    [ class "inline-flex items-center"
-                    , classList [ ( "opacity-60", isCurrentUserAgent && agent.isAdmin ) ]
-                    ]
-                    [ input
-                        [ type_ "checkbox"
-                        , class "rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                        , checked agent.isAdmin
-                        , onClick (ToggleAgentRole agent.id "admin")
-                        , disabled ((isCurrentUserAgent && agent.isAdmin) || not canEdit)
-                        , title
-                            (if isCurrentUserAgent && agent.isAdmin then
-                                "You cannot remove your admin role"
-
-                             else
-                                ""
-                            )
-                        ]
-                        []
-                    , span [ class "ml-2 text-sm text-gray-700" ]
-                        [ text "Admin" ]
-                    ]
-                ]
-            ]
         , div [ class "mt-6" ]
             [ p [ class "text-sm text-gray-500" ]
                 [ text "This agent will automatically use the carriers and state licenses from your organization settings." ]
@@ -810,7 +806,6 @@ viewBottomBar model =
                         && not (String.isEmpty agent.firstName)
                         && not (String.isEmpty agent.lastName)
                         && not (String.isEmpty agent.email)
-                        && (agent.isAdmin || agent.isAgent)
                 )
                 model.agents
 
@@ -820,7 +815,6 @@ viewBottomBar model =
                 && model.emailStatus
                 == Valid
                 && isValidPhone model.displayPhone
-                && (model.isAdmin || model.isAgent)
     in
     div [ class "fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 px-4 py-4 sm:px-6 z-10" ]
         [ div [ class "max-w-3xl mx-auto" ]
@@ -880,50 +874,6 @@ update msg model =
             , Cmd.none
             )
 
-        ToggleAdmin agentId ->
-            let
-                updatedAgents =
-                    List.map
-                        (\agent ->
-                            if agent.id == agentId then
-                                { agent | isAdmin = not agent.isAdmin }
-
-                            else
-                                agent
-                        )
-                        model.agents
-            in
-            ( { model | agents = updatedAgents }
-            , case List.head (List.filter (\a -> a.id == agentId) updatedAgents) of
-                Just agent ->
-                    saveAgentDetails agent
-
-                Nothing ->
-                    Cmd.none
-            )
-
-        ToggleAgent agentId ->
-            let
-                updatedAgents =
-                    List.map
-                        (\agent ->
-                            if agent.id == agentId then
-                                { agent | isAgent = not agent.isAgent }
-
-                            else
-                                agent
-                        )
-                        model.agents
-            in
-            ( { model | agents = updatedAgents }
-            , case List.head (List.filter (\a -> a.id == agentId) updatedAgents) of
-                Just agent ->
-                    saveAgentDetails agent
-
-                Nothing ->
-                    Cmd.none
-            )
-
         UpdateField field value ->
             case model.currentUser of
                 Just user ->
@@ -964,7 +914,6 @@ update msg model =
             if model.isSetup then
                 ( { model
                     | showAddForm = False
-                    , isAdmin = False
                     , firstName = ""
                     , lastName = ""
                     , email = ""
@@ -986,28 +935,6 @@ update msg model =
 
         AgentSaved (Err _) ->
             ( { model | error = Just "Failed to save agent" }
-            , Cmd.none
-            )
-
-        ToggleAgentRole agentId role ->
-            let
-                isSelfUser agId =
-                    case model.currentUser of
-                        Just user ->
-                            user.id == agId
-
-                        Nothing ->
-                            False
-
-                updateAgent agent =
-                    { agent | isAgent = True }
-
-                -- hardcodding everyone as agent
-            in
-            ( { model
-                | agents = List.map updateAgent model.agents
-                , pendingSave = Just agentId
-              }
             , Cmd.none
             )
 
@@ -1034,7 +961,7 @@ update msg model =
             ( { model | isLoading = True }
             , Http.get
                 { url = "/api/settings"
-                , expect = Http.expectJson GotOrgSettings (Decode.field "orgSettings" settingsObjectDecoder)
+                , expect = Http.expectJson GotOrgSettings settingsObjectDecoder
                 }
             )
 
@@ -1066,8 +993,6 @@ update msg model =
                 , displayPhone = ""
                 , carriers = []
                 , stateLicenses = []
-                , isAdmin = False
-                , isAgent = True
               }
             , Cmd.none
             )
@@ -1102,8 +1027,6 @@ update msg model =
                                             , lastName = user.lastName
                                             , email = user.email
                                             , phone = user.phone
-                                            , isAdmin = user.isAdmin
-                                            , isAgent = user.isAgent -- Use actual agent status from user
                                             , carriers = []
                                             , stateLicenses = []
                                             , expanded = False
@@ -1160,8 +1083,6 @@ update msg model =
                                     , lastName = user.lastName
                                     , email = user.email
                                     , phone = user.phone
-                                    , isAdmin = user.isAdmin
-                                    , isAgent = user.isAgent -- Use actual agent status
                                     , carriers = []
                                     , stateLicenses = []
                                     , expanded = False
@@ -1301,7 +1222,7 @@ update msg model =
             ( { model | isLoadingForAgent = Just agentId }
             , Http.get
                 { url = "/api/settings"
-                , expect = Http.expectJson (GotOrgSettingsForAgent agentId) (Decode.field "orgSettings" settingsObjectDecoder)
+                , expect = Http.expectJson (GotOrgSettingsForAgent agentId) settingsObjectDecoder
                 }
             )
 
@@ -1511,8 +1432,6 @@ update msg model =
                                 , lastName = user.lastName
                                 , email = user.email
                                 , phone = user.phone
-                                , isAdmin = user.isAdmin
-                                , isAgent = user.isAgent
                                 , carriers = []
                                 , stateLicenses = []
                                 , expanded = False
@@ -1551,23 +1470,6 @@ update msg model =
               }
             , Cmd.none
             )
-
-        UpdateAdminCheckbox value ->
-            ( { model | isAdmin = value, isAgent = True }, Cmd.none )
-
-        UpdateAgentCheckbox value ->
-            -- not using anymore
-            let
-                -- Ensure at least one role is selected
-                newIsAdmin =
-                    if not value then
-                        True
-                        -- If agent is being unchecked, ensure admin is checked
-
-                    else
-                        model.isAdmin
-            in
-            ( { model | isAgent = value, isAdmin = newIsAdmin }, Cmd.none )
 
         GotEmailResponse result ->
             case result of
@@ -1617,6 +1519,30 @@ update msg model =
             , Cmd.none
             )
 
+        SetDefaultAgent agentId ->
+            ( { model
+                | defaultAgentId = Just agentId
+                , isLoading = True
+              }
+            , Http.request
+                { method = "POST"
+                , url = "/api/agents/set_default_agent"
+                , body = Http.jsonBody (Encode.object [ ( "agentId", Encode.string agentId ) ])
+                , expect = Http.expectWhatever SetDefaultAgentResult
+                , timeout = Nothing
+                , tracker = Nothing
+                , headers = []
+                }
+            )
+
+        SetDefaultAgentResult result ->
+            case result of
+                Ok _ ->
+                    ( { model | isLoading = False }, Cmd.none )
+
+                Err _ ->
+                    ( { model | isLoading = False }, Cmd.none )
+
 
 
 -- Helper functions
@@ -1648,100 +1574,6 @@ formatPhoneNumber rawPhone =
             ++ String.slice 3 6 digits
             ++ "-"
             ++ String.dropLeft 6 digits
-
-
-saveAgent : User -> Model -> Cmd Msg
-saveAgent user model =
-    let
-        carriers =
-            case model.orgSettings of
-                Just settings ->
-                    settings.carrierContracts
-
-                Nothing ->
-                    []
-
-        stateLicenses =
-            case model.orgSettings of
-                Just settings ->
-                    settings.stateLicenses
-
-                Nothing ->
-                    []
-
-        agent =
-            { id = user.id
-            , firstName = user.firstName
-            , lastName = user.lastName
-            , email = user.email
-            , phone = user.phone
-            , isAdmin = user.isAdmin
-            , isAgent = True -- always true
-            , carriers = carriers
-            , stateLicenses = stateLicenses
-            , expanded = False
-            }
-    in
-    Http.post
-        { url = "/api/agents"
-        , body = Http.jsonBody (encodeAgent agent)
-        , expect = Http.expectWhatever AgentSaved
-        }
-
-
-settingsDecoder : Decoder SettingsResponse
-settingsDecoder =
-    Decode.map2 SettingsResponse
-        (Decode.field "orgSettings" settingsObjectDecoder)
-        (Decode.field "canEditOrgSettings" Decode.bool)
-
-
-type alias SettingsResponse =
-    { orgSettings : Settings
-    , canEditOrgSettings : Bool
-    }
-
-
-type alias Settings =
-    { stateLicenses : List String
-    , carrierContracts : List String
-    , stateCarrierSettings : List StateCarrierSetting
-    , allowAgentSettings : Bool
-    , emailSendBirthday : Bool
-    , emailSendPolicyAnniversary : Bool
-    , emailSendAep : Bool
-    , smartSendEnabled : Bool
-    }
-
-
-type alias StateCarrierSetting =
-    { state : String
-    , carrier : String
-    , active : Bool
-    , targetGI : Bool
-    }
-
-
-settingsObjectDecoder : Decoder Settings
-settingsObjectDecoder =
-    Decode.map8 Settings
-        (Decode.field "stateLicenses" (Decode.list Decode.string))
-        (Decode.field "carrierContracts" (Decode.list Decode.string))
-        (Decode.field "stateCarrierSettings" (Decode.list stateCarrierSettingDecoder))
-        (Decode.field "allowAgentSettings" Decode.bool)
-        (Decode.field "emailSendBirthday" Decode.bool)
-        (Decode.field "emailSendPolicyAnniversary" Decode.bool)
-        (Decode.field "emailSendAep" Decode.bool)
-        (Decode.field "smartSendEnabled" Decode.bool)
-
-
-stateCarrierSettingDecoder : Decoder StateCarrierSetting
-stateCarrierSettingDecoder =
-    Decode.map4 StateCarrierSetting
-        (Decode.field "state" Decode.string)
-        (Decode.field "carrier" Decode.string)
-        (Decode.field "active" Decode.bool)
-        (Decode.field "targetGI" Decode.bool)
 
 
 subscriptions : Model -> Sub Msg
@@ -1777,40 +1609,6 @@ isValidPhone phone =
             String.filter Char.isDigit phone
     in
     String.length digits == 10
-
-
-canSave : Model -> Bool
-canSave model =
-    let
-        hasValidName =
-            not (String.isEmpty (String.trim model.firstName))
-                && not (String.isEmpty (String.trim model.lastName))
-
-        hasValidEmail =
-            isValidEmail model.email
-
-        hasValidPhone =
-            isValidPhone model.displayPhone
-
-        hasValidRole =
-            model.isAdmin || model.isAgent
-
-        allAgentsValid =
-            List.all
-                (\agent ->
-                    not (String.isEmpty agent.phone)
-                        && not (String.isEmpty agent.firstName)
-                        && not (String.isEmpty agent.lastName)
-                        && not (String.isEmpty agent.email)
-                        && (agent.isAdmin || agent.isAgent)
-                )
-                model.agents
-    in
-    if model.showAddForm then
-        hasValidName && hasValidEmail && hasValidPhone && hasValidRole
-
-    else
-        allAgentsValid
 
 
 fetchAgents : Cmd Msg
@@ -1852,10 +1650,8 @@ agentDecoder =
         |> Pipeline.required "lastName" Decode.string
         |> Pipeline.required "email" Decode.string
         |> Pipeline.required "phone" Decode.string
-        |> Pipeline.required "isAdmin" Decode.bool
-        |> Pipeline.required "isAgent" Decode.bool
-        |> Pipeline.optional "carriers" (Decode.list Decode.string) []
-        |> Pipeline.optional "stateLicenses" (Decode.list Decode.string) []
+        |> Pipeline.required "carriers" (Decode.list Decode.string)
+        |> Pipeline.required "stateLicenses" (Decode.list Decode.string)
         |> Pipeline.hardcoded False
 
 
@@ -1866,8 +1662,6 @@ encodeAgent agent =
         , ( "lastName", Encode.string agent.lastName )
         , ( "email", Encode.string agent.email )
         , ( "phone", Encode.string agent.phone )
-        , ( "isAdmin", Encode.bool agent.isAdmin )
-        , ( "isAgent", Encode.bool agent.isAgent )
         , ( "carriers", Encode.list Encode.string agent.carriers )
         , ( "stateLicenses", Encode.list Encode.string agent.stateLicenses )
         ]
@@ -1875,12 +1669,11 @@ encodeAgent agent =
 
 isAdminBecomingAgent : Model -> Bool
 isAdminBecomingAgent model =
-    case model.currentUser of
-        Just user ->
-            model.isAdmin && user.isAdmin
+    False
 
-        Nothing ->
-            False
+
+
+-- This check is no longer needed since all users are both admin and agent
 
 
 fetchCurrentUser : Cmd Msg
@@ -1906,22 +1699,12 @@ userDecoder =
                 [ Decode.field "id" Decode.string
                 , Decode.field "id" (Decode.map String.fromInt Decode.int)
                 ]
-
-        -- Add decoders that handle different boolean formats
-        boolDecoder =
-            Decode.oneOf
-                [ Decode.bool
-                , Decode.map (\n -> n == 1) Decode.int
-                , Decode.map (\s -> s == "1" || s == "true") Decode.string
-                ]
     in
-    Decode.map7 User
+    Decode.map5 User
         idDecoder
         (Decode.field "email" Decode.string)
         (Decode.field "firstName" Decode.string)
         (Decode.field "lastName" Decode.string)
-        (Decode.field "is_admin" boolDecoder)
-        (Decode.field "is_agent" boolDecoder)
         (Decode.oneOf
             [ Decode.field "phone" Decode.string
             , Decode.succeed ""
@@ -1954,12 +1737,12 @@ isCurrentUser agent model =
 
 canModifySettings : Model -> String -> Bool
 canModifySettings model agentId =
-    case ( model.currentUser, model.orgSettings ) of
-        ( Just user, Just settings ) ->
-            -- Admin and admin_agent can always modify settings
-            user.isAdmin
+    case model.currentUser of
+        Just user ->
+            True
 
-        _ ->
+        -- All users can modify settings now
+        Nothing ->
             False
 
 
@@ -2155,17 +1938,12 @@ isFormValid model =
 
         isPhoneValid =
             not (String.isEmpty (String.trim model.displayPhone))
-
-        hasValidRole =
-            model.isAdmin || model.isAgent
     in
-    isEmailValid && areNamesValid && isPhoneValid && hasValidRole
+    isEmailValid && areNamesValid && isPhoneValid
 
 
 submitNewAgent : Model -> Cmd Msg
 submitNewAgent model =
-    -- For new agents, we need to send a POST to /api/agents/create
-    -- This endpoint should be more permissive than updating an existing agent
     Http.post
         { url = "/api/agents/create"
         , body =
@@ -2175,8 +1953,6 @@ submitNewAgent model =
                     , ( "lastName", Encode.string model.lastName )
                     , ( "email", Encode.string model.email )
                     , ( "phone", Encode.string model.rawPhone )
-                    , ( "isAdmin", Encode.bool model.isAdmin )
-                    , ( "isAgent", Encode.bool model.isAgent )
                     , ( "carriers", Encode.list Encode.string model.carriers )
                     , ( "stateLicenses", Encode.list Encode.string model.stateLicenses )
                     ]

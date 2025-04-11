@@ -1357,6 +1357,45 @@ const startServer = async () => {
           }
         }
       })
+      .post('/api/agents/set_default_agent', async ({ body, request, set }) => {
+        try {
+          const currentUser = await getUserFromSession(request)
+          if (!currentUser) {
+            set.status = 401
+            return {
+              success: false,
+              error: 'You must be logged in to perform this action'
+            }
+          }
+
+          const { agentId } = body  
+          logger.info(`Setting default agent to ${agentId} for user ${currentUser.id}`)
+
+          // Get the libSQL client
+          const client = db.getClient()
+
+          // Update the default agent for the organization
+          await client.execute({
+            sql: `UPDATE organizations SET default_agent_id = ? WHERE id = ?`,
+            args: [agentId, currentUser.organization_id]
+          })
+
+          logger.info(`Default agent set to ${agentId} for organization ${currentUser.organization_id}`)
+          
+          set.status = 200
+          return {
+            success: true,
+            message: 'Default agent set successfully'
+          }
+        } catch (e) {
+          logger.error(`Error setting default agent: ${e}`) 
+          set.status = 500
+          return {
+            success: false,
+            error: String(e)
+          }
+        }
+      })
       // Update PUT endpoint for updating agent details - moved here to be with other agent endpoints
       .put('/api/agents/:id', async ({ params, body, request, set }: {
         params: { id: string },

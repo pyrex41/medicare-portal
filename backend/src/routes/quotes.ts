@@ -220,16 +220,52 @@ export const quotesRoutes = (app: Elysia) => {
                 };
             }
 
-            // Get agent info - first try assigned agent, then fall back to first user
-            const agent = contact.agent_id 
-                ? await mainDb.fetchOne<{ first_name: string, last_name: string, email: string, phone: string }>(
+            // Get agent info - first try assigned agent, then default agent, then fall back to first user
+            let agent = null;
+            
+            // Try assigned agent first
+            if (contact.agent_id) {
+                agent = await mainDb.fetchOne<{ first_name: string, last_name: string, email: string, phone: string }>(
                     'SELECT first_name, last_name, email, phone FROM users WHERE id = ?',
                     [contact.agent_id]
-                  )
-                : await mainDb.fetchOne<{ first_name: string, last_name: string, email: string, phone: string }>(
-                    'SELECT first_name, last_name, email, phone FROM users WHERE organization_id = ? ORDER BY id ASC LIMIT 1',
+                );
+            }
+            
+            // If no assigned agent, try default agent from org settings
+            if (!agent) {
+                const defaultAgentResult = await mainDb.fetchOne<{ default_agent_id: number }>(
+                    'SELECT default_agent_id FROM organizations WHERE id = ?',
                     [decoded.orgId]
-                  );
+                );
+                
+                if (defaultAgentResult?.default_agent_id) {
+                    agent = await mainDb.fetchOne<{ first_name: string, last_name: string, email: string, phone: string }>(
+                        'SELECT first_name, last_name, email, phone FROM users WHERE id = ?',
+                        [defaultAgentResult.default_agent_id]
+                    );
+                    
+                    // If we found the default agent, update the contact's agent_id
+                    if (agent) {
+                        try {
+                            await orgDb.execute(
+                                'UPDATE contacts SET agent_id = ? WHERE id = ?',
+                                [defaultAgentResult.default_agent_id, decoded.contactId]
+                            );
+                            logger.info(`Updated contact ${decoded.contactId} with default agent ${defaultAgentResult.default_agent_id}`);
+                        } catch (e) {
+                            logger.error(`Error updating contact's agent_id: ${e}`);
+                        }
+                    }
+                }
+            }
+            
+            // If still no agent, fall back to first active user
+            if (!agent) {
+                agent = await mainDb.fetchOne<{ first_name: string, last_name: string, email: string, phone: string }>(
+                    'SELECT first_name, last_name, email, phone FROM users WHERE organization_id = ? AND is_active = 1 ORDER BY id ASC LIMIT 1',
+                    [decoded.orgId]
+                );
+            }
 
             if (!agent) {
                 logger.error(`No users found for organization: ${decoded.orgId}`);

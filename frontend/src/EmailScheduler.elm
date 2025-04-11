@@ -212,6 +212,11 @@ getScheduledEmails schedule =
             oneYearAfterEffective =
                 Date.add Date.Years 1 schedule.effectiveDate
 
+            -- Check if we're within the first year
+            isWithinFirstYear : Bool
+            isWithinFirstYear =
+                Date.compare schedule.currentDate oneYearAfterEffective == LT
+
             -- Calculate the next occurrence of an event based on the email type and base date.
             nextOccurrence : ScheduledEmailType -> Date -> Date
             nextOccurrence emailType baseDate =
@@ -435,14 +440,23 @@ getScheduledEmails schedule =
                 createScheduledEmail emailType baseDate
 
             emails =
-                [ planSpecificEmail Birthday
-                , planSpecificEmail Anniversary
-                , planSpecificEmail OctoberBlast
+                if isWithinFirstYear then
+                    [ { emailType = NoEmails
+                      , scheduledTime = schedule.currentDate
+                      , status = Skipped "Within first year of effective date"
+                      }
+                    ]
 
-                -- New Year email removed from the list
-                ]
+                else
+                    [ planSpecificEmail Birthday
+                    , planSpecificEmail Anniversary
+                    , planSpecificEmail OctoberBlast
+
+                    -- New Year email removed from the list
+                    ]
         in
-        -- Include both scheduled and delayed emails, but filter out skipped ones
+        -- Include both scheduled and delayed emails, but filter out individual skipped ones
+        -- except for our special NoEmails case
         List.filter
             (\email ->
                 case email.status of
@@ -452,8 +466,9 @@ getScheduledEmails schedule =
                     Delayed _ ->
                         True
 
-                    Skipped _ ->
-                        False
+                    Skipped reason ->
+                        -- Allow through if it's our NoEmails message
+                        email.emailType == NoEmails
             )
             emails
             |> List.sortWith
