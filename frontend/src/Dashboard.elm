@@ -181,7 +181,7 @@ viewTutorialModal =
 
 viewStatsCard : String -> String -> String -> Html Msg
 viewStatsCard title value colorClass =
-    div [ class "bg-white rounded-lg shadow p-4 sm:p-6" ]
+    div [ class "bg-white rounded-lg shadow-xl p-4 sm:p-6" ]
         [ div [ class "text-gray-600 text-xs sm:text-sm" ] [ text title ]
         , div [ class "text-2xl sm:text-4xl font-bold mt-1 sm:mt-2 text-[#03045E]" ] [ text value ]
         ]
@@ -193,6 +193,7 @@ viewChart model =
         [ CA.height 300
         , CA.width 800 -- Fixed width, with overflow-x-auto on container
         , CA.margin { top = 10, bottom = 45, left = 30, right = 10 }
+
         -- CA.responsive is not available in this version
         ]
         [ C.xLabels
