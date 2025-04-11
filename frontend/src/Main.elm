@@ -24,6 +24,7 @@ import Landing
 import Login
 import Logout
 import Onboarding
+import Pricing
 import Process
 import Profile
 import Quote
@@ -185,6 +186,7 @@ type Page
     | SelfOnboardingPage SelfServiceOnboarding.Model
     | WaitlistPage Waitlist.Model
     | LandingPage Landing.Model
+    | PricingPage Pricing.Model
 
 
 type Msg
@@ -228,6 +230,7 @@ type Msg
     | SelfOnboardingMsg SelfServiceOnboarding.Msg
     | WaitlistMsg Waitlist.Msg
     | LandingMsg Landing.Msg
+    | PricingMsg Pricing.Msg
 
 
 type alias Flags =
@@ -409,6 +412,7 @@ type PublicPage
     | SelfOnboardingRoute String
     | WaitlistRoute
     | LandingRoute { quoteId : Maybe String }
+    | PricingRoute
 
 
 type ProtectedPage
@@ -481,6 +485,7 @@ routeParser =
         , map (PublicRoute LoginRoute) (s "login")
         , map (PublicRoute SignupRoute) (s "signup")
         , map (PublicRoute OnboardingRoute) (s "onboarding")
+        , map (PublicRoute PricingRoute) (s "pricing")
         , map (\orgSlug token -> PublicRoute (VerifyRoute (VerifyParams orgSlug token)))
             (s "auth" </> s "verify" </> string </> string)
         , map (PublicRoute << CompareRoute) (s "compare" <?> compareParamsParser)
@@ -1118,6 +1123,20 @@ update msg model =
                 _ ->
                     ( model, Cmd.none )
 
+        PricingMsg subMsg ->
+            case model.page of
+                PricingPage pricingModel ->
+                    let
+                        ( newPricingModel, newCmd ) =
+                            Pricing.update subMsg pricingModel
+                    in
+                    ( { model | page = PricingPage newPricingModel }
+                    , Cmd.map PricingMsg newCmd
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
+
 
 view : Model -> Browser.Document Msg
 view model =
@@ -1334,6 +1353,15 @@ view model =
                     { title = landingView.title
                     , body = [ viewWithNav model (Html.map LandingMsg (div [] landingView.body)) ]
                     }
+
+                PricingPage pricingModel ->
+                    let
+                        pricingView =
+                            Pricing.view pricingModel
+                    in
+                    { title = "Pricing"
+                    , body = [ viewWithNav model (Html.map PricingMsg pricingView) ]
+                    }
     in
     viewPage
 
@@ -1380,6 +1408,9 @@ viewNavHeader model =
                     True
 
                 LandingPage _ ->
+                    True
+
+                PricingPage _ ->
                     True
 
                 _ ->
@@ -1652,6 +1683,9 @@ subscriptions model =
 
                 LandingPage landingModel ->
                     Sub.map LandingMsg (Landing.subscriptions landingModel)
+
+                PricingPage pricingModel ->
+                    Sub.none
     in
     Sub.batch [ dropdownSub, pageSubs ]
 
@@ -2439,6 +2473,15 @@ updatePage url ( model, cmd ) =
                                         , Cmd.map LandingMsg landingCmd
                                         )
 
+                                    PublicRoute PricingRoute ->
+                                        let
+                                            ( pricingModel, pricingCmd ) =
+                                                Pricing.init
+                                        in
+                                        ( { model | page = PricingPage pricingModel }
+                                        , Cmd.map PricingMsg pricingCmd
+                                        )
+
                 Nothing ->
                     ( { model | page = NotFoundPage }
                     , cmd
@@ -2745,6 +2788,15 @@ updatePageForcePublic url ( model, cmd ) =
                     in
                     ( { model | page = LandingPage landingModel }
                     , Cmd.map LandingMsg landingCmd
+                    )
+
+                PublicRoute PricingRoute ->
+                    let
+                        ( pricingModel, pricingCmd ) =
+                            Pricing.init
+                    in
+                    ( { model | page = PricingPage pricingModel }
+                    , Cmd.map PricingMsg pricingCmd
                     )
 
         Nothing ->

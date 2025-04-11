@@ -1,8 +1,8 @@
 module Landing exposing (Model, Msg(..), init, subscriptions, update, view)
 
 import Browser
-import Html exposing (Html, a, div, h1, p, text)
-import Html.Attributes exposing (class, href)
+import Html exposing (Html, a, br, div, h1, img, p, span, text)
+import Html.Attributes exposing (class, href, src)
 import Html.Events exposing (onClick)
 import Url.Builder as Builder
 
@@ -36,28 +36,58 @@ update msg model =
 
 view : Model -> Browser.Document Msg
 view model =
-    { title = "Thank You - Medicare Max"
+    { title = "Thanks for checking it out - Medicare Max"
     , body =
-        [ div [ class "min-h-screen bg-gray-50 flex flex-col items-center justify-center px-4 sm:px-6 lg:px-8" ]
-            [ div [ class "max-w-md w-full space-y-8 text-center" ]
-                [ h1 [ class "text-3xl font-bold text-gray-900 mb-8" ]
-                    [ text "Thank you for entering your information!" ]
-                , p [ class "text-lg text-gray-600 mb-8" ]
-                    [ text "You'll receive an email with a copy of your quote that you can click through, just like your clients will." ]
-                , div [ class "flex items-center justify-center my-12" ]
-                    [ div [ class "w-full max-w-[100px] h-[1px] bg-gray-300" ] [] ]
-                , div [ class "mt-6" ]
-                    [ case model.quoteId of
-                        Just id ->
-                            a
-                                [ href (Builder.absolute [ "compare" ] [ Builder.string "id" id ])
-                                , class "inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-md text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
-                                , onClick (NavigateTo (Builder.absolute [ "compare" ] [ Builder.string "id" id ]))
-                                ]
-                                [ text "View Quote on This Device" ]
+        [ div [ class "min-h-screen bg-white" ]
+            [ div [ class "max-w-md mx-auto px-4 sm:px-6 lg:px-8 pt-12" ]
+                [ div [ class "mb-16" ]
+                    [ img
+                        [ src "/images/medicare-max-logo.png"
+                        , class "h-12"
+                        ]
+                        []
+                    ]
+                , div [ class "text-center" ]
+                    [ div [ class "mb-8" ]
+                        [ img
+                            [ src "/images/party-popper.png"
+                            , class "h-16 mx-auto"
+                            ]
+                            []
+                        ]
+                    , h1 [ class "text-[40px] leading-[48px] font-bold text-[#111111] mb-4" ]
+                        [ text "Thanks for"
+                        , br [] []
+                        , text "checking it out."
+                        ]
+                    , p [ class "text-lg text-gray-600 mb-8" ]
+                        [ text "Head to "
+                        , span [ class "text-[#0A0F51] font-bold" ] [ text "your email" ]
+                        , text " to see what"
+                        , br [] []
+                        , text "your clients will experience"
+                        ]
+                    , a
+                        [ href "/"
+                        , class "inline-flex items-center px-6 py-3 text-base font-medium rounded-md text-white bg-[#0A0F51] hover:bg-[#0A0F51]/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#0A0F51] mb-8"
+                        , onClick (NavigateTo "/")
+                        ]
+                        [ text "Back to the Homepage" ]
+                    , div [ class "text-gray-600 text-sm max-w-[200px] mx-auto" ]
+                        [ text "Didn't receive an email yet - "
+                        , case model.quoteId of
+                            Just id ->
+                                a
+                                    [ href (Builder.absolute [ "compare" ] [ Builder.string "id" id ])
+                                    , class "text-[#0A0F51] underline hover:text-[#0A0F51]/90"
+                                    , onClick (NavigateTo (Builder.absolute [ "compare" ] [ Builder.string "id" id ]))
+                                    ]
+                                    [ text "click here" ]
 
-                        Nothing ->
-                            text ""
+                            Nothing ->
+                                text ""
+                        , text " for your quote"
+                        ]
                     ]
                 ]
             ]
