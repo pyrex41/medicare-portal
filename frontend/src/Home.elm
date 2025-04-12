@@ -221,7 +221,7 @@ update msg model =
 
 view : Model -> Browser.Document Msg
 view model =
-    { title = "Medicare Max - Boost Your Medigap Renewals with AI"
+    { title = "Medicare Max - Boost Your Medicare Supp Renewals with AI"
     , body =
         [ div [ class "min-h-screen bg-white md:snap-y md:snap-mandatory overflow-y-auto h-screen scroll-smooth" ]
             [ div [ class "max-w-7xl mx-auto px-6 sm:px-6 lg:px-8 pt-8 sm:pt-16 pb-16 sm:pb-32 min-h-screen flex items-center md:snap-start" ]
