@@ -20,16 +20,16 @@ calculatePrice : Int -> Int
 calculatePrice contacts =
     let
         basePrice =
-            60
+            150
 
-        -- Base price for up to 500 contacts
+        -- Base price for up to 250 contacts
         additionalTiers =
-            Basics.max 0 (ceiling (toFloat (Basics.max 0 (contacts - 500)) / 500))
+            Basics.max 0 (ceiling (toFloat (Basics.max 0 (contacts - 250)) / 250))
 
         additionalPrice =
-            additionalTiers * 40
+            additionalTiers * 35
 
-        -- $40 for each additional 500 contacts
+        -- $35 for each additional 250 contacts
     in
     basePrice + additionalPrice
 
@@ -126,13 +126,13 @@ view inputs =
                 [ tbody []
                     [ tr [ class "border-b border-gray-200" ]
                         [ td [ class "py-2 text-gray-600" ] [ text "Base monthly subscription:" ]
-                        , td [ class "py-2 text-right font-medium" ] [ text "$60/month" ]
+                        , td [ class "py-2 text-right font-medium" ] [ text "$150/month" ]
                         ]
-                    , if revenueModel.price /= 60 then
+                    , if revenueModel.price /= 150 then
                         tr [ class "border-b border-gray-200" ]
                             [ td [ class "py-2 text-gray-600" ] [ text "Additional monthly contacts cost:" ]
                             , td [ class "py-2 text-right font-medium" ]
-                                [ text <| "$" ++ String.fromInt (revenueModel.price - 60) ++ "/month" ]
+                                [ text <| "$" ++ String.fromInt (revenueModel.price - 150) ++ "/month" ]
                             ]
 
                       else
@@ -190,7 +190,7 @@ view inputs =
                     , div [ class "flex justify-between items-center py-2" ]
                         [ div [ class "font-medium text-gray-700 truncate pr-4" ] [ text "Annual Return on Investment:" ]
                         , div [ class "text-right font-bold text-green-600 whitespace-nowrap" ]
-                            [ text <| String.fromFloat revenueModel.roi ++ "x" ]
+                            [ text <| formatNumber revenueModel.roi ++ "x" ]
                         ]
                     ]
                 ]
