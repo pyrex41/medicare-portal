@@ -51,6 +51,7 @@ type Msg
     | GotSessionResponse (Result Http.Error SessionResponse)
     | NavigateSignup
     | NavigateTryItOut
+    | NavigatePricing
     | SetExperienceTab ExperienceTab
     | StartCarousel
     | StopCarousel
@@ -131,6 +132,11 @@ update msg model =
         NavigateTryItOut ->
             ( model
             , Nav.pushUrl model.key "/self-onboarding/demo-org"
+            )
+
+        NavigatePricing ->
+            ( model
+            , Nav.pushUrl model.key "/pricing"
             )
 
         SetExperienceTab tab ->
@@ -228,18 +234,39 @@ view model =
                             ]
                             []
                         ]
-                    , div [ class "flex items-center" ]
-                        [ button
+                    , div [ class "flex items-center rounded-lg overflow-hidden w-[600px]", style "box-shadow" "0 4px 14px rgba(147, 51, 234, 0.1)" ]
+                        (let
+                            baseClass =
+                                "px-8 py-3 font-medium cursor-pointer text-base transition-all duration-200 flex-1 text-center whitespace-nowrap"
+
+                            pricingClass =
+                                baseClass ++ " text-[#DC2626] hover:text-white hover:bg-[#DC2626]"
+
+                            earlyAccessClass =
+                                baseClass ++ " text-[#EAB308] hover:text-white hover:bg-[#EAB308]"
+
+                            tryItOutClass =
+                                baseClass ++ " text-[#03045E] hover:text-white hover:bg-[#03045E]"
+                         in
+                         [ a
+                            [ onClick NavigatePricing
+                            , class pricingClass
+                            ]
+                            [ text "Pricing" ]
+                         , div [ class "h-6 w-px bg-gray-200" ] []
+                         , a
                             [ onClick NavigateSignup
-                            , class "bg-[#03045E] text-white border-2 border-[#03045E] px-6 sm:px-8 py-2 rounded-lg text-sm font-medium hover:bg-[#1a1f5f] transition-colors duration-200 mr-3 w-[200px] text-center"
+                            , class earlyAccessClass
                             ]
                             [ text "Get Early Access" ]
-                        , button
+                         , div [ class "h-6 w-px bg-gray-200" ] []
+                         , a
                             [ onClick NavigateTryItOut
-                            , class "bg-white text-[#03045E] border-2 border-[#03045E] px-6 sm:px-8 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors duration-200 w-[200px] text-center"
+                            , class tryItOutClass
                             ]
                             [ text "Try It Out" ]
-                        ]
+                         ]
+                        )
                     ]
                 ]
             , div [ class "max-w-7xl mx-auto px-6 sm:px-6 lg:px-8 pt-8 sm:pt-16 pb-16 sm:pb-32 min-h-screen flex items-center md:snap-start" ]
@@ -281,15 +308,15 @@ view model =
                         , p
                             [ class "mt-4 sm:mt-6 text-base sm:text-lg text-[#475467] leading-[1.5] text-center sm:text-left" ]
                             [ text "Our AI-powered system handles client outreach, quotes, health underwriting, and e-apps — magically resetting your residuals so you can focus on growing your book." ]
-                        , div [ class "mt-6 sm:mt-10 flex justify-center sm:justify-start gap-4" ]
+                        , div [ class "mt-8 sm:mt-12 flex justify-start gap-6" ]
                             [ button
                                 [ onClick NavigateSignup
-                                , class "w-[180px] sm:w-[180px] inline-flex items-center justify-center px-3 sm:px-4 py-2 sm:py-2.5 rounded-lg text-sm font-semibold text-white bg-[#03045E] hover:bg-[#1a1f5f] transition-colors duration-200"
+                                , class "w-[220px] inline-flex items-center justify-center px-6 py-3.5 rounded-lg text-base font-semibold text-white bg-[#03045E] hover:bg-[#1a1f5f] transition-colors duration-200"
                                 ]
                                 [ text "Get Early Access" ]
                             , button
                                 [ onClick NavigateTryItOut
-                                , class "w-[180px] sm:w-[180px] inline-flex items-center justify-center px-2 sm:px-4 py-2 sm:py-2.5 rounded-lg text-sm font-semibold text-[#03045E] bg-white border-2 border-[#03045E] hover:bg-gray-50 transition-colors duration-200"
+                                , class "w-[220px] inline-flex items-center justify-center px-6 py-3.5 rounded-lg text-base font-semibold text-[#03045E] bg-white border-2 border-[#03045E] hover:bg-gray-50 transition-colors duration-200"
                                 ]
                                 [ text "Try It Out" ]
                             ]
