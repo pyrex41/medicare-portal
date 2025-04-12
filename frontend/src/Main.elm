@@ -1382,40 +1382,102 @@ viewWithNav model content =
         ]
 
 
-viewPublicNav : Html Msg
-viewPublicNav =
-    nav [ class "max-w-7xl mx-auto px-6 sm:px-6 lg:px-8 py-4 sm:py-6 sticky top-0 z-50 bg-white hidden xl:block" ]
-        [ div
-            [ class "flex justify-between items-center" ]
-            [ div [ class "flex items-center" ]
-                [ a [ href "/" ]
-                    [ img
-                        [ src "/images/medicare-max-logo.png"
-                        , class "h-6 sm:h-8 w-auto"
-                        , alt "Medicare Max logo"
+viewPublicNav : Model -> Html Msg
+viewPublicNav model =
+    div []
+        [ -- Desktop navigation
+          nav [ class "max-w-7xl mx-auto px-6 sm:px-6 lg:px-8 py-4 sm:py-6 sticky top-0 z-50 bg-white hidden xl:block" ]
+            [ div
+                [ class "flex justify-between items-center" ]
+                [ div [ class "flex items-center" ]
+                    [ a [ href "/" ]
+                        [ img
+                            [ src "/images/medicare-max-logo.png"
+                            , class "h-6 sm:h-8 w-auto"
+                            , alt "Medicare Max logo"
+                            ]
+                            []
                         ]
-                        []
                     ]
-                ]
-            , div [ class "flex items-center justify-end gap-8" ]
-                [ button
-                    [ onClick (InternalLinkClicked "/pricing")
-                    , class "px-6 text-gray-600 hover:text-gray-900 text-base font-medium cursor-pointer transition-all duration-200"
-                    ]
-                    [ text "Pricing" ]
-                , div [ class "flex items-center" ]
+                , div [ class "flex items-center justify-end gap-8" ]
                     [ button
-                        [ onClick (InternalLinkClicked "/waitlist")
-                        , class "bg-[#03045E] text-white border-2 border-[#03045E] px-6 sm:px-8 py-2 rounded-lg text-sm font-medium hover:bg-[#1a1f5f] transition-colors duration-200 mr-3 w-[200px] text-center"
+                        [ onClick (InternalLinkClicked "/pricing")
+                        , class "px-6 text-gray-600 hover:text-gray-900 text-base font-medium cursor-pointer transition-all duration-200"
                         ]
-                        [ text "Get Early Access" ]
-                    , button
-                        [ onClick (InternalLinkClicked "/self-onboarding/demo-org")
-                        , class "bg-white text-[#03045E] border-2 border-[#03045E] px-6 sm:px-8 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors duration-200 w-[200px] text-center"
+                        [ text "Pricing" ]
+                    , div [ class "flex items-center" ]
+                        [ button
+                            [ onClick (InternalLinkClicked "/waitlist")
+                            , class "bg-[#03045E] text-white border-2 border-[#03045E] px-6 sm:px-8 py-2 rounded-lg text-sm font-medium hover:bg-[#1a1f5f] transition-colors duration-200 mr-3 w-[200px] text-center"
+                            ]
+                            [ text "Get Early Access" ]
+                        , button
+                            [ onClick (InternalLinkClicked "/self-onboarding/demo-org")
+                            , class "bg-white text-[#03045E] border-2 border-[#03045E] px-6 sm:px-8 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors duration-200 w-[200px] text-center"
+                            ]
+                            [ text "Try It Out" ]
                         ]
-                        [ text "Try It Out" ]
                     ]
                 ]
+            ]
+
+        -- Mobile navigation
+        , nav [ class "xl:hidden sticky top-0 z-50 bg-white" ]
+            [ div [ class "max-w-7xl mx-auto px-4 py-4" ]
+                [ div [ class "flex justify-between items-center" ]
+                    [ a [ href "/" ]
+                        [ img
+                            [ src "/images/medicare-max-logo.png"
+                            , class "h-6 w-auto"
+                            , alt "Medicare Max logo"
+                            ]
+                            []
+                        ]
+                    , button
+                        [ onClick ToggleDropdown
+                        , class "p-2 rounded-md text-gray-600 hover:text-gray-900 hover:bg-gray-100 focus:outline-none"
+                        ]
+                        [ -- Hamburger icon
+                          svg
+                            [ Svg.Attributes.class "h-6 w-6"
+                            , Svg.Attributes.fill "none"
+                            , Svg.Attributes.viewBox "0 0 24 24"
+                            , Svg.Attributes.stroke "currentColor"
+                            ]
+                            [ path
+                                [ Svg.Attributes.strokeLinecap "round"
+                                , Svg.Attributes.strokeLinejoin "round"
+                                , Svg.Attributes.strokeWidth "2"
+                                , Svg.Attributes.d "M4 6h16M4 12h16M4 18h16"
+                                ]
+                                []
+                            ]
+                        ]
+                    ]
+                ]
+            , if model.showDropdown then
+                div [ class "absolute top-full left-0 w-full bg-white shadow-lg border-t border-gray-200" ]
+                    [ div [ class "px-4 py-2 space-y-2" ]
+                        [ button
+                            [ onClick (InternalLinkClicked "/pricing")
+                            , class "block w-full text-left px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-md"
+                            ]
+                            [ text "Pricing" ]
+                        , button
+                            [ onClick (InternalLinkClicked "/waitlist")
+                            , class "block w-full text-left px-4 py-2 text-[#03045E] font-medium hover:bg-gray-100 rounded-md"
+                            ]
+                            [ text "Get Early Access" ]
+                        , button
+                            [ onClick (InternalLinkClicked "/self-onboarding/demo-org")
+                            , class "block w-full text-left px-4 py-2 text-[#03045E] font-medium hover:bg-gray-100 rounded-md"
+                            ]
+                            [ text "Try It Out" ]
+                        ]
+                    ]
+
+              else
+                text ""
             ]
         ]
 
@@ -1465,7 +1527,7 @@ viewNavHeader model =
                     False
     in
     if isPublicPage then
-        viewPublicNav
+        viewPublicNav model
 
     else if isQuoteFlowPage then
         text ""

@@ -227,26 +227,7 @@ view model =
             [ div [ class "max-w-7xl mx-auto px-6 sm:px-6 lg:px-8 pt-8 sm:pt-16 pb-16 sm:pb-32 min-h-screen flex items-center md:snap-start" ]
                 [ div [ class "grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-16 items-center" ]
                     [ div [ class "relative" ]
-                        [ nav [ class "mb-8 xl:hidden" ]
-                            [ div [ class "flex justify-between items-center" ]
-                                [ div [ class "flex items-center" ]
-                                    [ img
-                                        [ src "/images/medicare-max-logo.png"
-                                        , class "h-6 sm:h-8 w-auto"
-                                        , alt "Medicare Max logo"
-                                        ]
-                                        []
-                                    ]
-                                , div [ class "flex items-center" ]
-                                    [ button
-                                        [ onClick NavigateTryItOut
-                                        , class "bg-[#03045E] text-white px-6 sm:px-8 py-2 rounded-lg text-sm font-medium hover:bg-[#1a1f5f] transition-colors duration-200"
-                                        ]
-                                        [ text "Try It Out" ]
-                                    ]
-                                ]
-                            ]
-                        , div [ class "flex justify-center sm:justify-start w-full" ]
+                        [ div [ class "flex justify-center sm:justify-start w-full" ]
                             [ div [ class "inline-flex items-center rounded-full bg-[#F9F5FF] mt-16 sm:mt-0 px-0 sm:px-0 py-1 mb-6 sm:mb-8" ]
                                 [ div [ class "bg-[#03045E] rounded-full px-3 sm:px-3.5 py-1" ]
                                     [ span [ class "text-xs sm:text-sm text-white" ] [ text "Old book of business?" ]
