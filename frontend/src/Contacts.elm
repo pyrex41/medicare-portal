@@ -1912,13 +1912,13 @@ view model =
                         [ colgroup []
                             [ col [ class "w-12" ] [] -- Checkbox
                             , col [ class "w-48" ] [] -- Name
-                            , col [ class "w-32" ] [] -- Contact Status
+                            , col [ class "w-16" ] [] -- Contact Status (reduced from w-20)
                             , col [ class "w-48" ] [] -- Email
-                            , col [ class "w-32" ] [] -- Phone Number
+                            , col [ class "w-28" ] [] -- Phone Number
                             , col [ class "w-16" ] [] -- State
                             , col [ class "w-32" ] [] -- Assigned Agent
-                            , col [ class "w-32" ] [] -- Current Carrier
-                            , col [ class "w-28" ] [] -- Effective Date
+                            , col [ class "w-20" ] [] -- Current Carrier (reduced from w-24)
+                            , col [ class "w-24" ] [] -- Effective Date
                             , col [ class "w-20" ] [] -- Actions
                             ]
                         , thead [ class "bg-gray-50" ]
@@ -1939,13 +1939,13 @@ view model =
                                         []
                                     ]
                                 , tableHeader "Name"
-                                , tableHeader "Contact Status"
+                                , tableHeader "Status"
                                 , tableHeader "Email"
-                                , tableHeader "Phone Number"
+                                , tableHeader "Phone"
                                 , tableHeader "State"
-                                , tableHeader "Assigned Agent"
-                                , tableHeader "Current Carrier"
-                                , tableHeader "Effective Date"
+                                , tableHeader "Agent"
+                                , tableHeader "Carrier"
+                                , tableHeader "Eff. Date"
                                 , tableHeader "Actions"
                                 ]
                             ]
@@ -2057,6 +2057,14 @@ viewTableRow model contact =
         cellClass =
             "px-2 py-1 text-sm border-t border-gray-200"
 
+        phoneCellClass =
+            cellClass ++ " text-xs"
+
+        compactCellClass =
+            "px-1 py-1 text-sm border-t border-gray-200"
+
+        -- Reduced padding for compact cells
+        -- Added smaller text for phone numbers
         initials =
             String.left 1 contact.firstName ++ String.left 1 contact.lastName
 
@@ -2113,17 +2121,17 @@ viewTableRow model contact =
                     ]
                 ]
             ]
-        , td [ class cellClass ]
+        , td [ class compactCellClass ]
             [ viewStatus contact.status ]
         , td [ class cellClass ]
             [ text contact.email ]
-        , td [ class cellClass ]
+        , td [ class phoneCellClass ]
             [ text (formatPhoneNumber contact.phoneNumber) ]
         , td [ class cellClass ]
             [ text contact.state ]
         , td [ class cellClass ]
             [ text agentName ]
-        , td [ class cellClass ]
+        , td [ class compactCellClass ]
             [ text currentCarrier ]
         , td [ class cellClass ]
             [ text contact.effectiveDate ]

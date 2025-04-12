@@ -1250,7 +1250,7 @@ view model =
                             Home.view homeModel
                     in
                     { title = homeView.title
-                    , body = List.map (Html.map HomeMsg) homeView.body
+                    , body = [ viewWithNav model (Html.map HomeMsg (div [] homeView.body)) ]
                     }
 
                 ContactPage contactModel ->
@@ -1382,6 +1382,44 @@ viewWithNav model content =
         ]
 
 
+viewPublicNav : Html Msg
+viewPublicNav =
+    nav [ class "max-w-7xl mx-auto px-6 sm:px-6 lg:px-8 py-4 sm:py-6 sticky top-0 z-50 bg-white hidden xl:block" ]
+        [ div
+            [ class "flex justify-between items-center" ]
+            [ div [ class "flex items-center" ]
+                [ a [ href "/" ]
+                    [ img
+                        [ src "/images/medicare-max-logo.png"
+                        , class "h-6 sm:h-8 w-auto"
+                        , alt "Medicare Max logo"
+                        ]
+                        []
+                    ]
+                ]
+            , div [ class "flex items-center justify-end gap-8" ]
+                [ button
+                    [ onClick (InternalLinkClicked "/pricing")
+                    , class "px-6 text-gray-600 hover:text-gray-900 text-base font-medium cursor-pointer transition-all duration-200"
+                    ]
+                    [ text "Pricing" ]
+                , div [ class "flex items-center" ]
+                    [ button
+                        [ onClick (InternalLinkClicked "/waitlist")
+                        , class "bg-[#03045E] text-white border-2 border-[#03045E] px-6 sm:px-8 py-2 rounded-lg text-sm font-medium hover:bg-[#1a1f5f] transition-colors duration-200 mr-3 w-[200px] text-center"
+                        ]
+                        [ text "Get Early Access" ]
+                    , button
+                        [ onClick (InternalLinkClicked "/self-onboarding/demo-org")
+                        , class "bg-white text-[#03045E] border-2 border-[#03045E] px-6 sm:px-8 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors duration-200 w-[200px] text-center"
+                        ]
+                        [ text "Try It Out" ]
+                    ]
+                ]
+            ]
+        ]
+
+
 viewNavHeader : Model -> Html Msg
 viewNavHeader model =
     let
@@ -1403,10 +1441,6 @@ viewNavHeader model =
                 SelfOnboardingPage _ ->
                     True
 
-                WaitlistPage _ ->
-                    -- not quote flow, but should have simplified header
-                    True
-
                 LandingPage _ ->
                     True
 
@@ -1415,26 +1449,26 @@ viewNavHeader model =
 
                 _ ->
                     False
+
+        isPublicPage =
+            case model.page of
+                HomePage _ ->
+                    True
+
+                PricingPage _ ->
+                    True
+
+                WaitlistPage _ ->
+                    True
+
+                _ ->
+                    False
     in
-    if isQuoteFlowPage then
+    if isPublicPage then
+        viewPublicNav
+
+    else if isQuoteFlowPage then
         text ""
-        {--
-        -- Simplified header with just the logo for quote flow pages
-        nav [ class "bg-white border-b border-gray-200" ]
-            [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8" ]
-                [ div [ class "flex justify-center h-14 sm:h-16" ]
-                    [ div [ class "shrink-0 flex items-center" ]
-                        [ img
-                            [ src "/images/medicare-max-logo.png"
-                            , class "h-6 sm:h-6 w-auto"
-                            , alt "Medicare Max logo"
-                            ]
-                            []
-                        ]
-                    ]
-                ]
-            ]
-        --}
 
     else
         -- Full header with navigation for other pages
@@ -2478,8 +2512,11 @@ updatePage url ( model, cmd ) =
                                             ( pricingModel, pricingCmd ) =
                                                 Pricing.init
                                         in
-                                        ( { model | page = PricingPage pricingModel }
-                                        , Cmd.map PricingMsg pricingCmd
+                                        ( { modelWithUpdatedSetup | page = PricingPage pricingModel }
+                                        , Cmd.batch
+                                            [ Cmd.map PricingMsg pricingCmd
+                                            , authCmd
+                                            ]
                                         )
 
                 Nothing ->

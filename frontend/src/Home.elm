@@ -224,52 +224,7 @@ view model =
     { title = "Medicare Max - Boost Your Medigap Renewals with AI"
     , body =
         [ div [ class "min-h-screen bg-white md:snap-y md:snap-mandatory overflow-y-auto h-screen scroll-smooth" ]
-            [ nav [ class "max-w-7xl mx-auto px-6 sm:px-6 lg:px-8 py-4 sm:py-6 sticky top-0 z-50 bg-white hidden xl:block" ]
-                [ div [ class "flex justify-between items-center" ]
-                    [ div [ class "flex items-center" ]
-                        [ img
-                            [ src "/images/medicare-max-logo.png"
-                            , class "h-6 sm:h-8 w-auto"
-                            , alt "Medicare Max logo"
-                            ]
-                            []
-                        ]
-                    , div [ class "flex items-center rounded-lg overflow-hidden w-[600px]", style "box-shadow" "0 4px 14px rgba(147, 51, 234, 0.1)" ]
-                        (let
-                            baseClass =
-                                "px-8 py-3 font-medium cursor-pointer text-base transition-all duration-200 flex-1 text-center whitespace-nowrap"
-
-                            pricingClass =
-                                baseClass ++ " text-[#DC2626] hover:text-white hover:bg-[#DC2626]"
-
-                            earlyAccessClass =
-                                baseClass ++ " text-[#EAB308] hover:text-white hover:bg-[#EAB308]"
-
-                            tryItOutClass =
-                                baseClass ++ " text-[#03045E] hover:text-white hover:bg-[#03045E]"
-                         in
-                         [ a
-                            [ onClick NavigatePricing
-                            , class pricingClass
-                            ]
-                            [ text "Pricing" ]
-                         , div [ class "h-6 w-px bg-gray-200" ] []
-                         , a
-                            [ onClick NavigateSignup
-                            , class earlyAccessClass
-                            ]
-                            [ text "Get Early Access" ]
-                         , div [ class "h-6 w-px bg-gray-200" ] []
-                         , a
-                            [ onClick NavigateTryItOut
-                            , class tryItOutClass
-                            ]
-                            [ text "Try It Out" ]
-                         ]
-                        )
-                    ]
-                ]
-            , div [ class "max-w-7xl mx-auto px-6 sm:px-6 lg:px-8 pt-8 sm:pt-16 pb-16 sm:pb-32 min-h-screen flex items-center md:snap-start" ]
+            [ div [ class "max-w-7xl mx-auto px-6 sm:px-6 lg:px-8 pt-8 sm:pt-16 pb-16 sm:pb-32 min-h-screen flex items-center md:snap-start" ]
                 [ div [ class "grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-16 items-center" ]
                     [ div [ class "relative" ]
                         [ nav [ class "mb-8 xl:hidden" ]
