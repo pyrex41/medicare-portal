@@ -132,7 +132,7 @@ view inputs =
                         tr [ class "border-b border-gray-200" ]
                             [ td [ class "py-2 text-gray-600" ] [ text "Additional monthly contacts cost:" ]
                             , td [ class "py-2 text-right font-medium" ]
-                                [ text <| "$" ++ String.fromInt (revenueModel.price - 150) ++ "/month" ]
+                                [ text <| "$" ++ addCommas (String.fromInt (revenueModel.price - 150)) ++ "/month" ]
                             ]
 
                       else
@@ -148,7 +148,7 @@ view inputs =
                     , tr []
                         [ td [ class "py-2 font-medium" ] [ text "Annual Cost:" ]
                         , td [ class "py-2 text-right font-bold text-indigo-600" ]
-                            [ text <| "$" ++ String.fromInt (revenueModel.price * 12) ]
+                            [ text <| "$" ++ addCommas (String.fromInt (revenueModel.price * 12)) ]
                         ]
                     ]
                 ]
