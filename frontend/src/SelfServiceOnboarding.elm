@@ -1120,6 +1120,12 @@ viewFormStep : Model -> Html Msg
 viewFormStep model =
     div []
         [ viewHeader model.logo model.orgName
+        , div [ class "text-center mb-6 px-4 sm:px-6" ]
+            [ div [ class "max-w-2xl mx-auto" ]
+                [ p [ class "text-[#475467] text-base sm:text-lg italic mb-2" ]
+                    [ text "This is the exact form that your clients will go through if we need more info. It can also be used for new lead generation. This form will be white labeled with your branding, logo, and colors to match your agency's style." ]
+                ]
+            ]
         , div [ class "text-center mb-6 px-2 sm:px-0" ]
             [ h1 [ class "text-2xl sm:text-3xl font-bold text-[#101828]" ] [ text "Let's Get Some Details" ]
             , p [ class "text-[#475467] mt-2 text-sm sm:text-base" ] [ text "We use this information to get you the most accurate quote for your area." ]
