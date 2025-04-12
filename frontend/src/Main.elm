@@ -25,6 +25,7 @@ import Login
 import Logout
 import Onboarding
 import Pricing
+import Pricing2
 import Process
 import Profile
 import Quote
@@ -187,6 +188,7 @@ type Page
     | WaitlistPage Waitlist.Model
     | LandingPage Landing.Model
     | PricingPage Pricing.Model
+    | Pricing2Page Pricing2.Model
 
 
 type Msg
@@ -231,6 +233,7 @@ type Msg
     | WaitlistMsg Waitlist.Msg
     | LandingMsg Landing.Msg
     | PricingMsg Pricing.Msg
+    | Pricing2Msg Pricing2.Msg
 
 
 type alias Flags =
@@ -413,6 +416,7 @@ type PublicPage
     | WaitlistRoute
     | LandingRoute { quoteId : Maybe String }
     | PricingRoute
+    | Pricing2Route
 
 
 type ProtectedPage
@@ -486,6 +490,7 @@ routeParser =
         , map (PublicRoute SignupRoute) (s "signup")
         , map (PublicRoute OnboardingRoute) (s "onboarding")
         , map (PublicRoute PricingRoute) (s "pricing")
+        , map (PublicRoute Pricing2Route) (s "pricing2")
         , map (\orgSlug token -> PublicRoute (VerifyRoute (VerifyParams orgSlug token)))
             (s "auth" </> s "verify" </> string </> string)
         , map (PublicRoute << CompareRoute) (s "compare" <?> compareParamsParser)
@@ -1137,6 +1142,20 @@ update msg model =
                 _ ->
                     ( model, Cmd.none )
 
+        Pricing2Msg subMsg ->
+            case model.page of
+                Pricing2Page pricing2Model ->
+                    let
+                        ( newPricing2Model, newCmd ) =
+                            Pricing2.update subMsg pricing2Model
+                    in
+                    ( { model | page = Pricing2Page newPricing2Model }
+                    , Cmd.map Pricing2Msg newCmd
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
+
 
 view : Model -> Browser.Document Msg
 view model =
@@ -1361,6 +1380,15 @@ view model =
                     in
                     { title = "Pricing"
                     , body = [ viewWithNav model (Html.map PricingMsg pricingView) ]
+                    }
+
+                Pricing2Page pricing2Model ->
+                    let
+                        pricing2View =
+                            Pricing2.view pricing2Model
+                    in
+                    { title = "Pricing"
+                    , body = [ viewWithNav model (Html.map Pricing2Msg pricing2View) ]
                     }
     in
     viewPage
@@ -1782,6 +1810,9 @@ subscriptions model =
 
                 PricingPage pricingModel ->
                     Sub.none
+
+                Pricing2Page pricing2Model ->
+                    Sub.map Pricing2Msg (Pricing2.subscriptions pricing2Model)
     in
     Sub.batch [ dropdownSub, pageSubs ]
 
@@ -2581,6 +2612,18 @@ updatePage url ( model, cmd ) =
                                             ]
                                         )
 
+                                    PublicRoute Pricing2Route ->
+                                        let
+                                            ( pricing2Model, pricing2Cmd ) =
+                                                Pricing2.init
+                                        in
+                                        ( { modelWithUpdatedSetup | page = Pricing2Page pricing2Model }
+                                        , Cmd.batch
+                                            [ Cmd.map Pricing2Msg pricing2Cmd
+                                            , authCmd
+                                            ]
+                                        )
+
                 Nothing ->
                     ( { model | page = NotFoundPage }
                     , cmd
@@ -2896,6 +2939,15 @@ updatePageForcePublic url ( model, cmd ) =
                     in
                     ( { model | page = PricingPage pricingModel }
                     , Cmd.map PricingMsg pricingCmd
+                    )
+
+                PublicRoute Pricing2Route ->
+                    let
+                        ( pricing2Model, pricing2Cmd ) =
+                            Pricing2.init
+                    in
+                    ( { model | page = Pricing2Page pricing2Model }
+                    , Cmd.map Pricing2Msg pricing2Cmd
                     )
 
         Nothing ->

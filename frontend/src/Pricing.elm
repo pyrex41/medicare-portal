@@ -1,4 +1,4 @@
-module Pricing exposing (Model, Msg, init, update, view)
+module Pricing exposing (Model, Msg, init, subscriptions, update, view)
 
 import Html exposing (Html, button, div, h2, h3, h4, img, input, label, p, span, text)
 import Html.Attributes exposing (class, for, id, placeholder, type_, value)
@@ -235,3 +235,8 @@ view model =
                 ]
             ]
         ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions model =
+    Sub.none
