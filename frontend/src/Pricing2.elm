@@ -1,10 +1,6 @@
 module Pricing2 exposing (Model, Msg, init, subscriptions, update, view)
 
 import Basics
-import Chart as C
-import Chart.Attributes as CA
-import Chart.Events as CE
-import Chart.Item as CI
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (..)
@@ -120,38 +116,49 @@ formatNumber value =
         String.fromFloat (round10 1 value)
 
 
-formatCurrency : Float -> String
-formatCurrency value =
-    "$" ++ formatNumber value
-
-
 addCommas : String -> String
 addCommas str =
-    if String.length str <= 3 then
-        str
+    let
+        parts =
+            String.split "." str
+
+        beforeDecimal =
+            List.head parts |> Maybe.withDefault ""
+
+        afterDecimal =
+            List.tail parts |> Maybe.withDefault [] |> List.head |> Maybe.withDefault ""
+
+        formatBeforeDecimal s =
+            if String.length s <= 3 then
+                s
+
+            else
+                let
+                    reversedDigits =
+                        String.reverse s
+
+                    withCommas =
+                        reversedDigits
+                            |> String.toList
+                            |> List.indexedMap
+                                (\i c ->
+                                    if i > 0 && modBy 3 i == 0 then
+                                        [ ',', c ]
+
+                                    else
+                                        [ c ]
+                                )
+                            |> List.concat
+                            |> String.fromList
+                            |> String.reverse
+                in
+                withCommas
+    in
+    if String.isEmpty afterDecimal then
+        formatBeforeDecimal beforeDecimal
 
     else
-        let
-            -- Recursively add commas
-            addCommasHelper : String -> String -> String
-            addCommasHelper acc remaining =
-                if String.length remaining <= 3 then
-                    remaining ++ acc
-
-                else
-                    let
-                        len =
-                            String.length remaining
-
-                        front =
-                            String.dropRight 3 remaining
-
-                        back =
-                            String.right 3 remaining
-                    in
-                    addCommasHelper ("," ++ back ++ acc) front
-        in
-        addCommasHelper "" str
+        formatBeforeDecimal beforeDecimal ++ "." ++ afterDecimal
 
 
 round10 : Int -> Float -> Float
@@ -164,35 +171,76 @@ round10 n value =
 
 
 
--- New pricing calculation function based on MedicareMax pricing tiers
+-- New graduated pricing calculation function
 
 
-calculatePricing : Int -> { bundles : Int, pricePerBundle : Float, totalPrice : Float }
+calculatePricing : Int -> { basePrice : Float, tierPrices : List { contacts : Int, price : Float }, totalPrice : Float }
 calculatePricing contacts =
     let
-        -- Calculate bundles (250 contacts per bundle)
-        bundles =
-            Basics.max 1 (ceiling (toFloat contacts / 250))
+        baseSubscription =
+            50.0
 
-        -- Determine the price per bundle based on contact volume
-        pricePerBundle =
-            if contacts >= 5000 then
-                25
-                -- $25 per bundle for 5000+ contacts
+        -- Calculate price for contacts in each tier
+        tier1Price =
+            if contacts <= 250 then
+                0.0
 
-            else if contacts >= 1000 then
-                30
-                -- $30 per bundle for 1000-4999 contacts
+            else if contacts <= 1000 then
+                toFloat (contacts - 250) * 0.14
 
             else
-                35
+                750 * 0.14
 
-        -- $35 per bundle for under 1000 contacts
+        tier2Price =
+            if contacts <= 1000 then
+                0.0
+
+            else if contacts <= 5000 then
+                toFloat (contacts - 1000) * 0.12
+
+            else
+                4000 * 0.12
+
+        tier3Price =
+            if contacts <= 5000 then
+                0.0
+
+            else
+                toFloat (contacts - 5000) * 0.1
+
         totalPrice =
-            toFloat (bundles * round pricePerBundle)
+            baseSubscription + tier1Price + tier2Price + tier3Price
+
+        -- Create list of tier prices for display
+        tierPrices =
+            [ { contacts =
+                    if contacts <= 250 then
+                        0
+
+                    else
+                        Basics.min (contacts - 250) 750
+              , price = tier1Price
+              }
+            , { contacts =
+                    if contacts <= 1000 then
+                        0
+
+                    else
+                        Basics.min (contacts - 1000) 4000
+              , price = tier2Price
+              }
+            , { contacts =
+                    if contacts <= 5000 then
+                        0
+
+                    else
+                        contacts - 5000
+              , price = tier3Price
+              }
+            ]
     in
-    { bundles = bundles
-    , pricePerBundle = pricePerBundle
+    { basePrice = baseSubscription
+    , tierPrices = tierPrices
     , totalPrice = totalPrice
     }
 
@@ -201,7 +249,19 @@ calculatePricing contacts =
 -- Calculate enhanced revenue metrics based on MedicareMax model
 
 
-calculateEnhancedRevenue : PriceModel.CalculationInputs -> { price : Float, annualPrice : Float, monthlyConverted : Float, annualConverted : Float, monthlyLtv : Float, annualLtv : Float, roi : Float, netBenefit : Float }
+type alias EnhancedRevenue =
+    { price : Float
+    , annualPrice : Float
+    , monthlyConverted : Float
+    , annualConverted : Float
+    , monthlyLtv : Float
+    , annualLtv : Float
+    , roi : Float
+    , netBenefit : Float
+    }
+
+
+calculateEnhancedRevenue : PriceModel.CalculationInputs -> EnhancedRevenue
 calculateEnhancedRevenue inputs =
     let
         -- Constants from MedicareMax model
@@ -213,7 +273,7 @@ calculateEnhancedRevenue inputs =
             monthlyConversionRate inputs
 
         contactLtv =
-            inputs.commissionRate
+            inputs.commissionRate * 3
 
         -- Pricing calculation
         pricing =
@@ -221,7 +281,7 @@ calculateEnhancedRevenue inputs =
 
         -- Converted contacts
         monthlyConverted =
-            toFloat inputs.contacts * monthlyRate
+            toFloat inputs.contacts * monthlyRate |> round |> toFloat
 
         annualConverted =
             toFloat inputs.contacts * annualConversionRate
@@ -255,15 +315,6 @@ calculateEnhancedRevenue inputs =
 
 
 
--- Create chart data
-
-
-createChartData : Float -> Float -> List { x : Float, cost : Float, benefit : Float }
-createChartData annualPrice annualLtv =
-    [ { x = 1, cost = annualPrice, benefit = annualLtv } ]
-
-
-
 -- Main view
 
 
@@ -282,9 +333,6 @@ view model =
 
             else
                 0
-
-        chartData =
-            createChartData revenue.annualPrice revenue.annualLtv
     in
     div [ class "min-h-screen bg-gray-50 flex flex-col items-center py-12 px-4 sm:px-6 lg:px-8" ]
         [ div [ class "max-w-6xl w-full space-y-8 bg-white p-8 rounded-lg shadow-md" ]
@@ -293,12 +341,57 @@ view model =
                 , h2 [ class "text-2xl font-semibold text-gray-900 mt-6" ] [ text "MedicareMax Pricing Calculator" ]
                 , p [ class "text-gray-500 mt-2 mb-6" ] [ text "Understand your costs and potential value from our service" ]
 
-                -- Contact Input Section
-                , div [ class "w-full max-w-5xl mt-6" ]
-                    [ div [ class "mb-4" ]
+                -- Pricing Tiers - Compact Layout
+                , div [ class "w-full flex gap-6 mb-12" ]
+                    [ div [ class "w-1/3 p-5 border rounded-lg bg-white shadow-sm" ]
+                        [ div [ class "flex flex-col" ]
+                            [ h3 [ class "font-bold text-xl text-gray-800 mb-3" ] [ text "Base Subscription" ]
+                            , span [ class "self-start mb-2 px-3 py-1 bg-green-100 text-green-800 text-sm rounded-full" ]
+                                [ text "Includes 250 contacts" ]
+                            , div [ class "flex items-baseline gap-2" ]
+                                [ span [ class "text-3xl font-bold text-gray-900" ] [ text "$50" ]
+                                , span [ class "text-gray-600" ] [ text "/month" ]
+                                ]
+                            , p [ class "mt-3 text-gray-600 text-sm" ]
+                                [ text "Includes all features of the Medicare Max portal platform." ]
+                            ]
+                        ]
+                    , div [ class "w-2/3 p-5 border rounded-lg bg-white shadow-sm" ]
+                        [ div [ class "flex flex-col" ]
+                            [ div [ class "flex items-center justify-between mb-3" ]
+                                [ h3 [ class "font-bold text-xl text-gray-800" ] [ text "Additional Contacts" ]
+                                , span [ class "text-gray-600 text-sm" ] [ text "Graduated pricing tiers based on your total volume." ]
+                                ]
+                            , div [ class "grid grid-cols-3 gap-4" ]
+                                [ div [ class "flex flex-col items-center" ]
+                                    [ span [ class "mb-3 px-3 py-1 bg-blue-100 text-blue-800 text-sm rounded-full" ]
+                                        [ text "251 - 1,000 contacts" ]
+                                    , div [ class "text-2xl font-bold text-gray-900" ] [ text "$0.14" ]
+                                    , span [ class "text-gray-600 text-sm" ] [ text "/contact" ]
+                                    ]
+                                , div [ class "flex flex-col items-center" ]
+                                    [ span [ class "mb-3 px-3 py-1 bg-blue-100 text-blue-800 text-sm rounded-full" ]
+                                        [ text "1,001 - 5,000 contacts" ]
+                                    , div [ class "text-2xl font-bold text-gray-900" ] [ text "$0.12" ]
+                                    , span [ class "text-gray-600 text-sm" ] [ text "/contact" ]
+                                    ]
+                                , div [ class "flex flex-col items-center" ]
+                                    [ span [ class "mb-3 px-3 py-1 bg-blue-100 text-blue-800 text-sm rounded-full" ]
+                                        [ text "5,001+ contacts" ]
+                                    , div [ class "text-2xl font-bold text-gray-900" ] [ text "$0.10" ]
+                                    , span [ class "text-gray-600 text-sm" ] [ text "/contact" ]
+                                    ]
+                                ]
+                            ]
+                        ]
+                    ]
+
+                -- Three Column Layout: Contacts, Summary, Monthly Price
+                , div [ class "w-full grid grid-cols-3 gap-6 mb-8" ]
+                    [ div [ class "flex flex-col" ]
                         [ label [ class "block text-gray-700 text-sm font-bold mb-2", for "contacts" ]
                             [ text "Number of Contacts:" ]
-                        , div [ class "flex items-center" ]
+                        , div [ class "flex flex-col space-y-3" ]
                             [ input
                                 [ id "contacts"
                                 , type_ "number"
@@ -308,154 +401,180 @@ view model =
                                 , Html.Attributes.min "0"
                                 ]
                                 []
+
+                            -- Preset buttons in a grid
+                            , div [ class "grid grid-cols-2 gap-2" ]
+                                ([ 250, 1000, 5000, 10000, 20000, 40000 ]
+                                    |> List.map
+                                        (\presetValue ->
+                                            let
+                                                isActive =
+                                                    model.activePreset == Just presetValue
+
+                                                baseClass =
+                                                    "hover:bg-blue-200 text-blue-800 font-semibold py-1 px-2 rounded-full text-sm text-center"
+
+                                                activeClass =
+                                                    "bg-blue-500 text-white"
+
+                                                inactiveClass =
+                                                    "bg-blue-100"
+                                            in
+                                            button
+                                                [ onClick (SelectPreset presetValue)
+                                                , class
+                                                    (baseClass
+                                                        ++ " "
+                                                        ++ (if isActive then
+                                                                activeClass
+
+                                                            else
+                                                                inactiveClass
+                                                           )
+                                                    )
+                                                ]
+                                                [ text (formatNumber (toFloat presetValue)) ]
+                                        )
+                                )
                             ]
+                        ]
+                    , div [ class "bg-gray-50 rounded-lg p-4" ]
+                        [ h3 [ class "text-lg font-bold text-gray-800 mb-3" ] [ text "Your Plan Summary" ]
+                        , div [ class "space-y-2" ]
+                            [ div [ class "flex justify-between items-center text-sm" ]
+                                [ span [ class "text-gray-600" ] [ text "Base subscription:" ]
+                                , span [ class "font-bold" ] [ text (formatCurrency pricing.basePrice) ]
+                                ]
+                            , List.filterMap
+                                (\tier ->
+                                    if tier.contacts > 0 && tier.price > 0 then
+                                        Just
+                                            (div [ class "flex justify-between items-center text-sm" ]
+                                                [ span [ class "text-gray-600" ]
+                                                    [ text
+                                                        (if tier.contacts <= 250 then
+                                                            ""
 
-                        -- Preset buttons
-                        , div [ class "mt-3 flex flex-wrap gap-2" ]
-                            ([ 250, 1000, 5000, 10000, 20000, 40000 ]
-                                |> List.map
-                                    (\presetValue ->
-                                        let
-                                            isActive =
-                                                model.activePreset == Just presetValue
+                                                         else if tier.contacts <= 750 then
+                                                            formatNumber (toFloat tier.contacts) ++ " @ $0.14"
 
-                                            baseClass =
-                                                "hover:bg-blue-200 text-blue-800 font-semibold py-1 px-3 rounded-full text-sm"
+                                                         else if tier.contacts <= 4000 then
+                                                            formatNumber (toFloat tier.contacts) ++ " @ $0.12:"
 
-                                            activeClass =
-                                                "bg-blue-500 text-white"
+                                                         else
+                                                            formatNumber (toFloat tier.contacts) ++ " @ $0.10:"
+                                                        )
+                                                    ]
+                                                , span [ class "font-bold" ] [ text (formatCurrency tier.price) ]
+                                                ]
+                                            )
 
-                                            inactiveClass =
-                                                "bg-blue-100"
-                                        in
-                                        button
-                                            [ onClick (SelectPreset presetValue)
-                                            , class
-                                                (baseClass
-                                                    ++ " "
-                                                    ++ (if isActive then
-                                                            activeClass
+                                    else
+                                        Nothing
+                                )
+                                pricing.tierPrices
+                                |> div [ class "space-y-2" ]
+                            ]
+                        ]
+                    , div [ class "flex items-center justify-center" ]
+                        [ div [ class "bg-blue-600 rounded-lg p-4 text-white text-center w-48" ]
+                            [ h2 [ class "font-bold mb-1 text-sm" ] [ text "Monthly Price" ]
+                            , div [ class "text-3xl font-bold" ] [ text (formatCurrency pricing.totalPrice) ]
+                            , p [ class "text-xs mt-1 text-blue-100" ]
+                                [ text ("For " ++ formatNumber (toFloat model.calculationInputs.contacts) ++ " contacts") ]
+                            ]
+                        ]
+                    ]
 
-                                                        else
-                                                            inactiveClass
-                                                       )
-                                                )
+                -- Value Analysis Section
+                , div [ class "w-full mt-8" ]
+                    [ div [ class "mb-6 bg-gradient-to-r from-purple-50 to-blue-50 rounded-lg p-4 border border-purple-100" ]
+                        [ div [ class "grid grid-cols-3 gap-6" ]
+                            [ div [ class "flex flex-col gap-6" ]
+                                [ h2 [ class "text-lg font-bold text-gray-800 mb-2" ] [ text "Value Analysis" ]
+                                , div [ class "grid grid-cols-2 gap-2" ]
+                                    [ div [ class "flex flex-col gap-5" ]
+                                        -- Left column for inputs
+                                        [ div [ class "flex flex-col" ]
+                                            [ label
+                                                [ class "block text-sm font-medium text-gray-700 mb-1 cursor-pointer h-5"
+                                                , for "commission-rate"
+                                                ]
+                                                [ text "Annual Commission" ]
+                                            , div [ class "flex rounded-md shadow-sm w-[100px]" ]
+                                                [ div [ class "flex-shrink-0 inline-flex items-center px-2 rounded-l-md border border-r-0 border-gray-300 bg-indigo-100 text-indigo-800 text-sm font-medium" ]
+                                                    [ text "$" ]
+                                                , input
+                                                    [ class "w-full border border-gray-300 rounded-none rounded-r-md shadow-sm py-1 px-2 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-center"
+                                                    , id "commission-rate"
+                                                    , type_ "number"
+                                                    , placeholder "Commission"
+                                                    , value (String.fromFloat model.calculationInputs.commissionRate)
+                                                    , onInput (\str -> CommissionRateChanged (String.toFloat str |> Maybe.withDefault 0))
+                                                    , Html.Attributes.min "0"
+                                                    , Html.Attributes.step "5"
+                                                    ]
+                                                    []
+                                                ]
                                             ]
-                                            [ text (formatNumber (toFloat presetValue)) ]
-                                    )
-                            )
-                        ]
-
-                    -- Pricing Tiers - Horizontal Layout
-                    , div [ class "flex flex-row mb-4 gap-4" ]
-                        [ div
-                            [ class
-                                ("flex-1 p-3 border rounded-lg bg-white "
-                                    ++ (if model.calculationInputs.contacts < 1000 then
-                                            "border-blue-300 shadow-md"
-
-                                        else
-                                            "border-gray-200"
-                                       )
-                                )
-                            ]
-                            [ div [ class "flex flex-col" ]
-                                [ div [ class "flex items-center justify-between mb-1" ]
-                                    [ h3 [ class "font-bold text-sm" ] [ text "Under 1,000 contacts" ]
-                                    , if model.calculationInputs.contacts < 1000 then
-                                        span [ class "bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full" ]
-                                            [ text "Your tier" ]
-
-                                      else
-                                        text ""
-                                    ]
-                                , p [ class "text-xl font-bold text-gray-800" ]
-                                    [ text "$35"
-                                    , span [ class "text-sm font-normal text-gray-500" ] [ text "/bundle" ]
-                                    ]
-                                ]
-                            ]
-                        , div
-                            [ class
-                                ("flex-1 p-3 border rounded-lg bg-white "
-                                    ++ (if model.calculationInputs.contacts >= 1000 && model.calculationInputs.contacts < 5000 then
-                                            "border-blue-300 shadow-md"
-
-                                        else
-                                            "border-gray-200"
-                                       )
-                                )
-                            ]
-                            [ div [ class "flex flex-col" ]
-                                [ div [ class "flex items-center justify-between mb-1" ]
-                                    [ h3 [ class "font-bold text-sm" ] [ text "1,000 - 4,999 contacts" ]
-                                    , if model.calculationInputs.contacts >= 1000 && model.calculationInputs.contacts < 5000 then
-                                        span [ class "bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full" ]
-                                            [ text "Your tier" ]
-
-                                      else
-                                        text ""
-                                    ]
-                                , p [ class "text-xl font-bold text-gray-800" ]
-                                    [ text "$30"
-                                    , span [ class "text-sm font-normal text-gray-500" ] [ text "/bundle" ]
-                                    ]
-                                ]
-                            ]
-                        , div
-                            [ class
-                                ("flex-1 p-3 border rounded-lg bg-white "
-                                    ++ (if model.calculationInputs.contacts >= 5000 then
-                                            "border-blue-300 shadow-md"
-
-                                        else
-                                            "border-gray-200"
-                                       )
-                                )
-                            ]
-                            [ div [ class "flex flex-col" ]
-                                [ div [ class "flex items-center justify-between mb-1" ]
-                                    [ h3 [ class "font-bold text-sm" ] [ text "5,000+ contacts" ]
-                                    , if model.calculationInputs.contacts >= 5000 then
-                                        span [ class "bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full" ]
-                                            [ text "Your tier" ]
-
-                                      else
-                                        text ""
-                                    ]
-                                , p [ class "text-xl font-bold text-gray-800" ]
-                                    [ text "$25"
-                                    , span [ class "text-sm font-normal text-gray-500" ] [ text "/bundle" ]
-                                    ]
-                                ]
-                            ]
-                        ]
-
-                    -- Value Analysis Section
-                    , div [ class "mb-6 bg-gradient-to-r from-purple-50 to-blue-50 rounded-lg p-4 border border-purple-100" ]
-                        [ h2 [ class "text-xl font-bold text-gray-800 mb-3" ] [ text "Value Analysis" ]
-                        , p [ class "text-gray-600 mb-3 text-sm" ]
-                            [ text
-                                ("Based on "
-                                    ++ String.fromFloat model.calculationInputs.rolloverPercent
-                                    ++ "% of contacts changing their policy over the course of a year, with each change adding $"
-                                    ++ formatNumber model.calculationInputs.commissionRate
-                                    ++ " in LTV"
-                                )
-                            ]
-                        , div [ class "grid grid-cols-1 md:grid-cols-2 gap-4" ]
-                            [ div [ class "bg-white rounded-lg p-3 shadow-sm border border-gray-200" ]
-                                [ h3 [ class "font-bold text-gray-700 mb-2 text-sm" ] [ text "Monthly Breakdown" ]
-                                , div [ class "space-y-2 text-sm" ]
-                                    [ div [ class "flex justify-between items-center" ]
-                                        [ span [ class "text-gray-600" ] [ text "Monthly investment:" ]
-                                        , span [ class "font-bold" ] [ text (formatCurrency revenue.price) ]
+                                        , div [ class "flex flex-col" ]
+                                            [ label
+                                                [ class "block text-sm font-medium text-gray-700 mb-1 cursor-pointer h-5"
+                                                , for "rollover-percent"
+                                                ]
+                                                [ text "Annual Rollover" ]
+                                            , div [ class "flex rounded-md shadow-sm w-[100px]" ]
+                                                [ div [ class "flex-shrink-0 inline-flex items-center px-2 rounded-l-md border border-r-0 border-gray-300 bg-indigo-100 text-indigo-800 text-sm font-medium" ]
+                                                    [ text "%" ]
+                                                , input
+                                                    [ class "w-full border border-gray-300 rounded-none rounded-r-md shadow-sm py-1 px-2 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-center"
+                                                    , id "rollover-percent"
+                                                    , type_ "number"
+                                                    , placeholder "Rollover"
+                                                    , value (String.fromFloat model.calculationInputs.rolloverPercent)
+                                                    , onInput (\str -> RolloverPercentChanged (String.toFloat str |> Maybe.withDefault 0))
+                                                    , Html.Attributes.min "0"
+                                                    , Html.Attributes.max "100"
+                                                    , Html.Attributes.step "0.1"
+                                                    ]
+                                                    []
+                                                ]
+                                            ]
                                         ]
-                                    , div [ class "flex justify-between items-center" ]
-                                        [ span [ class "text-gray-600" ] [ text "Monthly converted contacts:" ]
-                                        , span [ class "font-bold" ]
-                                            [ text (formatNumber revenue.monthlyConverted ++ " ")
-                                            , span [ class "text-xs font-normal text-gray-500" ]
+                                    , div [ class "flex flex-col gap-6" ]
+                                        -- Right column for outputs
+                                        [ div [ class "flex flex-col" ]
+                                            [ div [ class "text-sm font-medium text-gray-700 h-5" ] [ text "Baseline LTV" ]
+                                            , div [ class "h-[30px] flex flex-col justify-start" ]
+                                                [ div [ class "text-lg font-semibold text-indigo-600 -mb-1" ]
+                                                    [ text ("$" ++ formatNumber (model.calculationInputs.commissionRate * 6)) ]
+                                                , div [ class "text-sm font-normal text-gray-500" ] [ text "6 years" ]
+                                                ]
+                                            ]
+                                        , div [ class "flex flex-col" ]
+                                            [ div [ class "text-sm font-medium text-gray-700 h-5" ] [ text "Added LTV (Avg.)" ]
+                                            , div [ class "h-[30px] flex flex-col justify-start" ]
+                                                [ div [ class "text-lg font-semibold text-indigo-600 -mb-1" ]
+                                                    [ text ("$" ++ formatNumber (model.calculationInputs.commissionRate * 3)) ]
+                                                , div [ class "text-sm font-normal text-gray-500" ] [ text "3 extra years" ]
+                                                ]
+                                            ]
+                                        ]
+                                    ]
+                                ]
+                            , div [ class "bg-white rounded-lg p-3 shadow-sm border border-gray-200" ]
+                                [ h3 [ class "font-bold text-gray-700 mb-2 text-md" ] [ text "Monthly Impact" ]
+                                , div [ class "space-y-2 text-sm" ]
+                                    [ div [ class "flex justify-between items-start" ]
+                                        [ div [ class "flex flex-col" ]
+                                            [ span [ class "text-gray-600" ] [ text "Investment:" ]
+                                            ]
+                                        , span [ class "font-bold" ] [ text (formatCurrencyRounded revenue.price) ]
+                                        ]
+                                    , div [ class "flex justify-between items-start" ]
+                                        [ div [ class "flex flex-col" ]
+                                            [ span [ class "text-gray-600" ] [ text "Converted contacts:" ]
+                                            , span [ class "text-xs text-gray-500" ]
                                                 [ text
                                                     ("("
                                                         ++ formatNumber (monthlyConversionRate model.calculationInputs * 100)
@@ -465,25 +584,31 @@ view model =
                                                     )
                                                 ]
                                             ]
+                                        , span [ class "font-bold" ] [ text (formatNumber revenue.monthlyConverted) ]
                                         ]
-                                    , div [ class "flex justify-between items-center text-purple-700" ]
-                                        [ span [] [ text "New LTV Added Monthly:" ]
-                                        , span [ class "font-bold" ] [ text (formatCurrency revenue.monthlyLtv) ]
+                                    , div [ class "flex justify-between items-start" ]
+                                        [ div [ class "flex flex-col" ]
+                                            [ span [] [ text "New LTV Added:" ]
+                                            , span [ class "text-xs text-gray-500" ]
+                                                [ text ("(" ++ formatNumber revenue.monthlyConverted ++ " × $" ++ formatNumber (model.calculationInputs.commissionRate * 3) ++ ")") ]
+                                            ]
+                                        , span [ class "font-bold text-purple-700" ] [ text (formatCurrencyRounded revenue.monthlyLtv) ]
                                         ]
                                     ]
                                 ]
                             , div [ class "bg-white rounded-lg p-3 shadow-sm border border-gray-200" ]
-                                [ h3 [ class "font-bold text-gray-700 mb-2 text-sm" ] [ text "Annual Impact" ]
+                                [ h3 [ class "font-bold text-gray-700 mb-2 text-md" ] [ text "Annual Impact" ]
                                 , div [ class "space-y-2 text-sm" ]
-                                    [ div [ class "flex justify-between items-center" ]
-                                        [ span [ class "text-gray-600" ] [ text "Annual investment:" ]
-                                        , span [ class "font-bold" ] [ text (formatCurrency revenue.annualPrice) ]
+                                    [ div [ class "flex justify-between items-start" ]
+                                        [ div [ class "flex flex-col" ]
+                                            [ span [ class "text-gray-600" ] [ text "Investment:" ]
+                                            ]
+                                        , span [ class "font-bold" ] [ text (formatCurrencyRounded revenue.annualPrice) ]
                                         ]
-                                    , div [ class "flex justify-between items-center" ]
-                                        [ span [ class "text-gray-600" ] [ text "Annual converted contacts:" ]
-                                        , span [ class "font-bold" ]
-                                            [ text (formatNumber revenue.annualConverted ++ " ")
-                                            , span [ class "text-xs font-normal text-gray-500" ]
+                                    , div [ class "flex justify-between items-start" ]
+                                        [ div [ class "flex flex-col" ]
+                                            [ span [ class "text-gray-600" ] [ text "Converted contacts:" ]
+                                            , span [ class "text-xs text-gray-500" ]
                                                 [ text
                                                     ("("
                                                         ++ formatNumber model.calculationInputs.rolloverPercent
@@ -493,10 +618,15 @@ view model =
                                                     )
                                                 ]
                                             ]
+                                        , span [ class "font-bold" ] [ text (formatNumber revenue.annualConverted) ]
                                         ]
-                                    , div [ class "flex justify-between items-center text-green-700" ]
-                                        [ span [] [ text "New LTV Added Annually:" ]
-                                        , span [ class "font-bold" ] [ text (formatCurrency revenue.annualLtv) ]
+                                    , div [ class "flex justify-between items-start" ]
+                                        [ div [ class "flex flex-col" ]
+                                            [ span [] [ text "New LTV Added:" ]
+                                            , span [ class "text-xs text-gray-500" ]
+                                                [ text ("(" ++ formatNumber revenue.annualConverted ++ " × $" ++ formatNumber (model.calculationInputs.commissionRate * 3) ++ ")") ]
+                                            ]
+                                        , span [ class "font-bold text-green-700" ] [ text (formatCurrencyRounded revenue.annualLtv) ]
                                         ]
                                     , div [ class "flex justify-between items-center pt-1 mt-1 border-t border-gray-200" ]
                                         [ span [ class "text-gray-600" ] [ text "Return on investment:" ]
@@ -504,110 +634,9 @@ view model =
                                         ]
                                     , div [ class "flex justify-between items-center" ]
                                         [ span [ class "text-gray-600" ] [ text "Net annual benefit:" ]
-                                        , span [ class "font-bold text-green-700" ] [ text (formatCurrency revenue.netBenefit) ]
+                                        , span [ class "font-bold text-green-700" ] [ text (formatCurrencyRounded revenue.netBenefit) ]
                                         ]
                                     ]
-                                ]
-                            ]
-                        ]
-
-                    -- Plan Summary and Chart
-                    , div [ class "flex flex-col md:flex-row gap-6 mb-6" ]
-                        [ div [ class "w-full md:w-1/3 bg-gray-50 rounded-lg p-4" ]
-                            [ h2 [ class "text-lg font-bold text-gray-800 mb-3" ] [ text "Your Plan Summary" ]
-                            , div [ class "space-y-3" ]
-                                [ div [ class "flex justify-between items-center" ]
-                                    [ span [ class "text-gray-600" ] [ text "Price per bundle:" ]
-                                    , span [ class "font-bold" ] [ text (formatCurrency pricing.pricePerBundle) ]
-                                    ]
-                                , div [ class "flex justify-between items-center" ]
-                                    [ span [ class "text-gray-600" ] [ text "Contact bundles:" ]
-                                    , span [ class "font-bold" ] [ text (String.fromInt pricing.bundles) ]
-                                    ]
-                                , div [ class "flex justify-between items-center" ]
-                                    [ span [ class "text-gray-600" ] [ text "Total contacts:" ]
-                                    , span [ class "font-bold" ] [ text (formatNumber (toFloat model.calculationInputs.contacts)) ]
-                                    ]
-                                , div [ class "flex justify-between items-center" ]
-                                    [ span [ class "text-gray-600" ] [ text "Price per contact:" ]
-                                    , span [ class "font-bold" ] [ text (formatCurrency pricePerContact) ]
-                                    ]
-                                ]
-                            , div [ class "mt-4 pt-4 border-t border-gray-200" ]
-                                [ div [ class "bg-blue-600 rounded-lg p-4 text-white text-center" ]
-                                    [ h2 [ class "font-bold mb-1 text-sm" ] [ text "Monthly Price" ]
-                                    , div [ class "text-2xl font-bold" ] [ text (formatCurrency pricing.totalPrice) ]
-                                    , p [ class "text-xs mt-1 text-blue-100" ]
-                                        [ text ("For " ++ formatNumber (toFloat model.calculationInputs.contacts) ++ " contacts") ]
-                                    ]
-                                ]
-                            ]
-                        , div [ class "w-full md:w-2/3" ]
-                            [ div [ class "h-[300px] bg-white border border-gray-200 rounded-lg p-4" ]
-                                [ h2 [ class "text-lg font-bold text-gray-800 mb-3" ] [ text "Cost vs. Value Comparison" ]
-                                , C.chart
-                                    [ CA.height 240
-                                    , CA.width 400
-                                    , CA.margin { top = 10, bottom = 30, left = 60, right = 10 }
-                                    , CA.padding { top = 10, bottom = 30, left = 10, right = 10 }
-                                    ]
-                                    [ C.yLabels
-                                        [ CA.withGrid
-                                        , CA.amount 5
-                                        , CA.format (\n -> "$" ++ formatNumber n)
-                                        ]
-                                    , C.bars
-                                        [ CA.x1 .x
-                                        , CA.margin 0.2
-                                        ]
-                                        [ C.bar .cost [ CA.color "#3B82F6" ]
-                                        , C.bar .benefit [ CA.color "#8B5CF6" ]
-                                        ]
-                                        chartData
-                                    ]
-                                , div [ class "flex justify-center mt-4 space-x-6" ]
-                                    [ div [ class "flex items-center" ]
-                                        [ div [ class "w-3 h-3 rounded-full bg-blue-500 mr-2" ] []
-                                        , text "Annual Cost"
-                                        ]
-                                    , div [ class "flex items-center" ]
-                                        [ div [ class "w-3 h-3 rounded-full bg-purple-500 mr-2" ] []
-                                        , text "Annual Value"
-                                        ]
-                                    ]
-                                ]
-                            ]
-                        ]
-
-                    -- How Pricing Works
-                    , div [ class "bg-gray-50 p-3 rounded-lg text-sm" ]
-                        [ div [ class "flex items-center justify-between" ]
-                            [ h3 [ class "text-base font-bold text-gray-800" ] [ text "How Our Pricing Works" ]
-                            , p [ class "text-gray-600" ] [ text "Each bundle contains 250 contacts" ]
-                            ]
-                        , div [ class "mt-3 grid grid-cols-3 gap-3" ]
-                            [ div [ class "bg-white p-2 rounded border border-gray-200" ]
-                                [ p [ class "font-bold text-gray-700" ] [ text "Under 1,000 contacts" ]
-                                , p [ class "text-gray-600" ] [ text "$35 per bundle" ]
-                                ]
-                            , div [ class "bg-white p-2 rounded border border-gray-200" ]
-                                [ p [ class "font-bold text-gray-700" ] [ text "1,000 - 4,999 contacts" ]
-                                , p [ class "text-gray-600" ] [ text "$30 per bundle" ]
-                                ]
-                            , div [ class "bg-white p-2 rounded border border-gray-200" ]
-                                [ p [ class "font-bold text-gray-700" ] [ text "5,000+ contacts" ]
-                                , p [ class "text-gray-600" ] [ text "$25 per bundle" ]
-                                ]
-                            ]
-                        , div [ class "mt-3 p-2 bg-purple-50 rounded border border-purple-200" ]
-                            [ p [ class "text-purple-700" ]
-                                [ strong [] [ text "Value Analysis Assumptions: " ]
-                                , text
-                                    (String.fromFloat model.calculationInputs.rolloverPercent
-                                        ++ "% of contacts change policy annually, each adding $"
-                                        ++ formatNumber model.calculationInputs.commissionRate
-                                        ++ " in LTV"
-                                    )
                                 ]
                             ]
                         ]
@@ -629,3 +658,46 @@ monthlyConversionRate inputs =
 subscriptions : Model -> Sub Msg
 subscriptions model =
     Sub.none
+
+
+formatCurrency : Float -> String
+formatCurrency value =
+    let
+        valueCents =
+            value * 100 |> round
+
+        valueDollars =
+            toFloat valueCents / 100
+    in
+    "$" ++ addCommas (String.fromFloat valueDollars |> padCents)
+
+
+padCents : String -> String
+padCents str =
+    if String.contains "." str then
+        let
+            parts =
+                String.split "." str
+
+            beforeDecimal =
+                List.head parts |> Maybe.withDefault ""
+
+            afterDecimal =
+                List.tail parts |> Maybe.withDefault [] |> List.head |> Maybe.withDefault ""
+
+            padded =
+                if String.length afterDecimal == 1 then
+                    afterDecimal ++ "0"
+
+                else
+                    afterDecimal
+        in
+        beforeDecimal ++ "." ++ padded
+
+    else
+        str ++ ".00"
+
+
+formatCurrencyRounded : Float -> String
+formatCurrencyRounded value =
+    "$" ++ addCommas (String.fromInt (round value))

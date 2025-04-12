@@ -188,7 +188,7 @@ view inputs =
                             [ text <| "$" ++ formatRoughMoney revenueModel.ltvGainPerYear ]
                         ]
                     , div [ class "flex justify-between items-center py-2" ]
-                        [ div [ class "font-medium text-gray-700 truncate pr-4" ] [ text "Annual Return on Investment:" ]
+                        [ div [ class "font-medium text-gray-700 truncate pr-4" ] [ text "Return on Investment:" ]
                         , div [ class "text-right font-bold text-green-600 whitespace-nowrap" ]
                             [ text <| formatNumber revenueModel.roi ++ "x" ]
                         ]
