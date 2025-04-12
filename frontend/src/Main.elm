@@ -1534,9 +1534,6 @@ viewNavHeader model =
                 LandingPage _ ->
                     True
 
-                PricingPage _ ->
-                    True
-
                 _ ->
                     False
 
@@ -1546,6 +1543,9 @@ viewNavHeader model =
                     True
 
                 PricingPage _ ->
+                    True
+
+                Pricing2Page _ ->
                     True
 
                 WaitlistPage _ ->
