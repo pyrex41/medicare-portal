@@ -743,4 +743,53 @@ export const contactsRoutes = new Elysia({ prefix: '/api/contacts' })
         message: error instanceof Error ? error.message : 'Unknown error'
       };
     }
-  });
+  })
+  
+  // Add DELETE endpoint for contacts
+  .delete('/', 
+    async ({ body, set, request }) => {
+      try {
+        const user = await getUserFromSession(request);
+        if (!user || 'skip_auth' in user || !user.organization_id) {
+          set.status = 401;
+          return { error: 'Not authorized' };
+        }
+
+        const contactIds = body;
+        if (!Array.isArray(contactIds) || contactIds.length === 0) {
+          throw new Error('No contact IDs provided');
+        }
+        
+        logger.info(`DELETE /api/contacts - Attempting to delete ${contactIds.length} contacts for org ${user.organization_id}`);
+        
+        // Get org-specific database
+        const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString());
+
+        // Create placeholders for SQL IN clause
+        const placeholders = contactIds.map(() => '?').join(',');
+        
+        const query = `
+          DELETE FROM contacts 
+          WHERE id IN (${placeholders})
+          RETURNING id
+        `;
+
+        const result = await orgDb.execute(query, contactIds);
+        const deletedIds = result.rows?.map((row: { id: number }) => row.id) || [];
+
+        logger.info(`DELETE /api/contacts - Successfully deleted ${deletedIds.length} contacts from org ${user.organization_id}`);
+
+        return {
+          success: true,
+          deleted_ids: deletedIds,
+          message: `Successfully deleted ${deletedIds.length} contacts`
+        };
+      } catch (e) {
+        logger.error(`Error deleting contacts: ${e}`);
+        throw new Error(String(e));
+      }
+    },
+    {
+      body: t.Array(t.Number())
+    }
+  );
