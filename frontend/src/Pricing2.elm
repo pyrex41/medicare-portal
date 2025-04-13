@@ -407,7 +407,7 @@ view model =
                             [ div [ class "flex justify-between items-center mb-3" ]
                                 [ h3 [ class "font-bold text-lg sm:text-xl text-gray-800" ] [ text "Additional Contacts" ]
                                 , span [ class "px-3 py-1 bg-blue-100 text-blue-800 text-sm rounded-full" ]
-                                    [ text "Additional Contacts" ]
+                                    [ text "Pay as you go" ]
                                 ]
                             , div [ class "flex items-baseline gap-2 mb-3" ]
                                 [ span [ class "text-2xl sm:text-3xl font-bold text-gray-900" ] [ text <| formatCurrency tier1Pricing.price ]
@@ -923,26 +923,51 @@ renderRevenueChart inputs =
         , div [ class "flex flex-col" ]
             [ div [ class "w-full h-[120px] md:h-[350px] overflow-x-auto overflow-y-hidden" ]
                 [ C.chart
-                    [ CA.height 250
-                    , CA.width 800
+                    [ CA.width 800
+                    , CA.height 250
+                    , CA.attrs [ SA.style "max-width: 100%" ]
                     , CA.margin { top = 20, bottom = 40, left = 60, right = 20 }
                     , CA.padding { top = 10, bottom = 20, left = 10, right = 10 }
+                    , CA.htmlAttrs [ class "overflow-visible" ]
                     ]
-                    [ C.grid []
-                    , C.yLabels [ CA.withGrid, CA.format (\v -> String.fromFloat (round10 1 v) ++ "x"), CA.limits [ CA.lowest 0 CA.exactly ] ]
-                    , C.binLabels .x [ CA.moveDown 25, CA.fontSize 12 ]
+                    [ C.grid
+                        [ CA.width 1
+                        , CA.color "#e5e7eb"
+                        , CA.dashed [ 5, 5 ]
+                        ]
+                    , C.yLabels
+                        [ CA.withGrid
+                        , CA.format (\v -> String.fromFloat (round10 1 v) ++ "x")
+                        , CA.fontSize 11
+                        , CA.color "#6b7280"
+                        , CA.amount 5
+                        , CA.limits [ CA.lowest 0 CA.exactly ]
+                        ]
+                    , C.xLabels
+                        [ CA.withGrid
+                        , CA.amount 7
+                        , CA.fontSize 11
+                        , CA.color "#6b7280"
+                        ]
+                    , C.binLabels .x
+                        [ CA.moveDown 25
+                        , CA.fontSize 12
+                        , CA.color "#374151"
+                        , CA.rotate 0
+                        ]
                     , C.labelAt CA.middle
                         .max
                         [ CA.moveUp 15 ]
                         [ Svg.text_ [ SA.fontSize "18", SA.fill "#1F2937" ] [ Svg.text "Cash Flow" ] ]
                     , C.bars
                         [ CA.margin 0.1
+                        , CA.roundTop 0.5
                         ]
-                        [ C.bar .baseCase [ CA.color "#3B82F6", CA.opacity 0.7 ]
+                        [ C.bar .baseCase [ CA.color "#03045e", CA.opacity 0.8 ]
                             |> C.named "Base Case"
-                        , C.bar .flatCase [ CA.color "#22C55E", CA.opacity 0.7 ]
+                        , C.bar .flatCase [ CA.color "#047857", CA.opacity 0.8 ]
                             |> C.named "Flat Case"
-                        , C.bar .rolloverCase [ CA.color "#A855F7", CA.opacity 0.7 ]
+                        , C.bar .rolloverCase [ CA.color "#7F56D9", CA.opacity 0.8 ]
                             |> C.named "Rollover Case"
                         ]
                         allData
@@ -950,15 +975,15 @@ renderRevenueChart inputs =
                 ]
             , div [ class "flex flex-wrap justify-center gap-2 mt-1 sm:mt-4 text-sm" ]
                 [ div [ class "flex items-center gap-2" ]
-                    [ div [ class "w-3 h-3 bg-[#3B82F6] rounded-full opacity-70" ] []
+                    [ div [ class "w-3 h-3 bg-[#03045e] rounded-full opacity-80" ] []
                     , text "Base Case"
                     ]
                 , div [ class "flex items-center gap-2" ]
-                    [ div [ class "w-3 h-3 bg-[#22C55E] rounded-full opacity-70" ] []
+                    [ div [ class "w-3 h-3 bg-[#047857] rounded-full opacity-80" ] []
                     , text "Flat Case"
                     ]
                 , div [ class "flex items-center gap-2" ]
-                    [ div [ class "w-3 h-3 bg-[#A855F7] rounded-full opacity-70" ] []
+                    [ div [ class "w-3 h-3 bg-[#7F56D9] rounded-full opacity-80" ] []
                     , text "Rollover Case"
                     ]
                 ]
@@ -1065,26 +1090,51 @@ renderLtvChart inputs =
         , div [ class "flex flex-col" ]
             [ div [ class "w-full h-[120px] md:h-[350px] overflow-x-auto overflow-y-hidden" ]
                 [ C.chart
-                    [ CA.height 250
-                    , CA.width 800
+                    [ CA.width 800
+                    , CA.height 250
+                    , CA.attrs [ SA.style "max-width: 100%" ]
                     , CA.margin { top = 20, bottom = 40, left = 60, right = 20 }
                     , CA.padding { top = 10, bottom = 20, left = 10, right = 10 }
+                    , CA.htmlAttrs [ class "overflow-visible" ]
                     ]
-                    [ C.grid []
-                    , C.yLabels [ CA.withGrid, CA.format (\v -> "$" ++ formatNumber v ++ "M"), CA.limits [ CA.lowest 0 CA.exactly ] ]
-                    , C.binLabels .x [ CA.moveDown 25, CA.fontSize 12 ]
+                    [ C.grid
+                        [ CA.width 1
+                        , CA.color "#e5e7eb"
+                        , CA.dashed [ 5, 5 ]
+                        ]
+                    , C.yLabels
+                        [ CA.withGrid
+                        , CA.format (\v -> "$" ++ formatNumber v ++ "M")
+                        , CA.fontSize 11
+                        , CA.color "#6b7280"
+                        , CA.amount 5
+                        , CA.limits [ CA.lowest 0 CA.exactly ]
+                        ]
+                    , C.xLabels
+                        [ CA.withGrid
+                        , CA.amount 7
+                        , CA.fontSize 11
+                        , CA.color "#6b7280"
+                        ]
+                    , C.binLabels .x
+                        [ CA.moveDown 25
+                        , CA.fontSize 12
+                        , CA.color "#374151"
+                        , CA.rotate 0
+                        ]
                     , C.labelAt CA.middle
                         .max
                         [ CA.moveUp 15 ]
                         [ Svg.text_ [ SA.fontSize "18", SA.fill "#1F2937" ] [ Svg.text "Book Value" ] ]
                     , C.bars
                         [ CA.margin 0.1
+                        , CA.roundTop 0.5
                         ]
-                        [ C.bar .baseCase [ CA.color "#3B82F6", CA.opacity 0.7 ]
+                        [ C.bar .baseCase [ CA.color "#03045e", CA.opacity 0.8 ]
                             |> C.named "Base Case"
-                        , C.bar .flatCase [ CA.color "#22C55E", CA.opacity 0.7 ]
+                        , C.bar .flatCase [ CA.color "#047857", CA.opacity 0.8 ]
                             |> C.named "Flat Case"
-                        , C.bar .rolloverCase [ CA.color "#A855F7", CA.opacity 0.7 ]
+                        , C.bar .rolloverCase [ CA.color "#7F56D9", CA.opacity 0.8 ]
                             |> C.named "Rollover Case"
                         ]
                         allData
@@ -1092,15 +1142,15 @@ renderLtvChart inputs =
                 ]
             , div [ class "flex flex-wrap justify-center gap-2 mt-1 sm:mt-4 text-sm" ]
                 [ div [ class "flex items-center gap-2" ]
-                    [ div [ class "w-3 h-3 bg-[#3B82F6] rounded-full opacity-70" ] []
+                    [ div [ class "w-3 h-3 bg-[#03045e] rounded-full opacity-80" ] []
                     , text "Base Case"
                     ]
                 , div [ class "flex items-center gap-2" ]
-                    [ div [ class "w-3 h-3 bg-[#22C55E] rounded-full opacity-70" ] []
+                    [ div [ class "w-3 h-3 bg-[#047857] rounded-full opacity-80" ] []
                     , text "Flat Case"
                     ]
                 , div [ class "flex items-center gap-2" ]
-                    [ div [ class "w-3 h-3 bg-[#A855F7] rounded-full opacity-70" ] []
+                    [ div [ class "w-3 h-3 bg-[#7F56D9] rounded-full opacity-80" ] []
                     , text "Rollover Case"
                     ]
                 ]
