@@ -2679,11 +2679,26 @@ viewCsvUploadModal state isUploading model =
                         [ viewSpinner ]
 
                   else
+                    let
+                        isDisabled =
+                            state.file
+                                == Nothing
+                                || state.processingHeaders
+                                || state.extractingCarriers
+                                || not (hasCarrierMappings state)
+                                || List.isEmpty state.detectedCarriers
+                    in
                     button
                         [ type_ "submit"
-                        , class "px-6 py-3 bg-purple-500 text-white text-sm font-medium rounded-lg hover:bg-purple-600 transition-colors duration-200 focus:ring-4 focus:ring-purple-200"
+                        , class
+                            (if isDisabled then
+                                "px-6 py-3 bg-purple-400 text-white text-sm font-medium rounded-lg transition-colors duration-200 focus:ring-4 focus:ring-purple-200 cursor-not-allowed"
+
+                             else
+                                "px-6 py-3 bg-purple-500 text-white text-sm font-medium rounded-lg hover:bg-purple-600 transition-colors duration-200 focus:ring-4 focus:ring-purple-200"
+                            )
                         , onClick UploadCsv
-                        , Html.Attributes.disabled (state.file == Nothing || state.processingHeaders)
+                        , Html.Attributes.disabled isDisabled
                         ]
                         [ text "Upload" ]
                 ]
@@ -4479,3 +4494,17 @@ fetchAndProcessCarriers detectedCarriers =
     -- Use a model function instead of an API call
     -- We'll use this from the GotCarriers handler
     Cmd.none
+
+
+
+-- Add this helper function near other helper functions
+
+
+hasCarrierMappings : UploadState -> Bool
+hasCarrierMappings state =
+    case state.carrierMapping of
+        Just mapping ->
+            not (List.isEmpty mapping.detectedCarriers)
+
+        Nothing ->
+            False

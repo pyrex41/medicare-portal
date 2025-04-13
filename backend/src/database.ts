@@ -421,8 +421,8 @@ export class Database {
           event_type TEXT NOT NULL,
           metadata TEXT,
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          FOREIGN KEY (contact_id) REFERENCES contacts(id),
-          FOREIGN KEY (lead_id) REFERENCES leads(id)
+          FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE,
+          FOREIGN KEY (lead_id) REFERENCES leads(id) ON DELETE CASCADE
         )`,
         indexStatements: [
           `CREATE INDEX IF NOT EXISTS idx_contact_events_contact_id ON contact_events(contact_id)`,
@@ -448,7 +448,7 @@ export class Database {
         createStatement: `CREATE TABLE IF NOT EXISTS email_send_tracking (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           org_id INTEGER NOT NULL,
-          contact_id TEXT NOT NULL,
+          contact_id INTEGER NOT NULL,
           email_type TEXT NOT NULL,
           scheduled_date TEXT NOT NULL,
           send_status TEXT NOT NULL CHECK(send_status IN ('pending', 'processing', 'accepted', 'delivered', 'sent', 'deferred', 'bounced', 'dropped', 'failed', 'skipped')) DEFAULT 'pending',
@@ -463,7 +463,8 @@ export class Database {
           status_checked_at TEXT,
           status_details TEXT,
           created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-          updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+          updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
         )`,
         indexStatements: [
           `CREATE INDEX IF NOT EXISTS idx_email_tracking_batch_id ON email_send_tracking(batch_id)`,
@@ -474,11 +475,7 @@ export class Database {
           `CREATE INDEX IF NOT EXISTS idx_email_tracking_status_date ON email_send_tracking(send_status, scheduled_date)`,
           `CREATE INDEX IF NOT EXISTS idx_email_tracking_message_id ON email_send_tracking(message_id)`,
           `CREATE INDEX IF NOT EXISTS idx_email_tracking_delivery_status ON email_send_tracking(delivery_status)`,
-          `CREATE TRIGGER IF NOT EXISTS update_email_tracking_timestamp 
-            AFTER UPDATE ON email_send_tracking 
-            BEGIN
-                UPDATE email_send_tracking SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id; 
-            END;`
+          `CREATE TRIGGER IF NOT EXISTS update_email_tracking_timestamp AFTER UPDATE ON email_send_tracking BEGIN UPDATE email_send_tracking SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id; END`
         ]
       }
     ];
@@ -1104,8 +1101,8 @@ export class Database {
               event_type TEXT NOT NULL,
               metadata TEXT,
               created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-              FOREIGN KEY (contact_id) REFERENCES contacts(id),
-              FOREIGN KEY (lead_id) REFERENCES leads(id)
+              FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE,
+              FOREIGN KEY (lead_id) REFERENCES leads(id) ON DELETE CASCADE
             )
           `,
           indexSqls: [
@@ -1138,7 +1135,7 @@ export class Database {
               quote_id TEXT NOT NULL,
               answers TEXT NOT NULL,
               created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-              FOREIGN KEY (contact_id) REFERENCES contacts(id)
+              FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
             )
           `,
           indexSqls: [
@@ -1151,7 +1148,7 @@ export class Database {
             CREATE TABLE IF NOT EXISTS email_send_tracking (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               org_id INTEGER NOT NULL,
-              contact_id TEXT NOT NULL,
+              contact_id INTEGER NOT NULL,
               email_type TEXT NOT NULL,
               scheduled_date TEXT NOT NULL,
               send_status TEXT NOT NULL CHECK(send_status IN ('pending', 'processing', 'accepted', 'delivered', 'sent', 'deferred', 'bounced', 'dropped', 'failed', 'skipped')) DEFAULT 'pending',
@@ -1166,7 +1163,8 @@ export class Database {
               status_checked_at TEXT,
               status_details TEXT,
               created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
             )
           `,
           indexSqls: [

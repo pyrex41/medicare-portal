@@ -768,13 +768,21 @@ export const contactsRoutes = new Elysia({ prefix: '/api/contacts' })
         // Create placeholders for SQL IN clause
         const placeholders = contactIds.map(() => '?').join(',');
         
-        const query = `
+        // First delete related records from email_send_tracking
+        const deleteEmailTrackingQuery = `
+          DELETE FROM email_send_tracking 
+          WHERE contact_id IN (${placeholders})
+        `;
+        await orgDb.execute(deleteEmailTrackingQuery, contactIds);
+
+        // Then delete the contacts
+        const deleteContactsQuery = `
           DELETE FROM contacts 
           WHERE id IN (${placeholders})
           RETURNING id
         `;
 
-        const result = await orgDb.execute(query, contactIds);
+        const result = await orgDb.execute(deleteContactsQuery, contactIds);
         const deletedIds = result.rows?.map((row: { id: number }) => row.id) || [];
 
         logger.info(`DELETE /api/contacts - Successfully deleted ${deletedIds.length} contacts from org ${user.organization_id}`);
