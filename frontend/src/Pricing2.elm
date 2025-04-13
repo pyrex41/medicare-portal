@@ -382,7 +382,7 @@ view model =
         [ div [ class "max-w-6xl w-full space-y-8" ]
             [ div [ class "flex flex-col items-center" ]
                 [ MyIcon.banknote 32 "#0F172A"
-                , h2 [ class "text-xl sm:text-2xl font-semibold text-gray-900 mt-6" ] [ text "Subscription Pricing" ]
+                , h2 [ class "text-xl sm:text-2xl font-semibold text-gray-900 mt-6" ] [ text "Special Launch Pricing" ]
                 , p [ class "text-gray-500 mt-2 mb-6 text-center" ] [ text "Transparent pricing. Pay for what you use." ]
 
                 -- Pricing Tiers - Responsive Layout
