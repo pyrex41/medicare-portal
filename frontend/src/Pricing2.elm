@@ -1,11 +1,18 @@
 module Pricing2 exposing (Model, Msg, init, subscriptions, update, view)
 
 import Basics
+import Chart as C
+import Chart.Attributes as CA
+import Chart.Item as CI
+import Dict
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (..)
+import List.Extra
 import MyIcon
 import PriceModel
+import Svg
+import Svg.Attributes as SA
 
 
 type alias Model =
@@ -338,8 +345,8 @@ view model =
         [ div [ class "max-w-6xl w-full space-y-8 bg-white p-8 rounded-lg shadow-md" ]
             [ div [ class "flex flex-col items-center" ]
                 [ MyIcon.banknote 32 "#0F172A"
-                , h2 [ class "text-2xl font-semibold text-gray-900 mt-6" ] [ text "MedicareMax Pricing Calculator" ]
-                , p [ class "text-gray-500 mt-2 mb-6" ] [ text "Understand your costs and potential value from our service" ]
+                , h2 [ class "text-2xl font-semibold text-gray-900 mt-6" ] [ text "Subscription Pricing" ]
+                , p [ class "text-gray-500 mt-2 mb-6" ] [ text "Transparent pricing. Pay for what you use." ]
 
                 -- Pricing Tiers - Compact Layout
                 , div [ class "w-full flex gap-6 mb-12" ]
@@ -489,7 +496,7 @@ view model =
                     ]
 
                 -- Value Analysis Section
-                , div [ class "w-full mt-8" ]
+                , div [ class "w-full mt-8 mb-8" ]
                     [ div [ class "bg-gradient-to-r from-purple-50 to-blue-50 rounded-lg p-4 border border-purple-100" ]
                         [ div [ class "flex flex-col gap-6" ]
                             [ div [ class "grid grid-cols-3 gap-6" ]
@@ -650,6 +657,8 @@ view model =
                             ]
                         ]
                     ]
+                , renderRevenueChart model.calculationInputs
+                , renderLtvChart model.calculationInputs
                 ]
             ]
         ]
@@ -662,6 +671,49 @@ view model =
 monthlyConversionRate : PriceModel.CalculationInputs -> Float
 monthlyConversionRate inputs =
     inputs.rolloverPercent / (100 * 12)
+
+
+type alias CashFlowModel =
+    List ( Int, Float )
+
+
+baseCase : PriceModel.CalculationInputs -> CashFlowModel
+baseCase inputs =
+    List.range 0 6
+        |> List.map
+            (\i ->
+                ( i, toFloat inputs.contacts * inputs.commissionRate * (6 - toFloat i) / 6 )
+            )
+
+
+flatCase : PriceModel.CalculationInputs -> CashFlowModel
+flatCase inputs =
+    List.range 0 6
+        |> List.map
+            (\i ->
+                ( i, toFloat inputs.contacts * inputs.commissionRate )
+            )
+
+
+payingContactsLadder : PriceModel.CalculationInputs -> List ( Int, Float )
+payingContactsLadder inputs =
+    List.range 0 6
+        |> List.map
+            (\i ->
+                let
+                    nFact =
+                        List.range 0 i |> List.sum
+                in
+                ( i
+                , (1 + (inputs.rolloverPercent / toFloat 100) / 6) ^ toFloat nFact
+                )
+            )
+
+
+rolloverCase : PriceModel.CalculationInputs -> CashFlowModel
+rolloverCase inputs =
+    payingContactsLadder inputs
+        |> List.map (\( i, v ) -> ( i, v * inputs.commissionRate * toFloat inputs.contacts ))
 
 
 subscriptions : Model -> Sub Msg
@@ -710,3 +762,215 @@ padCents str =
 formatCurrencyRounded : Float -> String
 formatCurrencyRounded value =
     "$" ++ addCommas (String.fromInt (round value))
+
+
+
+-- Add this new function before the view function
+
+
+renderRevenueChart : PriceModel.CalculationInputs -> Html Msg
+renderRevenueChart inputs =
+    let
+        func : ( Int, Float ) -> { x : String, y : Float }
+        func ( year, value ) =
+            { x = String.fromInt year
+            , y = Basics.max 0 (value / inputs.commissionRate / toFloat inputs.contacts) -- Ensure value is never negative
+            }
+
+        baseCaseData =
+            baseCase inputs
+                |> List.map func
+
+        flatCaseData =
+            flatCase inputs
+                |> List.map func
+
+        rolloverCaseData =
+            rolloverCase inputs
+                |> List.map func
+
+        allData =
+            List.map3
+                (\base flat rollover ->
+                    { x = base.x
+                    , baseCase = Basics.max 0 base.y
+                    , flatCase = Basics.max 0 flat.y
+                    , rolloverCase = Basics.max 0 rollover.y
+                    }
+                )
+                baseCaseData
+                flatCaseData
+                rolloverCaseData
+    in
+    div [ class "w-full h-[400px] bg-white rounded-lg p-4 shadow-sm border border-gray-200" ]
+        [ div [ class "flex justify-between items-center text-lg font-bold text-gray-700" ]
+            [ text "Cash Flow" ]
+        , C.chart
+            [ CA.height 350
+            , CA.width 800
+            , CA.margin { top = 30, bottom = 60, left = 60, right = 20 }
+            , CA.padding { top = 10, bottom = 50, left = 10, right = 10 }
+            ]
+            [ C.grid []
+            , C.yLabels [ CA.withGrid, CA.format (\v -> String.fromFloat (round10 1 v) ++ "x"), CA.limits [ CA.lowest 0 CA.exactly ] ]
+            , C.binLabels .x [ CA.moveDown 20 ]
+            , C.labelAt CA.middle
+                .max
+                [ CA.moveUp 15 ]
+                [ Svg.text_ [ SA.fontSize "18", SA.fill "#1F2937" ] [ Svg.text "Cash Flow" ] ]
+            , C.bars
+                [ CA.margin 0.1
+                ]
+                [ C.bar .baseCase [ CA.color "#3B82F6", CA.opacity 0.7 ]
+                    |> C.named "Base Case"
+                , C.bar .flatCase [ CA.color "#22C55E", CA.opacity 0.7 ]
+                    |> C.named "Flat Case"
+                , C.bar .rolloverCase [ CA.color "#A855F7", CA.opacity 0.7 ]
+                    |> C.named "Rollover Case"
+                ]
+                allData
+            , C.legendsAt .min
+                .max
+                [ CA.column
+                , CA.moveRight 15
+                , CA.moveUp 10
+                , CA.alignLeft
+                , CA.spacing 5
+                ]
+                []
+            ]
+        ]
+
+
+
+-- LTV Model functions
+
+
+baseCaseLtv : PriceModel.CalculationInputs -> CashFlowModel
+baseCaseLtv inputs =
+    -- Initial book has average 3 years of LTV remaining (3x commission)
+    List.range 0 6
+        |> List.map
+            (\i ->
+                ( i
+                , toFloat inputs.contacts * inputs.commissionRate * 3.0 * (6 - toFloat i) / 6
+                  -- Initial 3x LTV
+                )
+            )
+
+
+flatCaseLtv : PriceModel.CalculationInputs -> CashFlowModel
+flatCaseLtv inputs =
+    -- Flat case maintains the same LTV
+    List.range 0 6
+        |> List.map
+            (\i ->
+                ( i
+                , toFloat inputs.contacts * inputs.commissionRate * 3.0
+                  -- Constant 3x LTV
+                )
+            )
+
+
+rolloverCaseLtv : PriceModel.CalculationInputs -> CashFlowModel
+rolloverCaseLtv inputs =
+    -- Each year we add (rolloverPercent)% of contacts with 6 years of LTV
+    List.range 0 6
+        |> List.map
+            (\i ->
+                let
+                    baseValue =
+                        toFloat inputs.contacts * inputs.commissionRate * 3.0
+
+                    -- Initial 3x LTV
+                    additionalLtv =
+                        if i == 0 then
+                            0
+
+                        else
+                            -- For each previous year, we've added rolloverPercent% of contacts with 6x commission
+                            toFloat inputs.contacts
+                                * (inputs.rolloverPercent / 100)
+                                * inputs.commissionRate
+                                * 3
+                                --  New policies have a net added LTV on average of 3x
+                                * toFloat i
+
+                    -- Accumulate for each year
+                in
+                ( i, baseValue + additionalLtv )
+            )
+
+
+renderLtvChart : PriceModel.CalculationInputs -> Html Msg
+renderLtvChart inputs =
+    let
+        func : ( Int, Float ) -> { x : String, y : Float }
+        func ( year, value ) =
+            { x = String.fromInt year
+            , y = value / 1000000 -- Convert to millions for cleaner display
+            }
+
+        baseCaseData =
+            baseCaseLtv inputs
+                |> List.map func
+
+        flatCaseData =
+            flatCaseLtv inputs
+                |> List.map func
+
+        rolloverCaseData =
+            rolloverCaseLtv inputs
+                |> List.map func
+
+        allData =
+            List.map3
+                (\base flat rollover ->
+                    { x = base.x
+                    , baseCase = base.y
+                    , flatCase = flat.y
+                    , rolloverCase = rollover.y
+                    }
+                )
+                baseCaseData
+                flatCaseData
+                rolloverCaseData
+    in
+    div [ class "w-full h-[400px] bg-white rounded-lg p-4 shadow-sm border border-gray-200 mt-8" ]
+        [ div [ class "flex justify-between items-center text-lg font-bold text-gray-700" ]
+            [ text "Book of Business -- Remaining LTV (Millions)" ]
+        , C.chart
+            [ CA.height 350
+            , CA.width 800
+            , CA.margin { top = 30, bottom = 60, left = 60, right = 20 }
+            , CA.padding { top = 10, bottom = 50, left = 10, right = 10 }
+            ]
+            [ C.grid []
+            , C.yLabels [ CA.withGrid, CA.format (\v -> "$" ++ formatNumber v ++ "M"), CA.limits [ CA.lowest 0 CA.exactly ] ]
+            , C.binLabels .x [ CA.moveDown 20 ]
+            , C.labelAt CA.middle
+                .max
+                [ CA.moveUp 15 ]
+                [ Svg.text_ [ SA.fontSize "18", SA.fill "#1F2937" ] [ Svg.text "Book Value" ] ]
+            , C.bars
+                [ CA.margin 0.1
+                ]
+                [ C.bar .baseCase [ CA.color "#3B82F6", CA.opacity 0.7 ]
+                    |> C.named "Base Case"
+                , C.bar .flatCase [ CA.color "#22C55E", CA.opacity 0.7 ]
+                    |> C.named "Flat Case"
+                , C.bar .rolloverCase [ CA.color "#A855F7", CA.opacity 0.7 ]
+                    |> C.named "Rollover Case"
+                ]
+                allData
+            , C.legendsAt .min
+                .max
+                [ CA.column
+                , CA.moveRight 15
+                , CA.moveUp 10
+                , CA.alignLeft
+                , CA.spacing 5
+                ]
+                []
+            ]
+        ]
