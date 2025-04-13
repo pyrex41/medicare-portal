@@ -13,6 +13,7 @@ import type { ContactCreate } from './types'
 import { Database as SqliteDatabase, open } from 'sqlite'
 import sqlite3 from 'sqlite3'
 import fsPromises from 'fs/promises'
+import Bun from 'bun'
 
 // Connection pool to reuse database connections
 interface ConnectionInfo {
@@ -720,266 +721,190 @@ export class Database {
         throw new Error(`Could not get database configuration for organization ${orgId}`);
       }
 
-      // Create a temporary database with our current schema
-      const tempDbSuffix = `temp-${Date.now()}`;
-      const localDb = new BunDatabase(`file:${tempDbSuffix}`);
+      // First, download the existing database from Turso
+      const tursoService = new TursoService();
+      logger.info(`Downloading existing database from Turso for org ${orgId}`);
+      logger.info(`Turso DB URL: ${turso_db_url}`);
+      logger.info(`Turso Auth Token: ${turso_auth_token}`);
+      const dumpContent = await tursoService.downloadDatabaseDump(turso_db_url, turso_auth_token);
+      logger.info(`Downloaded ${dumpContent.length} bytes of database dump`);
 
-      // Create tables with current schema
-      localDb.exec(`
-        CREATE TABLE contacts (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          first_name TEXT NOT NULL,
-          last_name TEXT NOT NULL,
-          email TEXT NOT NULL UNIQUE,
-          current_carrier TEXT NOT NULL,
-          plan_type TEXT NOT NULL,
-          effective_date TEXT NOT NULL,
-          birth_date TEXT NOT NULL,
-          tobacco_user INTEGER NOT NULL,
-          gender TEXT NOT NULL,
-          state TEXT NOT NULL,
-          zip_code TEXT NOT NULL,
-          agent_id INTEGER,
-          last_emailed DATETIME,
-          phone_number TEXT NOT NULL DEFAULT '',
-          status TEXT NOT NULL DEFAULT '',
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        );
-
-        -- Add indexes for contacts table
-        CREATE INDEX idx_contacts_email ON contacts(email);
-        CREATE UNIQUE INDEX idx_contacts_email_unique ON contacts(LOWER(TRIM(email)));
-        CREATE INDEX idx_contacts_agent_id ON contacts(agent_id);
-        CREATE INDEX idx_contacts_status ON contacts(status);
-
-        -- Create trigger for updated_at
-        CREATE TRIGGER update_contacts_timestamp 
-        AFTER UPDATE ON contacts 
-        BEGIN 
-          UPDATE contacts SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id; 
-        END;
-
-        -- Create other required tables
-        CREATE TABLE contact_events (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          contact_id INTEGER,
-          lead_id INTEGER,
-          event_type TEXT NOT NULL,
-          metadata TEXT,
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          FOREIGN KEY (contact_id) REFERENCES contacts(id),
-          FOREIGN KEY (lead_id) REFERENCES leads(id)
-        );
-
-        CREATE INDEX idx_contact_events_contact_id ON contact_events(contact_id);
-        CREATE INDEX idx_contact_events_lead_id ON contact_events(lead_id);
-        CREATE INDEX idx_contact_events_type ON contact_events(event_type);
-
-        CREATE TABLE leads (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          name TEXT NOT NULL,
-          email TEXT NOT NULL,
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          UNIQUE(email)
-        );
-
-        CREATE INDEX idx_leads_email ON leads(email);
-
-        CREATE TABLE eligibility_answers (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          contact_id INTEGER NOT NULL,
-          quote_id TEXT NOT NULL,
-          answers TEXT NOT NULL,
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          FOREIGN KEY (contact_id) REFERENCES contacts(id)
-        );
-
-        CREATE INDEX idx_eligibility_answers_contact_id ON eligibility_answers(contact_id);
-        
-        -- Create email tracking table
-        CREATE TABLE email_send_tracking (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          org_id INTEGER NOT NULL,
-          contact_id TEXT NOT NULL,
-          email_type TEXT NOT NULL,
-          scheduled_date TEXT NOT NULL,
-          send_status TEXT NOT NULL CHECK(send_status IN ('pending', 'processing', 'accepted', 'delivered', 'sent', 'deferred', 'bounced', 'dropped', 'failed', 'skipped')) DEFAULT 'pending',
-          send_mode TEXT NOT NULL CHECK(send_mode IN ('test', 'production')) DEFAULT 'test',
-          test_email TEXT,
-          send_attempt_count INTEGER NOT NULL DEFAULT 0,
-          last_attempt_date TEXT,
-          last_error TEXT,
-          batch_id TEXT NOT NULL,
-          message_id TEXT,
-          delivery_status TEXT,
-          status_checked_at TEXT,
-          status_details TEXT,
-          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-          updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-        );
-        
-        -- Add indexes for email tracking table
-        CREATE INDEX idx_email_tracking_batch_id ON email_send_tracking(batch_id);
-        CREATE INDEX idx_email_tracking_send_status ON email_send_tracking(send_status);
-        CREATE INDEX idx_email_tracking_send_mode ON email_send_tracking(send_mode);
-        CREATE INDEX idx_email_tracking_contact_id ON email_send_tracking(contact_id);
-        CREATE INDEX idx_email_tracking_contact_type ON email_send_tracking(contact_id, email_type);
-        CREATE INDEX idx_email_tracking_status_date ON email_send_tracking(send_status, scheduled_date);
-        CREATE INDEX idx_email_tracking_message_id ON email_send_tracking(message_id);
-        CREATE INDEX idx_email_tracking_delivery_status ON email_send_tracking(delivery_status);
-        
-        -- Create trigger for email tracking updated_at
-        CREATE TRIGGER update_email_tracking_timestamp 
-        AFTER UPDATE ON email_send_tracking 
-        BEGIN 
-          UPDATE email_send_tracking SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id; 
-        END;
-      `);
-      
-      // Read the CSV file
-      const fileContents = await fsPromises.readFile(csvFilePath, 'utf8');
-      const rows = await new Promise<any[]>((resolve, reject) => {
-        const results: any[] = [];
-        const parser = parse(fileContents, { columns: true });
-        
-        parser.on('readable', function() {
-          let record;
-          while ((record = parser.read()) !== null) {
-            results.push(record);
-          }
-        });
-        
-        parser.on('error', function(err) {
-          reject(err);
-        });
-        
-        parser.on('end', function() {
-          resolve(results);
-        });
-      });
-      
-      logger.info(`Processing ${rows.length} rows for organization ${orgId}`);
-      
-      // Find the email column (required for deduplication)
-      const emailColumn = columnMapping ? columnMapping.email : 'email';
-      if (!rows[0]?.[emailColumn]) {
-        throw new Error(`Email column "${emailColumn}" not found in CSV`);
-      }
-      
-      // Map columns based on provided mapping or use default field names
-      const processRow = (row: any) => {
-        const mappedRow: any = {};
-        
-        // Apply column mappings if provided
-        if (columnMapping) {
-          // Map each field using the provided column mapping
-          mappedRow.first_name = row[columnMapping.firstName] || '';
-          mappedRow.last_name = row[columnMapping.lastName] || '';
-          mappedRow.email = row[columnMapping.email] || '';
-          mappedRow.phone_number = row[columnMapping.phoneNumber] || '';
-          mappedRow.state = row[columnMapping.state] || '';
-          
-          // Apply carrier mapping if provided
-          let carrierValue = '';
-          if (columnMapping.currentCarrier && row[columnMapping.currentCarrier]) {
-            const originalCarrier = row[columnMapping.currentCarrier];
-            
-            // Use carrier mapping if available
-            if (carrierMapping && carrierMapping.mappings[originalCarrier]) {
-              carrierValue = carrierMapping.mappings[originalCarrier];
-              
-              // If mapped to "Other", preserve original value
-              if (carrierValue === 'Other') {
-                carrierValue = originalCarrier;
-              }
-            } else {
-              carrierValue = originalCarrier;
-            }
-          }
-          
-          mappedRow.current_carrier = carrierValue;
-          mappedRow.effective_date = row[columnMapping.effectiveDate] || '';
-          mappedRow.birth_date = row[columnMapping.birthDate] || '';
-          mappedRow.tobacco_user = row[columnMapping.tobaccoUser] === 'true' || row[columnMapping.tobaccoUser] === 'yes' || row[columnMapping.tobaccoUser] === '1';
-          mappedRow.gender = row[columnMapping.gender] || '';
-          mappedRow.zip_code = row[columnMapping.zipCode] || '';
-          mappedRow.plan_type = row[columnMapping.planType] || '';
-        } else {
-          // Use default field names if no mapping provided
-          mappedRow.first_name = row.first_name || row.firstName || '';
-          mappedRow.last_name = row.last_name || row.lastName || '';
-          mappedRow.email = row.email || '';
-          mappedRow.phone_number = row.phone_number || row.phoneNumber || '';
-          mappedRow.state = row.state || '';
-          mappedRow.current_carrier = row.current_carrier || row.currentCarrier || '';
-          mappedRow.effective_date = row.effective_date || row.effectiveDate || '';
-          mappedRow.birth_date = row.birth_date || row.birthDate || '';
-          mappedRow.tobacco_user = row.tobacco_user === 'true' || row.tobacco_user === 'yes' || row.tobacco_user === '1' ||
-                                 row.tobaccoUser === 'true' || row.tobaccoUser === 'yes' || row.tobaccoUser === '1';
-          mappedRow.gender = row.gender || '';
-          mappedRow.zip_code = row.zip_code || row.zipCode || '';
-          mappedRow.plan_type = row.plan_type || row.planType || '';
-        }
-        
-        // Add standard fields
-        mappedRow.created_at = new Date().toISOString();
-        mappedRow.updated_at = new Date().toISOString();
-        
-        // Add agent_id if provided
-        if (agentId !== undefined && agentId !== null) {
-          mappedRow.agent_id = agentId;
-        }
-        
-        return mappedRow;
-      };
-      
-      // Process rows in batches to avoid memory issues
-      const batchSize = 100;
-      const totalBatches = Math.ceil(rows.length / batchSize);
-      let totalProcessed = 0;
-      let totalAdded = 0;
-      let totalSkipped = 0;
-      
-      // Begin transaction for batch processing
-      localDb.exec('BEGIN TRANSACTION');
+      // Create a temporary file for the dump
+      const tempDumpFile = `dump-${Date.now()}.sql`;
+      const tempDbFile = `temp-${Date.now()}.db`;
+      let localDb: BunDatabase | null = null;
       
       try {
-        // Prepare the insert statement with ON CONFLICT clause
-        const stmt = localDb.prepare(`
-          INSERT INTO contacts (
-            first_name, last_name, email, phone_number, state,
-            current_carrier, effective_date, birth_date, tobacco_user,
-            gender, zip_code, plan_type, agent_id, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          ${overwriteExisting ? `
-          ON CONFLICT(email) DO UPDATE SET
-            first_name = excluded.first_name,
-            last_name = excluded.last_name,
-            phone_number = excluded.phone_number,
-            state = excluded.state,
-            current_carrier = excluded.current_carrier,
-            effective_date = excluded.effective_date,
-            birth_date = excluded.birth_date,
-            tobacco_user = excluded.tobacco_user,
-            gender = excluded.gender,
-            zip_code = excluded.zip_code,
-            plan_type = excluded.plan_type,
-            agent_id = excluded.agent_id,
-            updated_at = excluded.updated_at
-          ` : 'ON CONFLICT(email) DO NOTHING'}
-        `);
+        // Write dump to temporary file
+        await fsPromises.writeFile(tempDumpFile, dumpContent);
 
-        // Process each batch
-        for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
-          const start = batchIndex * batchSize;
-          const end = Math.min(start + batchSize, rows.length);
-          const batch = rows.slice(start, end);
+        // Use sqlite3 CLI to create and populate the database
+        logger.info('Creating temporary database from dump...');
+        await new Promise((resolve, reject) => {
+          const sqlite = Bun.spawn(['sqlite3', tempDbFile], {
+            stdin: Bun.file(tempDumpFile),
+            onExit(proc, exitCode, signalCode, error) {
+              if (exitCode === 0) {
+                resolve(null);
+              } else {
+                reject(new Error(`SQLite process exited with code ${exitCode}: ${error}`));
+              }
+            }
+          });
+        });
+
+        logger.info('Successfully created temporary database from dump');
+
+        // Now connect to the temporary database using BunSQLite
+        localDb = new BunDatabase(tempDbFile);
+
+        // Use DELETE journal mode instead of WAL for direct file writes
+        localDb.exec('PRAGMA journal_mode = DELETE');
+        localDb.exec('PRAGMA foreign_keys = OFF');
+
+        // Drop the unique index on email temporarily to allow the import
+        logger.info('Dropping unique email index for import...');
+        localDb.exec('DROP INDEX IF EXISTS idx_contacts_email_unique');
+
+        // Verify the database state before CSV import
+        const tables = ['contacts', 'contact_events', 'leads', 'eligibility_answers', 'email_send_tracking'];
+        for (const table of tables) {
+          try {
+            const count = localDb.prepare(`SELECT COUNT(*) as count FROM ${table}`).get() as { count: number };
+            logger.info(`Table ${table} before CSV import: ${count.count} rows`);
+          } catch (error) {
+            logger.error(`Error counting rows in ${table}: ${error}`);
+          }
+        }
+
+        // Now process the new contacts from CSV
+        logger.info(`Processing new contacts from CSV file`);
+        
+        // Read the CSV file
+        const fileContents = await fsPromises.readFile(csvFilePath, 'utf8');
+        const rows = await new Promise<any[]>((resolve, reject) => {
+          const results: any[] = [];
+          const parser = parse(fileContents, { columns: true });
           
-          logger.info(`Processing batch ${batchIndex + 1}/${totalBatches} (rows ${start + 1}-${end})`);
+          parser.on('readable', function() {
+            let record;
+            while ((record = parser.read()) !== null) {
+              results.push(record);
+            }
+          });
           
-          // Process each row in the batch
-          for (const row of batch) {
+          parser.on('error', function(err) {
+            reject(err);
+          });
+          
+          parser.on('end', function() {
+            resolve(results);
+          });
+        });
+        
+        logger.info(`Processing ${rows.length} rows from CSV`);
+        
+        // Find the email column (required for deduplication)
+        const emailColumn = columnMapping ? columnMapping.email : 'email';
+        if (!rows[0]?.[emailColumn]) {
+          throw new Error(`Email column "${emailColumn}" not found in CSV`);
+        }
+        
+        // Map columns based on provided mapping or use default field names
+        const processRow = (row: any) => {
+          const mappedRow: any = {};
+          
+          // Apply column mappings if provided
+          if (columnMapping) {
+            // Map each field using the provided column mapping
+            mappedRow.first_name = row[columnMapping.firstName] || '';
+            mappedRow.last_name = row[columnMapping.lastName] || '';
+            mappedRow.email = row[columnMapping.email] || '';
+            mappedRow.phone_number = row[columnMapping.phoneNumber] || '';
+            mappedRow.state = row[columnMapping.state] || '';
+            
+            // Apply carrier mapping if provided
+            let carrierValue = '';
+            if (columnMapping.currentCarrier && row[columnMapping.currentCarrier]) {
+              const originalCarrier = row[columnMapping.currentCarrier];
+              
+              // Use carrier mapping if available
+              if (carrierMapping && carrierMapping.mappings[originalCarrier]) {
+                carrierValue = carrierMapping.mappings[originalCarrier];
+                
+                // If mapped to "Other", preserve original value
+                if (carrierValue === 'Other') {
+                  carrierValue = originalCarrier;
+                }
+              } else {
+                carrierValue = originalCarrier;
+              }
+            }
+            
+            mappedRow.current_carrier = carrierValue;
+            mappedRow.effective_date = row[columnMapping.effectiveDate] || '';
+            mappedRow.birth_date = row[columnMapping.birthDate] || '';
+            mappedRow.tobacco_user = row[columnMapping.tobaccoUser] === 'true' || row[columnMapping.tobaccoUser] === 'yes' || row[columnMapping.tobaccoUser] === '1';
+            mappedRow.gender = row[columnMapping.gender] || '';
+            mappedRow.zip_code = row[columnMapping.zipCode] || '';
+            mappedRow.plan_type = row[columnMapping.planType] || '';
+          } else {
+            // Use default field names if no mapping provided
+            mappedRow.first_name = row.first_name || row.firstName || '';
+            mappedRow.last_name = row.last_name || row.lastName || '';
+            mappedRow.email = row.email || '';
+            mappedRow.phone_number = row.phone_number || row.phoneNumber || '';
+            mappedRow.state = row.state || '';
+            mappedRow.current_carrier = row.current_carrier || row.currentCarrier || '';
+            mappedRow.effective_date = row.effective_date || row.effectiveDate || '';
+            mappedRow.birth_date = row.birth_date || row.birthDate || '';
+            mappedRow.tobacco_user = row.tobacco_user === 'true' || row.tobacco_user === 'yes' || row.tobacco_user === '1' ||
+                                   row.tobaccoUser === 'true' || row.tobaccoUser === 'yes' || row.tobaccoUser === '1';
+            mappedRow.gender = row.gender || '';
+            mappedRow.zip_code = row.zip_code || row.zipCode || '';
+            mappedRow.plan_type = row.plan_type || row.planType || '';
+          }
+          
+          // Add standard fields
+          mappedRow.created_at = new Date().toISOString();
+          mappedRow.updated_at = new Date().toISOString();
+          
+          // Add agent_id if provided
+          if (agentId !== undefined && agentId !== null) {
+            mappedRow.agent_id = agentId;
+          }
+          
+          return mappedRow;
+        };
+        
+        // Begin transaction for CSV import
+        localDb.exec('BEGIN TRANSACTION');
+        
+        try {
+          // First, get all existing emails (for manual deduplication)
+          const existingEmails = new Set(
+            localDb.prepare('SELECT LOWER(TRIM(email)) as email FROM contacts')
+              .all()
+              .map((row: any) => row.email || row[0])
+          );
+
+          logger.info(`Found ${existingEmails.size} existing emails in database`);
+
+          // Prepare insert statement (without ON CONFLICT since we're handling it manually)
+          const stmt = localDb.prepare(`
+            INSERT INTO contacts (
+              first_name, last_name, email, phone_number, state,
+              current_carrier, effective_date, birth_date, tobacco_user,
+              gender, zip_code, plan_type, agent_id, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `);
+
+          let totalProcessed = 0;
+          let totalAdded = 0;
+          let totalSkipped = 0;
+
+          // Process each row
+          for (const row of rows) {
             totalProcessed++;
             const processedRow = processRow(row);
             const email = processedRow.email.toLowerCase().trim();
@@ -989,77 +914,132 @@ export class Database {
               totalSkipped++;
               continue;
             }
-            
+
             try {
-              const result = stmt.run(
-                processedRow.first_name,
-                processedRow.last_name,
-                email,
-                processedRow.phone_number,
-                processedRow.state,
-                processedRow.current_carrier,
-                processedRow.effective_date,
-                processedRow.birth_date,
-                processedRow.tobacco_user ? 1 : 0,
-                processedRow.gender,
-                processedRow.zip_code,
-                processedRow.plan_type,
-                processedRow.agent_id || null,
-                processedRow.created_at,
-                processedRow.updated_at
-              );
-              
-              if (result.changes > 0) {
-                totalAdded++;
+              if (existingEmails.has(email)) {
+                if (overwriteExisting) {
+                  // Update existing record
+                  localDb.prepare(`
+                    UPDATE contacts SET
+                      first_name = ?, last_name = ?, phone_number = ?, state = ?,
+                      current_carrier = ?, effective_date = ?, birth_date = ?,
+                      tobacco_user = ?, gender = ?, zip_code = ?, plan_type = ?,
+                      agent_id = ?, updated_at = ?
+                    WHERE LOWER(TRIM(email)) = LOWER(TRIM(?))
+                  `).run(
+                    processedRow.first_name,
+                    processedRow.last_name,
+                    processedRow.phone_number,
+                    processedRow.state,
+                    processedRow.current_carrier,
+                    processedRow.effective_date,
+                    processedRow.birth_date,
+                    processedRow.tobacco_user ? 1 : 0,
+                    processedRow.gender,
+                    processedRow.zip_code,
+                    processedRow.plan_type,
+                    processedRow.agent_id || null,
+                    processedRow.updated_at,
+                    email
+                  );
+                  totalAdded++;
+                } else {
+                  totalSkipped++;
+                }
               } else {
-                totalSkipped++;
+                stmt.run(
+                  processedRow.first_name,
+                  processedRow.last_name,
+                  email,
+                  processedRow.phone_number,
+                  processedRow.state,
+                  processedRow.current_carrier,
+                  processedRow.effective_date,
+                  processedRow.birth_date,
+                  processedRow.tobacco_user ? 1 : 0,
+                  processedRow.gender,
+                  processedRow.zip_code,
+                  processedRow.plan_type,
+                  processedRow.agent_id || null,
+                  processedRow.created_at,
+                  processedRow.updated_at
+                );
+                existingEmails.add(email);
+                totalAdded++;
               }
             } catch (err) {
               logger.error(`Error processing row with email ${email}: ${err}`);
               totalSkipped++;
             }
           }
-        }
-        
-        // Commit transaction after successful processing
-        localDb.exec('COMMIT');
-        logger.info(`Successfully processed all rows for organization ${orgId}`);
-        logger.info(`Total processed: ${totalProcessed}, added: ${totalAdded}, skipped: ${totalSkipped}`);
 
-        try {
-          // Create new database and upload data
-          const tursoService = new TursoService();
-          logger.info(`Creating new Turso database for import`);
-          const { dbName: newOrgDbName, url: newOrgDbUrl, token: newOrgDbToken } = await tursoService.createDatabaseForImport(orgId);
+          // Recreate the unique index after import
+          logger.info('Recreating unique email index...');
+          localDb.exec('CREATE UNIQUE INDEX idx_contacts_email_unique ON contacts(LOWER(TRIM(email)))');
+
+          // Commit CSV import transaction
+          localDb.exec('COMMIT');
           
-          // Upload the local db to the new org db
-          logger.info(`Uploading data to new Turso database at ${newOrgDbUrl}`);
-          await tursoService.uploadDatabase(newOrgDbName, newOrgDbToken, `file:${tempDbSuffix}`);
+          // Force a checkpoint to ensure all changes are written to disk
+          localDb.exec('PRAGMA wal_checkpoint(TRUNCATE)');
           
-          // Update main db with new org db url / auth token 
-          logger.info(`Updating organization ${orgId} with new database credentials`);
-          await mainDb.execute(`
-            UPDATE organizations 
-            SET turso_db_url = ?, turso_auth_token = ?
-            WHERE id = ?
-          `, [newOrgDbUrl, newOrgDbToken, orgId]);
-          
-          logger.info(`Successfully completed import for organization ${orgId}`);
-          
-          // Return success message with import stats
-          return `Successfully imported ${totalAdded} contacts (${totalSkipped} skipped) to new database: ${newOrgDbUrl}`;
-        } catch (importError) {
-          logger.error(`Error during Turso database creation or upload: ${importError}`);
-          throw importError;
+          logger.info(`Successfully processed all rows from CSV`);
+          logger.info(`Total processed: ${totalProcessed}, added: ${totalAdded}, skipped: ${totalSkipped}`);
+
+          // Verify final counts
+          const finalCount = localDb.prepare('SELECT COUNT(*) as count FROM contacts').get() as { count: number };
+          logger.info(`Final contact count in database: ${finalCount.count} (should be ${existingEmails.size} + new additions)`);
+
+          // Close the database to ensure all changes are flushed
+          localDb.close();
+          localDb = null;
+
+          try {
+            // Create new database and upload data
+            logger.info(`Creating new Turso database for import`);
+            const { dbName: newOrgDbName, url: newOrgDbUrl, token: newOrgDbToken } = await tursoService.createDatabaseForImport(orgId);
+            
+            // Upload the local db to the new org db
+            logger.info(`Uploading data to new Turso database at ${newOrgDbUrl}`);
+            await tursoService.uploadDatabase(newOrgDbName, newOrgDbToken, `file:${tempDbFile}`);
+            
+            // Update main db with new org db url / auth token 
+            logger.info(`Updating organization ${orgId} with new database credentials`);
+            await mainDb.execute(`
+              UPDATE organizations 
+              SET turso_db_url = ?, turso_auth_token = ?
+              WHERE id = ?
+            `, [newOrgDbUrl, newOrgDbToken, orgId]);
+            
+            logger.info(`Successfully completed import for organization ${orgId}`);
+            
+            // Return success message with import stats
+            return `Successfully imported ${totalAdded} contacts (${totalSkipped} skipped) to new database: ${newOrgDbUrl}`;
+          } catch (importError) {
+            logger.error(`Error during Turso database creation or upload: ${importError}`);
+            throw importError;
+          }
+        } catch (error) {
+          // Rollback transaction on error
+          try {
+            localDb.exec('ROLLBACK');
+          } catch (rollbackError) {
+            logger.error(`Error during transaction rollback: ${rollbackError}`);
+          }
+          throw error;
         }
-      } catch (error) {
-        // Rollback transaction on error
+      } finally {
+        // Clean up temporary files
         try {
-          localDb.exec('ROLLBACK');
-        } catch (rollbackError) {
-          logger.error(`Error during transaction rollback: ${rollbackError}`);
+          if (localDb) {
+            localDb.close();
+          }
+          await fsPromises.unlink(tempDumpFile);
+          await fsPromises.unlink(tempDbFile);
+          logger.info('Cleaned up temporary files');
+        } catch (cleanupError) {
+          logger.error(`Error cleaning up temporary files: ${cleanupError}`);
         }
-        throw error;
       }
     } catch (error) {
       logger.error(`Error in bulk import for organization ${orgId}: ${error}`);
@@ -1393,4 +1373,75 @@ export async function getOrganizationById(orgId: number): Promise<any> {
     logger.error(`Error getting organization: ${error}`);
     return null;
   }
+}
+
+// Function to split SQL dump into individual statements
+function splitSqlStatements(sql: string): string[] {
+  const statements: string[] = [];
+  let currentStatement = "";
+  let inString = false;
+  let inComment = false;
+  let inBlockComment = false;
+  let stringQuote: string | null = null;
+
+  for (let i = 0; i < sql.length; i++) {
+    const char = sql[i];
+    const nextChar = i + 1 < sql.length ? sql[i + 1] : null;
+
+    // Handle comments
+    if (!inString) {
+      if (char === "-" && nextChar === "-" && !inBlockComment) {
+        inComment = true;
+        i++; // Skip next char
+        continue;
+      }
+      if (char === "/" && nextChar === "*" && !inComment) {
+        inBlockComment = true;
+        i++;
+        continue;
+      }
+      if (inComment && char === "\n") {
+        inComment = false;
+        continue;
+      }
+      if (inBlockComment && char === "*" && nextChar === "/") {
+        inBlockComment = false;
+        i++;
+        continue;
+      }
+      if (inComment || inBlockComment) {
+        continue;
+      }
+    }
+
+    // Handle string literals
+    if ((char === "'" || char === '"') && !inComment && !inBlockComment) {
+      if (!inString) {
+        inString = true;
+        stringQuote = char;
+      } else if (char === stringQuote) {
+        // Check for escaped quotes
+        if (sql[i - 1] !== "\\") {
+          inString = false;
+          stringQuote = null;
+        }
+      }
+    }
+
+    // Handle statement termination
+    if (char === ";" && !inString && !inComment && !inBlockComment) {
+      statements.push(currentStatement.trim());
+      currentStatement = "";
+      continue;
+    }
+
+    currentStatement += char;
+  }
+
+  // Add the last statement if it exists
+  if (currentStatement.trim()) {
+    statements.push(currentStatement.trim());
+  }
+
+  return statements.filter(stmt => stmt.length > 0);
 }

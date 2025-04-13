@@ -1211,48 +1211,16 @@ update msg model =
 
         CsvUploaded (Ok response) ->
             let
-                errorMessage =
-                    if response.success then
-                        "Contacts imported successfully!"
-
-                    else if String.startsWith "Missing required columns:" response.message then
-                        let
-                            missingColumns =
-                                String.dropLeft (String.length "Missing required columns:") response.message
-                                    |> String.trim
-                                    |> String.split ","
-                                    |> List.map String.trim
-                                    |> String.join ", "
-                        in
-                        "Your CSV is missing the following required columns: " ++ missingColumns ++ ". Please add these columns and try again."
-
-                    else
-                        response.message
-
-                -- Check if the message contains information about duplicates
-                hasDuplicatesMessage =
-                    String.contains "duplicate" response.message || String.contains "existing contact" response.message
-
                 currentModal =
                     case model.showModal of
                         CsvUploadModal state ->
-                            if response.success && response.errorRows == 0 && not hasDuplicatesMessage then
+                            if response.success then
                                 NoModal
 
                             else
                                 CsvUploadModal
                                     { state
-                                        | error = Just errorMessage
-                                        , errorCsv = response.errorCsv
-                                        , converted_carriers_csv = response.converted_carriers_csv
-                                        , stats =
-                                            Just
-                                                { totalRows = response.totalRows
-                                                , errorRows = response.errorRows
-                                                , validRows = response.validRows
-                                                , converted_carrier_rows = response.converted_carrier_rows
-                                                , supported_carriers = response.supported_carriers
-                                                }
+                                        | error = Just response.message
                                     }
 
                         _ ->
@@ -1998,7 +1966,7 @@ viewBulkActionBar model =
             isAdminOrAdminAgent model.currentUser
     in
     div
-        [ class "fixed bottom-0 inset-x-0 bg-white border-t border-gray-200 shadow-lg transform transition-all duration-200" ]
+        [ class "fixed bottom-0 inset-x-0 bg-white border-t border-gray-200 shadow-lg transform transition-all duration-200 z-50" ]
         [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4" ]
             [ div [ class "flex justify-between items-center" ]
                 [ div [ class "flex items-center gap-4" ]
@@ -3106,35 +3074,16 @@ encodeCarrierMapping mapping =
 
 uploadResponseDecoder : Decode.Decoder UploadResponse
 uploadResponseDecoder =
-    let
-        errorCsvDecoder =
-            Decode.oneOf
-                [ Decode.string |> Decode.map Just
-                , Decode.null Nothing
-                ]
-    in
     Decode.succeed UploadResponse
         |> Pipeline.required "success" Decode.bool
         |> Pipeline.required "message" Decode.string
-        |> Pipeline.required "error_csv" errorCsvDecoder
-        |> Pipeline.required "converted_carriers_csv" errorCsvDecoder
-        |> Pipeline.required "total_rows" Decode.int
-        |> Pipeline.required "error_rows" Decode.int
-        |> Pipeline.required "valid_rows" Decode.int
-        |> Pipeline.required "converted_carrier_rows" Decode.int
-        |> Pipeline.required "supported_carriers" (Decode.list carrierDecoder)
+        |> Pipeline.required "totalRows" Decode.int
 
 
 type alias UploadResponse =
     { success : Bool
     , message : String
-    , errorCsv : Maybe String
-    , converted_carriers_csv : Maybe String
     , totalRows : Int
-    , errorRows : Int
-    , validRows : Int
-    , converted_carrier_rows : Int
-    , supported_carriers : List { name : String, aliases : List String }
     }
 
 
@@ -4401,7 +4350,8 @@ viewPaginationControls model =
                     ]
                     [ text (String.fromInt page) ]
     in
-    div [ class "max-w-7xl mx-auto" ]
+    div [ class "max-w-7xl mx-auto pb-24" ]
+        -- Added padding at bottom to prevent overlap with bulk action bar
         [ div [ class "mt-4 flex items-center justify-between border-t border-gray-200 bg-white px-4 py-3 sm:px-6" ]
             [ div [ class "flex flex-1 justify-between sm:hidden" ]
                 [ button

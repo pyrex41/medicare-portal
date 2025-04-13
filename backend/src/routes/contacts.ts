@@ -395,7 +395,7 @@ export const contactsRoutes = new Elysia({ prefix: '/api/contacts' })
   .post('/bulk-import', async ({ body, user, set }: { body: BulkImportRequest; user: User; set: { status: number } }) => {
     if (!user || !user.organization_id || !user.is_admin) {
       set.status = 401;
-      return { error: 'Not authorized for bulk import' };
+      return { success: false, message: 'Not authorized for bulk import', totalRows: 0 };
     }
 
     try {
@@ -405,7 +405,7 @@ export const contactsRoutes = new Elysia({ prefix: '/api/contacts' })
       // Validate contacts array
       if (!Array.isArray(body.contacts) || body.contacts.length === 0) {
         set.status = 400;
-        return { error: 'No contacts provided' };
+        return { success: false, message: 'No contacts provided', totalRows: 0 };
       }
 
       // Create temp directory if it doesn't exist
@@ -446,10 +446,8 @@ export const contactsRoutes = new Elysia({ prefix: '/api/contacts' })
         
         return {
           success: true,
-          message: `Successfully processed ${body.contacts.length} contacts`,
-          totalRows: body.contacts.length,
-          processedRows: body.contacts.length,
-          errorRows: 0
+          message: 'Contacts imported successfully',
+          totalRows: body.contacts.length
         };
       } finally {
         // Clean up temp file
@@ -463,8 +461,8 @@ export const contactsRoutes = new Elysia({ prefix: '/api/contacts' })
       set.status = 500;
       return { 
         success: false,
-        error: 'Failed to process import',
-        message: error instanceof Error ? error.message : 'Unknown error'
+        message: error instanceof Error ? error.message : 'Failed to process import',
+        totalRows: 0
       };
     }
   })
