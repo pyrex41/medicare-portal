@@ -42,7 +42,7 @@ basePricing =
 
 tier1Pricing =
     { contacts = 250
-    , price = 0.15
+    , price = 35
     }
 
 
@@ -262,23 +262,24 @@ calculatePricing contacts =
         baseSubscription =
             basePricing.price
 
-        -- Calculate price for contacts above base threshold
-        additionalContacts =
+        -- Calculate number of additional 250-contact tiers needed
+        additionalTiers =
             if contacts <= tier1Pricing.contacts then
                 0
 
             else
-                contacts - tier1Pricing.contacts
+                ceiling (toFloat (contacts - tier1Pricing.contacts) / toFloat tier1Pricing.contacts)
 
+        -- Calculate price for additional tiers
         additionalPrice =
-            toFloat additionalContacts * tier1Pricing.price
+            toFloat additionalTiers * tier1Pricing.price
 
         totalPrice =
             baseSubscription + additionalPrice
 
         -- Create list of tier prices for display
         tierPrices =
-            [ { contacts = additionalContacts
+            [ { contacts = contacts - tier1Pricing.contacts
               , price = additionalPrice
               }
             ]
@@ -378,8 +379,8 @@ view model =
             else
                 0
     in
-    div [ class "min-h-screen bg-gray-50 flex flex-col items-center py-0 px-4 sm:px-6 lg:px-8" ]
-        [ div [ class "max-w-6xl w-full space-y-8" ]
+    div [ class "min-h-screen bg-white flex flex-col items-center py-0 px-4 sm:px-6 lg:px-8" ]
+        [ div [ class "max-w-5xl w-full space-y-8" ]
             [ div [ class "flex flex-col items-center" ]
                 [ MyIcon.banknote 32 "#0F172A"
                 , h2 [ class "text-xl sm:text-2xl font-semibold text-gray-900 mt-6" ] [ text "Special Launch Pricing" ]
@@ -411,10 +412,10 @@ view model =
                                 ]
                             , div [ class "flex items-baseline gap-2 mb-3" ]
                                 [ span [ class "text-2xl sm:text-3xl font-bold text-gray-900" ] [ text <| formatCurrency tier1Pricing.price ]
-                                , span [ class "text-gray-600" ] [ text "/contact" ]
+                                , span [ class "text-gray-600" ] [ text "/250 contacts" ]
                                 ]
                             , p [ class "text-gray-600 text-sm" ]
-                                [ text "Simple per-contact pricing above base tier." ]
+                                [ text "Simple per-tier pricing above base tier." ]
                             ]
                         ]
                     ]
@@ -486,17 +487,24 @@ view model =
                                                 (div [ class "flex justify-between items-center text-sm" ]
                                                     [ span [ class "text-gray-600" ]
                                                         [ text
-                                                            (if tier.contacts <= 250 then
+                                                            (if tier.contacts <= 0 then
                                                                 ""
 
-                                                             else if tier.contacts <= 750 then
-                                                                formatNumber (toFloat tier.contacts) ++ " @ " ++ formatCurrency tier1Pricing.price
-
-                                                             else if tier.contacts <= 4000 then
-                                                                formatNumber (toFloat tier.contacts) ++ " @ " ++ formatCurrency tier1Pricing.price
-
                                                              else
-                                                                formatNumber (toFloat tier.contacts) ++ " @ " ++ formatCurrency tier1Pricing.price
+                                                                let
+                                                                    numTiers =
+                                                                        ceiling (toFloat tier.contacts / toFloat tier1Pricing.contacts)
+                                                                in
+                                                                String.fromInt numTiers
+                                                                    ++ " tier"
+                                                                    ++ (if numTiers > 1 then
+                                                                            "s"
+
+                                                                        else
+                                                                            ""
+                                                                       )
+                                                                    ++ " @ "
+                                                                    ++ formatCurrency tier1Pricing.price
                                                             )
                                                         ]
                                                     , span [ class "font-bold" ] [ text (formatCurrency tier.price) ]
@@ -937,12 +945,6 @@ renderRevenueChart inputs =
                         , CA.amount 5
                         , CA.limits [ CA.lowest 0 CA.exactly ]
                         ]
-                    , C.xLabels
-                        [ CA.withGrid
-                        , CA.amount 7
-                        , CA.fontSize 11
-                        , CA.color "#6b7280"
-                        ]
                     , C.binLabels .x
                         [ CA.moveDown 25
                         , CA.fontSize 12
@@ -1091,12 +1093,6 @@ renderLtvChart inputs =
                         , CA.color "#6b7280"
                         , CA.amount 5
                         , CA.limits [ CA.lowest 0 CA.exactly ]
-                        ]
-                    , C.xLabels
-                        [ CA.withGrid
-                        , CA.amount 7
-                        , CA.fontSize 11
-                        , CA.color "#6b7280"
                         ]
                     , C.binLabels .x
                         [ CA.moveDown 25
