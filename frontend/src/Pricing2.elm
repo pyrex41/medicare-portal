@@ -35,26 +35,8 @@ basePricing =
 
 
 tier1Pricing =
-    { contacts = 0
-    , price = 0
-    }
-
-
-tier2Pricing =
     { contacts = 250
-    , price = 0.18
-    }
-
-
-tier3Pricing =
-    { contacts = 1000
     , price = 0.15
-    }
-
-
-tier4Pricing =
-    { contacts = 5000
-    , price = 0.12
     }
 
 
@@ -223,62 +205,24 @@ calculatePricing contacts =
         baseSubscription =
             basePricing.price
 
-        -- Calculate price for contacts in each tier
-        tier2Price =
-            if contacts <= tier2Pricing.contacts then
-                tier1Pricing.price
-
-            else if contacts <= tier3Pricing.contacts then
-                toFloat (contacts - tier2Pricing.contacts) * tier2Pricing.price
+        -- Calculate price for contacts above base threshold
+        additionalContacts =
+            if contacts <= tier1Pricing.contacts then
+                0
 
             else
-                toFloat (tier3Pricing.contacts - tier2Pricing.contacts) * tier2Pricing.price
+                contacts - tier1Pricing.contacts
 
-        tier3Price =
-            if contacts <= tier3Pricing.contacts then
-                tier2Pricing.price
-
-            else if contacts <= tier4Pricing.contacts then
-                toFloat (contacts - tier3Pricing.contacts) * tier3Pricing.price
-
-            else
-                toFloat (tier4Pricing.contacts - tier3Pricing.contacts) * tier3Pricing.price
-
-        tier4Price =
-            if contacts <= tier4Pricing.contacts then
-                tier3Pricing.price
-
-            else
-                toFloat (contacts - tier4Pricing.contacts) * tier4Pricing.price
+        additionalPrice =
+            toFloat additionalContacts * tier1Pricing.price
 
         totalPrice =
-            baseSubscription + tier2Price + tier3Price + tier4Price
+            baseSubscription + additionalPrice
 
         -- Create list of tier prices for display
         tierPrices =
-            [ { contacts =
-                    if contacts <= tier2Pricing.contacts then
-                        0
-
-                    else
-                        Basics.min (contacts - tier2Pricing.contacts) (tier3Pricing.contacts - tier2Pricing.contacts)
-              , price = tier2Price
-              }
-            , { contacts =
-                    if contacts <= tier3Pricing.contacts then
-                        0
-
-                    else
-                        Basics.min (contacts - tier3Pricing.contacts) (tier4Pricing.contacts - tier3Pricing.contacts)
-              , price = tier3Price
-              }
-            , { contacts =
-                    if contacts <= tier4Pricing.contacts then
-                        0
-
-                    else
-                        contacts - tier4Pricing.contacts
-              , price = tier4Price
+            [ { contacts = additionalContacts
+              , price = additionalPrice
               }
             ]
     in
@@ -386,45 +330,34 @@ view model =
 
                 -- Pricing Tiers - Responsive Layout
                 , div [ class "w-full flex flex-col md:flex-row gap-4 sm:gap-6 mb-8 sm:mb-12" ]
-                    [ div [ class "w-full md:w-1/3 p-4 sm:p-5 border rounded-lg bg-white shadow-sm" ]
+                    [ div [ class "w-full md:w-1/2 p-4 sm:p-5 border rounded-lg bg-white shadow-sm" ]
                         [ div [ class "flex flex-col" ]
-                            [ h3 [ class "font-bold text-lg sm:text-xl text-gray-800 mb-3" ] [ text "Base Subscription" ]
-                            , span [ class "self-start mb-2 px-3 py-1 bg-green-100 text-green-800 text-sm rounded-full" ]
-                                [ text "Includes 250 contacts" ]
-                            , div [ class "flex items-baseline gap-2" ]
+                            [ div [ class "flex justify-between items-center mb-3" ]
+                                [ h3 [ class "font-bold text-lg sm:text-xl text-gray-800" ] [ text "Base Subscription" ]
+                                , span [ class "px-3 py-1 bg-green-100 text-green-800 text-sm rounded-full" ]
+                                    [ text "Includes 250 contacts" ]
+                                ]
+                            , div [ class "flex items-baseline gap-2 mb-3" ]
                                 [ span [ class "text-2xl sm:text-3xl font-bold text-gray-900" ] [ text "$50" ]
                                 , span [ class "text-gray-600" ] [ text "/month" ]
                                 ]
-                            , p [ class "mt-3 text-gray-600 text-sm" ]
+                            , p [ class "text-gray-600 text-sm" ]
                                 [ text "Includes all features of the Medicare Max portal platform." ]
                             ]
                         ]
-                    , div [ class "w-full md:w-2/3 p-4 sm:p-5 border rounded-lg bg-white shadow-sm" ]
+                    , div [ class "w-full md:w-1/2 p-4 sm:p-5 border rounded-lg bg-white shadow-sm" ]
                         [ div [ class "flex flex-col" ]
-                            [ div [ class "flex flex-col sm:flex-row sm:items-center sm:justify-between mb-3" ]
+                            [ div [ class "flex justify-between items-center mb-3" ]
                                 [ h3 [ class "font-bold text-lg sm:text-xl text-gray-800" ] [ text "Additional Contacts" ]
-                                , span [ class "text-gray-600 text-sm mt-1 sm:mt-0" ] [ text "Graduated pricing tiers based on your total volume." ]
+                                , span [ class "px-3 py-1 bg-blue-100 text-blue-800 text-sm rounded-full" ]
+                                    [ text "Additional Contacts" ]
                                 ]
-                            , div [ class "grid grid-cols-1 sm:grid-cols-3 gap-4 mt-4 sm:mt-0" ]
-                                [ div [ class "flex flex-col items-center" ]
-                                    [ span [ class "mb-3 px-3 py-1 bg-blue-100 text-blue-800 text-sm rounded-full" ]
-                                        [ text "251 - 1,000 contacts" ]
-                                    , div [ class "text-xl sm:text-2xl font-bold text-gray-900" ] [ text <| formatCurrency tier2Pricing.price ]
-                                    , span [ class "text-gray-600 text-sm" ] [ text "/contact" ]
-                                    ]
-                                , div [ class "flex flex-col items-center" ]
-                                    [ span [ class "mb-3 px-3 py-1 bg-blue-100 text-blue-800 text-sm rounded-full" ]
-                                        [ text "1,001 - 5,000 contacts" ]
-                                    , div [ class "text-xl sm:text-2xl font-bold text-gray-900" ] [ text <| formatCurrency tier3Pricing.price ]
-                                    , span [ class "text-gray-600 text-sm" ] [ text "/contact" ]
-                                    ]
-                                , div [ class "flex flex-col items-center" ]
-                                    [ span [ class "mb-3 px-3 py-1 bg-blue-100 text-blue-800 text-sm rounded-full" ]
-                                        [ text "5,001+ contacts" ]
-                                    , div [ class "text-xl sm:text-2xl font-bold text-gray-900" ] [ text <| formatCurrency tier4Pricing.price ]
-                                    , span [ class "text-gray-600 text-sm" ] [ text "/contact" ]
-                                    ]
+                            , div [ class "flex items-baseline gap-2 mb-3" ]
+                                [ span [ class "text-2xl sm:text-3xl font-bold text-gray-900" ] [ text <| formatCurrency tier1Pricing.price ]
+                                , span [ class "text-gray-600" ] [ text "/contact" ]
                                 ]
+                            , p [ class "text-gray-600 text-sm" ]
+                                [ text "Simple per-contact pricing above base tier." ]
                             ]
                         ]
                     ]
@@ -500,13 +433,13 @@ view model =
                                                                 ""
 
                                                              else if tier.contacts <= 750 then
-                                                                formatNumber (toFloat tier.contacts) ++ " @ " ++ formatCurrency tier2Pricing.price
+                                                                formatNumber (toFloat tier.contacts) ++ " @ " ++ formatCurrency tier1Pricing.price
 
                                                              else if tier.contacts <= 4000 then
-                                                                formatNumber (toFloat tier.contacts) ++ " @ " ++ formatCurrency tier3Pricing.price
+                                                                formatNumber (toFloat tier.contacts) ++ " @ " ++ formatCurrency tier1Pricing.price
 
                                                              else
-                                                                formatNumber (toFloat tier.contacts) ++ " @ " ++ formatCurrency tier4Pricing.price
+                                                                formatNumber (toFloat tier.contacts) ++ " @ " ++ formatCurrency tier1Pricing.price
                                                             )
                                                         ]
                                                     , span [ class "font-bold" ] [ text (formatCurrency tier.price) ]
