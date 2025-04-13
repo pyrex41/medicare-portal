@@ -896,25 +896,19 @@ renderRevenueChart inputs =
             baseCase inputs
                 |> List.map func
 
-        flatCaseData =
-            flatCase inputs
-                |> List.map func
-
         rolloverCaseData =
             rolloverCase inputs
                 |> List.map func
 
         allData =
-            List.map3
-                (\base flat rollover ->
+            List.map2
+                (\base rollover ->
                     { x = base.x
                     , baseCase = Basics.max 0 base.y
-                    , flatCase = Basics.max 0 flat.y
                     , rolloverCase = Basics.max 0 rollover.y
                     }
                 )
                 baseCaseData
-                flatCaseData
                 rolloverCaseData
     in
     div [ class "w-full bg-white rounded-lg p-2 sm:p-4 shadow-sm border border-gray-200" ]
@@ -965,8 +959,6 @@ renderRevenueChart inputs =
                         ]
                         [ C.bar .baseCase [ CA.color "#03045e", CA.opacity 0.8 ]
                             |> C.named "Base Case"
-                        , C.bar .flatCase [ CA.color "#047857", CA.opacity 0.8 ]
-                            |> C.named "Flat Case"
                         , C.bar .rolloverCase [ CA.color "#7F56D9", CA.opacity 0.8 ]
                             |> C.named "Rollover Case"
                         ]
@@ -977,10 +969,6 @@ renderRevenueChart inputs =
                 [ div [ class "flex items-center gap-2" ]
                     [ div [ class "w-3 h-3 bg-[#03045e] rounded-full opacity-80" ] []
                     , text "Base Case"
-                    ]
-                , div [ class "flex items-center gap-2" ]
-                    [ div [ class "w-3 h-3 bg-[#047857] rounded-full opacity-80" ] []
-                    , text "Flat Case"
                     ]
                 , div [ class "flex items-center gap-2" ]
                     [ div [ class "w-3 h-3 bg-[#7F56D9] rounded-full opacity-80" ] []
@@ -1063,25 +1051,19 @@ renderLtvChart inputs =
             baseCaseLtv inputs
                 |> List.map func
 
-        flatCaseData =
-            flatCaseLtv inputs
-                |> List.map func
-
         rolloverCaseData =
             rolloverCaseLtv inputs
                 |> List.map func
 
         allData =
-            List.map3
-                (\base flat rollover ->
+            List.map2
+                (\base rollover ->
                     { x = base.x
                     , baseCase = base.y
-                    , flatCase = flat.y
                     , rolloverCase = rollover.y
                     }
                 )
                 baseCaseData
-                flatCaseData
                 rolloverCaseData
     in
     div [ class "w-full bg-white rounded-lg p-2 sm:p-4 shadow-sm border border-gray-200 mt-4 sm:mt-8" ]
@@ -1132,8 +1114,6 @@ renderLtvChart inputs =
                         ]
                         [ C.bar .baseCase [ CA.color "#03045e", CA.opacity 0.8 ]
                             |> C.named "Base Case"
-                        , C.bar .flatCase [ CA.color "#047857", CA.opacity 0.8 ]
-                            |> C.named "Flat Case"
                         , C.bar .rolloverCase [ CA.color "#7F56D9", CA.opacity 0.8 ]
                             |> C.named "Rollover Case"
                         ]
@@ -1144,10 +1124,6 @@ renderLtvChart inputs =
                 [ div [ class "flex items-center gap-2" ]
                     [ div [ class "w-3 h-3 bg-[#03045e] rounded-full opacity-80" ] []
                     , text "Base Case"
-                    ]
-                , div [ class "flex items-center gap-2" ]
-                    [ div [ class "w-3 h-3 bg-[#047857] rounded-full opacity-80" ] []
-                    , text "Flat Case"
                     ]
                 , div [ class "flex items-center gap-2" ]
                     [ div [ class "w-3 h-3 bg-[#7F56D9] rounded-full opacity-80" ] []
