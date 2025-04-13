@@ -1501,7 +1501,7 @@ viewGvsNModal model =
                 , div [ class "w-full mx-auto my-auto h-[450px] sm:h-[500px] mt-2 sm:mt-4 sm:max-w-[90%]" ]
                     [ div [ class "w-full h-full" ]
                         [ iframe
-                            [ src "https://player.vimeo.com/video/1018402330?autoplay=0&title=0&byline=0&portrait=0&responsive=1"
+                            [ src "https://player.vimeo.com/video/1075091871?autoplay=0&title=0&byline=0&portrait=0&responsive=1"
                             , class "w-full h-full"
                             , attribute "frameborder" "0"
                             , attribute "allow" "autoplay; fullscreen; picture-in-picture"
