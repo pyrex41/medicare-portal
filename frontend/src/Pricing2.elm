@@ -378,8 +378,8 @@ view model =
             else
                 0
     in
-    div [ class "min-h-screen bg-gray-50 flex flex-col items-center py-0 md:py-12 px-4 sm:px-6 lg:px-8" ]
-        [ div [ class "max-w-6xl w-full space-y-8 bg-white p-4 sm:p-8 rounded-lg shadow-md" ]
+    div [ class "min-h-screen bg-gray-50 flex flex-col items-center py-0 px-4 sm:px-6 lg:px-8" ]
+        [ div [ class "max-w-6xl w-full space-y-8" ]
             [ div [ class "flex flex-col items-center" ]
                 [ MyIcon.banknote 32 "#0F172A"
                 , h2 [ class "text-xl sm:text-2xl font-semibold text-gray-900 mt-6" ] [ text "Subscription Pricing" ]
@@ -580,7 +580,7 @@ view model =
                                         , div [ class "flex flex-col gap-6" ]
                                             -- Right column for outputs
                                             [ div [ class "flex flex-col" ]
-                                                [ div [ class "text-sm font-medium text-gray-700 h-5" ] [ text "Baseline LTV" ]
+                                                [ div [ class "text-sm font-medium text-gray-700 h-5" ] [ text "Baseline Residuals" ]
                                                 , div [ class "h-[30px] flex flex-col justify-start" ]
                                                     [ div [ class "text-lg font-semibold text-indigo-600 -mb-1" ]
                                                         [ text ("$" ++ formatNumber (model.calculationInputs.commissionRate * 6)) ]
@@ -588,11 +588,11 @@ view model =
                                                     ]
                                                 ]
                                             , div [ class "flex flex-col" ]
-                                                [ div [ class "text-sm font-medium text-gray-700 h-5" ] [ text "Added LTV (Avg.)" ]
+                                                [ div [ class "text-sm font-medium text-gray-700 h-5" ] [ text "Additional Residuals" ]
                                                 , div [ class "h-[30px] flex flex-col justify-start" ]
                                                     [ div [ class "text-lg font-semibold text-indigo-600 -mb-1" ]
                                                         [ text ("$" ++ formatNumber (model.calculationInputs.commissionRate * 3)) ]
-                                                    , div [ class "text-sm font-normal text-gray-500" ] [ text "3 extra years" ]
+                                                    , div [ class "text-sm font-normal text-gray-500" ] [ text "3 extra yrs (on average)" ]
                                                     ]
                                                 ]
                                             ]
