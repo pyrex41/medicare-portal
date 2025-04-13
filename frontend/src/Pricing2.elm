@@ -377,7 +377,7 @@ view model =
             else
                 0
     in
-    div [ class "min-h-screen bg-gray-50 flex flex-col items-center py-12 px-4 sm:px-6 lg:px-8" ]
+    div [ class "min-h-screen bg-gray-50 flex flex-col items-center py-0 md:py-12 px-4 sm:px-6 lg:px-8" ]
         [ div [ class "max-w-6xl w-full space-y-8 bg-white p-4 sm:p-8 rounded-lg shadow-md" ]
             [ div [ class "flex flex-col items-center" ]
                 [ MyIcon.banknote 32 "#0F172A"
