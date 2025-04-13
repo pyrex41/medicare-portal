@@ -22,6 +22,42 @@ type alias Model =
     }
 
 
+type alias Pricing =
+    { contacts : Int
+    , price : Float
+    }
+
+
+basePricing =
+    { contacts = 0
+    , price = 50
+    }
+
+
+tier1Pricing =
+    { contacts = 0
+    , price = 0
+    }
+
+
+tier2Pricing =
+    { contacts = 250
+    , price = 0.18
+    }
+
+
+tier3Pricing =
+    { contacts = 1000
+    , price = 0.15
+    }
+
+
+tier4Pricing =
+    { contacts = 5000
+    , price = 0.12
+    }
+
+
 init : ( Model, Cmd Msg )
 init =
     ( { calculationInputs =
@@ -185,64 +221,64 @@ calculatePricing : Int -> { basePrice : Float, tierPrices : List { contacts : In
 calculatePricing contacts =
     let
         baseSubscription =
-            50.0
+            basePricing.price
 
         -- Calculate price for contacts in each tier
-        tier1Price =
-            if contacts <= 250 then
-                0.0
-
-            else if contacts <= 1000 then
-                toFloat (contacts - 250) * 0.14
-
-            else
-                750 * 0.14
-
         tier2Price =
-            if contacts <= 1000 then
-                0.0
+            if contacts <= tier2Pricing.contacts then
+                tier1Pricing.price
 
-            else if contacts <= 5000 then
-                toFloat (contacts - 1000) * 0.12
+            else if contacts <= tier3Pricing.contacts then
+                toFloat (contacts - tier2Pricing.contacts) * tier2Pricing.price
 
             else
-                4000 * 0.12
+                toFloat (tier3Pricing.contacts - tier2Pricing.contacts) * tier2Pricing.price
 
         tier3Price =
-            if contacts <= 5000 then
-                0.0
+            if contacts <= tier3Pricing.contacts then
+                tier2Pricing.price
+
+            else if contacts <= tier4Pricing.contacts then
+                toFloat (contacts - tier3Pricing.contacts) * tier3Pricing.price
 
             else
-                toFloat (contacts - 5000) * 0.1
+                toFloat (tier4Pricing.contacts - tier3Pricing.contacts) * tier3Pricing.price
+
+        tier4Price =
+            if contacts <= tier4Pricing.contacts then
+                tier3Pricing.price
+
+            else
+                toFloat (contacts - tier4Pricing.contacts) * tier4Pricing.price
 
         totalPrice =
-            baseSubscription + tier1Price + tier2Price + tier3Price
+            baseSubscription + tier2Price + tier3Price + tier4Price
 
         -- Create list of tier prices for display
         tierPrices =
             [ { contacts =
-                    if contacts <= 250 then
+                    if contacts <= tier2Pricing.contacts then
                         0
 
                     else
-                        Basics.min (contacts - 250) 750
-              , price = tier1Price
-              }
-            , { contacts =
-                    if contacts <= 1000 then
-                        0
-
-                    else
-                        Basics.min (contacts - 1000) 4000
+                        Basics.min (contacts - tier2Pricing.contacts) (tier3Pricing.contacts - tier2Pricing.contacts)
               , price = tier2Price
               }
             , { contacts =
-                    if contacts <= 5000 then
+                    if contacts <= tier3Pricing.contacts then
                         0
 
                     else
-                        contacts - 5000
+                        Basics.min (contacts - tier3Pricing.contacts) (tier4Pricing.contacts - tier3Pricing.contacts)
               , price = tier3Price
+              }
+            , { contacts =
+                    if contacts <= tier4Pricing.contacts then
+                        0
+
+                    else
+                        contacts - tier4Pricing.contacts
+              , price = tier4Price
               }
             ]
     in
@@ -342,50 +378,50 @@ view model =
                 0
     in
     div [ class "min-h-screen bg-gray-50 flex flex-col items-center py-12 px-4 sm:px-6 lg:px-8" ]
-        [ div [ class "max-w-6xl w-full space-y-8 bg-white p-8 rounded-lg shadow-md" ]
+        [ div [ class "max-w-6xl w-full space-y-8 bg-white p-4 sm:p-8 rounded-lg shadow-md" ]
             [ div [ class "flex flex-col items-center" ]
                 [ MyIcon.banknote 32 "#0F172A"
-                , h2 [ class "text-2xl font-semibold text-gray-900 mt-6" ] [ text "Subscription Pricing" ]
-                , p [ class "text-gray-500 mt-2 mb-6" ] [ text "Transparent pricing. Pay for what you use." ]
+                , h2 [ class "text-xl sm:text-2xl font-semibold text-gray-900 mt-6" ] [ text "Subscription Pricing" ]
+                , p [ class "text-gray-500 mt-2 mb-6 text-center" ] [ text "Transparent pricing. Pay for what you use." ]
 
-                -- Pricing Tiers - Compact Layout
-                , div [ class "w-full flex gap-6 mb-12" ]
-                    [ div [ class "w-1/3 p-5 border rounded-lg bg-white shadow-sm" ]
+                -- Pricing Tiers - Responsive Layout
+                , div [ class "w-full flex flex-col md:flex-row gap-4 sm:gap-6 mb-8 sm:mb-12" ]
+                    [ div [ class "w-full md:w-1/3 p-4 sm:p-5 border rounded-lg bg-white shadow-sm" ]
                         [ div [ class "flex flex-col" ]
-                            [ h3 [ class "font-bold text-xl text-gray-800 mb-3" ] [ text "Base Subscription" ]
+                            [ h3 [ class "font-bold text-lg sm:text-xl text-gray-800 mb-3" ] [ text "Base Subscription" ]
                             , span [ class "self-start mb-2 px-3 py-1 bg-green-100 text-green-800 text-sm rounded-full" ]
                                 [ text "Includes 250 contacts" ]
                             , div [ class "flex items-baseline gap-2" ]
-                                [ span [ class "text-3xl font-bold text-gray-900" ] [ text "$50" ]
+                                [ span [ class "text-2xl sm:text-3xl font-bold text-gray-900" ] [ text "$50" ]
                                 , span [ class "text-gray-600" ] [ text "/month" ]
                                 ]
                             , p [ class "mt-3 text-gray-600 text-sm" ]
                                 [ text "Includes all features of the Medicare Max portal platform." ]
                             ]
                         ]
-                    , div [ class "w-2/3 p-5 border rounded-lg bg-white shadow-sm" ]
+                    , div [ class "w-full md:w-2/3 p-4 sm:p-5 border rounded-lg bg-white shadow-sm" ]
                         [ div [ class "flex flex-col" ]
-                            [ div [ class "flex items-center justify-between mb-3" ]
-                                [ h3 [ class "font-bold text-xl text-gray-800" ] [ text "Additional Contacts" ]
-                                , span [ class "text-gray-600 text-sm" ] [ text "Graduated pricing tiers based on your total volume." ]
+                            [ div [ class "flex flex-col sm:flex-row sm:items-center sm:justify-between mb-3" ]
+                                [ h3 [ class "font-bold text-lg sm:text-xl text-gray-800" ] [ text "Additional Contacts" ]
+                                , span [ class "text-gray-600 text-sm mt-1 sm:mt-0" ] [ text "Graduated pricing tiers based on your total volume." ]
                                 ]
-                            , div [ class "grid grid-cols-3 gap-4" ]
+                            , div [ class "grid grid-cols-1 sm:grid-cols-3 gap-4 mt-4 sm:mt-0" ]
                                 [ div [ class "flex flex-col items-center" ]
                                     [ span [ class "mb-3 px-3 py-1 bg-blue-100 text-blue-800 text-sm rounded-full" ]
                                         [ text "251 - 1,000 contacts" ]
-                                    , div [ class "text-2xl font-bold text-gray-900" ] [ text "$0.14" ]
+                                    , div [ class "text-xl sm:text-2xl font-bold text-gray-900" ] [ text <| formatCurrency tier2Pricing.price ]
                                     , span [ class "text-gray-600 text-sm" ] [ text "/contact" ]
                                     ]
                                 , div [ class "flex flex-col items-center" ]
                                     [ span [ class "mb-3 px-3 py-1 bg-blue-100 text-blue-800 text-sm rounded-full" ]
                                         [ text "1,001 - 5,000 contacts" ]
-                                    , div [ class "text-2xl font-bold text-gray-900" ] [ text "$0.12" ]
+                                    , div [ class "text-xl sm:text-2xl font-bold text-gray-900" ] [ text <| formatCurrency tier3Pricing.price ]
                                     , span [ class "text-gray-600 text-sm" ] [ text "/contact" ]
                                     ]
                                 , div [ class "flex flex-col items-center" ]
                                     [ span [ class "mb-3 px-3 py-1 bg-blue-100 text-blue-800 text-sm rounded-full" ]
                                         [ text "5,001+ contacts" ]
-                                    , div [ class "text-2xl font-bold text-gray-900" ] [ text "$0.10" ]
+                                    , div [ class "text-xl sm:text-2xl font-bold text-gray-900" ] [ text <| formatCurrency tier4Pricing.price ]
                                     , span [ class "text-gray-600 text-sm" ] [ text "/contact" ]
                                     ]
                                 ]
@@ -393,11 +429,11 @@ view model =
                         ]
                     ]
 
-                -- Three Column Layout: Contacts, Summary, Monthly Price
-                , div [ class "w-full grid grid-cols-2 gap-6 mb-8" ]
+                -- Calculator Section - Responsive Layout
+                , div [ class "w-full grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8" ]
                     [ div [ class "flex flex-col space-y-6" ]
-                        [ div [ class "flex gap-6 items-start" ]
-                            [ div [ class "w-48" ]
+                        [ div [ class "flex flex-col sm:flex-row gap-4 sm:gap-6 items-start" ]
+                            [ div [ class "w-full sm:w-48" ]
                                 [ label [ class "block text-gray-700 text-sm font-bold mb-2", for "contacts" ]
                                     [ text "Number of Contacts:" ]
                                 , input
@@ -410,8 +446,8 @@ view model =
                                     ]
                                     []
                                 ]
-                            , div [ class "flex-1" ]
-                                [ div [ class "grid grid-cols-3 gap-2" ]
+                            , div [ class "flex-1 w-full" ]
+                                [ div [ class "grid grid-cols-2 sm:grid-cols-3 gap-2" ]
                                     ([ 250, 1000, 5000, 10000, 20000, 40000 ]
                                         |> List.map
                                             (\presetValue ->
@@ -464,13 +500,13 @@ view model =
                                                                 ""
 
                                                              else if tier.contacts <= 750 then
-                                                                formatNumber (toFloat tier.contacts) ++ " @ $0.14"
+                                                                formatNumber (toFloat tier.contacts) ++ " @ " ++ formatCurrency tier2Pricing.price
 
                                                              else if tier.contacts <= 4000 then
-                                                                formatNumber (toFloat tier.contacts) ++ " @ $0.12:"
+                                                                formatNumber (toFloat tier.contacts) ++ " @ " ++ formatCurrency tier3Pricing.price
 
                                                              else
-                                                                formatNumber (toFloat tier.contacts) ++ " @ $0.10:"
+                                                                formatNumber (toFloat tier.contacts) ++ " @ " ++ formatCurrency tier4Pricing.price
                                                             )
                                                         ]
                                                     , span [ class "font-bold" ] [ text (formatCurrency tier.price) ]
@@ -486,23 +522,23 @@ view model =
                             ]
                         ]
                     , div [ class "flex items-center justify-center" ]
-                        [ div [ class "bg-blue-600 rounded-lg p-6 text-white text-center w-96" ]
+                        [ div [ class "bg-blue-600 rounded-lg p-6 text-white text-center w-full lg:w-96" ]
                             [ h2 [ class "font-bold mb-2 text-lg" ] [ text "Monthly Price" ]
-                            , div [ class "text-5xl font-bold mb-2" ] [ text (formatCurrency pricing.totalPrice) ]
+                            , div [ class "text-4xl sm:text-5xl font-bold mb-2" ] [ text (formatCurrency pricing.totalPrice) ]
                             , p [ class "text-sm text-blue-100" ]
                                 [ text ("For " ++ formatNumber (toFloat model.calculationInputs.contacts) ++ " contacts") ]
                             ]
                         ]
                     ]
 
-                -- Value Analysis Section
+                -- Value Analysis Section - Responsive Layout
                 , div [ class "w-full mt-8 mb-8" ]
                     [ div [ class "bg-gradient-to-r from-purple-50 to-blue-50 rounded-lg p-4 border border-purple-100" ]
                         [ div [ class "flex flex-col gap-6" ]
-                            [ div [ class "grid grid-cols-3 gap-6" ]
-                                [ div [ class "flex flex-col gap-6" ]
-                                    [ h2 [ class "text-lg font-bold text-gray-800 mb-2" ] [ text "Value Analysis" ]
-                                    , div [ class "grid grid-cols-2 gap-2" ]
+                            [ div [ class "grid grid-cols-1 lg:grid-cols-3 gap-6" ]
+                                [ div [ class "flex flex-col gap-4" ]
+                                    [ h2 [ class "text-lg font-bold text-gray-800" ] [ text "Value Analysis" ]
+                                    , div [ class "grid grid-cols-2 gap-4" ]
                                         [ div [ class "flex flex-col gap-5" ]
                                             -- Left column for inputs
                                             [ div [ class "flex flex-col" ]
@@ -641,24 +677,25 @@ view model =
                                         ]
                                     ]
                                 ]
-                            , div [ class "grid grid-cols-3 gap-6" ]
-                                [ div [] [] -- Empty column for spacing
-                                , div [ class "col-span-2 bg-emerald-600 rounded-lg p-6 text-white text-center flex justify-center gap-16" ]
+                            , div [ class "mt-6" ]
+                                [ div [ class "bg-emerald-600 rounded-lg p-4 sm:p-6 text-white text-center flex flex-col sm:flex-row justify-center gap-8 sm:gap-16" ]
                                     [ div [ class "text-center" ]
                                         [ h3 [ class "text-lg mb-2 font-medium text-emerald-100" ] [ text "Return on Investment" ]
-                                        , div [ class "text-4xl font-bold mb-1" ] [ text (formatNumber revenue.roi ++ "x") ]
+                                        , div [ class "text-3xl sm:text-4xl font-bold mb-1" ] [ text (formatNumber revenue.roi ++ "x") ]
                                         ]
                                     , div [ class "text-center" ]
                                         [ h3 [ class "text-lg mb-2 font-medium text-emerald-100" ] [ text "Net Annual Benefit" ]
-                                        , div [ class "text-4xl font-bold mb-1" ] [ text (formatCurrencyRounded revenue.netBenefit) ]
+                                        , div [ class "text-3xl sm:text-4xl font-bold mb-1" ] [ text (formatCurrencyRounded revenue.netBenefit) ]
                                         ]
                                     ]
                                 ]
                             ]
                         ]
                     ]
-                , renderRevenueChart model.calculationInputs
-                , renderLtvChart model.calculationInputs
+                , div [ class "w-full overflow-x-auto" ]
+                    [ renderRevenueChart model.calculationInputs ]
+                , div [ class "w-full overflow-x-auto" ]
+                    [ renderLtvChart model.calculationInputs ]
                 ]
             ]
         ]
@@ -774,7 +811,7 @@ renderRevenueChart inputs =
         func : ( Int, Float ) -> { x : String, y : Float }
         func ( year, value ) =
             { x = String.fromInt year
-            , y = Basics.max 0 (value / inputs.commissionRate / toFloat inputs.contacts) -- Ensure value is never negative
+            , y = Basics.max 0 (value / inputs.commissionRate / toFloat inputs.contacts)
             }
 
         baseCaseData =
@@ -802,42 +839,51 @@ renderRevenueChart inputs =
                 flatCaseData
                 rolloverCaseData
     in
-    div [ class "w-full h-[400px] bg-white rounded-lg p-4 shadow-sm border border-gray-200" ]
-        [ div [ class "flex justify-between items-center text-lg font-bold text-gray-700" ]
+    div [ class "w-full bg-white rounded-lg p-2 sm:p-4 shadow-sm border border-gray-200" ]
+        [ div [ class "flex justify-between items-center text-lg font-bold text-gray-700 mb-1 sm:mb-4" ]
             [ text "Cash Flow" ]
-        , C.chart
-            [ CA.height 350
-            , CA.width 800
-            , CA.margin { top = 30, bottom = 60, left = 60, right = 20 }
-            , CA.padding { top = 10, bottom = 50, left = 10, right = 10 }
-            ]
-            [ C.grid []
-            , C.yLabels [ CA.withGrid, CA.format (\v -> String.fromFloat (round10 1 v) ++ "x"), CA.limits [ CA.lowest 0 CA.exactly ] ]
-            , C.binLabels .x [ CA.moveDown 20 ]
-            , C.labelAt CA.middle
-                .max
-                [ CA.moveUp 15 ]
-                [ Svg.text_ [ SA.fontSize "18", SA.fill "#1F2937" ] [ Svg.text "Cash Flow" ] ]
-            , C.bars
-                [ CA.margin 0.1
+        , div [ class "flex flex-col" ]
+            [ div [ class "w-full h-[120px] md:h-[350px] overflow-x-auto overflow-y-hidden" ]
+                [ C.chart
+                    [ CA.height 250
+                    , CA.width 800
+                    , CA.margin { top = 20, bottom = 40, left = 60, right = 20 }
+                    , CA.padding { top = 10, bottom = 20, left = 10, right = 10 }
+                    ]
+                    [ C.grid []
+                    , C.yLabels [ CA.withGrid, CA.format (\v -> String.fromFloat (round10 1 v) ++ "x"), CA.limits [ CA.lowest 0 CA.exactly ] ]
+                    , C.binLabels .x [ CA.moveDown 25, CA.fontSize 12 ]
+                    , C.labelAt CA.middle
+                        .max
+                        [ CA.moveUp 15 ]
+                        [ Svg.text_ [ SA.fontSize "18", SA.fill "#1F2937" ] [ Svg.text "Cash Flow" ] ]
+                    , C.bars
+                        [ CA.margin 0.1
+                        ]
+                        [ C.bar .baseCase [ CA.color "#3B82F6", CA.opacity 0.7 ]
+                            |> C.named "Base Case"
+                        , C.bar .flatCase [ CA.color "#22C55E", CA.opacity 0.7 ]
+                            |> C.named "Flat Case"
+                        , C.bar .rolloverCase [ CA.color "#A855F7", CA.opacity 0.7 ]
+                            |> C.named "Rollover Case"
+                        ]
+                        allData
+                    ]
                 ]
-                [ C.bar .baseCase [ CA.color "#3B82F6", CA.opacity 0.7 ]
-                    |> C.named "Base Case"
-                , C.bar .flatCase [ CA.color "#22C55E", CA.opacity 0.7 ]
-                    |> C.named "Flat Case"
-                , C.bar .rolloverCase [ CA.color "#A855F7", CA.opacity 0.7 ]
-                    |> C.named "Rollover Case"
+            , div [ class "flex flex-wrap justify-center gap-2 mt-1 sm:mt-4 text-sm" ]
+                [ div [ class "flex items-center gap-2" ]
+                    [ div [ class "w-3 h-3 bg-[#3B82F6] rounded-full opacity-70" ] []
+                    , text "Base Case"
+                    ]
+                , div [ class "flex items-center gap-2" ]
+                    [ div [ class "w-3 h-3 bg-[#22C55E] rounded-full opacity-70" ] []
+                    , text "Flat Case"
+                    ]
+                , div [ class "flex items-center gap-2" ]
+                    [ div [ class "w-3 h-3 bg-[#A855F7] rounded-full opacity-70" ] []
+                    , text "Rollover Case"
+                    ]
                 ]
-                allData
-            , C.legendsAt .min
-                .max
-                [ CA.column
-                , CA.moveRight 15
-                , CA.moveUp 10
-                , CA.alignLeft
-                , CA.spacing 5
-                ]
-                []
             ]
         ]
 
@@ -908,7 +954,7 @@ renderLtvChart inputs =
         func : ( Int, Float ) -> { x : String, y : Float }
         func ( year, value ) =
             { x = String.fromInt year
-            , y = value / 1000000 -- Convert to millions for cleaner display
+            , y = value / 1000000
             }
 
         baseCaseData =
@@ -936,41 +982,50 @@ renderLtvChart inputs =
                 flatCaseData
                 rolloverCaseData
     in
-    div [ class "w-full h-[400px] bg-white rounded-lg p-4 shadow-sm border border-gray-200 mt-8" ]
-        [ div [ class "flex justify-between items-center text-lg font-bold text-gray-700" ]
+    div [ class "w-full bg-white rounded-lg p-2 sm:p-4 shadow-sm border border-gray-200 mt-4 sm:mt-8" ]
+        [ div [ class "flex justify-between items-center text-lg font-bold text-gray-700 mb-1 sm:mb-4" ]
             [ text "Book of Business -- Remaining LTV (Millions)" ]
-        , C.chart
-            [ CA.height 350
-            , CA.width 800
-            , CA.margin { top = 30, bottom = 60, left = 60, right = 20 }
-            , CA.padding { top = 10, bottom = 50, left = 10, right = 10 }
-            ]
-            [ C.grid []
-            , C.yLabels [ CA.withGrid, CA.format (\v -> "$" ++ formatNumber v ++ "M"), CA.limits [ CA.lowest 0 CA.exactly ] ]
-            , C.binLabels .x [ CA.moveDown 20 ]
-            , C.labelAt CA.middle
-                .max
-                [ CA.moveUp 15 ]
-                [ Svg.text_ [ SA.fontSize "18", SA.fill "#1F2937" ] [ Svg.text "Book Value" ] ]
-            , C.bars
-                [ CA.margin 0.1
+        , div [ class "flex flex-col" ]
+            [ div [ class "w-full h-[120px] md:h-[350px] overflow-x-auto overflow-y-hidden" ]
+                [ C.chart
+                    [ CA.height 250
+                    , CA.width 800
+                    , CA.margin { top = 20, bottom = 40, left = 60, right = 20 }
+                    , CA.padding { top = 10, bottom = 20, left = 10, right = 10 }
+                    ]
+                    [ C.grid []
+                    , C.yLabels [ CA.withGrid, CA.format (\v -> "$" ++ formatNumber v ++ "M"), CA.limits [ CA.lowest 0 CA.exactly ] ]
+                    , C.binLabels .x [ CA.moveDown 25, CA.fontSize 12 ]
+                    , C.labelAt CA.middle
+                        .max
+                        [ CA.moveUp 15 ]
+                        [ Svg.text_ [ SA.fontSize "18", SA.fill "#1F2937" ] [ Svg.text "Book Value" ] ]
+                    , C.bars
+                        [ CA.margin 0.1
+                        ]
+                        [ C.bar .baseCase [ CA.color "#3B82F6", CA.opacity 0.7 ]
+                            |> C.named "Base Case"
+                        , C.bar .flatCase [ CA.color "#22C55E", CA.opacity 0.7 ]
+                            |> C.named "Flat Case"
+                        , C.bar .rolloverCase [ CA.color "#A855F7", CA.opacity 0.7 ]
+                            |> C.named "Rollover Case"
+                        ]
+                        allData
+                    ]
                 ]
-                [ C.bar .baseCase [ CA.color "#3B82F6", CA.opacity 0.7 ]
-                    |> C.named "Base Case"
-                , C.bar .flatCase [ CA.color "#22C55E", CA.opacity 0.7 ]
-                    |> C.named "Flat Case"
-                , C.bar .rolloverCase [ CA.color "#A855F7", CA.opacity 0.7 ]
-                    |> C.named "Rollover Case"
+            , div [ class "flex flex-wrap justify-center gap-2 mt-1 sm:mt-4 text-sm" ]
+                [ div [ class "flex items-center gap-2" ]
+                    [ div [ class "w-3 h-3 bg-[#3B82F6] rounded-full opacity-70" ] []
+                    , text "Base Case"
+                    ]
+                , div [ class "flex items-center gap-2" ]
+                    [ div [ class "w-3 h-3 bg-[#22C55E] rounded-full opacity-70" ] []
+                    , text "Flat Case"
+                    ]
+                , div [ class "flex items-center gap-2" ]
+                    [ div [ class "w-3 h-3 bg-[#A855F7] rounded-full opacity-70" ] []
+                    , text "Rollover Case"
+                    ]
                 ]
-                allData
-            , C.legendsAt .min
-                .max
-                [ CA.column
-                , CA.moveRight 15
-                , CA.moveUp 10
-                , CA.alignLeft
-                , CA.spacing 5
-                ]
-                []
             ]
         ]
