@@ -5,6 +5,7 @@ import Chart as C
 import Chart.Attributes as CA
 import Chart.Item as CI
 import Dict
+import Earnings
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (..)
@@ -19,6 +20,11 @@ type alias Model =
     { calculationInputs : PriceModel.CalculationInputs
     , calculatorExpanded : Bool
     , activePreset : Maybe Int
+    , earningsInputs :
+        { overheadCost : Float
+        , customerAcquisitionCost : Float
+        , earningsMultiple : Float
+        }
     }
 
 
@@ -50,6 +56,11 @@ init =
             }
       , calculatorExpanded = True
       , activePreset = Nothing
+      , earningsInputs =
+            { overheadCost = 1000 * 100 -- Default to number of contacts * 100
+            , customerAcquisitionCost = 400 -- Default CAC of 400
+            , earningsMultiple = 10 -- Default to 10x multiple
+            }
       }
     , Cmd.none
     )
@@ -61,6 +72,9 @@ type Msg
     | CommissionRateChanged Float
     | ToggleCalculator
     | SelectPreset Int
+    | OverheadCostChanged Float
+    | CustomerAcquisitionCostChanged Float
+    | EarningsMultipleChanged Float
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -73,9 +87,16 @@ update msg model =
 
                 newCalculationInputs =
                     { oldCalculationInputs | contacts = count }
+
+                oldEarningsInputs =
+                    model.earningsInputs
+
+                newEarningsInputs =
+                    { oldEarningsInputs | overheadCost = toFloat count * 100 }
             in
             ( { model
                 | calculationInputs = newCalculationInputs
+                , earningsInputs = newEarningsInputs
                 , activePreset = Nothing
               }
             , Cmd.none
@@ -122,6 +143,42 @@ update msg model =
                 | calculationInputs = newCalculationInputs
                 , activePreset = Just value
               }
+            , Cmd.none
+            )
+
+        OverheadCostChanged cost ->
+            let
+                oldEarningsInputs =
+                    model.earningsInputs
+
+                newEarningsInputs =
+                    { oldEarningsInputs | overheadCost = cost }
+            in
+            ( { model | earningsInputs = newEarningsInputs }
+            , Cmd.none
+            )
+
+        CustomerAcquisitionCostChanged cost ->
+            let
+                oldEarningsInputs =
+                    model.earningsInputs
+
+                newEarningsInputs =
+                    { oldEarningsInputs | customerAcquisitionCost = cost }
+            in
+            ( { model | earningsInputs = newEarningsInputs }
+            , Cmd.none
+            )
+
+        EarningsMultipleChanged multiple ->
+            let
+                oldEarningsInputs =
+                    model.earningsInputs
+
+                newEarningsInputs =
+                    { oldEarningsInputs | earningsMultiple = multiple }
+            in
+            ( { model | earningsInputs = newEarningsInputs }
             , Cmd.none
             )
 
@@ -625,10 +682,98 @@ view model =
                             ]
                         ]
                     ]
+
+                -- Earnings Parameters Section
+                {--
+                , div [ class "w-full mt-8 bg-white rounded-lg p-4 shadow-sm border border-gray-200" ]
+                    [ h3 [ class "text-lg font-bold text-gray-800 mb-4" ] [ text "Earnings Model Parameters" ]
+                    , div [ class "flex flex-col gap-5" ]
+                        [ div [ class "flex flex-col" ]
+                            [ label
+                                [ class "block text-sm font-medium text-gray-700 mb-1 cursor-pointer h-5"
+                                , for "annual-overhead"
+                                ]
+                                [ text "Annual Overhead" ]
+                            , div [ class "flex rounded-md shadow-sm w-[200px]" ]
+                                [ div [ class "flex-shrink-0 inline-flex items-center px-2 rounded-l-md border border-r-0 border-gray-300 bg-indigo-100 text-indigo-800 text-sm font-medium" ]
+                                    [ text "$" ]
+                                , input
+                                    [ id "annual-overhead"
+                                    , type_ "number"
+                                    , class "w-full border border-gray-300 rounded-none rounded-r-md shadow-sm py-1 px-2 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-center"
+                                    , value (String.fromFloat model.earningsInputs.overheadCost)
+                                    , onInput (\str -> OverheadCostChanged (String.toFloat str |> Maybe.withDefault 0))
+                                    , Html.Attributes.step "1000"
+                                    , Html.Attributes.min "0"
+                                    ]
+                                    []
+                                ]
+                            ]
+                        , div [ class "flex flex-col" ]
+                            [ label
+                                [ class "block text-sm font-medium text-gray-700 mb-1 cursor-pointer h-5"
+                                , for "customer-acquisition-cost"
+                                ]
+                                [ text "Customer Acquisition Cost" ]
+                            , div [ class "flex rounded-md shadow-sm w-[200px]" ]
+                                [ div [ class "flex-shrink-0 inline-flex items-center px-2 rounded-l-md border border-r-0 border-gray-300 bg-indigo-100 text-indigo-800 text-sm font-medium" ]
+                                    [ text "$" ]
+                                , input
+                                    [ id "customer-acquisition-cost"
+                                    , type_ "number"
+                                    , class "w-full border border-gray-300 rounded-none rounded-r-md shadow-sm py-1 px-2 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-center"
+                                    , value (String.fromFloat model.earningsInputs.customerAcquisitionCost)
+                                    , onInput (\str -> CustomerAcquisitionCostChanged (String.toFloat str |> Maybe.withDefault 0))
+                                    , Html.Attributes.step "10"
+                                    , Html.Attributes.min "0"
+                                    ]
+                                    []
+                                ]
+                            ]
+                        , div [ class "flex flex-col" ]
+                            [ label
+                                [ class "block text-sm font-medium text-gray-700 mb-1 cursor-pointer h-5"
+                                , for "earnings-multiple"
+                                ]
+                                [ text "Earnings Multiple" ]
+                            , div [ class "flex rounded-md shadow-sm w-[200px]" ]
+                                [ div [ class "flex-shrink-0 inline-flex items-center px-2 rounded-l-md border border-r-0 border-gray-300 bg-indigo-100 text-indigo-800 text-sm font-medium" ]
+                                    [ text "x" ]
+                                , input
+                                    [ id "earnings-multiple"
+                                    , type_ "number"
+                                    , class "w-full border border-gray-300 rounded-none rounded-r-md shadow-sm py-1 px-2 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-center"
+                                    , value (String.fromFloat model.earningsInputs.earningsMultiple)
+                                    , onInput (\str -> EarningsMultipleChanged (String.toFloat str |> Maybe.withDefault 0))
+                                    , Html.Attributes.step "0.1"
+                                    , Html.Attributes.min "0"
+                                    ]
+                                    []
+                                ]
+                            ]
+                        ]
+                    ]
+
+                -- Earnings Model Description
+                , div [ class "w-full mt-4 bg-blue-50 rounded-lg p-4 text-sm text-blue-700" ]
+                    [ div [ class "font-semibold mb-2" ] [ text "Model Assumptions:" ]
+                    , ul [ class "list-disc list-inside space-y-1" ]
+                        [ li [] [ text "Flat Case: Maintains current book size by replacing churned customers, incurring CAC" ]
+                        , li [] [ text "Rollover Case: Grows through rollovers, accumulating additional revenue over time" ]
+                        ]
+                    ]
+                --}
                 , div [ class "w-full overflow-x-auto" ]
                     [ renderRevenueChart model.calculationInputs ]
                 , div [ class "w-full overflow-x-auto" ]
                     [ renderLtvChart model.calculationInputs ]
+
+                {--
+                , div [ class "w-full overflow-x-auto" ]
+                    [ renderEarningsChart model ]
+                , div [ class "w-full overflow-x-auto" ]
+                    [ renderEnterpriseValueChart model ]
+                --}
                 ]
             ]
         ]
@@ -871,7 +1016,6 @@ rolloverCaseLtv inputs =
                             toFloat inputs.contacts
                                 * (inputs.rolloverPercent / 100)
                                 * inputs.commissionRate
-                                * 3
                                 --  New policies have a net added LTV on average of 3x
                                 * toFloat i
 
@@ -952,6 +1096,150 @@ renderLtvChart inputs =
                     , text "Base Case"
                     ]
                 , div [ class "flex items-center gap-2" ]
+                    [ div [ class "w-3 h-3 bg-[#22C55E] rounded-full opacity-70" ] []
+                    , text "Flat Case"
+                    ]
+                , div [ class "flex items-center gap-2" ]
+                    [ div [ class "w-3 h-3 bg-[#A855F7] rounded-full opacity-70" ] []
+                    , text "Rollover Case"
+                    ]
+                ]
+            ]
+        ]
+
+
+renderEarningsChart : Model -> Html Msg
+renderEarningsChart model =
+    let
+        earningsInputs =
+            { calculationInputs = model.calculationInputs
+            , overheadCost = model.earningsInputs.overheadCost
+            , customerAcquisitionCost = model.earningsInputs.customerAcquisitionCost
+            , earningsMultiple = model.earningsInputs.earningsMultiple
+            }
+
+        flatCaseData =
+            Earnings.flatCase earningsInputs
+                |> List.map (\data -> { x = String.fromInt data.year, y = data.earnings / 1000000 })
+
+        rolloverCaseData =
+            Earnings.rolloverCase earningsInputs
+                |> List.map (\data -> { x = String.fromInt data.year, y = data.earnings / 1000000 })
+
+        allData =
+            List.map2
+                (\flat rollover ->
+                    { x = flat.x
+                    , flatCase = flat.y
+                    , rolloverCase = rollover.y
+                    }
+                )
+                flatCaseData
+                rolloverCaseData
+    in
+    div [ class "w-full bg-white rounded-lg p-2 sm:p-4 shadow-sm border border-gray-200 mt-4 sm:mt-8" ]
+        [ div [ class "flex justify-between items-center text-lg font-bold text-gray-700 mb-1 sm:mb-4" ]
+            [ text "Annual Earnings (Millions)" ]
+        , div [ class "flex flex-col" ]
+            [ div [ class "w-full h-[120px] md:h-[350px] overflow-x-auto overflow-y-hidden" ]
+                [ C.chart
+                    [ CA.height 250
+                    , CA.width 800
+                    , CA.margin { top = 20, bottom = 40, left = 60, right = 20 }
+                    , CA.padding { top = 10, bottom = 20, left = 10, right = 10 }
+                    ]
+                    [ C.grid []
+                    , C.yLabels [ CA.withGrid, CA.format (\v -> "$" ++ formatNumber v ++ "M") ]
+                    , C.binLabels .x [ CA.moveDown 25, CA.fontSize 12 ]
+                    , C.labelAt CA.middle
+                        .max
+                        [ CA.moveUp 15 ]
+                        [ Svg.text_ [ SA.fontSize "18", SA.fill "#1F2937" ] [ Svg.text "Earnings" ] ]
+                    , C.bars
+                        [ CA.margin 0.1
+                        ]
+                        [ C.bar .flatCase [ CA.color "#22C55E", CA.opacity 0.7 ]
+                            |> C.named "Flat Case"
+                        , C.bar .rolloverCase [ CA.color "#A855F7", CA.opacity 0.7 ]
+                            |> C.named "Rollover Case"
+                        ]
+                        allData
+                    ]
+                ]
+            , div [ class "flex flex-wrap justify-center gap-2 mt-1 sm:mt-4 text-sm" ]
+                [ div [ class "flex items-center gap-2" ]
+                    [ div [ class "w-3 h-3 bg-[#22C55E] rounded-full opacity-70" ] []
+                    , text "Flat Case"
+                    ]
+                , div [ class "flex items-center gap-2" ]
+                    [ div [ class "w-3 h-3 bg-[#A855F7] rounded-full opacity-70" ] []
+                    , text "Rollover Case"
+                    ]
+                ]
+            ]
+        ]
+
+
+renderEnterpriseValueChart : Model -> Html Msg
+renderEnterpriseValueChart model =
+    let
+        earningsInputs =
+            { calculationInputs = model.calculationInputs
+            , overheadCost = model.earningsInputs.overheadCost
+            , customerAcquisitionCost = model.earningsInputs.customerAcquisitionCost
+            , earningsMultiple = model.earningsInputs.earningsMultiple
+            }
+
+        flatCaseData =
+            Earnings.flatCase earningsInputs
+                |> List.map (\data -> { x = String.fromInt data.year, y = data.enterpriseValue / 1000000 })
+
+        rolloverCaseData =
+            Earnings.rolloverCase earningsInputs
+                |> List.map (\data -> { x = String.fromInt data.year, y = data.enterpriseValue / 1000000 })
+
+        allData =
+            List.map2
+                (\flat rollover ->
+                    { x = flat.x
+                    , flatCase = flat.y
+                    , rolloverCase = rollover.y
+                    }
+                )
+                flatCaseData
+                rolloverCaseData
+    in
+    div [ class "w-full bg-white rounded-lg p-2 sm:p-4 shadow-sm border border-gray-200 mt-4 sm:mt-8" ]
+        [ div [ class "flex justify-between items-center text-lg font-bold text-gray-700 mb-1 sm:mb-4" ]
+            [ text "Enterprise Value (Millions)" ]
+        , div [ class "flex flex-col" ]
+            [ div [ class "w-full h-[120px] md:h-[350px] overflow-x-auto overflow-y-hidden" ]
+                [ C.chart
+                    [ CA.height 250
+                    , CA.width 800
+                    , CA.margin { top = 20, bottom = 40, left = 60, right = 20 }
+                    , CA.padding { top = 10, bottom = 20, left = 10, right = 10 }
+                    ]
+                    [ C.grid []
+                    , C.yLabels [ CA.withGrid, CA.format (\v -> "$" ++ formatNumber v ++ "M") ]
+                    , C.binLabels .x [ CA.moveDown 25, CA.fontSize 12 ]
+                    , C.labelAt CA.middle
+                        .max
+                        [ CA.moveUp 15 ]
+                        [ Svg.text_ [ SA.fontSize "18", SA.fill "#1F2937" ] [ Svg.text "Enterprise Value" ] ]
+                    , C.bars
+                        [ CA.margin 0.1
+                        ]
+                        [ C.bar .flatCase [ CA.color "#22C55E", CA.opacity 0.7 ]
+                            |> C.named "Flat Case"
+                        , C.bar .rolloverCase [ CA.color "#A855F7", CA.opacity 0.7 ]
+                            |> C.named "Rollover Case"
+                        ]
+                        allData
+                    ]
+                ]
+            , div [ class "flex flex-wrap justify-center gap-2 mt-1 sm:mt-4 text-sm" ]
+                [ div [ class "flex items-center gap-2" ]
                     [ div [ class "w-3 h-3 bg-[#22C55E] rounded-full opacity-70" ] []
                     , text "Flat Case"
                     ]
