@@ -327,7 +327,36 @@ export class EmailService {
       
       const result = await sgMail.send(msg);
       logger.info(`Quote email sent successfully to ${email}`);
+
+      // also send out text via twilio / mds endpoint
       
+      /*
+      const tempRetoolEndpoint = "https://api.retool.com/v1/workflows/2dfd31e1-b979-4f4d-a572-ca92879a3c09/startTrigger?workflowApiKey=retool_wk_e06f6026e4be4854bce04b77c90ee4c3"
+      const msgContent = `
+        Hi ${firstName},
+        We recently reviewed Medigap premiums for your zip code and found some options that might interest you. Click the link below to review your options:
+        ${quoteUrl}  
+      `
+      const twilioResponse = await fetch(tempRetoolEndpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          phone: formattedPhone,
+          message: msgContent,
+          quoteUrl: quoteUrl,
+          orgName: orgName
+        })
+      });
+      if (twilioResponse.ok) {
+        logger.info(`Text sent successfully to ${formattedPhone}`);
+        logger.info(await twilioResponse.json());
+      } else {
+        logger.error(`Error sending text: ${twilioResponse.statusText}`);
+      }
+      */
+
       // Return the SendGrid response and message ID if available
       return { 
         success: true,
