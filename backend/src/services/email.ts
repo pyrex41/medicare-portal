@@ -123,6 +123,7 @@ export class EmailService {
       phone?: string;
       website?: string;
     };
+    phone?: string;
   }) {
     try {
       const { email, firstName, lastName, quoteUrl, planType, organization } = params;
@@ -352,24 +353,35 @@ export class EmailService {
         We recently reviewed Medigap premiums for your zip code and found some options that might interest you. Click the link below to review your options:
         ${quoteUrl}  
       `
-      const twilioResponse = await fetch(tempRetoolEndpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          phone: e164Phone,
+      // Get client's phone number from params
+      const clientPhone = params.phone;
+      const clientE164Phone = clientPhone ? formatE164(clientPhone) : null;
+
+      if (clientE164Phone) {
+        logger.info(`clientE164Phone: ${clientE164Phone}`);
+        const bodyToSend = {
+          phone: clientE164Phone,
           firstName: firstName,
-          //message: msgContent,
           quoteUrl: quoteUrl,
           orgName: orgName
-        })
-      });
-      if (twilioResponse.ok) {
-        logger.info(`Text sent successfully to ${formattedPhone}`);
-        logger.info(await twilioResponse.json());
+        }
+        logger.info(JSON.stringify(bodyToSend));
+        
+        const twilioResponse = await fetch(tempRetoolEndpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(bodyToSend)
+        });
+        if (twilioResponse.ok) {
+          logger.info(`Text sent successfully to ${clientE164Phone}`);
+          logger.info(await twilioResponse.json());
+        } else {
+          logger.error(`Error sending text: ${twilioResponse.statusText}`);
+        }
       } else {
-        logger.error(`Error sending text: ${twilioResponse.statusText}`);
+        logger.info('No client phone number provided - skipping text message');
       }
 
       // Return the SendGrid response and message ID if available

@@ -331,7 +331,8 @@ export function createSelfServiceRoutes() {
             lastName,
             quoteUrl,
             planType: planType || 'G',
-            organization: orgInfo
+            organization: orgInfo,
+            phone: phoneNumber
           });
           
           // Record the email in tracking table

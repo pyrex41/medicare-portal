@@ -1956,8 +1956,8 @@ const startServer = async () => {
           const orgDb = await Database.getOrgDb(user.organization_id.toString());
 
           // Fetch contact details
-          const contact = await orgDb.fetchOne<{id: number, first_name: string, last_name: string, email: string, plan_type: string}>(
-            'SELECT id, first_name, last_name, email, plan_type FROM contacts WHERE id = ?',
+          const contact = await orgDb.fetchOne<{id: number, first_name: string, last_name: string, email: string, plan_type: string, phone_number: string}>(
+            'SELECT id, first_name, last_name, email, plan_type, phone_number FROM contacts WHERE id = ?',
             [contactId]
           );
 
@@ -1967,6 +1967,8 @@ const startServer = async () => {
               message: 'Contact not found'
             };
           }
+
+          logger.info(`Contact: ${JSON.stringify(contact)}`);
 
           // Use the proper generateQuoteId function
           const quoteId = generateQuoteId(user.organization_id, contactId);
@@ -2008,7 +2010,8 @@ const startServer = async () => {
             lastName: contact.last_name,
             quoteUrl,
             planType: contact.plan_type,
-            organization: organization || undefined
+            organization: organization || undefined,
+            phone: contact.phone_number
           });
 
           // Record in email tracking table

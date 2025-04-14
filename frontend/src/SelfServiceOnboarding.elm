@@ -1157,7 +1157,7 @@ viewCombinedForm model =
         [ div [ class "grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-4" ]
             [ inputField "First Name" "text" model.firstName UpdateFirstName False
             , inputField "Last Name" "text" model.lastName UpdateLastName False
-            , inputField "Phone Number" "tel" (formatPhoneNumber model.phoneNumber) UpdatePhoneNumber False
+            , inputField "Cell Number" "tel" (formatPhoneNumber model.phoneNumber) UpdatePhoneNumber False
             , inputField "Email Address" "email" model.email UpdateEmail model.emailReadOnly
             ]
         , div [ class "grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-4" ]
