@@ -30,6 +30,7 @@ import Process
 import Profile
 import Quote
 import Schedule
+import ScheduleMain
 import SelfServiceOnboarding
 import Settings
 import Signup
@@ -180,6 +181,7 @@ type Page
     | QuotePage Quote.Model
     | EligibilityPage Eligibility.Model
     | SchedulePage Schedule.Model
+    | ScheduleMainPage ScheduleMain.Model
     | DashboardPage Dashboard.Model
     | LogoutPage Logout.Model
     | OnboardingPage Onboarding.Model
@@ -212,6 +214,7 @@ type Msg
     | QuoteMsg Quote.Msg
     | EligibilityMsg Eligibility.Msg
     | ScheduleMsg Schedule.Msg
+    | ScheduleMainMsg ScheduleMain.Msg
     | DashboardMsg Dashboard.Msg
     | NoOp
     | GotCurrentUser (Result Http.Error CurrentUserResponse)
@@ -412,6 +415,7 @@ type PublicPage
     | QuoteRoute { quoteId : Maybe String, trackingId : Maybe String, planType : Maybe String, orgId : Maybe String }
     | EligibilityRoute ( Maybe String, Maybe String, Maybe String )
     | ScheduleRoute ( Maybe String, Maybe String, Maybe String )
+    | ScheduleMainRoute
     | SelfOnboardingRoute String
     | WaitlistRoute
     | LandingRoute { quoteId : Maybe String }
@@ -491,6 +495,7 @@ routeParser =
         , map (PublicRoute OnboardingRoute) (s "onboarding")
         , map (PublicRoute PricingRoute) (s "pricing")
         , map (PublicRoute Pricing2Route) (s "pricing2")
+        , map (PublicRoute ScheduleMainRoute) (s "schedule-main")
         , map (\orgSlug token -> PublicRoute (VerifyRoute (VerifyParams orgSlug token)))
             (s "auth" </> s "verify" </> string </> string)
         , map (PublicRoute << CompareRoute) (s "compare" <?> compareParamsParser)
@@ -894,6 +899,20 @@ update msg model =
                     in
                     ( { model | page = SchedulePage newPageModel }
                     , Cmd.map ScheduleMsg newCmd
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        ScheduleMainMsg subMsg ->
+            case model.page of
+                ScheduleMainPage pageModel ->
+                    let
+                        ( newPageModel, newCmd ) =
+                            ScheduleMain.update subMsg pageModel
+                    in
+                    ( { model | page = ScheduleMainPage newPageModel }
+                    , Cmd.map ScheduleMainMsg newCmd
                     )
 
                 _ ->
@@ -1317,6 +1336,15 @@ view model =
                     , body = [ viewWithNav model (Html.map ScheduleMsg (div [] scheduleView.body)) ]
                     }
 
+                ScheduleMainPage scheduleMainModel ->
+                    let
+                        scheduleMainView =
+                            ScheduleMain.view scheduleMainModel
+                    in
+                    { title = scheduleMainView.title
+                    , body = [ viewWithNav model (Html.map ScheduleMainMsg (div [] scheduleMainView.body)) ]
+                    }
+
                 DashboardPage dashboardModel ->
                     let
                         dashboardView =
@@ -1428,11 +1456,18 @@ viewPublicNav model =
                         ]
                     ]
                 , div [ class "flex items-center justify-end gap-8" ]
-                    [ button
-                        [ onClick (InternalLinkClicked "/pricing")
-                        , class "px-6 text-gray-600 hover:text-gray-900 text-base font-medium cursor-pointer transition-all duration-200"
+                    [ div [ class "flex items-center gap-2" ]
+                        [ button
+                            [ onClick (InternalLinkClicked "/schedule-main")
+                            , class "px-4 text-gray-600 hover:text-gray-900 text-base font-medium cursor-pointer transition-all duration-200"
+                            ]
+                            [ text "Book a Demo" ]
+                        , button
+                            [ onClick (InternalLinkClicked "/pricing")
+                            , class "px-4 text-gray-600 hover:text-gray-900 text-base font-medium cursor-pointer transition-all duration-200"
+                            ]
+                            [ text "Pricing" ]
                         ]
-                        [ text "Pricing" ]
                     , div [ class "flex items-center" ]
                         [ button
                             [ onClick (InternalLinkClicked "/waitlist")
@@ -1484,21 +1519,33 @@ viewPublicNav model =
                     ]
                 ]
             , if model.showDropdown then
-                div [ class "absolute top-full left-0 w-full bg-white shadow-lg border-t border-gray-200" ]
+                div
+                    [ class "absolute top-full left-0 w-full bg-white shadow-lg border-t border-gray-200"
+                    , stopPropagationOn "mousedown" (Decode.succeed ( NoOp, True ))
+                    ]
                     [ div [ class "px-4 py-2 space-y-2" ]
                         [ button
+                            [ onClick (InternalLinkClicked "/schedule-main")
+                            , class "block w-full text-left px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-md"
+                            , stopPropagationOn "click" (Decode.succeed ( CloseDropdown, True ))
+                            ]
+                            [ text "Book a Demo" ]
+                        , button
                             [ onClick (InternalLinkClicked "/pricing")
                             , class "block w-full text-left px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-md"
+                            , stopPropagationOn "click" (Decode.succeed ( CloseDropdown, True ))
                             ]
                             [ text "Pricing" ]
                         , button
                             [ onClick (InternalLinkClicked "/waitlist")
                             , class "block w-full text-left px-4 py-2 text-[#03045E] font-medium hover:bg-gray-100 rounded-md"
+                            , stopPropagationOn "click" (Decode.succeed ( CloseDropdown, True ))
                             ]
                             [ text "Get Early Access" ]
                         , button
                             [ onClick (InternalLinkClicked "/self-onboarding/demo-org")
                             , class "block w-full text-left px-4 py-2 text-[#03045E] font-medium hover:bg-gray-100 rounded-md"
+                            , stopPropagationOn "click" (Decode.succeed ( CloseDropdown, True ))
                             ]
                             [ text "Try It Out" ]
                         ]
@@ -1549,6 +1596,9 @@ viewNavHeader model =
                     True
 
                 WaitlistPage _ ->
+                    True
+
+                ScheduleMainPage _ ->
                     True
 
                 _ ->
@@ -1786,6 +1836,9 @@ subscriptions model =
 
                 SchedulePage pageModel ->
                     Sub.map ScheduleMsg (Schedule.subscriptions pageModel)
+
+                ScheduleMainPage pageModel ->
+                    Sub.map ScheduleMainMsg (ScheduleMain.subscriptions pageModel)
 
                 DashboardPage pageModel ->
                     Sub.map DashboardMsg (Dashboard.subscriptions pageModel)
@@ -2278,6 +2331,15 @@ updatePage url ( model, cmd ) =
                                         in
                                         ( { model | page = SchedulePage scheduleModel }
                                         , Cmd.map ScheduleMsg scheduleCmd
+                                        )
+
+                                    PublicRoute ScheduleMainRoute ->
+                                        let
+                                            ( scheduleMainModel, scheduleMainCmd ) =
+                                                ScheduleMain.init model.key
+                                        in
+                                        ( { model | page = ScheduleMainPage scheduleMainModel }
+                                        , Cmd.map ScheduleMainMsg scheduleMainCmd
                                         )
 
                                     ProtectedRoute ContactsRoute ->
@@ -2900,6 +2962,15 @@ updatePageForcePublic url ( model, cmd ) =
                     in
                     ( { model | page = SchedulePage scheduleModel }
                     , Cmd.map ScheduleMsg scheduleCmd
+                    )
+
+                PublicRoute ScheduleMainRoute ->
+                    let
+                        ( scheduleMainModel, scheduleMainCmd ) =
+                            ScheduleMain.init model.key
+                    in
+                    ( { model | page = ScheduleMainPage scheduleMainModel }
+                    , Cmd.map ScheduleMainMsg scheduleMainCmd
                     )
 
                 PublicRoute (SelfOnboardingRoute orgSlug) ->
