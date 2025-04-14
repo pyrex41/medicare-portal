@@ -564,6 +564,22 @@ maxLogo size color =
         ]
 
 
+chevronDown : Int -> String -> Svg msg
+chevronDown size color =
+    svg
+        [ width (String.fromInt size)
+        , height (String.fromInt size)
+        , viewBox "0 0 24 24"
+        , fill "none"
+        , stroke color
+        , strokeWidth "2"
+        , strokeLinecap "round"
+        , strokeLinejoin "round"
+        ]
+        [ Svg.path [ d "m6 9 6 6 6-6" ] []
+        ]
+
+
 chevronLeft : Int -> String -> Svg msg
 chevronLeft size color =
     svg

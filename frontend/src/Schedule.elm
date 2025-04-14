@@ -128,11 +128,11 @@ init key maybeQuoteId maybeStatus =
       , quoteId = maybeQuoteId
       , key = key
       , status = status
-      , redirectUrl = Just "https://calendly.com/medicareschool-max/30min"
+      , redirectUrl = Just "https://calendly.com/josh-musick-medicaremax/medicare-max-demo?month=2025-04" --"https://calendly.com/medicareschool-max/30min"
       , scheduleInfo = Nothing
       , isLoading = True
       , demoMode = True -- sets CTA to demo mode always
-      , demoRedirectUrl = Just "https://calendly.com/medicareschool-max/30min"
+      , demoRedirectUrl = Just "https://calendly.com/josh-musick-medicaremax/medicare-max-demo?month=2025-04" --"https://calendly.com/medicareschool-max/30min"
       }
     , Cmd.batch commands
     )
