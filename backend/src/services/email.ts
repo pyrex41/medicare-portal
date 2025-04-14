@@ -146,7 +146,22 @@ export class EmailService {
         return phoneStr;
       };
       
+      // Format phone number to E.164 format for Twilio
+      const formatE164 = (phoneStr: string): string => {
+        // Remove any non-digit characters
+        const digitsOnly = phoneStr.replace(/\D/g, '');
+        // Handle US numbers
+        if (digitsOnly.length === 10) {
+          return `+1${digitsOnly}`;
+        } else if (digitsOnly.length === 11 && digitsOnly.startsWith('1')) {
+          return `+${digitsOnly}`;
+        }
+        // Return with + prefix if not matching expected formats
+        return `+${digitsOnly}`;
+      };
+      
       const formattedPhone = phone ? formatPhoneNumber(phone) : '';
+      const e164Phone = phone ? formatE164(phone) : '';
       
       const fromEmail = process.env.SENDGRID_FROM_EMAIL || 'information@medicaremax.ai';
       
@@ -330,7 +345,7 @@ export class EmailService {
 
       // also send out text via twilio / mds endpoint
       
-      /*
+      
       const tempRetoolEndpoint = "https://api.retool.com/v1/workflows/2dfd31e1-b979-4f4d-a572-ca92879a3c09/startTrigger?workflowApiKey=retool_wk_e06f6026e4be4854bce04b77c90ee4c3"
       const msgContent = `
         Hi ${firstName},
@@ -343,8 +358,9 @@ export class EmailService {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          phone: formattedPhone,
-          message: msgContent,
+          phone: e164Phone,
+          firstName: firstName,
+          //message: msgContent,
           quoteUrl: quoteUrl,
           orgName: orgName
         })
@@ -355,7 +371,6 @@ export class EmailService {
       } else {
         logger.error(`Error sending text: ${twilioResponse.statusText}`);
       }
-      */
 
       // Return the SendGrid response and message ID if available
       return { 

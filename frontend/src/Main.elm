@@ -1442,7 +1442,7 @@ viewPublicNav : Model -> Html Msg
 viewPublicNav model =
     div []
         [ -- Desktop navigation
-          nav [ class "max-w-7xl mx-auto px-6 sm:px-6 lg:px-8 py-4 sm:py-6 sticky top-0 z-50 bg-white hidden xl:block" ]
+          nav [ class "max-w-7xl mx-auto px-6 sm:px-6 lg:px-8 py-4 sm:py-6 sticky top-0 z-50 bg-white hidden lg:block" ]
             [ div
                 [ class "flex justify-between items-center" ]
                 [ div [ class "flex items-center" ]
@@ -1485,7 +1485,7 @@ viewPublicNav model =
             ]
 
         -- Mobile navigation
-        , nav [ class "xl:hidden sticky top-0 z-50 bg-white" ]
+        , nav [ class "lg:hidden sticky top-0 z-50 bg-white" ]
             [ div [ class "max-w-7xl mx-auto px-4 py-4" ]
                 [ div [ class "flex justify-between items-center" ]
                     [ a [ href "/" ]
@@ -1527,25 +1527,21 @@ viewPublicNav model =
                         [ button
                             [ onClick (InternalLinkClicked "/schedule-main")
                             , class "block w-full text-left px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-md"
-                            , stopPropagationOn "click" (Decode.succeed ( CloseDropdown, True ))
                             ]
                             [ text "Book a Demo" ]
                         , button
                             [ onClick (InternalLinkClicked "/pricing")
                             , class "block w-full text-left px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-md"
-                            , stopPropagationOn "click" (Decode.succeed ( CloseDropdown, True ))
                             ]
                             [ text "Pricing" ]
                         , button
                             [ onClick (InternalLinkClicked "/waitlist")
                             , class "block w-full text-left px-4 py-2 text-[#03045E] font-medium hover:bg-gray-100 rounded-md"
-                            , stopPropagationOn "click" (Decode.succeed ( CloseDropdown, True ))
                             ]
                             [ text "Get Early Access" ]
                         , button
                             [ onClick (InternalLinkClicked "/self-onboarding/demo-org")
                             , class "block w-full text-left px-4 py-2 text-[#03045E] font-medium hover:bg-gray-100 rounded-md"
-                            , stopPropagationOn "click" (Decode.succeed ( CloseDropdown, True ))
                             ]
                             [ text "Try It Out" ]
                         ]
