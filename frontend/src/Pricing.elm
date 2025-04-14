@@ -504,7 +504,7 @@ view model =
                                                                        )
                                                                     ++ " of 250 @ "
                                                                     ++ formatCurrency tier1Pricing.price
-                                                                    ++ " each"
+                                                                    ++ " each:"
                                                             )
                                                         ]
                                                     , span [ class "font-bold" ] [ text (formatCurrency tier.price) ]
