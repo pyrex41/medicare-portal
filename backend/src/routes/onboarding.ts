@@ -428,7 +428,10 @@ export function createOnboardingRoutes() {
           companyWebsite, 
           primaryColor, 
           secondaryColor, 
-          logo
+          logo,
+          firstName,
+          lastName,
+          phone
         } = body as { 
           email: string,
           companyName?: string,
@@ -436,7 +439,10 @@ export function createOnboardingRoutes() {
           companyWebsite?: string,
           primaryColor?: string,
           secondaryColor?: string,
-          logo?: string
+          logo?: string,
+          firstName?: string,
+          lastName?: string,
+          phone?: string
         };
         
         if (!email) {
@@ -452,83 +458,145 @@ export function createOnboardingRoutes() {
         logger.info(`Processing onboarding company update for email: ${decodedEmail}`);
         
         // Find the organization by user email
-        const userInfo = await dbInstance.fetchOne<{ organization_id: number }>(
-          'SELECT organization_id FROM users WHERE email = ?',
+        let userInfo = await dbInstance.fetchOne<{ id: number, organization_id: number }>(
+          'SELECT id, organization_id FROM users WHERE email = ?',
           [decodedEmail]
         );
         
+        let organizationId;
+        
         if (!userInfo) {
-          set.status = 404;
+          // Create new organization first
+          const slug = await generateUniqueSlug(dbInstance, companyName || 'New Organization');
+          
+          // Insert the organization
+          const orgResult = await dbInstance.query<{ id: number }>(
+            `INSERT INTO organizations (
+              name, 
+              slug,
+              phone,
+              website,
+              primary_color,
+              secondary_color,
+              logo_data,
+              onboarding_completed
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            RETURNING id`,
+            [
+              companyName || 'New Organization',
+              slug,
+              companyPhone || '',
+              companyWebsite || '',
+              primaryColor || '#6B46C1',
+              secondaryColor || '#9F7AEA',
+              logo || null,
+              0 // Not completed yet
+            ]
+          );
+          
+          if (!orgResult || orgResult.length === 0) {
+            throw new Error('Failed to create organization');
+          }
+          
+          organizationId = orgResult[0].id;
+          logger.info(`Created new organization with ID: ${organizationId}`);
+          
+          // Create the user with all available fields
+          const userResult = await dbInstance.query<{ id: number }>(
+            `INSERT INTO users (
+              email,
+              first_name,
+              last_name,
+              phone,
+              organization_id,
+              is_admin,
+              is_agent
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            RETURNING id`,
+            [
+              decodedEmail,
+              firstName || '',
+              lastName || '',
+              phone || '',
+              organizationId,
+              1, // Set as admin
+              1  // Set as agent
+            ]
+          );
+          
+          if (!userResult || userResult.length === 0) {
+            throw new Error('Failed to create user');
+          }
+          
+          userInfo = {
+            id: userResult[0].id,
+            organization_id: organizationId
+          };
+          
+          logger.info(`Created new user (${userInfo.id}) for organization (${organizationId})`);
+          
+          // Set success status
+          set.status = 200;
           return {
-            success: false,
-            message: 'User not found'
-          };
-        }
-        
-        const organizationId = userInfo.organization_id;
-        
-        // Prepare update parameters
-        const updates = [];
-        const params = [];
-        
-        if (companyName) {
-          updates.push('name = ?');
-          params.push(companyName);
-        }
-        
-        if (companyPhone) {
-          updates.push('phone = ?');
-          params.push(companyPhone);
-        }
-        
-        if (companyWebsite) {
-          updates.push('website = ?');
-          params.push(companyWebsite);
-        }
-        
-        if (primaryColor) {
-          updates.push('primary_color = ?');
-          params.push(primaryColor);
-        }
-        
-        if (secondaryColor) {
-          updates.push('secondary_color = ?');
-          params.push(secondaryColor);
-        }
-        
-        if (logo) {
-          updates.push('logo_data = ?');
-          params.push(logo);
-        }
-        
-        // Only proceed if we have fields to update
-        if (updates.length === 0) {
-          return { 
             success: true,
-            message: 'No fields provided for update'
+            message: 'Organization and user created successfully',
+            organizationId,
+            userId: userInfo.id
+          };
+        } else {
+          organizationId = userInfo.organization_id;
+          
+          // Update existing organization
+          await dbInstance.execute(
+            `UPDATE organizations SET 
+              name = COALESCE(?, name),
+              phone = COALESCE(?, phone),
+              website = COALESCE(?, website),
+              primary_color = COALESCE(?, primary_color),
+              secondary_color = COALESCE(?, secondary_color),
+              logo_data = COALESCE(?, logo_data)
+            WHERE id = ?`,
+            [
+              companyName,
+              companyPhone,
+              companyWebsite,
+              primaryColor,
+              secondaryColor,
+              logo,
+              organizationId
+            ]
+          );
+          
+          // Update existing user if we have new information
+          if (firstName || lastName || phone) {
+            await dbInstance.execute(
+              `UPDATE users SET 
+                first_name = COALESCE(?, first_name),
+                last_name = COALESCE(?, last_name),
+                phone = COALESCE(?, phone)
+              WHERE id = ?`,
+              [firstName, lastName, phone, userInfo.id]
+            );
+          }
+          
+          logger.info(`Updated existing organization: ${organizationId} and user: ${userInfo.id}`);
+          
+          // Set success status
+          set.status = 200;
+          return {
+            success: true,
+            message: 'Organization and user updated successfully',
+            organizationId,
+            userId: userInfo.id
           };
         }
-        
-        // Update the organization
-        params.push(organizationId);
-        await dbInstance.execute(
-          `UPDATE organizations SET ${updates.join(', ')} WHERE id = ?`,
-          params
-        );
-        
-        logger.info(`Updated company details for organization ID: ${organizationId}`);
-        
-        return {
-          success: true,
-          message: 'Company details updated successfully'
-        };
         
       } catch (error) {
-        logger.error(`Error updating company details: ${error}`);
+        logger.error(`Error in company details endpoint: ${error}`);
         set.status = 500;
         return {
           success: false,
-          message: 'Failed to update company details'
+          message: 'Failed to process company details'
         };
       }
     })
@@ -565,14 +633,30 @@ export function createOnboardingRoutes() {
         );
         
         if (!userInfo) {
+          logger.warn(`User not found for email: ${decodedEmail}`);
           set.status = 404;
           return {
             success: false,
-            message: 'User not found'
+            message: 'User not found - please start from signup'
           };
         }
         
         const organizationId = userInfo.organization_id;
+        
+        // Verify organization exists
+        const orgExists = await dbInstance.fetchOne<{ id: number }>(
+          'SELECT id FROM organizations WHERE id = ?',
+          [organizationId]
+        );
+        
+        if (!orgExists) {
+          logger.warn(`Organization ${organizationId} not found for user ${decodedEmail}`);
+          set.status = 404;
+          return {
+            success: false,
+            message: 'Organization not found - please start from signup'
+          };
+        }
         
         // Get current org settings if any
         const currentSettings = await dbInstance.fetchOne<{ org_settings: string | null }>(
@@ -608,6 +692,7 @@ export function createOnboardingRoutes() {
         
         logger.info(`Updated licensing settings for organization ID: ${organizationId}`);
         
+        set.status = 200
         return {
           success: true,
           message: 'Licensing settings updated successfully'
@@ -659,14 +744,30 @@ export function createOnboardingRoutes() {
         );
         
         if (!userInfo) {
+          logger.warn(`User not found for email: ${decodedOwnerEmail}`);
           set.status = 404;
           return {
             success: false,
-            message: 'User not found'
+            message: 'User not found - please start from signup'
           };
         }
         
         const organizationId = userInfo.organization_id;
+        
+        // Verify organization exists
+        const orgExists = await dbInstance.fetchOne<{ id: number }>(
+          'SELECT id FROM organizations WHERE id = ?',
+          [organizationId]
+        );
+        
+        if (!orgExists) {
+          logger.warn(`Organization ${organizationId} not found for user ${decodedOwnerEmail}`);
+          set.status = 404;
+          return {
+            success: false,
+            message: 'Organization not found - please start from signup'
+          };
+        }
         
         // Process each agent
         let createdCount = 0;

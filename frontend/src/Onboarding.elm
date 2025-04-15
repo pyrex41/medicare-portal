@@ -14,7 +14,6 @@ import Json.Decode as Decode exposing (Decoder)
 import Json.Decode.Pipeline as Pipeline
 import Json.Encode as Encode
 import MyIcon
-import PriceModel
 import Task
 import Url exposing (Url)
 import Url.Builder exposing (absolute, int, string)
@@ -26,24 +25,8 @@ import Utils.UrlStuff exposing (getQueryParams)
 -- MODEL
 
 
-type PaymentStatus
-    = Loading
-    | ReadyToComplete
-    | Continuing
-    | Error String
-
-
-type alias CalculationInputs =
-    { contacts : Int
-    , averageAge : Float
-    , rolloverPercent : Float
-    , commissionRate : Float
-    }
-
-
 type alias Model =
     { user : User
-    , paymentStatus : PaymentStatus
     , frame : Int
     , companyName : String
     , companyPhone : String
@@ -53,8 +36,6 @@ type alias Model =
     , logo : Maybe String
     , uploadingLogo : Bool
     , key : Nav.Key
-    , calculationInputs : PriceModel.CalculationInputs
-    , calculatorExpanded : Bool
     , selectedCarriers : List Carrier
     , useSmartSend : Bool
     , agents : List Agent
@@ -79,7 +60,7 @@ type alias Agent =
 
 maxFrame : Int
 maxFrame =
-    5
+    3
 
 
 dummyUser : User
@@ -99,6 +80,37 @@ type alias User =
     }
 
 
+formatPhoneNumber : String -> String
+formatPhoneNumber phone =
+    let
+        -- Filter out non-digit characters
+        digitsOnly =
+            String.filter Char.isDigit phone
+
+        -- Limit to 10 digits
+        limitedDigits =
+            String.left 10 digitsOnly
+
+        -- Format the phone number as needed
+        formattedPhone =
+            if String.length limitedDigits == 10 then
+                "(" ++ String.left 3 limitedDigits ++ ") " ++ String.slice 3 6 limitedDigits ++ "-" ++ String.slice 6 10 limitedDigits
+
+            else if String.length limitedDigits >= 7 then
+                "(" ++ String.left 3 limitedDigits ++ ") " ++ String.slice 3 6 limitedDigits ++ "-" ++ String.slice 6 10 limitedDigits
+
+            else if String.length limitedDigits >= 4 then
+                "(" ++ String.left 3 limitedDigits ++ ") " ++ String.slice 3 10 limitedDigits
+
+            else if String.length limitedDigits > 0 then
+                "(" ++ limitedDigits
+
+            else
+                ""
+    in
+    formattedPhone
+
+
 init : Nav.Key -> Url -> ( Model, Cmd Msg )
 init key url =
     let
@@ -116,6 +128,11 @@ init key url =
 
         phone =
             Dict.get "phone" queryParams
+                |> Maybe.andThen Url.percentDecode
+                |> Maybe.withDefault ""
+
+        organizationName =
+            Dict.get "organizationName" queryParams
 
         frame =
             case Dict.get "frame" queryParams of
@@ -133,7 +150,7 @@ init key url =
         maybeUser =
             case ( firstName, lastName, email ) of
                 ( Just f, Just l, Just e ) ->
-                    Just { firstName = f, lastName = l, email = e, phone = phone |> Maybe.withDefault "" }
+                    Just { firstName = f, lastName = l, email = e, phone = phone |> formatPhoneNumber }
 
                 _ ->
                     Nothing
@@ -150,28 +167,17 @@ init key url =
               }
             ]
 
-        calculationInputs : PriceModel.CalculationInputs
-        calculationInputs =
-            { contacts = 1000
-            , averageAge = 3.0
-            , rolloverPercent = 7
-            , commissionRate = 300
-            }
-
         initialModel =
             { user = currentUser
-            , paymentStatus = ReadyToComplete
             , frame = frame
-            , companyName = ""
-            , companyPhone = ""
+            , companyName = organizationName |> Maybe.withDefault ""
+            , companyPhone = currentUser.phone
             , companyWebsite = ""
             , primaryColor = "#6B46C1"
             , secondaryColor = "#9F7AEA"
             , logo = Nothing
             , uploadingLogo = False
             , key = key
-            , calculationInputs = calculationInputs
-            , calculatorExpanded = False
             , selectedCarriers = []
             , useSmartSend = True
             , agents = initialAgents
@@ -184,10 +190,13 @@ init key url =
             , loadingResumeData = False
             }
 
+        -- Check if this is a direct page load with frame > 1
+        isDirectLoadWithHigherFrame =
+            frame > 1 && (url.path == "/onboarding") |> (\_ -> Debug.log "isDirectLoadWithHigherFrame" True)
+
         redirectCommand =
             case maybeUser of
                 Just user ->
-                    -- Try to resume session
                     fetchResumeData user.email
 
                 Nothing ->
@@ -202,7 +211,6 @@ init key url =
 
 type Msg
     = NoOp
-    | PaymentCompleted PaymentStatus
     | CompanyNameChanged String
     | PhoneChanged String
     | WebsiteChanged String
@@ -213,10 +221,6 @@ type Msg
     | GotLogoUrl String
     | ContinueClicked
     | BackClicked
-    | ContactCountChanged Int
-    | RolloverPercentChanged Float
-    | CommissionRateChanged Float
-    | ToggleCalculator
     | ToggleCarrier Carrier
     | ToggleSmartSend
     | ToggleAllCarriers
@@ -228,7 +232,9 @@ type Msg
     | AgentPhoneChanged String
     | AgentIsAdminToggled Bool
     | AddAgent
-    | AgentsSaved (Result Http.Error ())
+    | CompanyDetailsSaved (Result Http.Error SaveResponse)
+    | LicensingSaved (Result Http.Error SaveResponse)
+    | AgentsSaved (Result Http.Error SaveResponse)
     | GotResumeData (Result Http.Error ResumeData)
 
 
@@ -238,14 +244,11 @@ update msg model =
         NoOp ->
             ( model, Cmd.none )
 
-        PaymentCompleted status ->
-            ( { model | paymentStatus = status }, Cmd.none )
-
         CompanyNameChanged name ->
             ( { model | companyName = name }, Cmd.none )
 
         PhoneChanged phone ->
-            ( { model | companyPhone = phone }, Cmd.none )
+            ( { model | companyPhone = formatPhoneNumber phone }, Cmd.none )
 
         WebsiteChanged website ->
             ( { model | companyWebsite = website }, Cmd.none )
@@ -257,7 +260,7 @@ update msg model =
             ( { model | secondaryColor = color }, Cmd.none )
 
         UploadLogo ->
-            ( model, Select.file [ "image/png", "image/jpeg" ] GotLogo )
+            ( model, Select.file [ "image/png" ] GotLogo )
 
         GotLogo file ->
             ( { model | uploadingLogo = True }, Task.perform GotLogoUrl (File.toUrl file) )
@@ -265,40 +268,50 @@ update msg model =
         GotLogoUrl url ->
             ( { model | logo = Just url, uploadingLogo = False }, Cmd.none )
 
-        ToggleCalculator ->
-            ( { model | calculatorExpanded = not model.calculatorExpanded }, Cmd.none )
-
         ContinueClicked ->
             let
                 newFrame =
                     Basics.min maxFrame (model.frame + 1)
+
+                canContinue =
+                    case model.frame of
+                        2 ->
+                            hasSelectedCarriers model
+
+                        _ ->
+                            True
             in
-            ( { model | frame = newFrame }
-            , case model.frame of
-                2 ->
-                    Nav.load (buildUrl model newFrame)
+            if canContinue then
+                case model.frame of
+                    1 ->
+                        -- Show loading state while saving company details
+                        ( { model | loadingResumeData = True }
+                        , saveCompanyDetails model
+                        )
 
-                3 ->
-                    Cmd.batch
-                        [ saveCompanyDetails model
+                    2 ->
+                        ( { model | frame = newFrame }
+                        , Cmd.batch
+                            [ saveLicensingSettings model
+                            , Nav.pushUrl model.key (buildUrl model newFrame)
+                            ]
+                        )
+
+                    3 ->
+                        ( { model | frame = newFrame }
+                        , Cmd.batch
+                            [ saveAgents model
+                            , Nav.pushUrl model.key "/login"
+                            ]
+                        )
+
+                    _ ->
+                        ( { model | frame = newFrame }
                         , Nav.pushUrl model.key (buildUrl model newFrame)
-                        ]
+                        )
 
-                4 ->
-                    Cmd.batch
-                        [ saveLicensingSettings model
-                        , Nav.pushUrl model.key (buildUrl model newFrame)
-                        ]
-
-                5 ->
-                    Cmd.batch
-                        [ saveAgents model
-                        , Nav.pushUrl model.key "/login" -- Go to dashboard after onboarding is complete
-                        ]
-
-                _ ->
-                    Nav.pushUrl model.key (buildUrl model newFrame)
-            )
+            else
+                ( model, Cmd.none )
 
         BackClicked ->
             let
@@ -306,54 +319,7 @@ update msg model =
                     Basics.max 1 (model.frame - 1)
             in
             ( { model | frame = newFrame }
-            , case newFrame of
-                2 ->
-                    Nav.load (buildUrl model newFrame)
-
-                _ ->
-                    Nav.pushUrl model.key (buildUrl model newFrame)
-            )
-
-        ContactCountChanged count ->
-            let
-                oldCalculationInputs =
-                    model.calculationInputs
-
-                newCalculationInputs =
-                    { oldCalculationInputs | contacts = count }
-            in
-            ( { model
-                | calculationInputs = newCalculationInputs
-              }
-            , Cmd.none
-            )
-
-        RolloverPercentChanged percent ->
-            let
-                oldCalculationInputs =
-                    model.calculationInputs
-
-                newCalculationInputs =
-                    { oldCalculationInputs | rolloverPercent = percent }
-            in
-            ( { model
-                | calculationInputs = newCalculationInputs
-              }
-            , Cmd.none
-            )
-
-        CommissionRateChanged rate ->
-            let
-                oldCalculationInputs =
-                    model.calculationInputs
-
-                newCalculationInputs =
-                    { oldCalculationInputs | commissionRate = rate }
-            in
-            ( { model
-                | calculationInputs = newCalculationInputs
-              }
-            , Cmd.none
+            , Nav.pushUrl model.key (buildUrl model newFrame)
             )
 
         ToggleCarrier carrier ->
@@ -433,18 +399,59 @@ update msg model =
             else
                 ( model, Cmd.none )
 
-        AgentsSaved result ->
+        CompanyDetailsSaved result ->
             case result of
-                Ok _ ->
-                    ( model, Cmd.none )
+                Ok response ->
+                    if response.success then
+                        -- Move to frame 2 and clear loading state
+                        let
+                            _ =
+                                Debug.log "CompanyDetailsSaved -- moving to frame 2" 2
+                        in
+                        ( { model | frame = 2, loadingResumeData = False }
+                        , Nav.pushUrl model.key (buildUrl { model | frame = 2 } 2)
+                        )
+
+                    else
+                        -- Failed to save but stay on current page
+                        ( { model | loadingResumeData = False }, Cmd.none )
 
                 Err _ ->
-                    ( model, Cmd.none )
+                    -- Error saving but stay on current page
+                    ( { model | loadingResumeData = False }, Cmd.none )
+
+        LicensingSaved result ->
+            case result of
+                Ok response ->
+                    if response.success then
+                        ( model, Cmd.none )
+
+                    else
+                        -- Failed to save, redirect to signup
+                        ( model, Nav.pushUrl model.key "/signup" )
+
+                Err _ ->
+                    -- Error saving, redirect to signup
+                    ( model, Nav.pushUrl model.key "/signup" )
+
+        AgentsSaved result ->
+            case result of
+                Ok response ->
+                    if response.success then
+                        ( model, Nav.pushUrl model.key "/login" )
+
+                    else
+                        -- Failed to save, redirect to signup
+                        ( model, Nav.pushUrl model.key "/signup" )
+
+                Err _ ->
+                    -- Error saving, redirect to signup
+                    ( model, Nav.pushUrl model.key "/signup" )
 
         GotResumeData result ->
             case result of
                 Ok resumeData ->
-                    if resumeData.onboardingComplete && resumeData.redirectToLogin then
+                    if resumeData.onboardingComplete then
                         -- Onboarding is complete, redirect to login
                         ( model, Nav.load "/login" )
 
@@ -468,14 +475,6 @@ update msg model =
 
                                 else
                                     resumeData.agents
-
-                            -- Set payment status based on saved data
-                            paymentStatus =
-                                if resumeData.paymentStatus.paymentCompleted then
-                                    Continuing
-
-                                else
-                                    model.paymentStatus
                         in
                         ( { model
                             | loadingResumeData = False
@@ -488,18 +487,29 @@ update msg model =
                             , selectedCarriers = selectedCarriers
                             , useSmartSend = resumeData.carrierSettings.useSmartSend
                             , agents = updatedAgents
-                            , paymentStatus = paymentStatus
                           }
                         , Cmd.none
                         )
 
                     else
-                        -- Failed to get resume data but not critical, continue with current model
-                        ( { model | loadingResumeData = False }, Cmd.none )
+                        -- Failed to get resume data, redirect to signup if not on frame 1
+                        ( { model | loadingResumeData = False }
+                        , if model.frame > 1 then
+                            Nav.pushUrl model.key "/signup"
 
-                Err err ->
-                    -- Error fetching resume data, continue with current model
-                    ( { model | loadingResumeData = False }, Cmd.none )
+                          else
+                            Cmd.none
+                        )
+
+                Err _ ->
+                    -- Error fetching resume data, redirect to signup if not on frame 1
+                    ( { model | loadingResumeData = False }
+                    , if model.frame > 1 then
+                        Nav.pushUrl model.key "/signup"
+
+                      else
+                        Cmd.none
+                    )
 
 
 
@@ -525,6 +535,15 @@ calculatePrice contacts =
 
 
 
+-- Helper function to check if carriers are selected
+
+
+hasSelectedCarriers : Model -> Bool
+hasSelectedCarriers model =
+    not (List.isEmpty model.selectedCarriers)
+
+
+
 -- Calculate revenue based on contacts, average age, and rollover percent
 -- Handle navigation if needed
 -- VIEW
@@ -547,233 +566,22 @@ view model =
               else
                 div [ class "max-w-6xl w-full space-y-8 bg-white p-8 rounded-lg shadow-md" ]
                     [ case model.frame of
-                        2 ->
-                            viewStripe model
-
-                        3 ->
+                        1 ->
                             viewCompany model
 
-                        4 ->
+                        2 ->
                             viewLicensing model
 
-                        5 ->
+                        3 ->
                             viewAddAgents model
 
                         _ ->
-                            viewPricing model
+                            viewCompany model
                     , viewProgressDots model.frame
                     ]
             ]
         ]
     }
-
-
-viewPricing : Model -> Html Msg
-viewPricing model =
-    div [ class "flex flex-col items-center" ]
-        [ MyIcon.banknote 32 "#0F172A"
-        , h2 [ class "text-2xl font-semibold text-gray-900 mt-6" ] [ text "Subscription Pricing" ]
-        , p [ class "text-gray-500 mt-2 mb-6" ] [ text "Simple and transparent." ]
-        , div [ class "w-full max-w-3xl mt-6" ]
-            [ div [ class "flex flex-col md:flex-row gap-6" ]
-                [ div [ class "bg-white overflow-hidden shadow rounded-lg divide-y divide-gray-200 md:w-1/2" ]
-                    [ div [ class "px-4 py-5 sm:px-6 bg-indigo-50" ]
-                        [ h3 [ class "text-lg leading-6 font-medium text-gray-900" ]
-                            [ text "Base Subscription" ]
-                        ]
-                    , div [ class "px-4 py-5 sm:p-6" ]
-                        [ div [ class "flex items-center justify-between" ]
-                            [ div [ class "flex items-center" ]
-                                [ span [ class "text-3xl font-bold text-gray-900" ] [ text "$60" ]
-                                , span [ class "ml-2 text-gray-500" ] [ text "/month" ]
-                                ]
-                            , span [ class "bg-green-100 text-green-800 px-2 py-1 rounded-full text-sm font-medium" ]
-                                [ text "First 500 contacts" ]
-                            ]
-                        , div [ class "mt-4" ]
-                            [ p [ class "text-sm text-gray-500" ]
-                                [ text "Our base subscription includes all features of the Medicare Max portal platform and allows you to automate retention of up to 500 contacts." ]
-                            ]
-                        ]
-                    ]
-                , div [ class "bg-white overflow-hidden shadow rounded-lg divide-y divide-gray-200 md:w-1/2" ]
-                    [ div [ class "px-4 py-5 sm:px-6 bg-indigo-50" ]
-                        [ h3 [ class "text-lg leading-6 font-medium text-gray-900" ]
-                            [ text "Additional Contacts" ]
-                        ]
-                    , div [ class "px-4 py-5 sm:p-6" ]
-                        [ div [ class "flex items-center justify-between" ]
-                            [ div [ class "flex items-center" ]
-                                [ span [ class "text-3xl font-bold text-gray-900" ] [ text "$40" ]
-                                , span [ class "ml-2 text-gray-500" ] [ text "/month" ]
-                                ]
-                            , span [ class "bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-sm font-medium" ]
-                                [ text "per 500 contacts" ]
-                            ]
-                        , div [ class "mt-4" ]
-                            [ p [ class "text-sm text-gray-500" ]
-                                [ text "For every additional 500 contacts (or portion thereof), we charge $40 per month." ]
-                            ]
-                        ]
-                    ]
-                ]
-            , div [ class "bg-white overflow-hidden shadow rounded-lg divide-y divide-gray-200 mt-6" ]
-                [ div
-                    [ class "px-4 py-5 sm:px-6 bg-indigo-50 cursor-pointer hover:bg-indigo-100 transition-colors"
-                    , onClick ToggleCalculator
-                    ]
-                    [ div [ class "flex justify-between items-center" ]
-                        [ h3 [ class "text-lg leading-6 font-medium text-gray-900" ]
-                            [ text "Price & Revenue Calculator" ]
-                        , div
-                            [ class "transform transition-transform duration-200"
-                            , class
-                                (if model.calculatorExpanded then
-                                    "-rotate-90"
-
-                                 else
-                                    "rotate-90"
-                                )
-                            ]
-                            [ MyIcon.chevronRight 24 "#4A5568" ]
-                        ]
-                    ]
-                , if model.calculatorExpanded then
-                    div [ class "px-4 py-5 sm:p-6" ]
-                        [ div [ class "space-y-6" ]
-                            [ div [ class "bg-white p-4 rounded-md shadow-sm border border-gray-200" ]
-                                [ h4 [ class "text-md font-medium text-gray-800 mb-3" ] [ text "Inputs" ]
-                                , div [ class "flex flex-wrap gap-4" ]
-                                    [ div [ class "flex flex-col" ]
-                                        [ label
-                                            [ class "block text-sm font-medium text-gray-700 mb-1 cursor-pointer"
-                                            , for "contact-count"
-                                            ]
-                                            [ text "Number of Contacts" ]
-                                        , div [ class "w-[140px]" ]
-                                            [ input
-                                                [ class "w-full border border-gray-300 rounded-md shadow-sm py-1.5 px-2 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-center"
-                                                , id "contact-count"
-                                                , type_ "number"
-                                                , placeholder "Enter number"
-                                                , value (String.fromInt model.calculationInputs.contacts)
-                                                , onInput (\str -> ContactCountChanged (String.toInt str |> Maybe.withDefault 0))
-                                                , Html.Attributes.min "0"
-                                                , Html.Attributes.step "1"
-                                                ]
-                                                []
-                                            ]
-                                        ]
-                                    , div [ class "flex flex-col" ]
-                                        [ label
-                                            [ class "block text-sm font-medium text-gray-700 mb-1 cursor-pointer"
-                                            , for "commission-rate"
-                                            ]
-                                            [ text "Commission Per Contact" ]
-                                        , div [ class "flex rounded-md shadow-sm w-[140px]" ]
-                                            [ div [ class "flex-shrink-0 inline-flex items-center px-2 rounded-l-md border border-r-0 border-gray-300 bg-indigo-100 text-indigo-800 text-sm font-medium" ]
-                                                [ text "$" ]
-                                            , input
-                                                [ class "w-full border border-gray-300 rounded-none rounded-r-md shadow-sm py-1.5 px-2 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-center"
-                                                , id "commission-rate"
-                                                , type_ "number"
-                                                , placeholder "Commission"
-                                                , value (String.fromFloat model.calculationInputs.commissionRate)
-                                                , onInput (\str -> CommissionRateChanged (String.toFloat str |> Maybe.withDefault 0))
-                                                , Html.Attributes.min "0"
-                                                , Html.Attributes.step "5"
-                                                ]
-                                                []
-                                            ]
-                                        ]
-                                    , div [ class "flex flex-col" ]
-                                        [ label
-                                            [ class "block text-sm font-medium text-gray-700 mb-1 cursor-pointer"
-                                            , for "rollover-percent"
-                                            ]
-                                            [ text "Annual Rollover" ]
-                                        , div [ class "flex rounded-md shadow-sm w-[140px]" ]
-                                            [ div [ class "flex-shrink-0 inline-flex items-center px-2 rounded-l-md border border-r-0 border-gray-300 bg-indigo-100 text-indigo-800 text-sm font-medium" ]
-                                                [ text "%" ]
-                                            , input
-                                                [ class "w-full border border-gray-300 rounded-none rounded-r-md shadow-sm py-1.5 px-2 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-center"
-                                                , id "rollover-percent"
-                                                , type_ "number"
-                                                , placeholder "Rollover"
-                                                , value (String.fromFloat model.calculationInputs.rolloverPercent)
-                                                , onInput (\str -> RolloverPercentChanged (String.toFloat str |> Maybe.withDefault 0))
-                                                , Html.Attributes.min "0"
-                                                , Html.Attributes.max "100"
-                                                , Html.Attributes.step "0.1"
-                                                ]
-                                                []
-                                            ]
-                                        ]
-                                    ]
-                                ]
-                            , PriceModel.view model.calculationInputs
-                            ]
-                        ]
-
-                  else
-                    text ""
-                ]
-            , div [ class "w-full flex justify-center mt-8" ]
-                [ button
-                    [ class "bg-indigo-900 text-white py-2 px-6 rounded-md hover:bg-indigo-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                    , onClick ContinueClicked
-                    ]
-                    [ text "Continue to Payment" ]
-                ]
-            ]
-        ]
-
-
-viewStripe : Model -> Html Msg
-viewStripe model =
-    case model.paymentStatus of
-        Loading ->
-            div [ class "mt-4 pt-3 pb-32 px-4 bg-white border border-gray-200 rounded-md min-h-[600px] flex flex-col items-center justify-center" ]
-                [ div [ class "animate-spin rounded-full h-16 w-16 border-b-2 border-indigo-700 mb-6" ] []
-                , p [ class "text-gray-600 text-center text-lg" ] [ text "Loading secure payment form..." ]
-                , p [ class "text-sm text-gray-500 text-center mt-3 max-w-md" ]
-                    [ text "Please wait while we connect to our payment processor. This may take a few moments." ]
-                ]
-
-        Error error ->
-            div [ class "mt-4 p-3 bg-red-50 border border-red-200 rounded-md" ]
-                [ p [ class "text-red-700" ] [ text "Error" ]
-                , p [ class "mt-2 text-sm text-red-600" ]
-                    [ text "If you're using an ad blocker, please disable it for this site as it may interfere with payment processing." ]
-                ]
-
-        Continuing ->
-            div [ class "mt-4 pt-3 pb-32 px-4 bg-white border border-gray-200 rounded-md min-h-[600px] flex flex-col items-center justify-center" ]
-                [ div [ class "flex flex-col items-center" ]
-                    [ div [ class "rounded-full bg-green-100 p-6 mb-6" ]
-                        [ MyIcon.banknote 48 "#047857" ]
-                    , h3 [ class "text-xl font-semibold text-gray-800 mb-2" ]
-                        [ text "Payment Already Processed" ]
-                    , p [ class "text-gray-600 text-center max-w-md mb-8" ]
-                        [ text "Your subscription payment has been successfully processed. You can continue with the next steps of your onboarding process." ]
-                    , button
-                        [ class "bg-indigo-900 text-white py-2 px-6 rounded-md hover:bg-indigo-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                        , onClick ContinueClicked
-                        ]
-                        [ text "Continue to Company Setup" ]
-                    ]
-                ]
-
-        ReadyToComplete ->
-            node "stripe-checkout"
-                [ attribute "price-id" "price_1RBStWCBUPXAZKNGwpimWl7v" -- Base Subscription price
-                , attribute "metered-price-id" "price_1RBSvJCBUPXAZKNGQ1U9Hl8i" -- Contact Tier price
-                , attribute "return-url" ("http://localhost:5173" ++ buildUrl model 3) -- Return to frame 3 after payment
-                , attribute "first-name" model.user.firstName
-                , attribute "last-name" model.user.lastName
-                , attribute "email" model.user.email
-                ]
-                []
 
 
 viewCompany : Model -> Html Msg
@@ -854,7 +662,7 @@ viewCompany model =
                                     [ MyIcon.clipboardList 24 "#6366F1" ]
                                 , div [ class "text-indigo-600 font-medium" ] [ text "Click to upload" ]
                                 , div [ class "text-gray-500 text-sm mt-1" ] [ text "or drag and drop your logo" ]
-                                , div [ class "text-gray-400 text-xs mt-2" ] [ text "SVG, JPG, or PNG (Recommended: 240px width x 60px height)" ]
+                                , div [ class "text-gray-400 text-xs mt-2" ] [ text "PNG only (Recommended: 240px width x 60px height)" ]
                                 ]
                 ]
             , div [ class "space-y-4 mt-8" ]
@@ -1027,8 +835,15 @@ viewLicensing model =
                 ]
             , div [ class "w-full flex mt-8" ]
                 [ button
-                    [ class "w-full bg-indigo-900 text-white py-2 px-4 rounded-md hover:bg-indigo-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                    [ class
+                        (if hasSelectedCarriers model then
+                            "w-full bg-indigo-900 text-white py-2 px-4 rounded-md hover:bg-indigo-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+
+                         else
+                            "w-full bg-gray-400 text-white py-2 px-4 rounded-md cursor-not-allowed"
+                        )
                     , onClick ContinueClicked
+                    , disabled (not (hasSelectedCarriers model))
                     ]
                     [ text "Continue" ]
                 ]
@@ -1279,6 +1094,9 @@ saveCompanyDetails model =
             Http.jsonBody
                 (Encode.object
                     [ ( "email", Encode.string model.user.email )
+                    , ( "firstName", Encode.string model.user.firstName )
+                    , ( "lastName", Encode.string model.user.lastName )
+                    , ( "phone", Encode.string model.user.phone )
                     , ( "companyName", Encode.string model.companyName )
                     , ( "companyPhone", Encode.string model.companyPhone )
                     , ( "companyWebsite", Encode.string model.companyWebsite )
@@ -1287,7 +1105,7 @@ saveCompanyDetails model =
                     , ( "logo", Maybe.withDefault Encode.null (Maybe.map Encode.string model.logo) )
                     ]
                 )
-        , expect = Http.expectWhatever (\_ -> NoOp)
+        , expect = Http.expectJson CompanyDetailsSaved saveResponseDecoder
         }
 
 
@@ -1307,7 +1125,7 @@ saveLicensingSettings model =
                     , ( "useSmartSend", Encode.bool model.useSmartSend )
                     ]
                 )
-        , expect = Http.expectWhatever (\_ -> NoOp)
+        , expect = Http.expectJson LicensingSaved saveResponseDecoder
         }
 
 
@@ -1338,7 +1156,7 @@ saveAgents model =
                       )
                     ]
                 )
-        , expect = Http.expectWhatever AgentsSaved
+        , expect = Http.expectJson AgentsSaved saveResponseDecoder
         }
 
 
@@ -1375,23 +1193,19 @@ resumeDataDecoder =
     Decode.succeed ResumeData
         |> Pipeline.required "success" Decode.bool
         |> Pipeline.required "onboardingComplete" Decode.bool
-        |> Pipeline.optional "redirectToLogin" Decode.bool False
         |> Pipeline.optional "organization" organizationDecoder defaultOrganization
         |> Pipeline.optional "user" userDecoder defaultUser
         |> Pipeline.optional "agents" (Decode.list agentDecoder) []
         |> Pipeline.optional "carrierSettings" carrierSettingsDecoder defaultCarrierSettings
-        |> Pipeline.optional "paymentStatus" paymentStatusDecoder defaultPaymentStatus
 
 
 type alias ResumeData =
     { success : Bool
     , onboardingComplete : Bool
-    , redirectToLogin : Bool
     , organization : OrganizationData
     , user : UserData
     , agents : List Agent
     , carrierSettings : CarrierSettings
-    , paymentStatus : PaymentStatusInfo
     }
 
 
@@ -1418,13 +1232,6 @@ type alias UserData =
 type alias CarrierSettings =
     { selectedCarriers : List String
     , useSmartSend : Bool
-    }
-
-
-type alias PaymentStatusInfo =
-    { paymentCompleted : Bool
-    , stripeCustomerId : Maybe String
-    , stripeSubscriptionId : Maybe String
     }
 
 
@@ -1458,14 +1265,6 @@ defaultCarrierSettings : CarrierSettings
 defaultCarrierSettings =
     { selectedCarriers = []
     , useSmartSend = True
-    }
-
-
-defaultPaymentStatus : PaymentStatusInfo
-defaultPaymentStatus =
-    { paymentCompleted = False
-    , stripeCustomerId = Nothing
-    , stripeSubscriptionId = Nothing
     }
 
 
@@ -1512,9 +1311,14 @@ carrierSettingsDecoder =
         |> Pipeline.required "useSmartSend" Decode.bool
 
 
-paymentStatusDecoder : Decoder PaymentStatusInfo
-paymentStatusDecoder =
-    Decode.succeed PaymentStatusInfo
-        |> Pipeline.required "paymentCompleted" Decode.bool
-        |> Pipeline.optional "stripeCustomerId" (Decode.map Just Decode.string) Nothing
-        |> Pipeline.optional "stripeSubscriptionId" (Decode.map Just Decode.string) Nothing
+type alias SaveResponse =
+    { success : Bool
+    , message : String
+    }
+
+
+saveResponseDecoder : Decoder SaveResponse
+saveResponseDecoder =
+    Decode.map2 SaveResponse
+        (Decode.field "success" Decode.bool)
+        (Decode.field "message" Decode.string)

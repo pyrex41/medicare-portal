@@ -147,7 +147,10 @@ update msg model =
 
                 -- Format the phone number as needed
                 formattedPhone =
-                    if String.length limitedDigits == 10 then
+                    if String.isEmpty digitsOnly then
+                        ""
+
+                    else if String.length limitedDigits == 10 then
                         "(" ++ String.left 3 limitedDigits ++ ") " ++ String.slice 3 6 limitedDigits ++ "-" ++ String.slice 6 10 limitedDigits
 
                     else if String.length limitedDigits >= 7 then
@@ -156,11 +159,15 @@ update msg model =
                     else if String.length limitedDigits >= 4 then
                         "(" ++ String.left 3 limitedDigits ++ ") " ++ String.slice 3 10 limitedDigits
 
-                    else if String.length limitedDigits > 0 then
-                        "(" ++ limitedDigits
-
                     else
-                        ""
+                        "("
+                            ++ limitedDigits
+                            ++ (if String.length limitedDigits == 3 then
+                                    ") "
+
+                                else
+                                    ""
+                               )
             in
             ( { model | phone = formattedPhone }, Cmd.none )
 
@@ -329,6 +336,9 @@ viewForm model =
                     , onInput UpdatePhone
                     , class "mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
                     , placeholder "(555) 555-5555"
+                    , pattern "\\([0-9]{3}\\) [0-9]{3}-[0-9]{4}"
+                    , attribute "aria-label" "Phone number in format (555) 555-5555"
+                    , attribute "inputmode" "numeric"
                     ]
                     []
                 ]
