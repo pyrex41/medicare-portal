@@ -192,7 +192,7 @@ init key url =
 
         -- Check if this is a direct page load with frame > 1
         isDirectLoadWithHigherFrame =
-            frame > 1 && (url.path == "/onboarding") |> (\_ -> Debug.log "isDirectLoadWithHigherFrame" True)
+            frame > 1 && (url.path == "/onboarding")
 
         redirectCommand =
             case maybeUser of
@@ -404,10 +404,6 @@ update msg model =
                 Ok response ->
                     if response.success then
                         -- Move to frame 2 and clear loading state
-                        let
-                            _ =
-                                Debug.log "CompanyDetailsSaved -- moving to frame 2" 2
-                        in
                         ( { model | frame = 2, loadingResumeData = False }
                         , Nav.pushUrl model.key (buildUrl { model | frame = 2 } 2)
                         )
