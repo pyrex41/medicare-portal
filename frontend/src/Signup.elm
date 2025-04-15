@@ -283,7 +283,7 @@ viewForm model =
                     , id "firstName"
                     , value model.firstName
                     , onInput UpdateFirstName
-                    , class "mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                    , class "mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-base py-2.5 px-3"
                     , placeholder "John"
                     ]
                     []
@@ -295,7 +295,7 @@ viewForm model =
                     , id "lastName"
                     , value model.lastName
                     , onInput UpdateLastName
-                    , class "mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                    , class "mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-base py-2.5 px-3"
                     , placeholder "Doe"
                     ]
                     []
@@ -308,7 +308,7 @@ viewForm model =
                 , id "organizationName"
                 , value model.organizationName
                 , onInput UpdateOrganizationName
-                , class "mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                , class "mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-base py-2.5 px-3"
                 , placeholder "ABC Healthcare"
                 ]
                 []
@@ -321,7 +321,7 @@ viewForm model =
                     , id "email"
                     , value model.email
                     , onInput UpdateEmail
-                    , class "mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                    , class "mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-base py-2.5 px-3"
                     , placeholder "you@example.com"
                     ]
                     []
@@ -334,7 +334,7 @@ viewForm model =
                     , id "phone"
                     , value model.phone
                     , onInput UpdatePhone
-                    , class "mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                    , class "mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-base py-2.5 px-3"
                     , placeholder "(555) 555-5555"
                     , pattern "\\([0-9]{3}\\) [0-9]{3}-[0-9]{4}"
                     , attribute "aria-label" "Phone number in format (555) 555-5555"
@@ -352,7 +352,7 @@ viewForm model =
         , if model.formState == Submitting || not (isValidForm model) then
             button
                 [ type_ "submit"
-                , class "w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-gray-400 cursor-not-allowed opacity-70"
+                , class "w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-[#03045e] opacity-70 cursor-not-allowed"
                 , disabled True
                 ]
                 [ text
@@ -377,7 +377,7 @@ viewForm model =
             in
             a
                 [ href uri
-                , class "w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                , class "w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-[#03045e] hover:[#03045e]/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-theme-brand"
                 ]
                 [ text "Sign Up" ]
         , p [ class "mt-2 text-center text-sm text-gray-600" ]
