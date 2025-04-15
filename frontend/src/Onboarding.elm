@@ -515,7 +515,7 @@ update msg model =
                 Ok response ->
                     if response.success then
                         ( model
-                        , Nav.pushUrl model.key response.redirectUrl
+                        , Nav.load response.redirectUrl
                         )
 
                     else
