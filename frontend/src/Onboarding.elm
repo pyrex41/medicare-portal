@@ -46,6 +46,7 @@ type alias Model =
     , newAgentPhone : String
     , newAgentIsAdmin : Bool
     , loadingResumeData : Bool
+    , loginError : Maybe String
     }
 
 
@@ -190,6 +191,7 @@ init key url =
             , newAgentPhone = ""
             , newAgentIsAdmin = True
             , loadingResumeData = False
+            , loginError = Nothing
             }
 
         -- Check if this is a direct page load with frame > 1
@@ -519,13 +521,13 @@ update msg model =
                         )
 
                     else
-                        ( { model | loadingResumeData = False }
-                        , Nav.pushUrl model.key "/signup"
+                        ( { model | loadingResumeData = False, loginError = Just "Failed to complete onboarding login. Please try again or go back to sign up." }
+                        , Cmd.none
                         )
 
                 Err _ ->
-                    ( { model | loadingResumeData = False }
-                    , Nav.pushUrl model.key "/signup"
+                    ( { model | loadingResumeData = False, loginError = Just "Failed to complete onboarding login. Please try again or go back to sign up." }
+                    , Cmd.none
                     )
 
 
@@ -874,30 +876,53 @@ viewAddAgents model =
             [ h2 [ class "text-3xl font-semibold text-gray-900 mb-2" ] [ text "More Team Members?" ]
             , p [ class "text-gray-500" ] [ text "Add additional agents who will be using Medicare Max" ]
             ]
-        , div [ class "w-full max-w-4xl" ]
-            [ div [ class "grid grid-cols-1 gap-6 mb-8" ]
-                (List.map (viewAgentCard model) model.agents)
-            , if model.showAgentForm then
-                viewAgentForm model
+        , if model.loadingResumeData then
+            div [ class "w-full max-w-4xl text-center" ]
+                [ div [ class "animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-indigo-500 mx-auto mb-4" ] []
+                , div [ class "text-gray-600" ] [ text "Finalizing your setup..." ]
+                ]
 
-              else
-                div [ class "flex justify-center" ]
-                    [ button
-                        [ class "flex items-center justify-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                        , onClick ShowAgentForm
-                        ]
-                        [ span [ class "mr-2" ] [ text "+" ]
-                        , text "Add Another Agent"
+          else if model.loginError /= Nothing then
+            div [ class "w-full max-w-4xl" ]
+                [ div [ class "bg-red-50 border border-red-200 rounded-lg p-6 text-center" ]
+                    [ div [ class "text-red-800 mb-4" ] [ text (Maybe.withDefault "" model.loginError) ]
+                    , div [ class "flex justify-center space-x-4" ]
+                        [ a
+                            [ class "text-indigo-600 hover:text-indigo-800 font-medium"
+                            , href "/signup"
+                            ]
+                            [ text "Go back to sign up" ]
                         ]
                     ]
-            ]
-        , div [ class "mt-10 w-full max-w-md" ]
-            [ button
-                [ class "w-full bg-[#03045e] text-white py-3 px-4 rounded-md hover:bg-[#02034e] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 font-medium"
-                , onClick ContinueClicked
                 ]
-                [ text "Complete Setup" ]
-            ]
+
+          else
+            div [ class "w-full max-w-4xl" ]
+                [ div [ class "grid grid-cols-1 gap-6 mb-8" ]
+                    (List.map (viewAgentCard model) model.agents)
+                , if model.showAgentForm then
+                    viewAgentForm model
+
+                  else
+                    div [ class "flex justify-center" ]
+                        [ button
+                            [ class "flex items-center justify-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                            , onClick ShowAgentForm
+                            ]
+                            [ span [ class "mr-2" ] [ text "+" ]
+                            , text "Add Another Agent"
+                            ]
+                        ]
+                , div [ class "flex justify-center mt-10" ]
+                    [ div [ class "w-full max-w-md" ]
+                        [ button
+                            [ class "w-full bg-[#03045e] text-white py-3 px-4 rounded-md hover:bg-[#02034e] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 font-medium"
+                            , onClick ContinueClicked
+                            ]
+                            [ text "Complete Setup" ]
+                        ]
+                    ]
+                ]
         ]
 
 
