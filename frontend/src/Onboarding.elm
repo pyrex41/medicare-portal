@@ -133,6 +133,8 @@ init key url =
 
         organizationName =
             Dict.get "organizationName" queryParams
+                |> Maybe.andThen Url.percentDecode
+                |> Maybe.withDefault ""
 
         frame =
             case Dict.get "frame" queryParams of
@@ -170,7 +172,7 @@ init key url =
         initialModel =
             { user = currentUser
             , frame = frame
-            , companyName = organizationName |> Maybe.withDefault ""
+            , companyName = organizationName
             , companyPhone = currentUser.phone
             , companyWebsite = ""
             , primaryColor = "#6B46C1"
@@ -236,6 +238,7 @@ type Msg
     | LicensingSaved (Result Http.Error SaveResponse)
     | AgentsSaved (Result Http.Error SaveResponse)
     | GotResumeData (Result Http.Error ResumeData)
+    | OnboardingLoginCompleted (Result Http.Error OnboardingLoginResponse)
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -301,7 +304,7 @@ update msg model =
                         ( { model | frame = newFrame }
                         , Cmd.batch
                             [ saveAgents model
-                            , Nav.pushUrl model.key "/login"
+                            , completeOnboardingLogin model
                             ]
                         )
 
@@ -474,7 +477,7 @@ update msg model =
                         in
                         ( { model
                             | loadingResumeData = False
-                            , companyName = resumeData.organization.name
+                            , companyName = resumeData.organization.name |> Url.percentDecode |> Maybe.withDefault resumeData.organization.name
                             , companyPhone = resumeData.organization.phone
                             , companyWebsite = resumeData.organization.website
                             , primaryColor = resumeData.organization.primaryColor
@@ -505,6 +508,24 @@ update msg model =
 
                       else
                         Cmd.none
+                    )
+
+        OnboardingLoginCompleted result ->
+            case result of
+                Ok response ->
+                    if response.success then
+                        ( model
+                        , Nav.pushUrl model.key response.redirectUrl
+                        )
+
+                    else
+                        ( { model | loadingResumeData = False }
+                        , Nav.pushUrl model.key "/signup"
+                        )
+
+                Err _ ->
+                    ( { model | loadingResumeData = False }
+                    , Nav.pushUrl model.key "/signup"
                     )
 
 
@@ -692,7 +713,7 @@ viewCompany model =
             ]
         , div [ class "mt-10 w-full max-w-md" ]
             [ button
-                [ class "w-full bg-indigo-900 text-white py-3 px-4 rounded-md hover:bg-indigo-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 font-medium"
+                [ class "w-full bg-[#03045e] text-white py-3 px-4 rounded-md hover:bg-[#02034e] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 font-medium"
                 , onClick ContinueClicked
                 ]
                 [ text "Continue" ]
@@ -748,8 +769,7 @@ viewProgressDots currentFrame =
 viewLicensing : Model -> Html Msg
 viewLicensing model =
     div [ class "flex flex-col items-center" ]
-        [ MyIcon.clipboardList 32 "#0F172A"
-        , h2 [ class "text-2xl font-semibold text-gray-900 mt-6" ] [ text "Carrier Information" ]
+        [ h2 [ class "text-2xl font-semibold text-gray-900 mt-6" ] [ text "Carrier Information" ]
         , p [ class "text-gray-500 mt-2 mb-6" ] [ text "Tell us about your carrier relationships." ]
         , div [ class "w-full max-w-md space-y-6" ]
             [ div [ class "space-y-4" ]
@@ -833,10 +853,10 @@ viewLicensing model =
                 [ button
                     [ class
                         (if hasSelectedCarriers model then
-                            "w-full bg-indigo-900 text-white py-2 px-4 rounded-md hover:bg-indigo-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                            "w-full bg-[#03045e] text-white py-2 px-4 rounded-md hover:bg-[#02034e] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
 
                          else
-                            "w-full bg-gray-400 text-white py-2 px-4 rounded-md cursor-not-allowed"
+                            "w-full bg-[#03045e]/70 text-white py-2 px-4 rounded-md cursor-not-allowed"
                         )
                     , onClick ContinueClicked
                     , disabled (not (hasSelectedCarriers model))
@@ -873,7 +893,7 @@ viewAddAgents model =
             ]
         , div [ class "mt-10 w-full max-w-md" ]
             [ button
-                [ class "w-full bg-indigo-900 text-white py-3 px-4 rounded-md hover:bg-indigo-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 font-medium"
+                [ class "w-full bg-[#03045e] text-white py-3 px-4 rounded-md hover:bg-[#02034e] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 font-medium"
                 , onClick ContinueClicked
                 ]
                 [ text "Complete Setup" ]
@@ -920,25 +940,6 @@ viewAgentCard model agent =
                                 agent.phone
                             )
                         ]
-                    ]
-                ]
-            , div [ class "ml-auto" ]
-                [ span
-                    [ class
-                        (if agent.isAdmin then
-                            "inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-green-100 text-green-800"
-
-                         else
-                            "inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-gray-100 text-gray-800"
-                        )
-                    ]
-                    [ text
-                        (if agent.isAdmin then
-                            "Admin"
-
-                         else
-                            "Agent"
-                        )
                     ]
                 ]
             ]
@@ -1005,7 +1006,7 @@ viewAgentForm model =
                     ]
                 , div []
                     [ label [ class "block text-sm font-medium text-gray-700 mb-1" ]
-                        [ text "Phone (optional)" ]
+                        [ text "Phone" ]
                     , input
                         [ class "shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md"
                         , type_ "tel"
@@ -1018,8 +1019,23 @@ viewAgentForm model =
                 ]
             , div [ class "pt-4" ]
                 [ button
-                    [ class "w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                    [ class
+                        (if
+                            String.isEmpty (String.trim model.newAgentFirstName)
+                                || String.isEmpty (String.trim model.newAgentLastName)
+                                || String.isEmpty (String.trim model.newAgentEmail)
+                         then
+                            "w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-400 cursor-not-allowed"
+
+                         else
+                            "w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                        )
                     , onClick AddAgent
+                    , disabled
+                        (String.isEmpty (String.trim model.newAgentFirstName)
+                            || String.isEmpty (String.trim model.newAgentLastName)
+                            || String.isEmpty (String.trim model.newAgentEmail)
+                        )
                     ]
                     [ text "Add Agent" ]
                 ]
@@ -1318,3 +1334,32 @@ saveResponseDecoder =
     Decode.map2 SaveResponse
         (Decode.field "success" Decode.bool)
         (Decode.field "message" Decode.string)
+
+
+type alias OnboardingLoginResponse =
+    { success : Bool
+    , redirectUrl : String
+    , email : String
+    }
+
+
+onboardingLoginResponseDecoder : Decoder OnboardingLoginResponse
+onboardingLoginResponseDecoder =
+    Decode.succeed OnboardingLoginResponse
+        |> Pipeline.required "success" Decode.bool
+        |> Pipeline.required "redirectUrl" Decode.string
+        |> Pipeline.required "email" Decode.string
+
+
+completeOnboardingLogin : Model -> Cmd Msg
+completeOnboardingLogin model =
+    Http.post
+        { url = "/api/auth/onboarding-login"
+        , body =
+            Http.jsonBody
+                (Encode.object
+                    [ ( "emailRaw", Encode.string model.user.email )
+                    ]
+                )
+        , expect = Http.expectJson OnboardingLoginCompleted onboardingLoginResponseDecoder
+        }

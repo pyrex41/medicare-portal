@@ -102,6 +102,60 @@ export function createAuthRoutes() {
       }
     })
 
+    .post('/api/auth/onboarding-login', async ({ body, set, setCookie }) => {
+      const { emailRaw } = body as { emailRaw: string };
+      logger.info(`Onboarding login request for email: ${emailRaw}`);
+
+      // Decode the email if it's URL encoded and trim whitespace
+      const email = decodeURIComponent(emailRaw).trim();
+      
+      const user = await db.fetchOne<User>(
+        `SELECT u.*, o.slug as organization_slug 
+        FROM users u 
+        JOIN organizations o ON u.organization_id = o.id 
+        WHERE LOWER(u.email) = LOWER(?) AND u.is_active = 1`,
+        [email]
+      );
+      
+      if (!user) {
+        logger.error(`No active user found for email: ${email}`);
+        return {
+          success: false,
+          redirectUrl: "/signup",
+          email: ""
+        };
+      }
+      
+      logger.info(`Found user: ${JSON.stringify(user)}`);
+      
+      const sessionId = crypto.randomBytes(32).toString('hex');
+      logger.info(`Created session ID: ${sessionId}`);
+      const expiresAt = new Date();
+      expiresAt.setDate(expiresAt.getDate() + 1); // 1 day from now
+
+      await db.execute(
+        'INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)',
+        [sessionId, user.id, expiresAt.toISOString()]
+      );
+
+      logger.info(`Created session in database for user ${user.id}`);
+
+      setCookie('session', sessionId, {
+        path: '/',
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        maxAge: 60 * 60 * 24 * 1 // 1 day -- shorter to force them to login again soon after onboarding
+      });
+
+      set.status = 200;
+      return {
+        success: true,  
+        redirectUrl: "/contacts",
+        email: user.email
+      };
+    })
+
     .get('/api/auth/verify/:organizationSlug/:token', async ({ params, cookie, setCookie }) => {
       const { token, organizationSlug } = params;
       

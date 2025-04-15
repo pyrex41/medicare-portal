@@ -4,6 +4,23 @@ module.exports = {
   content: ["./src/**/*.{html,js,elm}", "*.{js,ts,jsx,tsx,mdx}"],
   theme: {
     extend: {
+      fontFamily: {
+        sans: [
+          '-apple-system',
+          'BlinkMacSystemFont',
+          'Roboto',
+          '"Segoe UI"',
+          '"Helvetica Neue"',
+          'Arial',
+          '"Noto Sans"',
+          'sans-serif',
+          '"Apple Color Emoji"',
+          '"Segoe UI Emoji"',
+          '"Segoe UI Symbol"',
+          '"Noto Color Emoji"',
+        ],
+        heading: ['Inter', 'system-ui', 'sans-serif'],
+      },
       colors: {
         brand: {
           DEFAULT: '#03045e',
