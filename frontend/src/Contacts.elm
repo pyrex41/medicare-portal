@@ -2617,10 +2617,25 @@ viewCsvUploadModal state isUploading model =
                                                         )
                                                     )
                                                     model.agents
+
+                                            -- Get default agent ID - either from state.selectedAgentId if valid, or from current user
+                                            defaultAgentId =
+                                                case state.selectedAgentId of
+                                                    Just id ->
+                                                        if id > 0 then
+                                                            id
+
+                                                        else
+                                                            -- If id is 0, use current user's id
+                                                            user.id
+
+                                                    Nothing ->
+                                                        -- If Nothing, use current user's id
+                                                        user.id
                                         in
                                         Html.select
                                             [ class "w-full px-4 py-3 bg-white border-[2.5px] border-purple-300 rounded-lg text-gray-700 placeholder-gray-400 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 focus:bg-white transition-all duration-200 appearance-none"
-                                            , value (String.fromInt (Maybe.withDefault 0 state.selectedAgentId))
+                                            , value (String.fromInt defaultAgentId)
                                             , onInput (\val -> SelectUploadAgent (String.toInt val |> Maybe.withDefault 0))
                                             ]
                                             (List.map

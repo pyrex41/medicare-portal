@@ -120,8 +120,24 @@ export const contactsRoutes = new Elysia({ prefix: '/api/contacts' })
 
       // Add search condition if present
       if (search) {
-        whereConditions.push('(first_name LIKE ? OR last_name LIKE ? OR email LIKE ?)');
-        params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+        const searchTerms = search.trim().split(/\s+/);
+        
+        if (searchTerms.length === 1) {
+          // Single word search - check each column individually
+          whereConditions.push('(first_name LIKE ? OR last_name LIKE ? OR email LIKE ? OR phone_number LIKE ?)');
+          params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
+        } else {
+          // Multi-word search - treat first word as first name and remaining words as last name
+          const firstName = searchTerms[0];
+          const lastName = searchTerms.slice(1).join(' ');
+          
+          whereConditions.push('((first_name LIKE ? AND last_name LIKE ?) OR first_name LIKE ? OR last_name LIKE ? OR email LIKE ? OR phone_number LIKE ?)');
+          params.push(
+            `%${firstName}%`, `%${lastName}%`, // Combined name search
+            `%${search}%`, `%${search}%`, // Full search term in either name field
+            `%${search}%`, `%${search}%` // Email and phone
+          );
+        }
       }
 
       // Add state filter
