@@ -1578,7 +1578,18 @@ update msg model =
                                         }
                     in
                     ( { model | showModal = CsvUploadModal { state | columnMapping = updatedMapping } }
-                    , Cmd.none
+                    , case ( field, state.file, updatedMapping ) of
+                        ( "currentCarrier", Just file, Just mapping ) ->
+                            if mapping.currentCarrier == "" then
+                                Cmd.none
+
+                            else
+                                Task.perform
+                                    (\content -> CarrierValuesExtracted (extractUniqueCarriers content mapping.currentCarrier))
+                                    (File.toString file)
+
+                        _ ->
+                            Cmd.none
                     )
 
                 _ ->
@@ -1613,15 +1624,32 @@ update msg model =
                 CsvUploadModal state ->
                     case result of
                         Ok suggestions ->
+                            let
+                                hasCarrierColumn =
+                                    case suggestions.columnMappings.currentCarrier of
+                                        "" ->
+                                            False
+
+                                        _ ->
+                                            True
+                            in
                             ( { model
                                 | showModal =
                                     CsvUploadModal
                                         { state
                                             | columnMapping = Just suggestions.columnMappings
                                             , carrierMapping = Just { detectedCarriers = state.detectedCarriers, mappings = suggestions.carrierMappings }
+                                            , extractingCarriers = hasCarrierColumn
                                         }
                               }
-                            , Cmd.none
+                            , case ( hasCarrierColumn, state.file ) of
+                                ( True, Just file ) ->
+                                    Task.perform
+                                        (\content -> CarrierValuesExtracted (extractUniqueCarriers content suggestions.columnMappings.currentCarrier))
+                                        (File.toString file)
+
+                                _ ->
+                                    Cmd.none
                             )
 
                         Err _ ->
@@ -1731,7 +1759,14 @@ update msg model =
                                     { mapping | mappings = updatedMappings }
                             in
                             ( { model | showModal = CsvUploadModal { state | carrierMapping = Just updatedMapping } }
-                            , Cmd.none
+                            , case ( original, state.file ) of
+                                ( "currentCarrier", Just file ) ->
+                                    Task.perform
+                                        (\content -> CarrierValuesExtracted (extractUniqueCarriers content mapped))
+                                        (File.toString file)
+
+                                _ ->
+                                    Cmd.none
                             )
 
                         Nothing ->
@@ -2762,6 +2797,8 @@ viewCarrierMapping state supportedCarriers =
                 div [ class "flex space-x-2" ]
                     [ div [ class "text-xs font-medium text-gray-600 py-1" ]
                         [ text ("Using column \"" ++ carrierColumnName ++ "\" for carrier data") ]
+
+                    {--
                     , button
                         [ class "px-3 py-1 bg-purple-500 text-white text-xs font-medium rounded hover:bg-purple-600 transition-colors"
                         , onClick ExtractCarrierValues
@@ -2776,6 +2813,7 @@ viewCarrierMapping state supportedCarriers =
                           else
                             text "Extract Carriers"
                         ]
+                    --}
                     ]
 
               else
@@ -3375,7 +3413,7 @@ viewContactForm : Model -> ContactForm -> (ContactFormField -> String -> Msg) ->
 viewContactForm model form updateMsg submitMsg buttonText isSubmitting =
     let
         carrierOptions =
-            ( "", "Select a carrier" ) :: List.map (\c -> ( c, c )) (model.carriers ++ [ "Other" ])
+            ( "", "Select a carrier" ) :: List.map (\c -> ( c, c )) model.carriers ++ [ ( "Other", "Other" ) ]
 
         planTypeOptions =
             [ ( "", "Select a plan type" ), ( "Plan N", "Plan N" ), ( "Plan G", "Plan G" ), ( "Other", "Other" ) ]
@@ -3590,6 +3628,7 @@ viewFormSelect labelText selectedValue field updateMsg options =
             [ class "w-full px-2 py-1.5 bg-white border-[1.5px] border-purple-300 rounded-md text-sm text-gray-700 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-1 focus:ring-purple-200 focus:bg-white transition-all duration-200"
             , value selectedValue
             , onInput (updateMsg field)
+            , required True
             ]
             (List.map
                 (\( val, label ) ->
@@ -3999,6 +4038,7 @@ isContactFormValid form =
         && String.length form.zipCode
         > 0
         && isJust form.planType
+        && isJust form.currentCarrier
 
 
 isJust : Maybe a -> Bool
