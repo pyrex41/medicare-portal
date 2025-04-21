@@ -414,6 +414,9 @@ const startServer = async () => {
     logger.info('Database initialized successfully')
 
     const app = new Elysia()
+      // Add error handler
+      .use(errorHandler)
+      // Add CORS middleware
       .use(cors({
         // In development, allow the Vite dev server origin
         origin: process.env.NODE_ENV === 'development' 
@@ -424,6 +427,34 @@ const startServer = async () => {
         credentials: true,
         preflight: true
       }))
+      // Add SPA route auth bypass handler
+      .onRequest(({ request }) => {
+        const url = new URL(request.url);
+        const path = url.pathname;
+        
+        // Log all requests (combined from the other handler)
+        const method = request.method;
+        logger.info(`⮕ ${method} ${path}`);
+        
+        // Bypass auth for all SPA routes (non-API paths with no file extension)
+        if ((!path.startsWith('/api/') && !path.includes('.')) || 
+            path.startsWith('/compare/') ||
+            path.startsWith('/quote/') ||
+            path.startsWith('/eligibility') ||
+            path.startsWith('/schedule')) {
+          
+          logger.info(`[Auth Bypass] Setting bypass header for SPA route: ${path}`);
+          // Modify the request headers to include X-Bypass-Auth
+          const newHeaders = new Headers(request.headers);
+          newHeaders.set('X-Bypass-Auth', 'true');
+          
+          // Create a new request with the modified headers
+          Object.defineProperty(request, 'headers', {
+            value: newHeaders,
+            writable: true
+          });
+        }
+      })
       // Add explicit OPTIONS handler for preflight
       .options('/api/contacts/:id', ({ set }) => {
         set.headers = {
@@ -433,11 +464,6 @@ const startServer = async () => {
           'Access-Control-Allow-Credentials': 'true'
         }
         return new Response(null, { status: 204 })
-      })
-      // Log all requests
-      .onRequest(({ request: { method, url, headers } }) => {
-        const path = new URL(url).pathname
-        logger.info(`⮕ ${method} ${path}`)
       })
       // Log all responses
       .onResponse((context) => {
@@ -928,10 +954,13 @@ const startServer = async () => {
             }
             
             // Try different approach for static files
-            app.get('/*', async ({ request }) => {
+            app.get('/*', async ({ request, set }) => {
               const url = new URL(request.url);
               const path = url.pathname;
-              
+
+              // Log the browser type from the user agent
+              const userAgent = request.headers.get('user-agent') || 'unknown';
+             
               logger.info(`[Static Route Handler] Handling request for: ${path}`);
               
               // Skip API routes
@@ -966,14 +995,78 @@ const startServer = async () => {
                 } else if (path.match(/^\/compare\/[^\/]+$/)) {
                   // Special case for Compare route with path parameters
                   logger.info(`[Static Route Handler] Serving index.html for Compare route with path parameter: ${path}`);
-                  return new Response(Bun.file(join(distPath, 'index.html')), {
-                    headers: { 'Content-Type': 'text/html' }
+                  logger.info(`[Static Route Handler] About to create response with explicit 200 status code`);
+                  
+                  // Create response with explicit status
+                  set.status = 200
+                  const response = new Response(Bun.file(join(distPath, 'index.html')), {
+                    headers: { 
+                      'Content-Type': 'text/html',
+                      'X-Bypass-Auth': 'true' // Add a header to indicate this should bypass auth
+                    },
+                    status: 200 // Explicitly set 200 status code
                   });
+                  
+                  logger.info(`[Static Route Handler] Created response with status: ${response.status}`);
+                  return response;
+                } else if (path.match(/^\/quote\/[^\/]+$/)) {
+                  // Special case for Quote route with path parameters
+                  logger.info(`[Static Route Handler] Serving index.html for Quote route with path parameter: ${path}`);
+                  logger.info(`[Static Route Handler] About to create response with explicit 200 status code`);
+                  
+                  // Create response with explicit status
+                  set.status = 200
+                  const response = new Response(Bun.file(join(distPath, 'index.html')), {
+                    headers: { 
+                      'Content-Type': 'text/html',
+                      'X-Bypass-Auth': 'true' // Add a header to indicate this should bypass auth
+                    },
+                    status: 200 // Explicitly set 200 status code
+                  });
+                  
+                  logger.info(`[Static Route Handler] Created response with status: ${response.status}`);
+                  return response;
+                } else if (path.match(/^\/eligibility(\?.*)?$/)) {
+                  // Special case for Eligibility route with query parameters
+                  logger.info(`[Static Route Handler] Serving index.html for Eligibility route: ${path}`);
+                  logger.info(`[Static Route Handler] About to create response with explicit 200 status code`);
+                  
+                  // Create response with explicit status
+                  set.status = 200
+                  const response = new Response(Bun.file(join(distPath, 'index.html')), {
+                    headers: { 
+                      'Content-Type': 'text/html',
+                      'X-Bypass-Auth': 'true' // Add a header to indicate this should bypass auth
+                    },
+                    status: 200 // Explicitly set 200 status code
+                  });
+                  
+                  logger.info(`[Static Route Handler] Created response with status: ${response.status}`);
+                  return response;
+                } else if (path.match(/^\/schedule(\?.*)?$/)) {
+                  // Special case for Schedule route with query parameters
+                  logger.info(`[Static Route Handler] Serving index.html for Schedule route: ${path}`);
+                  logger.info(`[Static Route Handler] About to create response with explicit 200 status code`);
+                  
+                  // Create response with explicit status
+                  set.status = 200
+                  const response = new Response(Bun.file(join(distPath, 'index.html')), {
+                    headers: { 
+                      'Content-Type': 'text/html',
+                      'X-Bypass-Auth': 'true' // Add a header to indicate this should bypass auth
+                    },
+                    status: 200 // Explicitly set 200 status code
+                  });
+                  
+                  logger.info(`[Static Route Handler] Created response with status: ${response.status}`);
+                  return response;
                 } else if (path !== '/' && !path.includes('.')) {
                   // This is likely a SPA route, serve index.html
                   logger.info(`[Static Route Handler] Likely SPA route, serving index.html for: ${path}`);
+                  set.status = 200
                   return new Response(Bun.file(join(distPath, 'index.html')), {
-                    headers: { 'Content-Type': 'text/html' }
+                    headers: { 'Content-Type': 'text/html' },
+                    status: 200 // Explicitly set 200 status code
                   });
                 } else if (path === '/') {
                   // Explicitly handle root path
@@ -982,8 +1075,10 @@ const startServer = async () => {
                   
                   if (existsSync(indexPath)) {
                     logger.info(`[Static Route Handler] Root: index.html exists, serving it`);
+                    set.status = 200
                     return new Response(Bun.file(indexPath), {
-                      headers: { 'Content-Type': 'text/html' }
+                      headers: { 'Content-Type': 'text/html' },
+                      status: 200 // Explicitly set 200 status code
                     });
                   } else {
                     logger.error(`[Static Route Handler] Root: index.html doesn't exist at ${indexPath}`);

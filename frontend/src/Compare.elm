@@ -1461,6 +1461,20 @@ viewLoading =
         [ div [ class "animate-spin rounded-full h-12 w-12 border-4 border-purple-600 border-t-transparent" ] []
         , p [ class "text-center text-lg font-medium text-gray-600" ]
             [ text "Loading your personalized quote..." ]
+        , div
+            [ class "sm:hidden opacity-0 transition-opacity duration-500 delay-[10000ms] mt-6 px-4 max-w-xs text-center text-sm text-gray-500"
+            , style "animation" "fadeIn 0.5s 5s forwards"
+            ]
+            [ text "If page fails to load, please try refreshing or opening in your device's default browser." ]
+        , Html.node "style"
+            []
+            [ text """
+                @keyframes fadeIn {
+                    from { opacity: 0; }
+                    to { opacity: 1; }
+                }
+              """
+            ]
         ]
 
 

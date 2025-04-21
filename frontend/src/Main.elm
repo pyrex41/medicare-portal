@@ -310,15 +310,18 @@ init flags url key =
         initialRoute =
             Parser.parse routeParser url
 
+        --|> Debug.log "initialRoute"
         -- Determine if this is a public route that can be rendered immediately
         isPublicRoute =
             case initialRoute of
                 Just (PublicRoute _) ->
                     True
 
+                --|> Debug.log "isPublicRoute"
                 _ ->
                     False
 
+        --|> Debug.log "isPublicRoute"
         -- Set initial page appropriately
         initialPage =
             if isPublicRoute then
