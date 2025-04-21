@@ -36,7 +36,7 @@ Notes:
 ------
 - Some files may have been excluded based on .gitignore rules and Repomix's configuration
 - Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
-- Only files matching these patterns are included: main.ts, src/**/*.elm
+- Only files matching these patterns are included: main.ts, **/*.elm
 - Files matching patterns in .gitignore are excluded
 - Files matching default ignore patterns are excluded
 
@@ -46,65 +46,65 @@ Additional Info:
 ================================================================
 Directory Structure
 ================================================================
-src/
-  Components/
-    AccountStatusBanner.elm
-    LimitBanner.elm
-    ProgressIndicator.elm
-    SetupLayout.elm
-  Utils/
-    MyDate.elm
-    QuoteHeader.elm
-    RandomOrgName.elm
-    UrlStuff.elm
-  Accept.elm
-  AddAgent.elm
-  AgeCalc.elm
-  BirthdayRules.elm
-  Calculator.elm
-  CarrierNaic.elm
-  ChangePlan.elm
-  ChoosePlan.elm
-  Compare.elm
-  Contact.elm
-  Contacts.elm
-  CsvProcessor.elm
-  Dashboard.elm
-  Decline.elm
-  Earnings.elm
-  Eligibility.elm
-  EmailScheduler.elm
-  Home.elm
-  Landing.elm
-  Login.elm
-  Logout.elm
-  Main.elm
-  MyIcon.elm
-  Onboarding.elm
-  Ports.elm
-  PriceModel.elm
-  Pricing.elm
-  Pricing2.elm
-  Profile.elm
-  Quote.elm
-  QuoteBirthdayRules.elm
-  Schedule.elm
-  ScheduleMain.elm
-  SelfServiceOnboarding.elm
-  Settings.elm
-  Signup.elm
-  StateRegions.elm
-  Subscription.elm
-  TempLanding.elm
-  Waitlist.elm
-  Walkthrough.elm
+Components/
+  AccountStatusBanner.elm
+  LimitBanner.elm
+  ProgressIndicator.elm
+  SetupLayout.elm
+Utils/
+  MyDate.elm
+  QuoteHeader.elm
+  RandomOrgName.elm
+  UrlStuff.elm
+Accept.elm
+AddAgent.elm
+AgeCalc.elm
+BirthdayRules.elm
+Calculator.elm
+CarrierNaic.elm
+ChangePlan.elm
+ChoosePlan.elm
+Compare.elm
+Contact.elm
+Contacts.elm
+CsvProcessor.elm
+Dashboard.elm
+Decline.elm
+Earnings.elm
+Eligibility.elm
+EmailScheduler.elm
+Home.elm
+Landing.elm
+Login.elm
+Logout.elm
+Main.elm
+main.ts
+MyIcon.elm
+Onboarding.elm
+Ports.elm
+PriceModel.elm
+Pricing.elm
+Pricing2.elm
+Profile.elm
+Quote.elm
+QuoteBirthdayRules.elm
+Schedule.elm
+ScheduleMain.elm
+SelfServiceOnboarding.elm
+Settings.elm
+Signup.elm
+StateRegions.elm
+Subscription.elm
+TempLanding.elm
+Waitlist.elm
+Walkthrough.elm
 
 ================================================================
 Files
 ================================================================
 
 ================
-File: src/Components/AccountStatusBanner.elm
+File: Components/AccountStatusBanner.elm
 ================
 module Components.AccountStatusBanner exposing (AccountStatusDetails, view)
 
@@ -353,7 +353,7 @@ getStatusTitle status =
             "Notice"
 
 ================
-File: src/Components/LimitBanner.elm
+File: Components/LimitBanner.elm
 ================
 module Components.LimitBanner exposing (LimitWarning(..), Model, Msg, init, update, view, viewLimitBanner)
 
@@ -533,7 +533,7 @@ viewLimitBanner warning closeMsg =
         ]
 
 ================
-File: src/Components/ProgressIndicator.elm
+File: Components/ProgressIndicator.elm
 ================
 module Components.ProgressIndicator exposing (Step, view)
 
@@ -618,7 +618,7 @@ viewStep step =
         ]
 
 ================
-File: src/Components/SetupLayout.elm
+File: Components/SetupLayout.elm
 ================
 module Components.SetupLayout exposing (SetupStep(..), view)
 
@@ -879,7 +879,7 @@ isStepComplete currentStep step stepIndex currentStepNumber =
             True
 
 ================
-File: src/Utils/MyDate.elm
+File: Utils/MyDate.elm
 ================
 module Utils.MyDate exposing (dateFromMonthDayYear)
 
@@ -934,7 +934,7 @@ dateFromMonthDayYear dateString =
         Err "Invalid date format 2"
 
 ================
-File: src/Utils/QuoteHeader.elm
+File: Utils/QuoteHeader.elm
 ================
 module Utils.QuoteHeader exposing (..)
 
@@ -957,7 +957,7 @@ viewHeader maybeImage maybeName =
         ]
 
 ================
-File: src/Utils/RandomOrgName.elm
+File: Utils/RandomOrgName.elm
 ================
 module Utils.RandomOrgName exposing (generateOrgName)
 
@@ -987,7 +987,7 @@ generateOrgName =
             )
 
 ================
-File: src/Utils/UrlStuff.elm
+File: Utils/UrlStuff.elm
 ================
 module Utils.UrlStuff exposing (getQueryParams)
 
@@ -1012,7 +1012,7 @@ getQueryParams url =
         |> Dict.fromList
 
 ================
-File: src/Accept.elm
+File: Accept.elm
 ================
 module Accept exposing (Model, Msg(..), init, subscriptions, update, view)
 
@@ -1219,7 +1219,7 @@ subscriptions _ =
     Sub.none
 
 ================
-File: src/AddAgent.elm
+File: AddAgent.elm
 ================
 module AddAgent exposing (Model, Msg, init, subscriptions, update, view)
 
@@ -3184,7 +3184,7 @@ submitNewAgent model =
         }
 
 ================
-File: src/AgeCalc.elm
+File: AgeCalc.elm
 ================
 module AgeCalc exposing (getAgeNextMonth)
 
@@ -3213,7 +3213,7 @@ getAgeNextMonth birthDateStr currentDate =
             0
 
 ================
-File: src/BirthdayRules.elm
+File: BirthdayRules.elm
 ================
 module BirthdayRules exposing
     ( BirthdayRuleType(..)
@@ -3512,7 +3512,7 @@ getDelayedEmailDate state baseDate scheduledDate =
             scheduledDate
 
 ================
-File: src/Calculator.elm
+File: Calculator.elm
 ================
 module Calculator exposing (main)
 
@@ -3710,7 +3710,7 @@ main =
     Browser.sandbox { init = init, update = update, view = view }
 
 ================
-File: src/CarrierNaic.elm
+File: CarrierNaic.elm
 ================
 module CarrierNaic exposing
     ( Carrier(..)
@@ -3981,7 +3981,7 @@ carrierDecoder =
             )
 
 ================
-File: src/ChangePlan.elm
+File: ChangePlan.elm
 ================
 module ChangePlan exposing (Model, Msg, init, subscriptions, update, view)
 
@@ -4063,7 +4063,7 @@ subscriptions model =
     Sub.map ChoosePlanMsg (ChoosePlan.subscriptions model.choosePlanModel)
 
 ================
-File: src/ChoosePlan.elm
+File: ChoosePlan.elm
 ================
 port module ChoosePlan exposing (Model, Msg(..), init, subscriptions, update, view, viewChangePlan)
 
@@ -5265,7 +5265,7 @@ viewPlan selectedPlan tier =
 port stripeTableSelected : (String -> msg) -> Sub msg
 
 ================
-File: src/Compare.elm
+File: Compare.elm
 ================
 module Compare exposing
     ( CompareParams
@@ -7033,7 +7033,7 @@ locationUpdateResponseDecoder =
         (D.field "counties" (D.list D.string))
 
 ================
-File: src/Contact.elm
+File: Contact.elm
 ================
 module Contact exposing (Model, Msg(..), init, subscriptions, update, view)
 
@@ -9208,7 +9208,7 @@ viewFollowUpQuestionAnswer question =
         ]
 
 ================
-File: src/Contacts.elm
+File: Contacts.elm
 ================
 module Contacts exposing
     ( Model
@@ -13777,7 +13777,7 @@ hasCarrierMappings state =
             False
 
 ================
-File: src/CsvProcessor.elm
+File: CsvProcessor.elm
 ================
 module CsvProcessor exposing
     ( CarrierMapping
@@ -14446,7 +14446,7 @@ processCsvToContacts csvContent columnMapping carrierMapping =
             Err (ParseError "Failed to parse CSV file")
 
 ================
-File: src/Dashboard.elm
+File: Dashboard.elm
 ================
 module Dashboard exposing (Model, Msg, init, subscriptions, update, view)
 
@@ -14728,7 +14728,7 @@ subscriptions _ =
     Sub.none
 
 ================
-File: src/Decline.elm
+File: Decline.elm
 ================
 module Decline exposing (Model, Msg(..), init, subscriptions, update, view)
 
@@ -14935,7 +14935,7 @@ subscriptions _ =
     Sub.none
 
 ================
-File: src/Earnings.elm
+File: Earnings.elm
 ================
 module Earnings exposing
     ( EarningsInputs
@@ -15110,7 +15110,7 @@ rolloverCase inputs =
             )
 
 ================
-File: src/Eligibility.elm
+File: Eligibility.elm
 ================
 module Eligibility exposing (Model, Msg(..), init, subscriptions, update, view)
 
@@ -16254,7 +16254,7 @@ dictToAnswerList dict =
             )
 
 ================
-File: src/EmailScheduler.elm
+File: EmailScheduler.elm
 ================
 module EmailScheduler exposing
     ( EmailSchedule
@@ -16836,7 +16836,7 @@ scheduledEmailTypeToString emailType =
             "No Scheduled Emails"
 
 ================
-File: src/Home.elm
+File: Home.elm
 ================
 port module Home exposing (Model, Msg, init, subscriptions, update, view)
 
@@ -17689,7 +17689,7 @@ tabContainerClass activeTab tab =
         baseClass ++ " bg-gray-100 text-gray-600 border-t-2 border-transparent"
 
 ================
-File: src/Landing.elm
+File: Landing.elm
 ================
 module Landing exposing (Model, Msg(..), init, subscriptions, update, view)
 
@@ -17793,7 +17793,7 @@ subscriptions _ =
     Sub.none
 
 ================
-File: src/Login.elm
+File: Login.elm
 ================
 module Login exposing (Model, Msg, init, subscriptions, update, view)
 
@@ -18184,7 +18184,7 @@ view model =
         viewLoginForm model
 
 ================
-File: src/Logout.elm
+File: Logout.elm
 ================
 module Logout exposing (Model, Msg(..), init, subscriptions, update, view)
 
@@ -18249,7 +18249,7 @@ subscriptions _ =
     Sub.none
 
 ================
-File: src/Main.elm
+File: Main.elm
 ================
 port module Main exposing (main)
 
@@ -21305,7 +21305,276 @@ isValidQuoteId maybeQuoteId =
             False
 
 ================
-File: src/MyIcon.elm
+File: main.ts
+================
+import './styles.css'
+import { Elm } from './Main.elm'
+
+// Declare Stripe for TypeScript
+declare const Stripe: any;
+
+const root = document.querySelector('#app')
+if (!root) {
+  console.error('Could not find root element')
+  throw new Error('Could not find root element')
+}
+
+// Define the Stripe Checkout custom element
+customElements.define('stripe-checkout', class extends HTMLElement {
+  private stripe: any;
+  private checkout: any;
+
+  constructor() {
+    super();
+    this.stripe = null;
+    this.checkout = null;
+  }
+
+  async connectedCallback() {
+    // Apply a wider style to the element
+    this.style.width = '100%';
+    this.style.maxWidth = '800px';
+    this.style.minHeight = '500px';
+    
+    await this.initializeStripe();
+    await this.mountCheckout();
+  }
+
+  attributeChangedCallback() {
+    if (this.isConnected) {
+      this.mountCheckout();
+    }
+  }
+
+  static get observedAttributes() {
+    return ['price-id', 'metered-price-id', 'return-url', 'first-name', 'last-name', 'email'];
+  }
+
+  async initializeStripe() {
+    if (!this.stripe) {
+      const stripeScript = document.createElement('script');
+      stripeScript.src = 'https://js.stripe.com/v3/';
+      document.head.appendChild(stripeScript);
+      await new Promise(resolve => stripeScript.onload = resolve);
+      
+      // Use environment variable if available, otherwise fallback to the hardcoded key
+      const publishableKey = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || 
+        'pk_test_51Qyh7RCBUPXAZKNGAvsWikdxCCaV1R9Vc79IgPqCul8AJsln69ABDQZE0zzOtOlH5rqrlw2maRebndvPl8xDaIVl00Nn2OOBCX';
+      
+      console.log('Initializing Stripe with publishable key:', publishableKey.substring(0, 20) + '...');
+      this.stripe = Stripe(publishableKey);
+    }
+  }
+
+  async mountCheckout() {
+    const priceId = this.getAttribute('price-id');
+    const meteredPriceId = this.getAttribute('metered-price-id');
+    const firstName = this.getAttribute('first-name');
+    const lastName = this.getAttribute('last-name');
+    const email = this.getAttribute('email');
+
+    if (!priceId) {
+      this.textContent = 'Error: Missing price-id attribute';
+      return;
+    }
+
+    // Check for required user information
+    if (!firstName || !lastName || !email) {
+      this.textContent = 'Error: Missing user information';
+      return;
+    }
+
+    try {
+      // Set the element to loading state
+      console.log(`Creating checkout session with priceId: ${priceId}, meteredPriceId: ${meteredPriceId || 'none'}, email: ${email}`);
+      
+      // Create a checkout session with the API
+      const response = await fetch('/api/create-checkout-session', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          priceId,
+          meteredPriceId,
+          customerEmail: email,
+          customerName: `${firstName} ${lastName}`
+        }),
+      });
+
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.message || 'Failed to create checkout session');
+      }
+
+      const { clientSecret } = data;
+
+      // Create the checkout form
+      const checkout = await this.stripe!.initEmbeddedCheckout({
+        clientSecret,
+      });
+
+      // Mount the checkout form to the element
+      await checkout.mount(this);
+
+    } catch (error) {
+      console.error('Error mounting checkout:', error);
+      this.textContent = `Error: ${error instanceof Error ? error.message : 'Failed to load payment form'}`;
+    }
+  }
+
+  async createCheckoutSession(priceId: string, meteredPriceId: string | null, email?: string, name?: string) {
+    try {
+      console.log(`Creating checkout session for base price: ${priceId}, metered price: ${meteredPriceId}, email: ${email || 'not provided'}`);
+      const response = await fetch('/api/create-checkout-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          priceId,
+          meteredPriceId,
+          customerEmail: email,
+          customerName: name
+        })
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`Checkout session creation failed with status ${response.status}:`, errorText);
+        throw new Error(`Failed to create checkout session: ${response.status} ${errorText}`);
+      }
+      
+      const data = await response.json();
+      console.log('Checkout session created successfully:', { success: data.success });
+      return data;
+    } catch (error: any) {
+      console.error('Error in createCheckoutSession:', error);
+      throw error;
+    }
+  }
+
+  disconnectedCallback() {
+    if (this.checkout) {
+      this.checkout.destroy();
+    }
+  }
+});
+
+// Initialize Elm app
+try {
+  console.log('Initializing Elm application...');
+  
+  if (!Elm) {
+    throw new Error('Elm object is not defined');
+  }
+  
+  if (!Elm.Main) {
+    throw new Error('Elm.Main is not defined. Make sure the Elm application is correctly compiled.');
+  }
+  
+  if (typeof Elm.Main.init !== 'function') {
+    throw new Error('Elm.Main.init is not a function. The Elm application might not be correctly compiled.');
+  }
+  
+  console.log('Elm available:', !!Elm);
+  console.log('Elm.Main available:', !!Elm.Main);
+  console.log('Elm.Main.init available:', !!(Elm.Main && typeof Elm.Main.init === 'function'));
+  
+  const app = Elm.Main.init({
+    node: root  
+  });
+  
+  (window as any).elmApp = app;
+  (window as any).elmDebug = Elm;
+  
+  // Setup IntersectionObserver for phone section
+  if (app.ports && app.ports.viewingPhone) {
+    setTimeout(() => {
+      const phoneSection = document.querySelector('.relative.h-\\[400px\\].w-\\[280px\\].rounded-\\[30px\\].overflow-hidden')
+      
+      if (phoneSection) {
+        console.log('Found phone section, setting up IntersectionObserver')
+        
+        const observer = new IntersectionObserver((entries) => {
+          entries.forEach(entry => {
+            if (entry.isIntersecting) {
+              console.log('Phone section is now visible')
+              app.ports.viewingPhone.send(true)
+            } else {
+              console.log('Phone section is no longer visible')
+              app.ports.viewingPhone.send(false)
+            }
+          })
+        }, {
+          threshold: 0.2
+        })
+        
+        observer.observe(phoneSection)
+      } else {
+        console.warn('Could not find phone section for carousel')
+      }
+    }, 1000)
+  }
+
+  // Get org slug
+  if (app.ports && app.ports.getOrgSlug) {
+    app.ports.getOrgSlug.subscribe(() => {
+      app.ports.receiveOrgSlug.send("")
+    })
+  }
+    
+  // Copy to clipboard
+  if (app.ports && app.ports.copyToClipboard) {
+    app.ports.copyToClipboard.subscribe((text: string) => {
+      console.log('Copying to clipboard:', text.substring(0, 20) + '...')
+      try {
+        navigator.clipboard.writeText(text)
+          .then(() => {
+            console.log('Text copied to clipboard')
+            if (app.ports.onCopyResult) {
+              app.ports.onCopyResult.send(true)
+            }
+          })
+          .catch((error) => {
+            console.error('Failed to copy text to clipboard:', error)
+            if (app.ports.onCopyResult) {
+              app.ports.onCopyResult.send(false)
+            }
+          })
+      } catch (error) {
+        console.error('Clipboard API not available:', error)
+        if (app.ports.onCopyResult) {
+          app.ports.onCopyResult.send(false)
+        }
+      }
+    })
+  }
+
+  // Listen for custom events from stripe-checkout
+  document.addEventListener('payment-completed', (e: any) => {
+    if (app.ports && app.ports.paymentCompleted) {
+      app.ports.paymentCompleted.send(e.detail.status);
+    }
+  });
+
+} catch (error) {
+  console.error('Error initializing Elm application:', error);
+  
+  if (root) {
+    root.innerHTML = `
+      <div style="max-width: 800px; margin: 50px auto; padding: 20px; font-family: sans-serif; background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 5px;">
+        <h1 style="color: #721c24;">Elm Initialization Error</h1>
+        <p style="margin-bottom: 20px; font-size: 16px;">There was a problem initializing the application:</p>
+        <pre style="background: #f8f9fa; padding: 15px; border-radius: 5px; overflow: auto; max-height: 300px;">${error}</pre>
+        <p style="margin-top: 20px; font-size: 14px;">Try refreshing the page or clearing your browser cache.</p>
+        <button onclick="window.location.reload()" style="padding: 10px 20px; background: #dc3545; color: white; border: none; border-radius: 5px; cursor: pointer; margin-top: 10px;">Refresh Page</button>
+      </div>
+    `;
+  }
+}
+
+================
+File: MyIcon.elm
 ================
 module MyIcon exposing (..)
 
@@ -21939,7 +22208,7 @@ banknote size color =
         ]
 
 ================
-File: src/Onboarding.elm
+File: Onboarding.elm
 ================
 module Onboarding exposing (Model, Msg, init, subscriptions, update, view)
 
@@ -23300,7 +23569,7 @@ completeOnboardingLogin model =
         }
 
 ================
-File: src/Ports.elm
+File: Ports.elm
 ================
 port module Ports exposing
     ( clearDebugInfo
@@ -23360,7 +23629,7 @@ port clearDebugInfo : () -> Cmd msg
 port viewingPhone : (Bool -> msg) -> Sub msg
 
 ================
-File: src/PriceModel.elm
+File: PriceModel.elm
 ================
 module PriceModel exposing (CalculationInputs, view)
 
@@ -23677,7 +23946,7 @@ round10 n value =
     (value * factor) |> round |> toFloat |> (\x -> x / factor)
 
 ================
-File: src/Pricing.elm
+File: Pricing.elm
 ================
 module Pricing exposing (Model, Msg, init, subscriptions, update, view)
 
@@ -24955,7 +25224,7 @@ renderEnterpriseValueChart model =
         ]
 
 ================
-File: src/Pricing2.elm
+File: Pricing2.elm
 ================
 module Pricing2 exposing (Model, Msg, init, subscriptions, update, view)
 
@@ -25201,7 +25470,7 @@ subscriptions model =
     Sub.none
 
 ================
-File: src/Profile.elm
+File: Profile.elm
 ================
 module Profile exposing (Model, Msg(..), init, subscriptions, update, view)
 
@@ -25666,7 +25935,7 @@ subscriptions _ =
     Sub.none
 
 ================
-File: src/Quote.elm
+File: Quote.elm
 ================
 module Quote exposing (Model, Msg(..), init, subscriptions, update, view)
 
@@ -26289,7 +26558,7 @@ viewFormForManualEntry model =
         ]
 
 ================
-File: src/QuoteBirthdayRules.elm
+File: QuoteBirthdayRules.elm
 ================
 module QuoteBirthdayRules exposing
     ( PlanRestriction(..)
@@ -26371,7 +26640,7 @@ canPresentPlan restriction currentPlan planToPresent =
                     False
 
 ================
-File: src/Schedule.elm
+File: Schedule.elm
 ================
 module Schedule exposing (Model, Msg(..), init, subscriptions, update, view)
 
@@ -27116,7 +27385,7 @@ subscriptions _ =
     Sub.none
 
 ================
-File: src/ScheduleMain.elm
+File: ScheduleMain.elm
 ================
 module ScheduleMain exposing (Model, Msg(..), init, subscriptions, update, view)
 
@@ -27214,7 +27483,7 @@ subscriptions _ =
     Sub.none
 
 ================
-File: src/SelfServiceOnboarding.elm
+File: SelfServiceOnboarding.elm
 ================
 port module SelfServiceOnboarding exposing (..)
 
@@ -28745,7 +29014,7 @@ main =
         }
 
 ================
-File: src/Settings.elm
+File: Settings.elm
 ================
 module Settings exposing (Model, Msg, init, subscriptions, update, view)
 
@@ -30002,7 +30271,7 @@ finalizeOrganization orgSlug =
         }
 
 ================
-File: src/Signup.elm
+File: Signup.elm
 ================
 module Signup exposing (Model, Msg, init, subscriptions, update, view)
 
@@ -30503,7 +30772,7 @@ subscriptions _ =
     Sub.none
 
 ================
-File: src/StateRegions.elm
+File: StateRegions.elm
 ================
 module StateRegions exposing (Region(..), allRegions, getRegionStates, regionToString, stringToRegion)
 
@@ -30571,7 +30840,7 @@ getRegionStates region =
             [ "OH", "MI", "IN", "IL", "WI", "MN", "IA", "MO", "ND", "SD", "NE", "KS", "MT", "WY", "CO", "ID", "NV", "NM", "AZ", "UT" ]
 
 ================
-File: src/Subscription.elm
+File: Subscription.elm
 ================
 module Subscription exposing (Model, Msg, init, subscriptions, update, view)
 
@@ -31506,7 +31775,7 @@ subscriptions _ =
     Sub.none
 
 ================
-File: src/TempLanding.elm
+File: TempLanding.elm
 ================
 module TempLanding exposing (Model, Msg(..), init, subscriptions, update, view)
 
@@ -31567,7 +31836,7 @@ subscriptions _ =
     Sub.none
 
 ================
-File: src/Waitlist.elm
+File: Waitlist.elm
 ================
 module Waitlist exposing (Model, Msg, init, subscriptions, update, view)
 
@@ -31912,7 +32181,7 @@ formatPhoneNumber phone =
         "(" ++ String.left 3 digits ++ ") " ++ String.slice 3 6 digits ++ "-" ++ String.dropLeft 6 digits
 
 ================
-File: src/Walkthrough.elm
+File: Walkthrough.elm
 ================
 module Walkthrough exposing (Model, Msg, init, subscriptions, update, view)
 

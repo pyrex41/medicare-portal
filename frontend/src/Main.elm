@@ -499,6 +499,8 @@ routeParser =
         , map (\orgSlug token -> PublicRoute (VerifyRoute (VerifyParams orgSlug token)))
             (s "auth" </> s "verify" </> string </> string)
         , map (PublicRoute << CompareRoute) (s "compare" <?> compareParamsParser)
+        , map (\quoteId -> PublicRoute (CompareRoute { quoteId = Just quoteId, orgId = Nothing }))
+            (s "compare" </> string)
         , map (PublicRoute << QuoteRoute)
             (s "quote"
                 <?> Query.map4
