@@ -963,6 +963,12 @@ const startServer = async () => {
                   return new Response(Bun.file(filePath), {
                     headers: { 'Content-Type': mimeTypes[ext] || 'application/octet-stream' }
                   });
+                } else if (path.match(/^\/compare\/[^\/]+$/)) {
+                  // Special case for Compare route with path parameters
+                  logger.info(`[Static Route Handler] Serving index.html for Compare route with path parameter: ${path}`);
+                  return new Response(Bun.file(join(distPath, 'index.html')), {
+                    headers: { 'Content-Type': 'text/html' }
+                  });
                 } else if (path !== '/' && !path.includes('.')) {
                   // This is likely a SPA route, serve index.html
                   logger.info(`[Static Route Handler] Likely SPA route, serving index.html for: ${path}`);

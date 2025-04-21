@@ -291,6 +291,12 @@ export async function getUserFromSession(request: Request) {
       return { skip_auth: true }; // Return a dummy user that won't trigger auth failures
     }
 
+    // Skip auth for compare pages with path parameters
+    if (url.pathname.match(/^\/compare\/[^\/]+$/)) {
+      logger.info(`Skipping auth check for compare path parameter endpoint: ${url.pathname}`);
+      return { skip_auth: true }; // Return a dummy user that won't trigger auth failures
+    }
+
     // Get session cookie
     const sessionId = request.headers.get('cookie')?.split('session=')[1]?.split(';')[0];
     
