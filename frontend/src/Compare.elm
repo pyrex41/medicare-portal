@@ -796,12 +796,6 @@ update msg model =
                     date
                         |> Date.add Date.Months 1
                         |> Date.floor Date.Month
-
-                _ =
-                    Debug.log "current date" (Date.toIsoString date)
-
-                _ =
-                    Debug.log "effective date" (Date.toIsoString effectiveDate)
             in
             ( { model
                 | currentDate = Just date
