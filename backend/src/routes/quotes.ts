@@ -50,6 +50,7 @@ interface QuoteRequestBody {
     tobacco: string | boolean;
     gender: string;
     county?: string;
+    effective_date?: string;
 }
 
 interface QuoteRequest {
@@ -61,6 +62,7 @@ interface QuoteRequest {
     plans: string[];
     carriers: string;
     county?: string;
+    effective_date?: string;
 }
 
 interface ContactQuoteInfo {
@@ -340,6 +342,10 @@ export const quotesRoutes = (app: Elysia) => {
                 carriers: 'supported',
                 county: body.county
             };
+
+            if (body.effective_date) {
+                requestBody.effective_date = body.effective_date;
+            }
 
             // Log incoming request details
             logger.info(`Incoming quote request body: ${JSON.stringify(requestBody, null, 2)}`);

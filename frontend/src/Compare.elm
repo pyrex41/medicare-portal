@@ -158,6 +158,7 @@ type alias Model =
     , quoteId : Maybe String
     , carrierContracts : List Carrier
     , currentDate : Maybe Date
+    , effectiveDate : Maybe Date
     , orgId : Maybe String
     , orgName : Maybe String
     , orgLogo : Maybe String
@@ -173,6 +174,8 @@ type alias Model =
     , availableCounties : List String
     , locationUpdateError : Maybe String
     , submittingLocation : Bool
+    , editingEffectiveDate : Maybe String
+    , fetchNewPlans : Bool
     }
 
 
@@ -199,9 +202,11 @@ type Msg
     | GotCurrentDate Date
     | GotContactData (Result Http.Error ContactResponse)
     | ShowLocationModal
-    | CloseLocationModal
+    | CloseEditModal
+    | CloseEditModalAndFetchPlans
     | UpdateZipCode String
     | UpdateCounty String
+    | UpdateEffectiveDate String
     | SubmitLocationUpdate
     | GotLocationUpdate (Result Http.Error LocationUpdateResponse)
     | NoOp
@@ -255,6 +260,7 @@ init key maybeParams =
             , quoteId = Nothing
             , carrierContracts = []
             , currentDate = Nothing
+            , effectiveDate = Nothing
             , orgId = Nothing
             , orgName = Nothing
             , orgLogo = Nothing
@@ -270,6 +276,8 @@ init key maybeParams =
             , availableCounties = []
             , locationUpdateError = Nothing
             , submittingLocation = False
+            , editingEffectiveDate = Nothing
+            , fetchNewPlans = False
             }
     in
     case maybeParams of
@@ -312,19 +320,6 @@ init key maybeParams =
             )
 
 
-defaultPlanType : Flags -> PlanType
-defaultPlanType flags =
-    case flags.planType of
-        "G" ->
-            PlanG
-
-        "N" ->
-            PlanN
-
-        _ ->
-            PlanG
-
-
 
 -- HTTP
 
@@ -345,7 +340,7 @@ fetchPlans model =
                 { method = "POST"
                 , headers = []
                 , url = "/api/quotes"
-                , body = Http.jsonBody (buildPlansBody contact)
+                , body = Http.jsonBody (buildPlansBody contact model.effectiveDate)
                 , expect = Http.expectJson GotPlans (plansDecoder model)
                 , timeout = Nothing
                 , tracker = Nothing
@@ -356,33 +351,44 @@ fetchPlans model =
             Cmd.none
 
 
-buildPlansBody : Contact -> E.Value
-buildPlansBody contact =
-    E.object
-        [ ( "zip_code", E.string contact.zipCode )
-        , ( "state", E.string contact.state )
-        , ( "county", E.string (Maybe.withDefault "" contact.county) )
-        , ( "age", E.int contact.age )
-        , ( "gender"
-          , E.string
-                (if String.contains "f" (String.toLower contact.gender) then
-                    "F"
-
-                 else
-                    "M"
-                )
-          )
-        , ( "tobacco", E.bool contact.tobacco )
-        , ( "plans", E.list E.string [ "G", "N" ] )
-        , ( "carriers", E.string "supported" )
-        ]
+getEffectiveDate : Date -> String
+getEffectiveDate date =
+    date
+        |> Date.add Date.Months 1
+        |> Date.floor Date.Month
+        |> Date.toIsoString
 
 
-calculateAge : String -> Int
-calculateAge dateOfBirth =
-    -- TODO: Implement proper age calculation from dateOfBirth string
-    -- For now, default to 65 which is the minimum age for Medicare
-    65
+buildPlansBody : Contact -> Maybe Date -> E.Value
+buildPlansBody contact currentDate =
+    let
+        ed =
+            case currentDate of
+                Just date ->
+                    [ ( "effective_date", E.string (Date.toIsoString date) ) ]
+
+                Nothing ->
+                    []
+    in
+    [ ( "zip_code", E.string contact.zipCode )
+    , ( "state", E.string contact.state )
+    , ( "county", E.string (Maybe.withDefault "" contact.county) )
+    , ( "age", E.int contact.age )
+    , ( "gender"
+      , E.string
+            (if String.contains "f" (String.toLower contact.gender) then
+                "F"
+
+             else
+                "M"
+            )
+      )
+    , ( "tobacco", E.bool contact.tobacco )
+    , ( "plans", E.list E.string [ "G", "N" ] )
+    , ( "carriers", E.string "supported" )
+    ]
+        ++ ed
+        |> E.object
 
 
 
@@ -785,7 +791,24 @@ update msg model =
             ( model, Nav.pushUrl model.key path )
 
         GotCurrentDate date ->
-            ( { model | currentDate = Just date }, Cmd.none )
+            let
+                effectiveDate =
+                    date
+                        |> Date.add Date.Months 1
+                        |> Date.floor Date.Month
+
+                _ =
+                    Debug.log "current date" (Date.toIsoString date)
+
+                _ =
+                    Debug.log "effective date" (Date.toIsoString effectiveDate)
+            in
+            ( { model
+                | currentDate = Just date
+                , effectiveDate = Just effectiveDate
+              }
+            , Cmd.none
+            )
 
         GotContactData result ->
             case result of
@@ -831,20 +854,58 @@ update msg model =
                 , editingCounty = Nothing
                 , availableCounties = []
                 , locationUpdateError = Nothing
+                , fetchNewPlans = False
               }
             , Cmd.none
             )
 
-        CloseLocationModal ->
+        CloseEditModal ->
             ( { model
                 | showLocationModal = False
                 , editingZipCode = Nothing
                 , editingCounty = Nothing
                 , availableCounties = []
                 , locationUpdateError = Nothing
+                , isLoading = False
+                , fetchNewPlans = False
               }
             , Cmd.none
             )
+
+        CloseEditModalAndFetchPlans ->
+            let
+                maybeEffectiveDate =
+                    case model.editingEffectiveDate of
+                        Just effectiveDateString ->
+                            Date.fromIsoString effectiveDateString
+                                |> Result.toMaybe
+
+                        Nothing ->
+                            model.effectiveDate
+
+                updatedModel =
+                    { model
+                        | showLocationModal = False
+                        , editingZipCode = Nothing
+                        , editingCounty = Nothing
+                        , availableCounties = []
+                        , locationUpdateError = Nothing
+                        , fetchNewPlans = False
+                        , effectiveDate = maybeEffectiveDate
+                    }
+            in
+            if model.fetchNewPlans then
+                ( { updatedModel
+                    | fetchNewPlans = False
+                    , isLoading = True
+                  }
+                , fetchPlans updatedModel
+                )
+
+            else
+                ( updatedModel
+                , Cmd.none
+                )
 
         UpdateZipCode newZip ->
             ( { model | editingZipCode = Just newZip }
@@ -853,6 +914,19 @@ update msg model =
 
         UpdateCounty county ->
             ( { model | editingCounty = Just county }
+            , Cmd.none
+            )
+
+        UpdateEffectiveDate dateString ->
+            let
+                updatedModel =
+                    { model
+                        | effectiveDate = Date.fromIsoString dateString |> Result.toMaybe
+                        , editingEffectiveDate = Just dateString
+                        , fetchNewPlans = True
+                    }
+            in
+            ( updatedModel
             , Cmd.none
             )
 
@@ -1091,7 +1165,7 @@ subscriptions model =
                 case model of
                     _ ->
                         if model.showLocationModal then
-                            CloseLocationModal
+                            CloseEditModal
 
                         else if model.showGvsNVideo then
                             CloseGvsNVideo
@@ -1173,7 +1247,18 @@ viewPersonalInfo model =
                                 ]
                             ]
                         , div [ class "flex flex-col gap-2" ]
-                            [ button [ class "text-xs text-[#2563EB] underline text-left", onClick ShowLocationModal ] [ text "Edit Location" ]
+                            [ div [ class "flex gap-2" ]
+                                [ case model.effectiveDate of
+                                    Just date ->
+                                        p [ class "text-xs text-[#667085]" ]
+                                            [ span [ class "font-medium" ] [ text "Effective Date: " ]
+                                            , text (date |> Date.toIsoString |> formatEffectiveDate)
+                                            ]
+
+                                    Nothing ->
+                                        text ""
+                                , button [ class "text-xs text-[#2563EB] underline text-left", onClick ShowLocationModal ] [ text "Change" ]
+                                ]
                             , div [ class "hidden sm:block" ]
                                 [ div [ class "flex flex-col mt-4 gap-1" ]
                                     [ p [ class "text-xs text-[#667085]" ] [ text "Need a Quote for Someone else?" ]
@@ -1635,62 +1720,50 @@ viewLocationModal model =
         div [ class "fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4 backdrop-blur-sm" ]
             [ div [ class "bg-white rounded-lg p-6 w-[95%] max-w-md mx-auto shadow-lg" ]
                 [ div [ class "flex justify-between items-center mb-4" ]
-                    [ h2 [ class "text-xl font-extrabold -tracking-[0.04em] text-[#101828]" ] [ text "Update Location" ]
+                    [ h2 [ class "text-xl font-extrabold -tracking-[0.04em] text-[#101828]" ] [ text "Update" ]
                     , button
                         [ class "text-[#667085] hover:text-[#101828] transition-colors"
-                        , onClick CloseLocationModal
+                        , onClick CloseEditModal
                         ]
                         [ text "×" ]
                     ]
-                , div [ class "mb-4" ]
-                    [ label [ class "block text-sm font-medium text-[#667085] mb-1" ]
-                        [ text "ZIP Code" ]
-                    , input
-                        [ type_ "text"
-                        , class "w-full px-3 py-2 border border-[#DCE2E5] rounded-md focus:outline-none focus:ring-1 focus:ring-[#03045E] focus:border-[#03045E]"
-                        , value (Maybe.withDefault "" model.editingZipCode)
-                        , onInput UpdateZipCode
-                        , maxlength 5
-                        , pattern "[0-9]*"
-                        ]
-                        []
-                    ]
-                , if not (List.isEmpty model.availableCounties) then
-                    div [ class "mb-4" ]
-                        [ label [ class "block text-sm font-medium text-[#667085] mb-1" ]
-                            [ text "County" ]
-                        , select
-                            [ class "w-full px-3 py-2 border border-[#DCE2E5] rounded-md focus:outline-none focus:ring-1 focus:ring-[#03045E] focus:border-[#03045E]"
-                            , onInput UpdateCounty
-                            , value (Maybe.withDefault "" model.editingCounty)
-                            ]
-                            (option [ value "" ] [ text "Select a county" ]
-                                :: List.map
-                                    (\county ->
-                                        option [ value county ]
-                                            [ text county ]
+                , case ( model.effectiveDate, model.currentDate ) of
+                    ( Just effectiveDate, Just currentDate ) ->
+                        let
+                            defaultEffectiveDate =
+                                model.editingEffectiveDate
+                                    |> Maybe.withDefault (Date.toIsoString effectiveDate)
+                        in
+                        div [ class "mb-4" ]
+                            [ label [ class "block text-sm font-medium text-[#667085] mb-1" ]
+                                [ text "Effective Date" ]
+                            , select
+                                [ class "w-full px-3 py-2 border border-[#DCE2E5] rounded-md focus:outline-none focus:ring-1 focus:ring-[#03045E] focus:border-[#03045E]"
+                                , onInput UpdateEffectiveDate
+                                , value defaultEffectiveDate
+                                ]
+                                (List.map
+                                    (\date ->
+                                        option
+                                            [ value date, selected (date == defaultEffectiveDate) ]
+                                            [ text (formatEffectiveDate date) ]
                                     )
-                                    model.availableCounties
-                            )
-                        ]
+                                    (getNextEffectiveDates currentDate 4)
+                                )
+                            ]
 
-                  else
-                    text ""
+                    _ ->
+                        text ""
                 , if model.locationUpdateError /= Nothing then
                     div [ class "mb-4 text-red-600 text-sm" ]
                         [ text (Maybe.withDefault "" model.locationUpdateError) ]
 
                   else
                     text ""
-                , div [ class "flex justify-end gap-3" ]
+                , div [ class "flex justify-center" ]
                     [ button
-                        [ class "px-4 py-2 text-[#667085] hover:text-[#101828] transition-colors"
-                        , onClick CloseLocationModal
-                        ]
-                        [ text "Cancel" ]
-                    , button
                         [ class "px-4 py-2 bg-[#03045E] text-white rounded hover:bg-[#02034D] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center min-w-[80px]"
-                        , onClick SubmitLocationUpdate
+                        , onClick CloseEditModalAndFetchPlans
                         , disabled
                             (String.length (Maybe.withDefault "" model.editingZipCode)
                                 /= 5
@@ -1776,3 +1849,34 @@ locationUpdateResponseDecoder =
         (D.field "zipCode" D.string)
         (D.field "state" D.string)
         (D.field "counties" (D.list D.string))
+
+
+
+-- Helper function to format the date in a more readable way
+
+
+formatEffectiveDate : String -> String
+formatEffectiveDate isoDate =
+    case Date.fromIsoString isoDate of
+        Ok date ->
+            Date.format "MMMM 1, yyyy" date
+
+        Err _ ->
+            isoDate
+
+
+
+-- Helper function to get next N months of effective dates
+
+
+getNextEffectiveDates : Date -> Int -> List String
+getNextEffectiveDates currentDate count =
+    List.range 0 (count - 1)
+        |> List.map
+            (\n ->
+                currentDate
+                    |> Date.add Date.Months n
+                    |> Date.add Date.Months 1
+                    |> Date.floor Date.Month
+                    |> Date.toIsoString
+            )
