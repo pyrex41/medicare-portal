@@ -25,6 +25,7 @@ import Http
 import Json.Decode as D exposing (Decoder)
 import Json.Decode.Pipeline as Pipeline
 import Json.Encode as E
+import List.Extra
 import Svg exposing (path, svg)
 import Svg.Attributes exposing (clipRule, d, fill, fillRule, height, stroke, strokeLinecap, viewBox, width)
 import Task
@@ -456,8 +457,8 @@ isCarrierSupported naic carrierContracts =
 
 filterPlansByCarrier : Plans -> List Carrier -> Plans
 filterPlansByCarrier plans carrierContracts =
-    { planG = List.filter (\plan -> isCarrierSupported plan.naic carrierContracts) plans.planG
-    , planN = List.filter (\plan -> isCarrierSupported plan.naic carrierContracts) plans.planN
+    { planG = List.filter (\plan -> isCarrierSupported plan.naic carrierContracts) plans.planG |> List.Extra.unique
+    , planN = List.filter (\plan -> isCarrierSupported plan.naic carrierContracts) plans.planN |> List.Extra.unique
     }
 
 
