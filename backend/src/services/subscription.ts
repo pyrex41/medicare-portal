@@ -24,6 +24,7 @@ export interface AccountStatusDetails {
   currentContactCount: number;
   billingCycleEnd?: Date;
   paymentFailureCount: number;
+  paymentCompleted: boolean;
 }
 
 /**
@@ -125,7 +126,7 @@ export async function checkAccountStatus(organizationId: number): Promise<Accoun
     
     // Get basic organization info first (this should always work)
     const orgResult = await db.execute(
-      'SELECT id, name, slug, subscription_tier, subscription_status, agent_limit, contact_limit, extra_agents, extra_contacts, billing_cycle_end, payment_failure_count FROM organizations WHERE id = ?', 
+      'SELECT id, name, slug, subscription_tier, subscription_status, agent_limit, contact_limit, extra_agents, extra_contacts, billing_cycle_end, payment_failure_count, payment_completed FROM organizations WHERE id = ?', 
       [organizationId]
     );
     
@@ -186,7 +187,8 @@ export async function checkAccountStatus(organizationId: number): Promise<Accoun
           currentAgentCount: statusObj.current_agent_count,
           currentContactCount: statusObj.current_contact_count,
           billingCycleEnd: statusObj.billing_cycle_end ? new Date(statusObj.billing_cycle_end) : undefined,
-          paymentFailureCount: statusObj.payment_failure_count
+          paymentFailureCount: statusObj.payment_failure_count,
+          paymentCompleted: statusObj.payment_completed
         };
       }
     } catch (viewError) {
@@ -229,7 +231,8 @@ export async function checkAccountStatus(organizationId: number): Promise<Accoun
       currentAgentCount: 0, // Default to 0 since we can't query agents table
       currentContactCount: 0, // Default to 0 since we can't query contacts table
       billingCycleEnd: orgObj.billing_cycle_end ? new Date(orgObj.billing_cycle_end) : undefined,
-      paymentFailureCount: orgObj.payment_failure_count || 0
+      paymentFailureCount: orgObj.payment_failure_count || 0,
+      paymentCompleted: orgObj.payment_completed || false
     };
     
   } catch (error) {

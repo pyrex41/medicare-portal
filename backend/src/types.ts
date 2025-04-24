@@ -1,3 +1,6 @@
+import { Database } from './database';
+import { cookie } from '@elysiajs/cookie';
+
 export interface ContactCreate {
   first_name: string
   last_name: string
@@ -26,6 +29,7 @@ export interface User {
   id: number;
   email: string;
   organization_id: number;
+  organizationId?: number;
   is_admin: boolean;
   is_agent: boolean;
   is_active: boolean;
@@ -33,4 +37,18 @@ export interface User {
   last_name: string;
   phone: string;
   organization_name?: string;
+}
+
+export interface UserContext {
+  store: {
+    db: Database;
+  };
+  user: User;
+  set: {
+    status?: number;
+    headers?: Record<string, string>;
+  };
+  cookie: ReturnType<typeof cookie>;
+  query: Record<string, string | undefined>;
+  body: unknown;
 } 

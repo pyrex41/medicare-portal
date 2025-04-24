@@ -14,23 +14,12 @@ import Json.Decode as Decode
 
 type alias Model =
     { key : Nav.Key
-    , currentUser : Maybe CurrentUser
     }
 
 
-type alias CurrentUser =
-    { id : String
-    , name : String
-    , email : String
-    , isAdmin : Bool
-    , isAgent : Bool
-    }
-
-
-init : Nav.Key -> Maybe CurrentUser -> ( Model, Cmd Msg )
-init key currentUser =
+init : Nav.Key -> ( Model, Cmd Msg )
+init key =
     ( { key = key
-      , currentUser = currentUser
       }
     , Cmd.none
     )

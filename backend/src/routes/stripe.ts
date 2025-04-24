@@ -3,281 +3,194 @@ import { Database } from '../database';
 import { logger } from '../logger';
 import { config } from '../config';
 import { getUserFromSession } from '../services/auth';
+import { requireAuth } from '../middleware/auth';
+import { checkPaymentStatus } from '../services/stripe';
+import crypto from 'crypto';
+import { cookie } from '@elysiajs/cookie';  
 
-// Mock Stripe if not available
-let stripe: any;
-try {
-  if (config.stripeApiKey) {
-    // @ts-ignore - Dynamic import for Stripe
-    stripe = require('stripe')(config.stripeApiKey);
-  } else {
-    // Mock Stripe for development
-    stripe = {
-      checkout: {
-        sessions: {
-          create: async () => ({ id: `test_session_id_${Date.now()}` })
-        }
-      },
-      webhooks: {
-        constructEvent: () => ({ 
-          type: 'test.event', 
-          data: { object: {} } 
-        })
-      }
-    };
-    logger.info('Using mock Stripe implementation');
-  }
-} catch (error) {
-  logger.error(`Error loading Stripe: ${error}`);
-  // Create a mock implementation
-  stripe = {
-    checkout: {
-      sessions: {
-        create: async () => ({ id: `test_session_id_${Date.now()}` })
-      }
-    },
-    webhooks: {
-      constructEvent: () => ({ 
-        type: 'test.event', 
-        data: { object: {} } 
-      })
-    }
-  };
-  logger.info('Using mock Stripe implementation due to error');
+interface SubscriptionStatus {
+  isActive: boolean;
+  tier: string;
+  currentPeriodEnd?: number;
+  cancelAtPeriodEnd?: boolean;
+  paymentStatus: string;
 }
 
-export const createStripeRoutes = () => {
-  return new Elysia({ prefix: '/api/stripe' })
-    // Create a Stripe checkout session
-    .post('/create-checkout-session', async ({ body, set, request }) => {
-      const db = new Database();
-      
+export const createStripeRoutes = (app: Elysia) => {
+  app.use(requireAuth)
+    .get('/api/stripe/subscription-status', async ({ user, set }) => {
       try {
-        const user = await getUserFromSession(request);
-        if (!user) {
-          set.status = 401;
-          return { error: 'Unauthorized' };
-        }
-        
-        const { orgSlug, tierId, extraAgents, extraContacts } = body as {
-          orgSlug: string;
-          tierId: string;
-          extraAgents: number;
-          extraContacts: number;
-        };
-        
-        // Get the organization
-        const organization = await db.query(
-          'SELECT id, name, stripe_customer_id FROM organizations WHERE slug = ?',
-          [orgSlug]
-        ).then(rows => rows[0]);
-        
-        if (!organization) {
-          set.status = 404;
-          return { error: 'Organization not found' };
-        }
-        
-        // Get the subscription tier pricing
-        const tier = await db.query(
-          'SELECT id, name, price_monthly, agent_limit, contact_limit FROM subscription_tiers WHERE id = ?',
-          [tierId]
-        ).then(rows => rows[0]);
-        
-        if (!tier) {
-          set.status = 404;
-          return { error: 'Subscription tier not found' };
-        }
-        
-        // Calculate the total price
-        const basePriceInCents = Number(tier.price_monthly);
-        const extraAgentPriceInCents = extraAgents * 2000; // $20 per agent
-        const extraContactsPackages = Math.ceil(extraContacts / 5000);
-        const extraContactsPriceInCents = extraContactsPackages * 5000; // $50 per 5000 contacts
-        
-        const totalPriceInCents = basePriceInCents + extraAgentPriceInCents + extraContactsPriceInCents;
-        
-        let sessionConfig: any = {
-          payment_method_types: ['card'],
-          line_items: [
-            {
-              price_data: {
-                currency: 'usd',
-                product_data: {
-                  name: tier.name + ' Plan',
-                  description: `Includes ${tier.agent_limit} agents and ${tier.contact_limit} contacts`
-                },
-                unit_amount: basePriceInCents
-              },
-              quantity: 1
-            }
-          ],
-          mode: 'subscription',
-          success_url: config.clientUrl + '/dashboard?payment_success=true',
-          cancel_url: config.clientUrl + '/change-plan?payment_canceled=true',
-        };
-        
-        // Add extra agents if any
-        if (extraAgents > 0) {
-          sessionConfig.line_items.push({
-            price_data: {
-              currency: 'usd',
-              product_data: {
-                name: 'Extra Agents',
-                description: `${extraAgents} additional agents at $20/agent/month`
-              },
-              unit_amount: 2000,
-            },
-            quantity: extraAgents
-          });
-        }
-        
-        // Add extra contacts if any
-        if (extraContacts > 0) {
-          sessionConfig.line_items.push({
-            price_data: {
-              currency: 'usd',
-              product_data: {
-                name: 'Extra Contacts',
-                description: `${extraContactsPackages} packages of 5,000 contacts at $50/package/month`
-              },
-              unit_amount: 5000,
-            },
-            quantity: extraContactsPackages
-          });
-        }
-        
-        // If organization already has a Stripe customer ID, use it
-        if (organization.stripe_customer_id) {
-          sessionConfig.customer = organization.stripe_customer_id;
-        } else {
-          sessionConfig.customer_email = user.email;
-        }
-
-        // Create the checkout session
-        let session;
-        if (config.stripeApiKey) {
-          session = await stripe.checkout.sessions.create(sessionConfig);
-        } else {
-          // For development without Stripe API key
-          logger.info('Creating test checkout session with config:', sessionConfig);
-          session = { id: 'test_session_id_' + Date.now() };
-        }
-        
-        // Store the checkout session ID in the database for later verification
-        await db.execute(
-          `UPDATE organizations 
-           SET stripe_checkout_session = ? 
-           WHERE id = ?`,
-          [session.id, organization.id]
-        );
-        
-        // Return the session ID to the client
-        return { sessionId: session.id };
-        
-      } catch (error) {
-        logger.error('Error creating checkout session:', error);
-        set.status = 500;
-        return { error: 'Failed to create checkout session' };
-      }
-    })
-    
-    // Redirect to Stripe checkout
-    .get('/redirect-to-checkout', async ({ query, set }) => {
-      const sessionId = query.session_id as string;
-      
-      if (!sessionId) {
-        set.status = 400;
-        return { error: 'Session ID is required' };
-      }
-      
-      // In production, you would use Stripe's client-side SDK to redirect
-      // For this demo, we'll simulate by redirecting to a success page
-      if (config.stripeApiKey) {
-        set.redirect = `https://checkout.stripe.com/pay/${sessionId}`;
-      } else {
-        // Simulate successful payment in development
-        set.redirect = '/dashboard?payment_success=true&test_mode=true';
-      }
-      
-      return {};
-    })
-    
-    // Webhook for Stripe events (payment completion, etc.)
-    .post('/webhook', async ({ body, request, set }) => {
-      let event;
-      const db = new Database();
-      
-      try {
-        const signature = request.headers.get('stripe-signature');
-        
-        if (config.stripeWebhookSecret && config.stripeApiKey && signature) {
-          event = stripe.webhooks.constructEvent(
-            body, // Raw body needed here
-            signature,
-            config.stripeWebhookSecret
-          );
-        } else {
-          // For development without Stripe
-          event = { 
-            type: 'checkout.session.completed',
-            data: { object: body } 
+        if (!user?.organization_id) {
+          logger.info('No organization ID in request');
+          set.status = 400;
+          return { 
+            success: false,
+            error: 'No organization ID found' 
           };
         }
         
-        // Handle the event
-        if (event.type === 'checkout.session.completed') {
-          await handleCheckoutComplete(event.data.object, db);
-        } else {
-          logger.info(`Unhandled event type ${event.type}`);
-        }
+        const db = new Database();
+        const status = await checkPaymentStatus(db, user.organization_id);
+        logger.info(`Returning subscription status: ${JSON.stringify(status)}`);
         
-        set.status = 200;
-        return { received: true };
+        return {
+          success: true,
+          data: status as SubscriptionStatus
+        };
       } catch (error) {
-        logger.error('Error processing webhook:', error);
-        set.status = 400;
-        return { error: `Webhook Error: ${error instanceof Error ? error.message : 'Unknown error'}` };
+        logger.error(`Error in subscription status route: ${error}`);
+        set.status = 500;
+        return { 
+          success: false,
+          error: 'Failed to fetch subscription status',
+          details: error instanceof Error ? error.message : 'Unknown error'
+        };
       }
     });
+    
+  // Create separate instance without auth middleware for the payment-complete endpoint
+  app.use(cookie())
+    .post('/api/stripe/payment-complete', async ({ body, set, setCookie }) => {
+      try {
+        const { 
+          email: encodedEmail, 
+          firstName, 
+          lastName,
+          stripeCustomerId,
+          stripeSubscriptionId,
+          stripeUsageItemId
+        } = body as { 
+          email: string;
+          firstName: string;
+          lastName: string;
+          stripeCustomerId?: string;
+          stripeSubscriptionId?: string;
+          stripeUsageItemId?: string;
+        };
+
+        // Decode the email in case it contains URL-encoded characters
+        const email = decodeURIComponent(encodedEmail);
+
+        logger.info(`Processing payment completion for email: ${email}`);
+        logger.info(`Payment data: StripeCustomer=${stripeCustomerId ? (typeof stripeCustomerId === 'string' ? stripeCustomerId.substring(0, 10) + '...' : 'object') : 'missing'}, StripeSubscription=${stripeSubscriptionId ? (stripeSubscriptionId && typeof stripeSubscriptionId === 'string' ? stripeSubscriptionId.substring(0, 10) + '...' : 'object') : 'missing'}, UsageItem=${stripeUsageItemId ? (typeof stripeUsageItemId === 'string' ? stripeUsageItemId.substring(0, 10) + '...' : 'object') : 'missing'}`);
+
+        const db = new Database();
+        const client = db.getClient();
+
+        // First get the user and organization
+        logger.info(`Looking up user record for email: ${email}`);
+        const userResult = await client.execute({
+          sql: 'SELECT users.id, users.organization_id FROM users WHERE email = ? AND is_active = 1',
+          args: [email]
+        });
+
+        logger.info(`User query returned ${userResult.rows.length} rows`);
+        
+        if (userResult.rows.length === 0) {
+          logger.error(`No active user found for email: ${email}`);
+          // Let's try a case-insensitive search as a fallback
+          logger.info(`Trying case-insensitive search for email: ${email}`);
+          const caseInsensitiveResult = await client.execute({
+            sql: 'SELECT users.id, users.organization_id FROM users WHERE LOWER(email) = LOWER(?) AND is_active = 1',
+            args: [email]
+          });
+          
+          if (caseInsensitiveResult.rows.length === 0) {
+            logger.error(`Still no user found with case-insensitive search for email: ${email}`);
+            set.status = 404;
+            return { success: false, error: 'User not found' };
+          } else {
+            logger.info(`Found user with case-insensitive match: ${caseInsensitiveResult.rows[0].id}`);
+            // Continue with the found user
+            userResult.rows = caseInsensitiveResult.rows;
+          }
+        }
+
+        const userId = userResult.rows[0].id;
+        const organizationId = userResult.rows[0].organization_id;
+        logger.info(`Found user ID: ${userId}, organization ID: ${organizationId}`);
+
+        // Construct the SQL update based on available Stripe data
+        let sql = `UPDATE organizations 
+                  SET payment_completed = 1, 
+                      subscription_status = 'active',
+                      onboarding_completed = TRUE`;
+        
+        const args = [];
+        
+        if (stripeCustomerId) {
+          sql += ', stripe_customer_id = ?';
+          args.push(stripeCustomerId);
+        }
+        
+        if (stripeSubscriptionId) {
+          sql += ', stripe_subscription_id = ?';
+          args.push(typeof stripeSubscriptionId === 'object' ? JSON.stringify(stripeSubscriptionId) : stripeSubscriptionId);
+        }
+        
+        if (stripeUsageItemId) {
+          sql += ', stripe_usage_item_id = ?';
+          args.push(typeof stripeUsageItemId === 'object' ? JSON.stringify(stripeUsageItemId) : stripeUsageItemId);
+        }
+        
+        sql += ' WHERE id = ?';
+        args.push(organizationId);
+
+        // Update organization with payment and Stripe info
+        logger.info(`Updating organization ${organizationId} with payment data`);
+        const updateResult = await client.execute({ sql, args });
+        logger.info(`Organization update affected ${updateResult.rowsAffected} rows`);
+
+        // Create a new session
+        const sessionId = crypto.randomBytes(32).toString('hex');
+        const expiresAt = new Date();
+        expiresAt.setDate(expiresAt.getDate() + 7); // 7 days from now
+
+        logger.info(`Creating new session for user ${userId}: ${sessionId.substring(0, 16)}...`);
+        const sessionResult = await client.execute({
+          sql: 'INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)',
+          args: [sessionId, userId, expiresAt.toISOString()]
+        });
+        logger.info(`Session creation affected ${sessionResult.rowsAffected} rows`);
+
+        // Set the session cookie
+        logger.info(`Setting session cookie with expiry: ${expiresAt.toISOString()}`);
+        setCookie('session', sessionId, {
+          path: '/',
+          httpOnly: true,
+          secure: process.env.NODE_ENV === 'production',
+          sameSite: 'lax',
+          maxAge: 60 * 60 * 24 * 1 // 1 day -- shorter to force them to login again soon after onboarding
+        });
+        logger.info(`Session cookie set successfully`);
+
+        // Get the subscription status to return to client
+        logger.info(`Fetching subscription status for organization ${organizationId}`);
+        const status = await checkPaymentStatus(db, organizationId);
+        logger.info(`Subscription status: ${JSON.stringify(status)}`);
+
+        logger.info(`Successfully completed payment setup for user ${userId} in organization ${organizationId}`);
+        
+        set.status = 200;
+        return {
+          success: true,
+          data: status
+        };
+
+      } catch (error) {
+        logger.error(`Error in payment completion: ${error}`);
+        if (error instanceof Error && error.stack) {
+          logger.error(`Stack trace: ${error.stack}`);
+        }
+        set.status = 500;
+        return { 
+          success: false,
+          error: 'Failed to complete payment setup',
+          details: error instanceof Error ? error.message : 'Unknown error'
+        };
+      }
+    });
+
+  return app;
 };
 
-async function handleCheckoutComplete(session: any, db: Database): Promise<void> {
-  try {
-    // Find the organization by checkout session ID
-    const organization = await db.query(
-      `SELECT id, slug FROM organizations WHERE stripe_checkout_session = ?`,
-      [session.id]
-    ).then(rows => rows[0]);
-    
-    if (!organization) {
-      logger.error('Organization not found for checkout session:', session.id);
-      return;
-    }
-    
-    // Update the organization with the subscription info
-    await db.execute(
-      `UPDATE organizations 
-       SET stripe_subscription_id = ?, 
-           stripe_customer_id = ?,
-           stripe_checkout_session = NULL,
-           agent_limit = (SELECT agent_limit FROM subscription_tiers WHERE id = ?) + ?,
-           contact_limit = (SELECT contact_limit FROM subscription_tiers WHERE id = ?) + ?,
-           subscription_tier = ?
-       WHERE id = ?`,
-      [
-        session.subscription, 
-        session.customer, 
-        session.metadata?.tierId || 'basic',
-        Number(session.metadata?.extraAgents || 0),
-        session.metadata?.tierId || 'basic',
-        Number(session.metadata?.extraContacts || 0),
-        session.metadata?.tierId || 'basic',
-        organization.id
-      ]
-    );
-    
-    logger.info(`Subscription updated for organization: ${organization.slug}`);
-  } catch (error) {
-    logger.error('Error handling checkout completion:', error);
-  }
-} 

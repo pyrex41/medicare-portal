@@ -3,7 +3,7 @@ module Components.AccountStatusBanner exposing (AccountStatusDetails, view)
 import Html exposing (Html, a, button, div, h3, p, span, text)
 import Html.Attributes exposing (attribute, class, href)
 import Html.Events exposing (onClick)
-import Json.Decode as Decode exposing (Decoder, int, string)
+import Json.Decode as Decode exposing (Decoder, bool, int, string)
 import Json.Decode.Pipeline as Pipeline
 import Svg exposing (path, svg)
 import Svg.Attributes as SvgAttr exposing (clipRule, d, fill, fillRule, viewBox)
@@ -31,6 +31,7 @@ type alias AccountStatusDetails =
     , currentContactCount : Int
     , billingCycleEnd : Maybe String
     , paymentFailureCount : Int
+    , paymentCompleted : Bool
     }
 
 
@@ -54,6 +55,7 @@ accountStatusDetailsDecoder =
         |> Pipeline.required "currentContactCount" int
         |> Pipeline.optional "billingCycleEnd" (Decode.nullable string) Nothing
         |> Pipeline.required "paymentFailureCount" int
+        |> Pipeline.required "paymentCompleted" bool
 
 
 

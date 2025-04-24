@@ -19,6 +19,45 @@ export function createAuthRoutes() {
 
   return new Elysia()
     .use(cookie())
+    .post('/api/auth/set-session', async ({ body, set, setCookie }) => {
+      const { email } = body as { email: string };
+        logger.info(`Login request for email: ${email}`);
+
+        // Check if user exists
+        const client = dbInstance.getClient();
+        const userResult = await client.execute({
+          sql: 'SELECT id, email FROM users WHERE email = ? AND is_active = 1',
+          args: [email]
+        });
+
+        if (userResult.rows.length === 0) {
+          // Don't reveal if user exists or not
+          logger.info(`No active user found for email: ${email}`);
+          set.status = 404;
+          return { success: false, error: 'User not found' };
+        }
+      const sessionId = crypto.randomBytes(32).toString('hex');
+      const expiresAt = new Date();
+      expiresAt.setDate(expiresAt.getDate() + 7); // 7 days from now
+
+      await db.execute(
+        'INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)',
+        [sessionId, userResult.rows[0].id, expiresAt.toISOString()]
+      );
+
+      setCookie('session', sessionId, {
+        path: '/',
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        maxAge: 60 * 60 * 24 * 1 // 1 day -- shorter to force them to login again soon after onboarding
+      });
+
+      set.status = 200;
+
+      set.status = 200;
+      return { success: true };
+    })
     .post('/api/auth/login', async ({ body, set }) => {
       try {
         const { email } = body as { email: string };
@@ -246,7 +285,7 @@ export function createAuthRoutes() {
       }
     })
 
-    .get('/api/auth/session', async ({ cookie }) => {
+    .get('/api/auth/session', async ({ cookie, set }) => {
       const sessionId = cookie.session;
       logger.info(`Session check - Cookie session ID: ${sessionId}`);
       
@@ -297,6 +336,7 @@ export function createAuthRoutes() {
         logger.info(`Found valid session for user: ${sessionUser.email}`);
         logger.info(`Session details: ${JSON.stringify(sessionUser, null, 2)}`);
 
+        set.status = 200;
         return { 
           valid: true,
           session: sessionId,

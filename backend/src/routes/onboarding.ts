@@ -318,7 +318,7 @@ export function createOnboardingRoutes() {
         const lineItems: any[] = [
           {
             price: priceId,
-            quantity: 1, // Required for regular subscription
+            //quantity: 1, // Required for regular subscription
           }
         ];
         
@@ -337,7 +337,7 @@ export function createOnboardingRoutes() {
           ui_mode: 'embedded',
           line_items: lineItems,
           mode: 'subscription',
-          return_url: `${YOUR_DOMAIN}/return?session_id={CHECKOUT_SESSION_ID}`,
+          redirect_on_completion: 'never',
           automatic_tax: { enabled: true },
           ...(decodedEmail ? { customer_email: decodedEmail } : {})
         })
@@ -363,6 +363,7 @@ export function createOnboardingRoutes() {
         const { session_id } = query as { session_id: string }
         
         if (!session_id) {
+          logger.error('No session ID provided in status request');
           set.status = 400
           return {
             success: false,
@@ -370,7 +371,10 @@ export function createOnboardingRoutes() {
           }
         }
         
+        logger.info(`Checking status for session ID: ${session_id}`);
         const session = await stripe.checkout.sessions.retrieve(session_id)
+        
+        logger.info(`Retrieved session with status: ${session.status}, payment status: ${session.payment_status || 'unknown'}`);
         
         // If payment is complete, store the customer and subscription info in the database
         if (session.status === 'complete' && session.customer_details?.email) {
@@ -381,6 +385,7 @@ export function createOnboardingRoutes() {
           const stripeSubscriptionId = session.subscription as string;
           
           logger.info(`Payment completed for ${decodedEmail}, updating database records`);
+          logger.info(`Customer ID: ${stripeCustomerId}, Subscription ID: ${stripeSubscriptionId}`);
           
           // Find the user by email
           const userInfo = await dbInstance.fetchOne<{ organization_id: number }>(
@@ -400,20 +405,138 @@ export function createOnboardingRoutes() {
             );
             
             logger.info(`Updated payment status for organization ID: ${userInfo.organization_id}`);
+          } else {
+            logger.warn(`Could not find user with email ${decodedEmail} to update payment status`);
           }
+        } else if (session.status === 'open') {
+          logger.info(`Session ${session_id} is still open, payment not completed yet`);
+        } else {
+          logger.info(`Session ${session_id} has status ${session.status}, no database update needed`);
         }
         
         return {
           success: true,
           status: session.status,
-          customer_email: session.customer_details?.email
+          payment_status: session.payment_status || null,
+          customer_email: session.customer_details?.email || null,
+          amount_total: session.amount_total,
+          customer: session.customer,
+          subscription: session.subscription
         }
       } catch (error) {
-        logger.error(`Error retrieving session: ${error}`)
+        logger.error(`Error checking session status: ${error}`)
         set.status = 500
         return {
           success: false,
-          message: 'Failed to retrieve session status'
+          message: 'Failed to check session status'
+        }
+      }
+    })
+    
+    // Get checkout session from client secret
+    .get('/api/checkout-session', async ({ query, set }) => {
+      try {
+        const { clientSecret } = query as { clientSecret: string }
+        
+        if (!clientSecret) {
+          logger.error('No client secret provided in checkout session request');
+          set.status = 400
+          return {
+            success: false,
+            message: 'Client secret is required'
+          }
+        }
+        
+        // Extract the session ID from the client secret (format: cs_<id>_secret_<secret>)
+        const sessionId = clientSecret.split('_secret_')[0];
+        if (!sessionId) {
+          logger.error(`Could not extract session ID from client secret: ${clientSecret.substring(0, 10)}...`);
+          set.status = 400;
+          return {
+            success: false,
+            message: 'Invalid client secret format'
+          };
+        }
+        
+        logger.info(`Retrieving checkout session with ID: ${sessionId}`);
+        
+        // Retrieve the session from Stripe
+        logger.info(`Calling Stripe API to retrieve session ${sessionId} with expanded subscription data`);
+        const session = await stripe.checkout.sessions.retrieve(sessionId, {
+          expand: ['subscription', 'subscription.items']
+        });
+        
+        if (!session) {
+          logger.error(`Could not find session with ID: ${sessionId}`);
+          set.status = 404;
+          return {
+            success: false,
+            message: 'Session not found'
+          };
+        }
+        
+        logger.info(`Session retrieved successfully. Status: ${session.status}, Customer: ${session.customer ? (session.customer as string).substring(0, 10) + '...' : 'none'}`);
+        logger.info(`Session subscription data: ${session.subscription ? 'present' : 'missing'}`);
+        
+        // Get subscription item ID if it exists
+        let subscriptionItemId = null;
+        if (session.subscription && typeof session.subscription !== 'string') {
+          const subscription = session.subscription;
+          const items = subscription.items?.data || [];
+          
+          logger.info(`Found ${items.length} subscription items`);
+          
+          // Log item details for debugging
+          items.forEach((item, index) => {
+            logger.info(`Subscription item ${index + 1}:`);
+            logger.info(`  ID: ${item.id}`);
+            logger.info(`  Price: ${item.price ? item.price.id : 'unknown'}`);
+            if (item.price && typeof item.price === 'object') {
+              logger.info(`  Price Type: ${(item.price as any).type || 'unknown'}`);
+              logger.info(`  Price Nickname: ${(item.price as any).nickname || 'unknown'}`);
+            }
+          });
+          
+          // Use a type-safe approach to identify the metered price item
+          const meteredItem = items.find(item => {
+            if (item.price && typeof item.price === 'object' && 'type' in item.price) {
+              const priceType = (item.price as any).type;
+              logger.info(`Checking item with price type: ${priceType}`);
+              return priceType === 'metered';
+            }
+            return false;
+          });
+          
+          if (meteredItem) {
+            subscriptionItemId = meteredItem.id;
+            logger.info(`Found metered subscription item: ${subscriptionItemId}`);
+          } else {
+            logger.info('No metered subscription item found');
+            // Fallback: just use the last item if there are multiple items (often the metered item is second)
+            if (items.length > 1) {
+              subscriptionItemId = items[items.length - 1].id;
+              logger.info(`Using last subscription item as fallback: ${subscriptionItemId}`);
+            }
+          }
+        } else {
+          logger.info(`Subscription data is not expanded or missing: ${typeof session.subscription}`);
+        }
+        
+        const result = {
+          success: true,
+          customer: session.customer as string,
+          subscription: session.subscription as string || null,
+          subscription_item: subscriptionItemId
+        };
+        
+        logger.info(`Returning checkout session data: ${JSON.stringify(result)}`);
+        return result;
+      } catch (error) {
+        logger.error(`Error retrieving checkout session: ${error}`);
+        set.status = 500;
+        return {
+          success: false,
+          message: `Failed to retrieve checkout session: ${error instanceof Error ? error.message : 'Unknown error'}`
         }
       }
     })

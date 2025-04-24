@@ -1,113 +1,44 @@
 import { Database } from '../database';
 import { logger } from '../logger';
-import { checkSubscriptionTier, updateSubscriptionTier } from './stripe';
 
 /**
  * Updates the contact count for a user and handles subscription tier changes if needed
  */
 export async function updateContactCount(userId: string, totalContacts: number): Promise<{
   success: boolean;
-  currentTier: number;
-  newTier?: number;
-  tierUpgraded?: boolean;
   error?: string;
 }> {
   const db = new Database();
   
   try {
-    // Check if we need to upgrade the subscription
-    const { currentTier, requiredTier, needsUpgrade } = await checkSubscriptionTier(userId, totalContacts);
-    
+   
     // Update the contact count in the database
     await upsertContactCount(userId, totalContacts);
-    
-    // If no upgrade needed, just return success
-    if (!needsUpgrade) {
-      return {
-        success: true,
-        currentTier,
-      };
-    }
-    
+
     // Check if auto-upgrade is enabled
     const user = await db.fetchOne<{ auto_upgrade_limit: number }>(
-      'SELECT auto_upgrade_limit FROM users WHERE id = ?',
+      'SELECT user_id FROM users WHERE id = ?',
       [userId]
     );
     
     if (!user) {
       return {
         success: false,
-        currentTier,
         error: 'User not found',
       };
     }
-    
-    // Check if the required tier exceeds the auto-upgrade limit
-    if (user.auto_upgrade_limit > 0 && requiredTier * 500 <= user.auto_upgrade_limit) {
-      // Auto-upgrade is allowed
-      const subscription = await db.fetchOne<{
-        stripe_subscription_id: string;
-        stripe_subscription_item_id: string;
-      }>(
-        'SELECT stripe_subscription_id, stripe_subscription_item_id FROM subscriptions WHERE user_id = ? AND status = "active" ORDER BY created_at DESC LIMIT 1',
-        [userId]
-      );
-      
-      if (!subscription) {
-        return {
-          success: false,
-          currentTier,
-          error: 'No active subscription found',
-        };
-      }
-      
-      // Upgrade the subscription
-      try {
-        await updateSubscriptionTier(
-          subscription.stripe_subscription_id,
-          subscription.stripe_subscription_item_id,
-          requiredTier
-        );
-        
-        // Update the subscription in our database
-        await db.execute(
-          'UPDATE subscriptions SET tier = ?, updated_at = CURRENT_TIMESTAMP WHERE stripe_subscription_id = ?',
-          [requiredTier, subscription.stripe_subscription_id]
-        );
-        
-        logger.info(`Auto-upgraded subscription for user ${userId} from tier ${currentTier} to ${requiredTier}`);
-        
-        return {
-          success: true,
-          currentTier,
-          newTier: requiredTier,
-          tierUpgraded: true,
-        };
-      } catch (error) {
-        logger.error(`Error auto-upgrading subscription for user ${userId}:`, error);
-        return {
-          success: false,
-          currentTier,
-          error: 'Failed to auto-upgrade subscription',
-        };
-      }
-    } else {
-      // Manual upgrade required
-      return {
-        success: false,
-        currentTier,
-        error: 'Contact limit exceeded. Please upgrade your subscription.',
-      };
-    }
   } catch (error) {
-    logger.error(`Error updating contact count for user ${userId}:`, error);
+    logger.error(`Error updating contact count for user ${userId}: ${error}`);
     return {
       success: false,
-      currentTier: 0,
       error: 'Failed to update contact count',
     };
   }
+  
+  // Return success if no errors occurred
+  return {
+    success: true
+  };
 }
 
 /**

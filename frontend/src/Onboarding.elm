@@ -1,4 +1,4 @@
-module Onboarding exposing (Model, Msg, init, subscriptions, update, view)
+port module Onboarding exposing (Model, Msg, init, subscriptions, update, view)
 
 import Browser
 import Browser.Navigation as Nav
@@ -22,7 +22,43 @@ import Utils.UrlStuff exposing (getQueryParams)
 
 
 
+-- PORTS
+
+
+port paymentCompleted : (PaymentResponse -> msg) -> Sub msg
+
+
+port checkoutCompleted : (CheckoutData -> msg) -> Sub msg
+
+
+port checkoutError : (ErrorData -> msg) -> Sub msg
+
+
+
 -- MODEL
+
+
+type alias PaymentResponse =
+    { success : Bool
+    , message : String
+    , paymentCompleted : Bool
+    }
+
+
+type alias CheckoutData =
+    { email : String
+    , firstName : String
+    , lastName : String
+    , stripeCustomerId : String
+    , stripeSubscriptionId : String
+    , stripeUsageItemId : String
+    }
+
+
+type alias ErrorData =
+    { success : Bool
+    , message : String
+    }
 
 
 type alias Model =
@@ -46,6 +82,34 @@ type alias Model =
     , newAgentPhone : String
     , newAgentIsAdmin : Bool
     , loadingResumeData : Bool
+    , paymentStatus : PaymentStatus
+    }
+
+
+type PaymentStatus
+    = ReadyToComplete
+    | Continuing
+    | Error ApiError
+    | Loading
+    | Success SubscriptionStatus
+    | PaymentProcessing
+    | PaymentCompleted
+
+
+type ApiError
+    = NetworkError
+    | BadStatus Int String
+    | BadPayload String
+    | BadUrl String
+    | Timeout
+
+
+type alias SubscriptionStatus =
+    { isActive : Bool
+    , tier : String
+    , currentPeriodEnd : Maybe Int
+    , cancelAtPeriodEnd : Maybe Bool
+    , paymentStatus : String
     }
 
 
@@ -60,7 +124,7 @@ type alias Agent =
 
 maxFrame : Int
 maxFrame =
-    3
+    4
 
 
 dummyUser : User
@@ -190,6 +254,7 @@ init key url =
             , newAgentPhone = ""
             , newAgentIsAdmin = True
             , loadingResumeData = False
+            , paymentStatus = Loading
             }
 
         -- Check if this is a direct page load with frame > 1
@@ -239,6 +304,14 @@ type Msg
     | AgentsSaved (Result Http.Error SaveResponse)
     | GotResumeData (Result Http.Error ResumeData)
     | OnboardingLoginCompleted (Result Http.Error OnboardingLoginResponse)
+    | PaymentSaved (Result Http.Error SaveResponse)
+    | GotSubscriptionStatus (Result Http.Error SubscriptionStatus)
+    | PaymentProcessed (Result Http.Error PaymentResponse)
+    | PaymentCompletedFromPort PaymentResponse
+    | RefreshPage
+    | CheckoutCompletedFromPort CheckoutData
+    | CheckoutErrorFromPort ErrorData
+    | ProcessCheckoutData CheckoutData
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -272,50 +345,53 @@ update msg model =
             ( { model | logo = Just url, uploadingLogo = False }, Cmd.none )
 
         ContinueClicked ->
-            let
-                newFrame =
-                    Basics.min maxFrame (model.frame + 1)
+            case model.frame of
+                4 ->
+                    case model.paymentStatus of
+                        Success status ->
+                            if status.isActive then
+                                ( { model | frame = model.frame + 1 }
+                                , completeOnboardingLogin model.user.email
+                                )
 
-                canContinue =
-                    case model.frame of
-                        2 ->
-                            hasSelectedCarriers model
+                            else
+                                ( { model | paymentStatus = PaymentProcessing }
+                                , checkPaymentStatus model.user.email
+                                )
+
+                        PaymentCompleted ->
+                            ( { model | frame = model.frame + 1 }
+                            , completeOnboardingLogin model.user.email
+                            )
 
                         _ ->
-                            True
-            in
-            if canContinue then
-                case model.frame of
-                    1 ->
-                        -- Show loading state while saving company details
+                            ( model, Cmd.none )
+
+                1 ->
+                    if String.isEmpty model.companyName || String.isEmpty model.companyPhone then
+                        ( model, Cmd.none )
+
+                    else
                         ( { model | loadingResumeData = True }
                         , saveCompanyDetails model
                         )
 
-                    2 ->
-                        ( { model | frame = newFrame }
-                        , Cmd.batch
-                            [ saveLicensingSettings model
-                            , Nav.pushUrl model.key (buildUrl model newFrame)
-                            ]
+                2 ->
+                    if List.isEmpty model.selectedCarriers then
+                        ( model, Cmd.none )
+
+                    else
+                        ( { model | frame = model.frame + 1 }
+                        , Cmd.none
                         )
 
-                    3 ->
-                        ( { model | frame = newFrame }
-                        , Cmd.batch
-                            [ saveAgents model
+                3 ->
+                    ( { model | frame = model.frame + 1, paymentStatus = ReadyToComplete }
+                    , Cmd.none
+                    )
 
-                            --, completeOnboardingLogin model
-                            ]
-                        )
-
-                    _ ->
-                        ( { model | frame = newFrame }
-                        , Nav.pushUrl model.key (buildUrl model newFrame)
-                        )
-
-            else
-                ( model, Cmd.none )
+                _ ->
+                    ( model, Cmd.none )
 
         BackClicked ->
             let
@@ -436,7 +512,7 @@ update msg model =
 
         AgentsSaved _ ->
             ( model
-            , completeOnboardingLogin model
+            , completeOnboardingLogin model.user.email
             )
 
         GotResumeData result ->
@@ -520,6 +596,77 @@ update msg model =
                     , Nav.pushUrl model.key "/signup"
                     )
 
+        PaymentSaved result ->
+            case result of
+                Ok response ->
+                    if response.success then
+                        ( model, Cmd.none )
+
+                    else
+                        -- Failed to save, redirect to signup
+                        ( model, Nav.pushUrl model.key "/signup" )
+
+                Err _ ->
+                    -- Error saving, redirect to signup
+                    ( model, Nav.pushUrl model.key "/signup" )
+
+        GotSubscriptionStatus result ->
+            case result of
+                Ok status ->
+                    ( { model | paymentStatus = Success status }, Cmd.none )
+
+                Err _ ->
+                    ( model, Cmd.none )
+
+        PaymentProcessed result ->
+            case result of
+                Ok response ->
+                    if response.success then
+                        ( { model | paymentStatus = PaymentCompleted }
+                        , Cmd.batch
+                            [ completeOnboardingLogin model.user.email
+                            , fetchSubscriptionStatus
+                            ]
+                        )
+
+                    else
+                        ( { model | paymentStatus = Error (BadPayload "Payment processing failed. Please try again.") }
+                        , Cmd.none
+                        )
+
+                Err _ ->
+                    ( { model | paymentStatus = Error NetworkError }
+                    , Cmd.none
+                    )
+
+        PaymentCompletedFromPort response ->
+            if response.success then
+                ( { model | paymentStatus = PaymentCompleted }
+                , Cmd.batch
+                    [ completeOnboardingLogin model.user.email
+                    , fetchSubscriptionStatus
+                    ]
+                )
+
+            else
+                ( { model | paymentStatus = Error (BadPayload "Payment processing failed. Please try again.") }
+                , Cmd.none
+                )
+
+        CheckoutCompletedFromPort checkoutData ->
+            ( model, processCheckoutData checkoutData )
+
+        CheckoutErrorFromPort errorData ->
+            ( { model | paymentStatus = Error (BadPayload errorData.message) }, Cmd.none )
+
+        ProcessCheckoutData checkoutData ->
+            ( { model | paymentStatus = PaymentProcessing }
+            , completePayment checkoutData
+            )
+
+        RefreshPage ->
+            ( model, Nav.reload )
+
 
 
 -- Calculate the price based on the number of contacts
@@ -583,6 +730,9 @@ view model =
 
                         3 ->
                             viewAddAgents model
+
+                        4 ->
+                            viewPayment model
 
                         _ ->
                             viewCompany model
@@ -888,7 +1038,7 @@ viewAddAgents model =
                 [ class "w-full bg-[#03045e] text-white py-3 px-4 rounded-md hover:bg-[#02034e] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 font-medium"
                 , onClick ContinueClicked
                 ]
-                [ text "Complete Setup" ]
+                [ text "Continue" ]
             ]
         ]
 
@@ -1035,13 +1185,154 @@ viewAgentForm model =
         ]
 
 
+viewPayment : Model -> Html Msg
+viewPayment model =
+    div [ class "flex flex-col items-center" ]
+        [ div [ class "text-center mb-8 w-full" ]
+            [ h2 [ class "text-3xl font-semibold text-gray-900 mb-2" ] [ text "Payment Information" ]
+            , p [ class "text-gray-500" ] [ text "Set up your payment method to complete your account." ]
+            ]
+        , div [ class "w-full max-w-md space-y-6" ]
+            [ case model.paymentStatus of
+                Loading ->
+                    div [ class "mt-4 p-3 bg-blue-50 border border-blue-200 rounded-md" ]
+                        [ p [ class "text-blue-700" ] [ text "Loading subscription status..." ] ]
+
+                Error apiError ->
+                    div [ class "mt-4 p-3 bg-red-50 border border-red-200 rounded-md" ]
+                        [ p [ class "text-red-700" ] [ text "Error" ]
+                        , p [ class "mt-2 text-sm text-red-600" ]
+                            [ text (apiErrorToString apiError)
+                            , br [] []
+                            , text "If you're using an ad blocker, please disable it for this site as it may interfere with payment processing."
+                            ]
+                        , div [ class "mt-4 flex justify-center" ]
+                            [ button
+                                [ class "px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700"
+                                , onClick RefreshPage
+                                ]
+                                [ text "Refresh Page" ]
+                            ]
+                        ]
+
+                Success status ->
+                    if status.isActive then
+                        div [ class "mt-4 p-3 bg-green-50 border border-green-200 rounded-md" ]
+                            [ p [ class "text-green-700 font-medium" ]
+                                [ text ("Active subscription: " ++ status.tier) ]
+                            , case status.currentPeriodEnd of
+                                Just periodEnd ->
+                                    p [ class "mt-2 text-sm text-green-600" ]
+                                        [ text ("Current period ends: " ++ formatUnixTimestamp periodEnd) ]
+
+                                Nothing ->
+                                    text ""
+                            , case status.cancelAtPeriodEnd of
+                                Just True ->
+                                    p [ class "mt-2 text-sm text-yellow-600" ]
+                                        [ text "Your subscription will cancel at the end of the current period" ]
+
+                                _ ->
+                                    text ""
+                            ]
+
+                    else
+                        node "stripe-checkout"
+                            [ attribute "price-id" "price_1RHG4mCBUPXAZKNGem75yV4U" --"price_1RBStWCBUPXAZKNGwpimWl7v"
+                            , attribute "metered-price-id" "price_1RHG7kCBUPXAZKNGd5YvIzsw" --"price_1RBSvJCBUPXAZKNGQ1U9Hl8i"
+
+                            --, attribute "return-url" ("http://localhost:3000/walkthrough?payment_success=true&email=" ++ model.user.email)
+                            , attribute "first-name" model.user.firstName
+                            , attribute "last-name" model.user.lastName
+                            , attribute "email" model.user.email
+                            ]
+                            []
+
+                Continuing ->
+                    div [ class "mt-4 p-3 bg-blue-50 border border-blue-200 rounded-md" ]
+                        [ p [ class "text-blue-700" ] [ text "Resuming your previous setup" ]
+                        , p [ class "mt-2 text-sm text-blue-600" ]
+                            [ text "If the checkout doesn't appear, please disable any ad blockers for this site." ]
+                        ]
+
+                ReadyToComplete ->
+                    node "stripe-checkout"
+                        [ attribute "price-id" "price_1RHG4mCBUPXAZKNGem75yV4U" --"price_1RBStWCBUPXAZKNGwpimWl7v"
+                        , attribute "metered-price-id" "price_1RHG7kCBUPXAZKNGd5YvIzsw" --"price_1RBSvJCBUPXAZKNGQ1U9Hl8i"
+
+                        --, attribute "return-url" ("http://localhost:3000/walkthrough?payment_success=true&email=" ++ model.user.email)
+                        , attribute "first-name" model.user.firstName
+                        , attribute "last-name" model.user.lastName
+                        , attribute "email" model.user.email
+                        ]
+                        []
+
+                PaymentProcessing ->
+                    div [ class "mt-4 p-3 bg-blue-50 border border-blue-200 rounded-md" ]
+                        [ div [ class "animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500 mx-auto mb-4" ] []
+                        , p [ class "text-blue-700 text-center" ] [ text "Processing your payment..." ]
+                        ]
+
+                PaymentCompleted ->
+                    div [ class "mt-4 p-3 bg-green-50 border border-green-200 rounded-md" ]
+                        [ p [ class "text-green-700 font-medium text-center" ] [ text "Payment completed successfully!" ]
+                        , p [ class "mt-2 text-sm text-green-600 text-center" ] [ text "Finalizing your account setup..." ]
+                        ]
+            ]
+        ]
+
+
+
+-- Helper function to format Unix timestamp
+
+
+formatUnixTimestamp : Int -> String
+formatUnixTimestamp timestamp =
+    -- Convert Unix timestamp to readable date string
+    -- For now just return the raw timestamp, you can enhance this later
+    String.fromInt timestamp
+
+
+
+-- Helper function to convert API errors to strings
+
+
+apiErrorToString : ApiError -> String
+apiErrorToString error =
+    case error of
+        NetworkError ->
+            "Network error occurred. Please check your connection."
+
+        BadStatus status message ->
+            "Server error: " ++ String.fromInt status ++ " - " ++ message
+
+        BadPayload message ->
+            "Failed to process server response. "
+                ++ (if String.contains "JSON" message then
+                        "Please try refreshing the page."
+
+                    else
+                        message
+                   )
+
+        BadUrl url ->
+            "Invalid API URL: " ++ url
+
+        Timeout ->
+            "Request timed out. Please try again."
+
+
 
 -- SUBSCRIPTIONS
 
 
 subscriptions : Model -> Sub Msg
 subscriptions _ =
-    Sub.none
+    Sub.batch
+        [ paymentCompleted PaymentCompletedFromPort
+        , checkoutCompleted CheckoutCompletedFromPort
+        , checkoutError CheckoutErrorFromPort
+        ]
 
 
 
@@ -1343,15 +1634,124 @@ onboardingLoginResponseDecoder =
         |> Pipeline.required "email" Decode.string
 
 
-completeOnboardingLogin : Model -> Cmd Msg
-completeOnboardingLogin model =
+completeOnboardingLogin : String -> Cmd Msg
+completeOnboardingLogin email =
     Http.post
         { url = "/api/auth/onboarding-login"
         , body =
             Http.jsonBody
                 (Encode.object
-                    [ ( "emailRaw", Encode.string model.user.email )
+                    [ ( "emailRaw", Encode.string email )
                     ]
                 )
         , expect = Http.expectJson OnboardingLoginCompleted onboardingLoginResponseDecoder
         }
+
+
+
+-- Save payment settings to the API
+
+
+savePaymentSettings : Model -> Cmd Msg
+savePaymentSettings model =
+    Http.post
+        { url = "/api/onboarding/payment"
+        , body =
+            Http.jsonBody
+                (Encode.object
+                    [ ( "email", Encode.string model.user.email )
+                    ]
+                )
+        , expect = Http.expectJson PaymentSaved saveResponseDecoder
+        }
+
+
+
+-- Add fetchSubscriptionStatus function
+
+
+fetchSubscriptionStatus : Cmd Msg
+fetchSubscriptionStatus =
+    Http.get
+        { url = "/api/stripe/subscription-status"
+        , expect = Http.expectJson GotSubscriptionStatus subscriptionStatusDecoder
+        }
+
+
+
+-- Add subscription status decoder
+
+
+subscriptionStatusDecoder : Decoder SubscriptionStatus
+subscriptionStatusDecoder =
+    Decode.field "data"
+        (Decode.map5 SubscriptionStatus
+            (Decode.field "isActive" Decode.bool)
+            (Decode.field "tier" Decode.string)
+            (Decode.maybe (Decode.field "currentPeriodEnd" Decode.int))
+            (Decode.maybe (Decode.field "cancelAtPeriodEnd" Decode.bool))
+            (Decode.field "paymentStatus" Decode.string)
+        )
+
+
+
+-- Add payment status check function
+
+
+checkPaymentStatus : String -> Cmd Msg
+checkPaymentStatus email =
+    Http.get
+        { url = "/api/stripe/payment-status"
+        , expect = Http.expectJson PaymentProcessed paymentResponseDecoder
+        }
+
+
+
+-- Add payment response decoder
+
+
+paymentResponseDecoder : Decoder PaymentResponse
+paymentResponseDecoder =
+    Decode.map3 PaymentResponse
+        (Decode.field "success" Decode.bool)
+        (Decode.field "message" Decode.string)
+        (Decode.field "paymentCompleted" Decode.bool)
+
+
+
+-- Call the payment-complete endpoint with checkout data
+
+
+completePayment : CheckoutData -> Cmd Msg
+completePayment checkoutData =
+    Http.post
+        { url = "/api/stripe/payment-complete"
+        , body = Http.jsonBody (encodeCheckoutData checkoutData)
+        , expect = Http.expectJson PaymentProcessed paymentResponseDecoder
+        }
+
+
+
+-- Encode checkout data for the API
+
+
+encodeCheckoutData : CheckoutData -> Encode.Value
+encodeCheckoutData data =
+    Encode.object
+        [ ( "email", Encode.string data.email )
+        , ( "firstName", Encode.string data.firstName )
+        , ( "lastName", Encode.string data.lastName )
+        , ( "stripeCustomerId", Encode.string data.stripeCustomerId )
+        , ( "stripeSubscriptionId", Encode.string data.stripeSubscriptionId )
+        , ( "stripeUsageItemId", Encode.string data.stripeUsageItemId )
+        ]
+
+
+
+-- Process checkout data by making the API call
+
+
+processCheckoutData : CheckoutData -> Cmd Msg
+processCheckoutData checkoutData =
+    -- After a small delay to allow UI to update, process the checkout data
+    Task.perform (\_ -> ProcessCheckoutData checkoutData) (Task.succeed ())

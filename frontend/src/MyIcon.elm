@@ -4,7 +4,41 @@ import Svg exposing (Svg, rect, svg)
 import Svg.Attributes exposing (..)
 
 
-heartPulse : Int -> String -> Svg msg
+zapOff : Int -> String -> Svg msg
+zapOff size color =
+    svg
+        [ width (String.fromInt size)
+        , height (String.fromInt size)
+        , viewBox "0 0 24 24"
+        , fill "none"
+        , stroke color
+        , strokeWidth "2"
+        , strokeLinecap "round"
+        , strokeLinejoin "round"
+        ]
+        [ Svg.path [ d "M10.513 4.856 13.12 2.17a.5.5 0 0 1 .86.46l-1.377 4.317" ] []
+        , Svg.path [ d "M15.656 10H20a1 1 0 0 1 .78 1.63l-1.72 1.773" ] []
+        , Svg.path [ d "M16.273 16.273 10.88 21.83a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14H4a1 1 0 0 1-.78-1.63l4.507-4.643" ] []
+        , Svg.path [ d "m2 2 20 20" ] []
+        ]
+
+
+zap : Int -> String -> Svg msg
+zap size color =
+    svg
+        [ width (String.fromInt size)
+        , height (String.fromInt size)
+        , viewBox "0 0 24 24"
+        , fill "none"
+        , stroke color
+        , strokeWidth "2"
+        , strokeLinecap "round"
+        , strokeLinejoin "round"
+        ]
+        [ Svg.path [ d "M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z" ] []
+        ]
+
+
 heartPulse size color =
     svg
         [ width (String.fromInt size)

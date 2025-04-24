@@ -1204,9 +1204,8 @@ viewPersonalInfo model =
     div [ class "flex flex-col gap-4 sm:gap-10" ]
         [ div [ class "bg-white rounded-[10px] border border-[#DCE2E5] shadow-[0_1px_2px_rgba(16,24,40,0.05)]" ]
             [ -- Personal Quote Header
-              div
-                [ class "border-b border-[#DCE2E5] bg-[#F9F5FF] px-4 sm:px-6 py-3 rounded-t-[10px]" ]
-                [ h2 [ class "text-2xl font-extrabold tracking-tight leading-[2] -tracking-[0.04em]" ] [ text "Personal Quote" ]
+              div [ class "border-b border-[#DCE2E5] bg-[#F9F5FF] px-4 sm:px-6 py-4 rounded-t-[10px]" ]
+                [ h2 [ class "text-2xl font-extrabold -tracking-[0.04em] text-[#101828] leading-[1.2]" ] [ text "Personal Quote" ]
                 ]
             , div
                 [ class "p-4 sm:p-6 flex flex-col sm:flex-row sm:justify-between sm:items-start gap-4 sm:gap-6 bg-white rounded-b-[10px]" ]

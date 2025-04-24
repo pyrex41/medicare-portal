@@ -29,9 +29,11 @@ export const requireAuth = new Elysia()
       
       // Get user from session
       const user = await getUserFromSession(request)
+      logger.info(`Auth middleware: user: ${JSON.stringify(user)}`)
       
       // If no user or skip_auth not set, return 401
-      if (!user || !(user as any).skip_auth) {
+      if (!user ) {
+        logger.warn(`not user: ${JSON.stringify(!user)}`)
         logger.warn(`Auth middleware: unauthorized access to ${pathname}`)
         set.status = 401
         return { success: false, error: 'Authentication required' }

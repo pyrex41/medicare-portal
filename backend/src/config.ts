@@ -82,6 +82,7 @@ export const config = {
   stripeApiKey: process.env.STRIPE_SECRET_KEY,
   stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
   clientUrl: process.env.PUBLIC_URL || 'http://localhost:5173',
+  stripeSecretKey: process.env.STRIPE_SECRET_KEY || '',
 }
 
 // Log loaded config (safely)

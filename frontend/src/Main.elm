@@ -23,6 +23,7 @@ import Json.Encode as E
 import Landing
 import Login
 import Logout
+import MyIcon
 import Onboarding
 import Pricing
 import Pricing2
@@ -34,6 +35,7 @@ import ScheduleMain
 import SelfServiceOnboarding
 import Settings
 import Signup
+import Stripe
 import Svg exposing (path, svg)
 import Svg.Attributes exposing (d, fill, viewBox)
 import Task
@@ -141,6 +143,7 @@ type alias AccountStatusDetails =
     , currentContactCount : Int
     , billingCycleEnd : Maybe String
     , paymentFailureCount : Int
+    , paymentCompleted : Bool
     }
 
 
@@ -154,6 +157,7 @@ type alias Model =
     , intendedDestination : Maybe String
     , showDropdown : Bool
     , showStatusBanner : Bool
+    , showPaymentStatus : Bool
     }
 
 
@@ -191,6 +195,7 @@ type Page
     | LandingPage Landing.Model
     | PricingPage Pricing.Model
     | Pricing2Page Pricing2.Model
+    | StripePage Stripe.Model
 
 
 type Msg
@@ -237,6 +242,9 @@ type Msg
     | LandingMsg Landing.Msg
     | PricingMsg Pricing.Msg
     | Pricing2Msg Pricing2.Msg
+    | StripeMsg Stripe.Msg
+    | TogglePaymentStatus
+    | SetSessionResponse (Result Http.Error SetSessionResponseAlias)
 
 
 type alias Flags =
@@ -291,6 +299,7 @@ accountStatusDecoder =
         |> Pipeline.required "currentContactCount" Decode.int
         |> Pipeline.optional "billingCycleEnd" (Decode.nullable Decode.string) Nothing
         |> Pipeline.required "paymentFailureCount" Decode.int
+        |> Pipeline.required "paymentCompleted" Decode.bool
 
 
 accountStatusResponseDecoder : Decoder AccountStatusResponse
@@ -342,6 +351,7 @@ init flags url key =
             , intendedDestination = Nothing
             , showDropdown = False
             , showStatusBanner = True
+            , showPaymentStatus = False
             }
 
         checkSession =
@@ -354,8 +364,36 @@ init flags url key =
         directPageUpdate =
             Task.perform (\_ -> DirectPageUpdate) (Process.sleep 50)
 
+        currentPath =
+            url.path
+                |> Debug.log "currentPath"
+
+        maybeUserEmail =
+            case model.url.query of
+                Just queryString ->
+                    let
+                        queryParams =
+                            String.split "&" queryString
+                                |> List.filterMap
+                                    (\param ->
+                                        case String.split "=" param of
+                                            [ "email", value ] ->
+                                                Just value
+
+                                            _ ->
+                                                Nothing
+                                    )
+                    in
+                    List.head queryParams
+
+                Nothing ->
+                    Nothing
+
+        _ =
+            Debug.log "maybeUserEmail on init" maybeUserEmail
+
         -- Check session and also immediately try to render public routes
-        cmds =
+        cmds0 =
             case initialSession of
                 Verified _ ->
                     -- If we have a session, also fetch the current user immediately
@@ -363,6 +401,14 @@ init flags url key =
 
                 _ ->
                     [ directPageUpdate ]
+
+        cmds =
+            case ( currentPath, maybeUserEmail ) of
+                ( "/walkthrough", Just userEmail ) ->
+                    cmds0 ++ [ setSession userEmail ]
+
+                _ ->
+                    cmds0
     in
     -- For public routes, immediately try to render without waiting for session
     if isPublicRoute then
@@ -433,6 +479,7 @@ type ProtectedPage
     | ContactRoute String
     | DashboardRoute
     | ChangePlanRoute
+    | StripeRoute
     | WalkthroughRoute
 
 
@@ -545,6 +592,7 @@ routeParser =
         , map (ProtectedRoute ProfileRoute) (s "profile")
         , map (ProtectedRoute TempLandingRoute) (s "templanding")
         , map (ProtectedRoute WalkthroughRoute) (s "walkthrough")
+        , map (ProtectedRoute StripeRoute) (s "stripe")
         , map (AdminRoute AgentsRoute) (s "add-agents")
         , map (ProtectedRoute DashboardRoute) (s "dashboard")
         , map (\id -> ProtectedRoute (ContactRoute id)) (s "contact" </> string)
@@ -560,6 +608,22 @@ routeParser =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+        SetSessionResponse result ->
+            case result of
+                Ok sessionResponse ->
+                    ( model
+                    , if sessionResponse.success then
+                        Cmd.none
+
+                      else
+                        Nav.pushUrl model.key "/login"
+                    )
+
+                Err _ ->
+                    ( model
+                    , Nav.pushUrl model.key "/login"
+                    )
+
         DirectPageUpdate ->
             -- Force updatePage even if we're in Unknown session state
             updatePageForcePublic model.url ( model, Cmd.none )
@@ -577,7 +641,10 @@ update msg model =
                     )
 
         InternalLinkClicked frag ->
-            ( { model | showDropdown = False }
+            ( { model
+                | showDropdown = False
+                , showPaymentStatus = False
+              }
             , Nav.pushUrl model.key frag
             )
 
@@ -976,7 +1043,9 @@ update msg model =
 
                                 -- Fetch account status after user is loaded
                                 cmd =
-                                    fetchAccountStatus user.organizationSlug
+                                    Cmd.none
+
+                                --fetchAccountStatus user.organizationSlug
                             in
                             -- Check if we were already on the right page with the right data
                             -- Only update the page if something meaningful has changed
@@ -984,7 +1053,8 @@ update msg model =
                                 Just existingUser ->
                                     if existingUser.id == user.id && existingUser.organizationSlug == user.organizationSlug then
                                         -- We already have the same user, just update the model without triggering updatePage
-                                        ( newModel, cmd )
+                                        --( newModel, cmd )
+                                        updatePage model.url ( newModel, cmd )
 
                                     else
                                         -- User has changed, update the page
@@ -1066,7 +1136,10 @@ update msg model =
             )
 
         CloseDropdown ->
-            ( { model | showDropdown = False }
+            ( { model
+                | showDropdown = False
+                , showPaymentStatus = False
+              }
             , Cmd.none
             )
 
@@ -1179,6 +1252,23 @@ update msg model =
 
                 _ ->
                     ( model, Cmd.none )
+
+        StripeMsg subMsg ->
+            case model.page of
+                StripePage stripeModel ->
+                    let
+                        ( newStripeModel, newCmd ) =
+                            Stripe.update subMsg stripeModel
+                    in
+                    ( { model | page = StripePage newStripeModel }
+                    , Cmd.map StripeMsg newCmd
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        TogglePaymentStatus ->
+            ( { model | showPaymentStatus = not model.showPaymentStatus }, Cmd.none )
 
 
 view : Model -> Browser.Document Msg
@@ -1423,6 +1513,15 @@ view model =
                     { title = "Pricing"
                     , body = [ viewWithNav model (Html.map Pricing2Msg pricing2View) ]
                     }
+
+                StripePage stripeModel ->
+                    let
+                        stripeView =
+                            Stripe.view stripeModel
+                    in
+                    { title = stripeView.title
+                    , body = [ viewWithNav model (Html.map StripeMsg (div [] stripeView.body)) ]
+                    }
     in
     viewPage
 
@@ -1604,6 +1703,67 @@ viewNavHeader model =
 
                 _ ->
                     False
+
+        isPaymentActive =
+            model.currentUser
+                |> Maybe.andThen .accountStatus
+                |> Maybe.map (\status -> status.paymentCompleted)
+                |> Maybe.withDefault False
+
+        paymentStatusMessage =
+            model.currentUser
+                |> Maybe.andThen .accountStatus
+                |> Maybe.map
+                    (\status ->
+                        if status.subscriptionStatus == "active" then
+                            "Payments active"
+
+                        else
+                            "Payment needs to be updated. Click to update payment information."
+                    )
+                |> Maybe.withDefault "Payment status unknown"
+
+        paymentStatusIcon =
+            if isPaymentActive then
+                MyIcon.zap 20 "#10B981"
+                -- Green color for active
+
+            else
+                MyIcon.zapOff 20 "#EF4444"
+
+        -- Red color for inactive
+        paymentStatusIndicator =
+            div [ class "relative" ]
+                [ button
+                    [ class "flex items-center space-x-2 px-3 py-1.5 text-gray-700 text-sm font-medium hover:bg-[#DCE2E5] rounded-md transition-colors duration-200"
+                    , onClick TogglePaymentStatus
+                    ]
+                    [ div [ class "flex items-center space-x-2" ]
+                        [ paymentStatusIcon
+                        ]
+                    ]
+                , if model.showPaymentStatus then
+                    div
+                        [ class "absolute right-0 mt-2 w-64 rounded-md shadow-lg py-1 bg-white ring-1 ring-black ring-opacity-5 z-50"
+                        , stopPropagationOn "mousedown" (Decode.succeed ( NoOp, True ))
+                        ]
+                        [ div [ class "px-4 py-2 text-sm text-gray-700" ]
+                            [ text paymentStatusMessage
+                            , if not isPaymentActive then
+                                button
+                                    [ class "mt-2 w-full px-4 py-2 bg-red-100 text-red-700 rounded-md hover:bg-red-200 transition-colors duration-200"
+                                    , onClick (InternalLinkClicked "/stripe")
+                                    ]
+                                    [ text "Update Payment" ]
+
+                              else
+                                text ""
+                            ]
+                        ]
+
+                  else
+                    text ""
+                ]
     in
     if isPublicPage then
         viewPublicNav model
@@ -1644,7 +1804,7 @@ viewNavHeader model =
                                 [ text "Contacts" ]
                             ]
                         ]
-                    , div [ class "flex items-center" ]
+                    , div [ class "flex items-center space-x-2" ]
                         [ div [ class "relative" ]
                             [ button
                                 [ class "flex items-center space-x-1 sm:space-x-2 px-2 sm:px-3 py-1.5 text-gray-700 text-xs sm:text-sm font-medium hover:bg-[#DCE2E5] rounded-md transition-colors duration-200"
@@ -1715,9 +1875,9 @@ viewNavHeader model =
                                         text ""
                                     , button
                                         [ class "block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-[#DCE2E5]"
-                                        , onClick (InternalLinkClicked "/change-plan")
+                                        , onClick (InternalLinkClicked "/stripe")
                                         ]
-                                        [ text "Change Plan" ]
+                                        [ text "Payment Settings" ]
                                     , button
                                         [ class "block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-[#DCE2E5]"
                                         , onClick InitiateLogout
@@ -1779,8 +1939,15 @@ subscriptions : Model -> Sub Msg
 subscriptions model =
     let
         dropdownSub =
-            if model.showDropdown then
+            if model.showDropdown || model.showPaymentStatus then
                 Browser.Events.onMouseDown (Decode.succeed CloseDropdown)
+
+            else
+                Sub.none
+
+        escDropdownSub =
+            if model.showDropdown then
+                Browser.Events.onKeyDown (Decode.succeed CloseDropdown)
 
             else
                 Sub.none
@@ -1867,8 +2034,11 @@ subscriptions model =
 
                 Pricing2Page pricing2Model ->
                     Sub.map Pricing2Msg (Pricing2.subscriptions pricing2Model)
+
+                StripePage stripeModel ->
+                    Sub.none
     in
-    Sub.batch [ dropdownSub, pageSubs ]
+    Sub.batch [ dropdownSub, escDropdownSub, pageSubs ]
 
 
 routeAccessType : Route -> RouteAccess
@@ -2454,20 +2624,8 @@ updatePage url ( model, cmd ) =
 
                                     ProtectedRoute WalkthroughRoute ->
                                         let
-                                            currentUser =
-                                                modelWithUpdatedSetup.currentUser
-                                                    |> Maybe.map
-                                                        (\user ->
-                                                            { id = user.id
-                                                            , name = user.firstName ++ " " ++ user.lastName
-                                                            , email = user.email
-                                                            , isAdmin = user.isAdmin
-                                                            , isAgent = user.isAgent
-                                                            }
-                                                        )
-
                                             ( walkthroughModel, walkthroughCmd ) =
-                                                Walkthrough.init modelWithUpdatedSetup.key currentUser
+                                                Walkthrough.init modelWithUpdatedSetup.key
                                         in
                                         ( { modelWithUpdatedSetup | page = WalkthroughPage walkthroughModel }
                                         , Cmd.batch
@@ -2687,6 +2845,18 @@ updatePage url ( model, cmd ) =
                                             ]
                                         )
 
+                                    ProtectedRoute StripeRoute ->
+                                        let
+                                            ( stripeModel, stripeCmd ) =
+                                                Stripe.init modelWithUpdatedSetup.key url
+                                        in
+                                        ( { modelWithUpdatedSetup | page = StripePage stripeModel }
+                                        , Cmd.batch
+                                            [ Cmd.map StripeMsg stripeCmd
+                                            , authCmd
+                                            ]
+                                        )
+
                 Nothing ->
                     ( { model | page = NotFoundPage }
                     , cmd
@@ -2705,6 +2875,26 @@ fetchCurrentUser =
         { url = "/api/me"
         , expect = Http.expectJson GotCurrentUser currentUserResponseDecoder
         }
+
+
+setSession : String -> Cmd Msg
+setSession email =
+    Http.post
+        { url = "/api/auth/set-session"
+        , expect = Http.expectJson SetSessionResponse setSessionResponseDecoder
+        , body = Http.jsonBody (E.object [ ( "email", E.string email ) ])
+        }
+
+
+type alias SetSessionResponseAlias =
+    { success : Bool
+    }
+
+
+setSessionResponseDecoder : Decoder SetSessionResponseAlias
+setSessionResponseDecoder =
+    Decode.map SetSessionResponseAlias
+        (Decode.field "success" Decode.bool)
 
 
 fetchAccountStatus : String -> Cmd Msg
