@@ -14,6 +14,7 @@ import { Database as SqliteDatabase, open } from 'sqlite'
 import sqlite3 from 'sqlite3'
 import fsPromises from 'fs/promises'
 import Bun from 'bun'
+import { ZIP_DATA } from './index' // Import ZIP_DATA for state lookup
 
 // Connection pool to reuse database connections
 interface ConnectionInfo {
@@ -135,7 +136,7 @@ type ColumnMapping = {
   lastName: string;
   email: string;
   phoneNumber: string;
-  state: string;
+  state?: string; // Make state optional since we'll infer it from zip code
   currentCarrier: string;
   effectiveDate: string;
   birthDate: string;
@@ -818,7 +819,20 @@ export class Database {
             mappedRow.last_name = row[columnMapping.lastName] || '';
             mappedRow.email = row[columnMapping.email] || '';
             mappedRow.phone_number = row[columnMapping.phoneNumber] || '';
-            mappedRow.state = row[columnMapping.state] || '';
+            mappedRow.zip_code = row[columnMapping.zipCode] || '';
+            
+            // Infer state from zip code
+            if (mappedRow.zip_code && ZIP_DATA[mappedRow.zip_code]) {
+              mappedRow.state = ZIP_DATA[mappedRow.zip_code].state;
+              logger.info(`Inferred state ${mappedRow.state} from zip code ${mappedRow.zip_code}`);
+            } else if (columnMapping.state && row[columnMapping.state]) {
+              // Fallback to provided state if zip code lookup fails
+              mappedRow.state = row[columnMapping.state] || '';
+              logger.info(`Using provided state ${mappedRow.state} (zip code lookup failed)`);
+            } else {
+              logger.warn(`No state found for zip code ${mappedRow.zip_code}, defaulting to empty string`);
+              mappedRow.state = '';
+            }
             
             // Apply carrier mapping if provided
             let carrierValue = '';
@@ -843,7 +857,6 @@ export class Database {
             mappedRow.birth_date = row[columnMapping.birthDate] || '';
             mappedRow.tobacco_user = row[columnMapping.tobaccoUser] === 'true' || row[columnMapping.tobaccoUser] === 'yes' || row[columnMapping.tobaccoUser] === '1';
             mappedRow.gender = row[columnMapping.gender] || '';
-            mappedRow.zip_code = row[columnMapping.zipCode] || '';
             mappedRow.plan_type = row[columnMapping.planType] || '';
           } else {
             // Use default field names if no mapping provided
@@ -851,14 +864,27 @@ export class Database {
             mappedRow.last_name = row.last_name || row.lastName || '';
             mappedRow.email = row.email || '';
             mappedRow.phone_number = row.phone_number || row.phoneNumber || '';
-            mappedRow.state = row.state || '';
+            mappedRow.zip_code = row.zip_code || row.zipCode || '';
+            
+            // Infer state from zip code
+            if (mappedRow.zip_code && ZIP_DATA[mappedRow.zip_code]) {
+              mappedRow.state = ZIP_DATA[mappedRow.zip_code].state;
+              logger.info(`Inferred state ${mappedRow.state} from zip code ${mappedRow.zip_code}`);
+            } else if (row.state) {
+              // Fallback to provided state if zip code lookup fails
+              mappedRow.state = row.state || '';
+              logger.info(`Using provided state ${mappedRow.state} (zip code lookup failed)`);
+            } else {
+              logger.warn(`No state found for zip code ${mappedRow.zip_code}, defaulting to empty string`);
+              mappedRow.state = '';
+            }
+            
             mappedRow.current_carrier = row.current_carrier || row.currentCarrier || '';
             mappedRow.effective_date = row.effective_date || row.effectiveDate || '';
             mappedRow.birth_date = row.birth_date || row.birthDate || '';
             mappedRow.tobacco_user = row.tobacco_user === 'true' || row.tobacco_user === 'yes' || row.tobacco_user === '1' ||
                                    row.tobaccoUser === 'true' || row.tobaccoUser === 'yes' || row.tobaccoUser === '1';
             mappedRow.gender = row.gender || '';
-            mappedRow.zip_code = row.zip_code || row.zipCode || '';
             mappedRow.plan_type = row.plan_type || row.planType || '';
           }
           
@@ -1067,17 +1093,17 @@ export class Database {
               first_name TEXT NOT NULL,
               last_name TEXT NOT NULL,
               email TEXT NOT NULL UNIQUE,
-              current_carrier TEXT NOT NULL,
-              plan_type TEXT NOT NULL,
-              effective_date TEXT NOT NULL,
-              birth_date TEXT NOT NULL,
+              current_carrier TEXT,
+              plan_type TEXT,
+              effective_date TEXT,
+              birth_date TEXT,
               tobacco_user INTEGER NOT NULL,
-              gender TEXT NOT NULL,
-              state TEXT NOT NULL,
-              zip_code TEXT NOT NULL,
+              gender TEXT,
+              state TEXT,
+              zip_code TEXT,
               agent_id INTEGER,
               last_emailed DATETIME,
-              phone_number TEXT NOT NULL DEFAULT '',
+              phone_number TEXT,
               status TEXT NOT NULL DEFAULT '',
               created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
               updated_at DATETIME DEFAULT CURRENT_TIMESTAMP

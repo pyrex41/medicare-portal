@@ -59,19 +59,19 @@ main =
 
 type alias Contact =
     { id : Int
-    , firstName : String
-    , lastName : String
+    , firstName : Maybe String
+    , lastName : Maybe String
     , email : String
-    , phoneNumber : String
-    , state : String
+    , phoneNumber : Maybe String
+    , state : Maybe String
     , contactOwnerId : Maybe Int
     , contactOwner : Maybe User
     , currentCarrier : Maybe String
-    , effectiveDate : String
-    , birthDate : String
-    , tobaccoUser : Bool
-    , gender : String
-    , zipCode : String
+    , effectiveDate : Maybe String
+    , birthDate : Maybe String
+    , tobaccoUser : Maybe Bool
+    , gender : Maybe String
+    , zipCode : Maybe String
     , planType : Maybe String
     , status : String
     , agentId : Maybe Int
@@ -185,6 +185,7 @@ type alias UploadState =
     , csvHeaders : List String
     , processingHeaders : Bool
     , extractingCarriers : Bool
+    , invalidEmails : List { email : String, reason : String }
     }
 
 
@@ -218,6 +219,7 @@ type alias User =
     , lastName : String
     , isAdmin : Bool
     , isAgent : Bool
+    , isDefault : Bool
     , organizationId : Int
     , isActive : Bool
     , phone : String
@@ -254,7 +256,6 @@ type alias ColumnMapping =
     , lastName : String
     , email : String
     , phoneNumber : String
-    , state : String
     , currentCarrier : String
     , effectiveDate : String
     , birthDate : String
@@ -385,7 +386,7 @@ emptyForm =
     , effectiveDate = ""
     , birthDate = ""
     , tobaccoUser = False
-    , gender = "M"
+    , gender = ""
     , zipCode = ""
     , planType = Nothing
     }
@@ -406,7 +407,7 @@ emptyUploadState model =
         selectedAgentId =
             case model.currentUser of
                 Just user ->
-                    if user.isAgent && not user.isAdmin then
+                    if user.isAgent then
                         Just user.id
 
                     else
@@ -437,6 +438,7 @@ emptyUploadState model =
     , csvHeaders = []
     , processingHeaders = False
     , extractingCarriers = False
+    , invalidEmails = []
     }
 
 
@@ -515,6 +517,7 @@ type Msg
     | CarrierValuesExtracted (List String)
     | UpdateCarrierMapping String String
     | GotCarriersForMapping (List String) (Result Http.Error (List { name : String, aliases : List String }))
+    | EmailValidationCompleted (List { email : String, reason : String })
 
 
 type ContactFormField
@@ -563,18 +566,18 @@ update msg model =
                 | showModal = EditModal contact
                 , editForm =
                     { id = Just contact.id
-                    , firstName = contact.firstName
-                    , lastName = contact.lastName
+                    , firstName = Maybe.withDefault "" contact.firstName
+                    , lastName = Maybe.withDefault "" contact.lastName
                     , email = contact.email
-                    , phoneNumber = contact.phoneNumber
-                    , state = contact.state
+                    , phoneNumber = Maybe.withDefault "" contact.phoneNumber
+                    , state = Maybe.withDefault "" contact.state
                     , contactOwnerId = contact.contactOwnerId
                     , currentCarrier = contact.currentCarrier
-                    , effectiveDate = contact.effectiveDate
-                    , birthDate = contact.birthDate
-                    , tobaccoUser = contact.tobaccoUser
-                    , gender = contact.gender
-                    , zipCode = contact.zipCode
+                    , effectiveDate = Maybe.withDefault "" contact.effectiveDate
+                    , birthDate = Maybe.withDefault "" contact.birthDate
+                    , tobaccoUser = Maybe.withDefault False contact.tobaccoUser
+                    , gender = Maybe.withDefault "" contact.gender
+                    , zipCode = Maybe.withDefault "" contact.zipCode
                     , planType = contact.planType
                     }
               }
@@ -907,7 +910,7 @@ update msg model =
                             | contacts = updatedContacts
                             , editForm =
                                 model.editForm
-                                    |> (\form -> { form | state = contact.state })
+                                    |> (\form -> { form | state = Maybe.withDefault "" contact.state })
                             , isSubmittingForm = False
                             , error = Nothing
                         }
@@ -1367,7 +1370,21 @@ update msg model =
                     ( model, Cmd.none )
 
         ShowReassignAgentModal ->
-            ( { model | showModal = ReassignAgentModal }, Cmd.none )
+            let
+                -- Get the first agent ID as the default selected agent
+                defaultAgentId =
+                    model.agents
+                        |> List.head
+                        |> Maybe.map .id
+
+                -- Update the edit form with the selected agent
+                updatedForm =
+                    model.editForm
+
+                updatedFormWithAgent =
+                    { updatedForm | contactOwnerId = defaultAgentId }
+            in
+            ( { model | showModal = ReassignAgentModal, editForm = updatedFormWithAgent }, Cmd.none )
 
         SelectReassignAgent agentId ->
             let
@@ -1473,9 +1490,6 @@ update msg model =
                                             "phoneNumber" ->
                                                 { mapping | phoneNumber = value }
 
-                                            "state" ->
-                                                { mapping | state = value }
-
                                             "currentCarrier" ->
                                                 { mapping | currentCarrier = value }
 
@@ -1523,12 +1537,6 @@ update msg model =
                                                 ""
                                         , phoneNumber =
                                             if field == "phoneNumber" then
-                                                value
-
-                                            else
-                                                ""
-                                        , state =
-                                            if field == "state" then
                                                 value
 
                                             else
@@ -1632,24 +1640,61 @@ update msg model =
 
                                         _ ->
                                             True
-                            in
-                            ( { model
-                                | showModal =
-                                    CsvUploadModal
-                                        { state
-                                            | columnMapping = Just suggestions.columnMappings
-                                            , carrierMapping = Just { detectedCarriers = state.detectedCarriers, mappings = suggestions.carrierMappings }
-                                            , extractingCarriers = hasCarrierColumn
-                                        }
-                              }
-                            , case ( hasCarrierColumn, state.file ) of
-                                ( True, Just file ) ->
-                                    Task.perform
-                                        (\content -> CarrierValuesExtracted (extractUniqueCarriers content suggestions.columnMappings.currentCarrier))
-                                        (File.toString file)
 
-                                _ ->
-                                    Cmd.none
+                                updatedState =
+                                    { state
+                                        | columnMapping = Just suggestions.columnMappings
+                                        , carrierMapping = Just { detectedCarriers = state.detectedCarriers, mappings = suggestions.carrierMappings }
+                                        , extractingCarriers = hasCarrierColumn
+                                    }
+
+                                -- Create commands to run
+                                commands =
+                                    []
+
+                                -- Add carrier extraction command if needed
+                                commands1 =
+                                    case ( hasCarrierColumn, state.file ) of
+                                        ( True, Just file ) ->
+                                            Task.perform
+                                                (\content -> CarrierValuesExtracted (extractUniqueCarriers content suggestions.columnMappings.currentCarrier))
+                                                (File.toString file)
+                                                :: commands
+
+                                        _ ->
+                                            commands
+
+                                -- Add email validation command
+                                commands2 =
+                                    case state.file of
+                                        Just file ->
+                                            if not (String.isEmpty suggestions.columnMappings.email) then
+                                                let
+                                                    dummyCarrierMapping =
+                                                        { detectedCarriers = []
+                                                        , mappings = Dict.empty
+                                                        }
+                                                in
+                                                Task.perform
+                                                    (\content ->
+                                                        case CsvProcessor.processCsvToContacts content suggestions.columnMappings dummyCarrierMapping of
+                                                            Ok result1 ->
+                                                                EmailValidationCompleted (List.map (\contact -> { email = contact.email, reason = contact.reason }) result1.invalid)
+
+                                                            Err _ ->
+                                                                EmailValidationCompleted []
+                                                    )
+                                                    (File.toString file)
+                                                    :: commands1
+
+                                            else
+                                                commands1
+
+                                        Nothing ->
+                                            commands1
+                            in
+                            ( { model | showModal = CsvUploadModal updatedState }
+                            , Cmd.batch commands2
                             )
 
                         Err _ ->
@@ -1730,6 +1775,28 @@ update msg model =
                         -- Use CsvProcessor to suggest carrier mappings
                         carrierMapping =
                             CsvProcessor.suggestCarrierMappings carrierValues standardCarriers
+
+                        -- Add validation command if we have all necessary components
+                        validateEmails =
+                            case ( state.file, state.columnMapping ) of
+                                ( Just file, Just colMapping ) ->
+                                    if String.isEmpty colMapping.email then
+                                        Cmd.none
+
+                                    else
+                                        Task.perform
+                                            (\content ->
+                                                case CsvProcessor.processCsvToContacts content colMapping carrierMapping of
+                                                    Ok result ->
+                                                        EmailValidationCompleted (List.map (\contact -> { email = contact.email, reason = contact.reason }) result.invalid)
+
+                                                    Err _ ->
+                                                        EmailValidationCompleted []
+                                            )
+                                            (File.toString file)
+
+                                _ ->
+                                    Cmd.none
                     in
                     ( { model
                         | showModal =
@@ -1740,7 +1807,7 @@ update msg model =
                                     , extractingCarriers = False
                                 }
                       }
-                    , Cmd.none
+                    , validateEmails
                     )
 
                 _ ->
@@ -1814,6 +1881,16 @@ update msg model =
                 _ ->
                     ( model, Cmd.none )
 
+        EmailValidationCompleted invalidEmails ->
+            case model.showModal of
+                CsvUploadModal state ->
+                    ( { model | showModal = CsvUploadModal { state | invalidEmails = invalidEmails } }
+                    , Cmd.none
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
+
 
 
 -- TODO: Handle error
@@ -1831,9 +1908,9 @@ view model =
             , -- Stats Section - Make more compact with reduced margins
               div [ class "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-6" ]
                 [ statsCard "Total Contacts" (String.fromInt model.pagination.totalItems)
-                , statsCard "Emails Sent" "1824"
-                , statsCard "Emails Clicked" "425"
-                , statsCard "Quotes Created" "385"
+                , statsCard "Emails Sent" "0"
+                , statsCard "Emails Clicked" "0"
+                , statsCard "Quotes Created" "0"
                 ]
             , -- Table Container with overflow handling - reduced vertical spacing
               div [ class "overflow-x-auto max-w-7xl mx-auto" ]
@@ -1942,7 +2019,8 @@ view model =
                                         []
                                     ]
                                 , tableHeader "Name"
-                                , tableHeader "Status"
+
+                                --, tableHeader "Status"
                                 , tableHeader "Email"
                                 , tableHeader "Phone"
                                 , tableHeader "State"
@@ -2069,7 +2147,7 @@ viewTableRow model contact =
         -- Reduced padding for compact cells
         -- Added smaller text for phone numbers
         initials =
-            String.left 1 contact.firstName ++ String.left 1 contact.lastName
+            String.left 1 (Maybe.withDefault "" contact.firstName) ++ String.left 1 (Maybe.withDefault "" contact.lastName)
 
         agentName =
             case contact.contactOwner of
@@ -2090,11 +2168,22 @@ viewTableRow model contact =
                                     agent.firstName ++ " " ++ agent.lastName
 
                                 Nothing ->
-                                    -- Fallback if agent not found in list
-                                    "Agent #" ++ String.fromInt agentId
+                                    -- Return empty string instead of showing agent ID
+                                    ""
 
                         Nothing ->
-                            "Default"
+                            -- Find the default agent
+                            let
+                                defaultAgent =
+                                    List.filter (\agent -> agent.isDefault) model.agents
+                                        |> List.head
+                            in
+                            case defaultAgent of
+                                Just agent ->
+                                    agent.firstName ++ " " ++ agent.lastName ++ " (Default)"
+
+                                Nothing ->
+                                    "Default"
 
         currentCarrier =
             Maybe.withDefault "" contact.currentCarrier
@@ -2120,24 +2209,27 @@ viewTableRow model contact =
                         [ class "text-left text-gray-900 hover:text-purple-600 transition-colors duration-200"
                         , onClick (NavigateToContact contact.id)
                         ]
-                        [ text (contact.firstName ++ " " ++ contact.lastName) ]
+                        [ text (Maybe.withDefault "" contact.firstName ++ " " ++ Maybe.withDefault "" contact.lastName) ]
                     ]
                 ]
             ]
+
+        {--
         , td [ class compactCellClass ]
             [ viewStatus contact.status ]
+        --}
         , td [ class cellClass ]
             [ text contact.email ]
         , td [ class phoneCellClass ]
-            [ text (formatPhoneNumber contact.phoneNumber) ]
+            [ text (formatPhoneNumber (Maybe.withDefault "" contact.phoneNumber)) ]
         , td [ class cellClass ]
-            [ text contact.state ]
+            [ text (Maybe.withDefault "" contact.state) ]
         , td [ class cellClass ]
             [ text agentName ]
         , td [ class compactCellClass ]
             [ text currentCarrier ]
         , td [ class cellClass ]
-            [ text contact.effectiveDate ]
+            [ text (Maybe.withDefault "" contact.effectiveDate) ]
         , td [ class cellClass ]
             [ button
                 [ class "text-purple-600 hover:text-purple-800 transition-colors duration-200"
@@ -2240,24 +2332,25 @@ contactDecoder : Decode.Decoder Contact
 contactDecoder =
     Decode.succeed Contact
         |> Pipeline.required "id" Decode.int
-        |> Pipeline.required "first_name" Decode.string
-        |> Pipeline.required "last_name" Decode.string
+        |> Pipeline.optional "first_name" (Decode.nullable Decode.string) Nothing
+        |> Pipeline.optional "last_name" (Decode.nullable Decode.string) Nothing
         |> Pipeline.required "email" Decode.string
         |> Pipeline.optional "phone_number"
             (Decode.string
                 |> Decode.andThen
                     (\val -> Decode.succeed val)
+                |> Decode.nullable
             )
-            ""
-        |> Pipeline.required "state" Decode.string
+            Nothing
+        |> Pipeline.optional "state" (Decode.nullable Decode.string) Nothing
         |> Pipeline.optional "contact_owner_id" (Decode.nullable Decode.int) Nothing
         |> Pipeline.optional "contact_owner" (Decode.nullable userDecoder) Nothing
         |> Pipeline.optional "current_carrier" (Decode.nullable Decode.string) Nothing
-        |> Pipeline.required "effective_date" Decode.string
-        |> Pipeline.required "birth_date" Decode.string
-        |> Pipeline.required "tobacco_user" Decode.bool
-        |> Pipeline.required "gender" Decode.string
-        |> Pipeline.required "zip_code" Decode.string
+        |> Pipeline.optional "effective_date" (Decode.nullable Decode.string) Nothing
+        |> Pipeline.optional "birth_date" (Decode.nullable Decode.string) Nothing
+        |> Pipeline.optional "tobacco_user" (Decode.nullable Decode.bool) Nothing
+        |> Pipeline.optional "gender" (Decode.nullable Decode.string) Nothing
+        |> Pipeline.optional "zip_code" (Decode.nullable Decode.string) Nothing
         |> Pipeline.optional "plan_type" (Decode.nullable Decode.string) Nothing
         |> Pipeline.optional "status" Decode.string "New"
         |> Pipeline.required "agent_id" (Decode.nullable Decode.int)
@@ -2560,6 +2653,42 @@ viewCsvUploadModal state isUploading model =
               else
                 text ""
 
+            -- Display invalid emails section (if any)
+            , if not (List.isEmpty state.invalidEmails) then
+                div [ class "mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg" ]
+                    [ div [ class "flex items-start" ]
+                        [ div [ class "flex-shrink-0" ]
+                            [ viewIcon "M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" ]
+                        , div [ class "ml-3 w-full" ]
+                            [ h3 [ class "text-sm font-medium text-yellow-800 mb-2" ]
+                                [ text ("Invalid Emails (" ++ String.fromInt (List.length state.invalidEmails) ++ ")") ]
+                            , p [ class "text-sm text-yellow-700 mb-3" ]
+                                [ text "The following records have invalid email addresses and will be skipped during import:" ]
+                            , div [ class "max-h-80 overflow-y-auto bg-white border border-yellow-200 rounded p-2" ]
+                                [ Html.ul [ class "text-xs text-yellow-800 space-y-1" ]
+                                    (List.indexedMap
+                                        (\index inv ->
+                                            Html.li [ class "flex" ]
+                                                [ span [ class "text-gray-500 w-16 flex-shrink-0" ] [ text ("Row " ++ String.fromInt (index + 1) ++ ":") ]
+                                                , span [ class "flex-grow" ]
+                                                    [ if String.isEmpty inv.email then
+                                                        text "(empty string)"
+
+                                                      else
+                                                        text inv.email
+                                                    ]
+                                                ]
+                                        )
+                                        state.invalidEmails
+                                    )
+                                ]
+                            ]
+                        ]
+                    ]
+
+              else
+                text ""
+
             -- Form fields (agent selection, etc.)
             , div [ class "mb-4 space-y-4" ]
                 [ case model.currentUser of
@@ -2620,18 +2749,7 @@ viewCsvUploadModal state isUploading model =
 
                                             -- Get default agent ID - either from state.selectedAgentId if valid, or from current user
                                             defaultAgentId =
-                                                case state.selectedAgentId of
-                                                    Just id ->
-                                                        if id > 0 then
-                                                            id
-
-                                                        else
-                                                            -- If id is 0, use current user's id
-                                                            user.id
-
-                                                    Nothing ->
-                                                        -- If Nothing, use current user's id
-                                                        user.id
+                                                user.id
                                         in
                                         Html.select
                                             [ class "w-full px-4 py-3 bg-white border-[2.5px] border-purple-300 rounded-lg text-gray-700 placeholder-gray-400 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 focus:bg-white transition-all duration-200 appearance-none"
@@ -2771,7 +2889,6 @@ viewColumnMapping state =
             , viewColumnMapField "Last Name" "lastName" state
             , viewColumnMapField "Email" "email" state
             , viewColumnMapField "Phone Number" "phoneNumber" state
-            , viewColumnMapField "State" "state" state
             , viewColumnMapField "Current Carrier" "currentCarrier" state
             , viewColumnMapField "Effective Date" "effectiveDate" state
             , viewColumnMapField "Birth Date" "birthDate" state
@@ -2940,9 +3057,6 @@ getColumnMapping field state =
                 "phoneNumber" ->
                     mapping.phoneNumber
 
-                "state" ->
-                    mapping.state
-
                 "currentCarrier" ->
                     mapping.currentCarrier
 
@@ -3000,53 +3114,63 @@ uploadCsv file overwriteDuplicates maybeAgentId model =
                         case ( state.columnMapping, state.carrierMapping ) of
                             ( Just colMapping, Just carrierMapping ) ->
                                 case CsvProcessor.processCsvToContacts csvContent colMapping carrierMapping of
-                                    Ok contacts ->
-                                        Http.task
-                                            { method = "POST"
-                                            , headers = []
-                                            , url = "/api/contacts/bulk-import"
-                                            , body =
-                                                Http.jsonBody
-                                                    (Encode.object
-                                                        [ ( "contacts", Encode.list encodeProcessedContact contacts )
-                                                        , ( "overwriteExisting", Encode.bool actualOverwriteValue )
-                                                        , ( "agentId"
-                                                          , case maybeAgentId of
-                                                                Just id ->
-                                                                    Encode.int id
-
-                                                                Nothing ->
-                                                                    Encode.null
-                                                          )
-                                                        ]
+                                    Ok { valid, invalid } ->
+                                        if List.isEmpty valid then
+                                            -- If there are no valid contacts, return an error
+                                            Task.succeed
+                                                (Err
+                                                    (Http.BadBody
+                                                        "No valid contacts found in CSV. Please check email formats."
                                                     )
-                                            , resolver =
-                                                Http.stringResolver <|
-                                                    \response ->
-                                                        case response of
-                                                            Http.GoodStatus_ _ body ->
-                                                                case Decode.decodeString uploadResponseDecoder body of
-                                                                    Ok value ->
-                                                                        Ok value
+                                                )
 
-                                                                    Err err ->
-                                                                        Err (Http.BadBody (Decode.errorToString err))
+                                        else
+                                            Http.task
+                                                { method = "POST"
+                                                , headers = []
+                                                , url = "/api/contacts/bulk-import"
+                                                , body =
+                                                    Http.jsonBody
+                                                        (Encode.object
+                                                            [ ( "contacts", Encode.list encodeProcessedContact valid )
+                                                            , ( "overwriteExisting", Encode.bool actualOverwriteValue )
+                                                            , ( "agentId"
+                                                              , case maybeAgentId of
+                                                                    Just id ->
+                                                                        Encode.int id
 
-                                                            Http.BadUrl_ url ->
-                                                                Err (Http.BadUrl url)
+                                                                    Nothing ->
+                                                                        Encode.null
+                                                              )
+                                                            ]
+                                                        )
+                                                , resolver =
+                                                    Http.stringResolver <|
+                                                        \response ->
+                                                            case response of
+                                                                Http.GoodStatus_ _ body ->
+                                                                    case Decode.decodeString uploadResponseDecoder body of
+                                                                        Ok value ->
+                                                                            Ok value
 
-                                                            Http.Timeout_ ->
-                                                                Err Http.Timeout
+                                                                        Err err ->
+                                                                            Err (Http.BadBody (Decode.errorToString err))
 
-                                                            Http.NetworkError_ ->
-                                                                Err Http.NetworkError
+                                                                Http.BadUrl_ url ->
+                                                                    Err (Http.BadUrl url)
 
-                                                            Http.BadStatus_ metadata _ ->
-                                                                Err (Http.BadStatus metadata.statusCode)
-                                            , timeout = Nothing
-                                            }
-                                            |> Task.map Ok
-                                            |> Task.onError (\err -> Task.succeed (Err err))
+                                                                Http.Timeout_ ->
+                                                                    Err Http.Timeout
+
+                                                                Http.NetworkError_ ->
+                                                                    Err Http.NetworkError
+
+                                                                Http.BadStatus_ metadata _ ->
+                                                                    Err (Http.BadStatus metadata.statusCode)
+                                                , timeout = Nothing
+                                                }
+                                                |> Task.map Ok
+                                                |> Task.onError (\err -> Task.succeed (Err err))
 
                                     Err err ->
                                         Task.succeed
@@ -3091,7 +3215,6 @@ encodeProcessedContact contact =
         , ( "last_name", Encode.string contact.lastName )
         , ( "email", Encode.string contact.email )
         , ( "phone_number", Encode.string contact.phoneNumber )
-        , ( "state", Encode.string contact.state )
         , ( "current_carrier", Encode.string contact.currentCarrier )
         , ( "effective_date", Encode.string contact.effectiveDate )
         , ( "birth_date", Encode.string contact.birthDate )
@@ -3114,7 +3237,6 @@ encodeColumnMapping mapping =
             , ( "lastName", Encode.string mapping.lastName )
             , ( "email", Encode.string mapping.email )
             , ( "phoneNumber", Encode.string mapping.phoneNumber )
-            , ( "state", Encode.string mapping.state )
             , ( "currentCarrier", Encode.string mapping.currentCarrier )
             , ( "effectiveDate", Encode.string mapping.effectiveDate )
             , ( "birthDate", Encode.string mapping.birthDate )
@@ -3222,8 +3344,8 @@ sortContacts maybeColumn direction contacts =
                         NameCol ->
                             \a b ->
                                 compare
-                                    (a.firstName ++ " " ++ a.lastName)
-                                    (b.firstName ++ " " ++ b.lastName)
+                                    (Maybe.withDefault "" a.firstName ++ " " ++ Maybe.withDefault "" a.lastName)
+                                    (Maybe.withDefault "" b.firstName ++ " " ++ Maybe.withDefault "" b.lastName)
 
                         StatusCol ->
                             \a b -> compare a.status b.status
@@ -3232,25 +3354,27 @@ sortContacts maybeColumn direction contacts =
                             \a b -> compare a.email b.email
 
                         PhoneNumberCol ->
-                            \a b -> compare a.phoneNumber b.phoneNumber
+                            \a b -> compare (Maybe.withDefault "" a.phoneNumber) (Maybe.withDefault "" b.phoneNumber)
 
                         StateCol ->
-                            \a b -> compare a.state b.state
+                            \a b -> compare (Maybe.withDefault "" a.state) (Maybe.withDefault "" b.state)
 
                         ContactOwnerCol ->
                             \a b ->
-                                compare
-                                    (Maybe.map .firstName a.contactOwner |> Maybe.withDefault "Default")
-                                    (Maybe.map .firstName b.contactOwner |> Maybe.withDefault "Default")
+                                let
+                                    aName =
+                                        getUserName a.contactOwner
+
+                                    bName =
+                                        getUserName b.contactOwner
+                                in
+                                compare aName bName
 
                         CurrentCarrierCol ->
-                            \a b ->
-                                compare
-                                    (Maybe.withDefault "" a.currentCarrier)
-                                    (Maybe.withDefault "" b.currentCarrier)
+                            \a b -> compare (Maybe.withDefault "" a.currentCarrier) (Maybe.withDefault "" b.currentCarrier)
 
                         EffectiveDateCol ->
-                            \a b -> compare a.effectiveDate b.effectiveDate
+                            \a b -> compare (Maybe.withDefault "" a.effectiveDate) (Maybe.withDefault "" b.effectiveDate)
             in
             List.sortWith
                 (if direction == Ascending then
@@ -3267,7 +3391,7 @@ filterContacts filters searchQuery currentTime contacts =
     contacts
         |> filterBySearch searchQuery
         |> filterByCarriers filters.carriers
-        |> filterByList .state filters.states
+        |> filterByList (\c -> Maybe.withDefault "" c.state) filters.states
         |> filterByAge filters.ageRange
         |> filterByAgents filters.agents
 
@@ -3302,8 +3426,8 @@ filterBySearch query contacts =
         in
         List.filter
             (\contact ->
-                String.contains loweredQuery (String.toLower contact.firstName)
-                    || String.contains loweredQuery (String.toLower contact.lastName)
+                String.contains loweredQuery (String.toLower (Maybe.withDefault "" contact.firstName))
+                    || String.contains loweredQuery (String.toLower (Maybe.withDefault "" contact.lastName))
                     || (case contact.currentCarrier of
                             Just carrier ->
                                 String.contains loweredQuery (String.toLower carrier)
@@ -3316,8 +3440,8 @@ filterBySearch query contacts =
 
 
 filterByAge : Maybe ( Int, Int ) -> List Contact -> List Contact
-filterByAge maybeRange contacts =
-    case maybeRange of
+filterByAge range contacts =
+    case range of
         Nothing ->
             contacts
 
@@ -3326,7 +3450,7 @@ filterByAge maybeRange contacts =
                 (\contact ->
                     let
                         age =
-                            calculateAge contact.birthDate
+                            calculateAge (Maybe.withDefault "" contact.birthDate)
                     in
                     age >= min && age <= max
                 )
@@ -3530,12 +3654,12 @@ viewContactForm model form updateMsg submitMsg buttonText isSubmitting =
             [ viewFormInput "First Name" "text" form.firstName FirstName updateMsg True
             , viewFormInput "Last Name" "text" form.lastName LastName updateMsg True
             , emailField
-            , viewFormInput "Phone Number" "text" form.phoneNumber PhoneNumber updateMsg True
+            , viewFormInput "Phone Number" "text" form.phoneNumber PhoneNumber updateMsg False
             , viewFormSelect "Current Carrier" selectedCarrier CurrentCarrier updateMsg carrierOptions
             , viewFormSelect "Plan Type" (Maybe.withDefault "" form.planType) PlanType updateMsg planTypeOptions
             , viewFormSelectWithValue "Assigned Agent" selectedAgentId ContactOwnerId updateMsg agentOptions
-            , viewFormInput "Effective Date" "date" form.effectiveDate EffectiveDate updateMsg True
-            , viewFormInput "Birth Date" "date" form.birthDate BirthDate updateMsg True
+            , viewFormInput "Effective Date" "date" form.effectiveDate EffectiveDate updateMsg False
+            , viewFormInput "Birth Date" "date" form.birthDate BirthDate updateMsg False
             , viewFormRadioGroup "Tobacco User"
                 (if form.tobaccoUser then
                     "true"
@@ -3643,7 +3767,7 @@ viewFormSelect labelText selectedValue field updateMsg options =
             [ class "w-full px-2 py-1.5 bg-white border-[1.5px] border-purple-300 rounded-md text-sm text-gray-700 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-1 focus:ring-purple-200 focus:bg-white transition-all duration-200"
             , value selectedValue
             , onInput (updateMsg field)
-            , required True
+            , required False
             ]
             (List.map
                 (\( val, label ) ->
@@ -3758,6 +3882,7 @@ userDecoder =
         |> Pipeline.required "last_name" Decode.string
         |> Pipeline.required "is_admin" Decode.bool
         |> Pipeline.required "is_agent" Decode.bool
+        |> Pipeline.required "is_default" Decode.bool
         |> Pipeline.required "organization_id" Decode.int
         |> Pipeline.required "is_active" Decode.bool
         |> Pipeline.required "phone" Decode.string
@@ -3813,16 +3938,20 @@ viewExpandedContent : Contact -> Html Msg
 viewExpandedContent contact =
     div
         [ class "grid grid-cols-5 gap-4 py-2 px-4 transition-all duration-200 ease-in-out" ]
-        [ viewExpandedField "Birth Date" contact.birthDate
+        [ viewExpandedField "Birth Date" (Maybe.withDefault "" contact.birthDate)
         , viewExpandedField "Tobacco User"
-            (if contact.tobaccoUser then
-                "Yes"
+            (case contact.tobaccoUser of
+                Just True ->
+                    "Yes"
 
-             else
-                "No"
+                Just False ->
+                    "No"
+
+                Nothing ->
+                    ""
             )
-        , viewExpandedField "Gender" contact.gender
-        , viewExpandedField "ZIP Code" contact.zipCode
+        , viewExpandedField "Gender" (Maybe.withDefault "" contact.gender)
+        , viewExpandedField "ZIP Code" (Maybe.withDefault "" contact.zipCode)
         , viewExpandedField "Plan Type" (Maybe.withDefault "" contact.planType)
         ]
 
@@ -4042,18 +4171,6 @@ isContactFormValid form =
         > 0
         && String.length form.email
         > 0
-        && String.length form.phoneNumber
-        > 0
-        && String.length form.state
-        > 0
-        && String.length form.effectiveDate
-        > 0
-        && String.length form.birthDate
-        > 0
-        && String.length form.zipCode
-        > 0
-        && isJust form.planType
-        && isJust form.currentCarrier
 
 
 isJust : Maybe a -> Bool
@@ -4090,8 +4207,22 @@ fetchAgents : Cmd Msg
 fetchAgents =
     Http.get
         { url = "/api/agents"
-        , expect = Http.expectJson GotAgents (Decode.list agentDecoder)
+        , expect = Http.expectJson GotAgents agentsResponseDecoder
         }
+
+
+
+-- Add a decoder for the new response format
+
+
+agentsResponseDecoder : Decoder (List User)
+agentsResponseDecoder =
+    Decode.oneOf
+        [ -- First try the new format (response with agents and defaultAgentId)
+          Decode.field "agents" (Decode.list agentDecoder)
+        , -- Fall back to the old format (just a list of agents)
+          Decode.list agentDecoder
+        ]
 
 
 checkEmail : String -> Cmd Msg
@@ -4180,6 +4311,7 @@ viewFormSelectWithValue labelText selectedValue field updateMsg options =
                 [ class "w-full px-2 py-1.5 bg-white border-[1.5px] border-purple-300 rounded-md text-sm text-gray-700 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-1 focus:ring-purple-200 focus:bg-white transition-all duration-200 appearance-none"
                 , value selectedValue
                 , onInput (updateMsg field)
+                , required False
                 ]
                 (option [ value "", disabled True, selected (selectedValue == "") ] [ text "Select an Agent" ]
                     :: List.map (\( val, txt ) -> option [ value val, selected (val == selectedValue) ] [ text txt ]) options
@@ -4215,6 +4347,7 @@ agentDecoder =
         |> Pipeline.required "lastName" Decode.string
         |> Pipeline.required "isAdmin" Decode.bool
         |> Pipeline.required "isAgent" Decode.bool
+        |> Pipeline.required "isDefault" Decode.bool
         |> Pipeline.optional "organizationId" Decode.int 0
         -- Add default value for isActive since it's not in the API response
         |> Pipeline.hardcoded True
@@ -4227,21 +4360,28 @@ agentDecoder =
 viewReassignAgentModal : Model -> Html Msg
 viewReassignAgentModal model =
     let
-        -- Filter to only include actual agents
+        -- Use all users in the agents list
         agentList =
             model.agents
-                |> List.filter (\user -> user.isAgent)
 
-        -- Add a "Default" option (NULL agent_id)
+        -- Create list of agent options
         agentOptions =
-            ( 0, "Default" )
-                :: List.map
-                    (\agent ->
-                        ( agent.id
-                        , agent.firstName ++ " " ++ agent.lastName
-                        )
+            List.map
+                (\agent ->
+                    ( agent.id
+                    , agent.firstName ++ " " ++ agent.lastName
                     )
-                    agentList
+                )
+                agentList
+
+        -- Get the first agent ID as the default value if no agent is currently selected
+        defaultAgentId =
+            case List.head agentList of
+                Just agent ->
+                    String.fromInt agent.id
+
+                Nothing ->
+                    "0"
     in
     div [ class "fixed inset-0 bg-gray-500/75 flex items-center justify-center p-4 sm:p-8" ]
         [ div [ class "bg-white rounded-xl p-5 sm:p-8 md:p-10 max-w-2xl w-full mx-4 shadow-xl relative overflow-y-auto max-h-[90vh]" ]
@@ -4265,7 +4405,7 @@ viewReassignAgentModal model =
                       else
                         Html.select
                             [ class "w-full px-3 py-2 sm:px-4 sm:py-3 bg-white border-[2.5px] border-purple-300 rounded-lg text-gray-700 placeholder-gray-400 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 focus:bg-white transition-all duration-200 appearance-none"
-                            , value (String.fromInt (Maybe.withDefault 0 model.editForm.contactOwnerId))
+                            , value defaultAgentId
                             , onInput (\val -> SelectReassignAgent (String.toInt val |> Maybe.withDefault 0))
                             ]
                             (List.map
@@ -4563,3 +4703,13 @@ hasCarrierMappings state =
 
         Nothing ->
             False
+
+
+getUserName : Maybe User -> String
+getUserName maybeUser =
+    case maybeUser of
+        Just user ->
+            user.firstName ++ " " ++ user.lastName
+
+        Nothing ->
+            "Default"

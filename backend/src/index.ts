@@ -605,16 +605,16 @@ const startServer = async () => {
             contact.first_name,
             contact.last_name,
             contact.email,
-            contact.current_carrier,
-            contact.plan_type,
-            contact.effective_date,
-            contact.birth_date,
-            contact.tobacco_user,
-            contact.gender,
-            contact.state,
-            contact.zip_code,
+            contact.current_carrier || null, // Make nullable
+            contact.plan_type || null, // Make nullable
+            contact.effective_date || null, // Make nullable
+            contact.birth_date || null, // Make nullable
+            contact.tobacco_user ?? false, // Default tobacco_user to false if null
+            contact.gender || null, // Make nullable
+            contact.state || null, // Make nullable
+            contact.zip_code || null, // Make nullable
             contact.agent_id || null,
-            contact.phone_number || ''
+            contact.phone_number || null // Make nullable
           ]
 
           logger.info(`Executing query with params: ${JSON.stringify(params)}`)
@@ -1228,6 +1228,15 @@ const startServer = async () => {
           // Get the libSQL client
           const client = db.getClient()
 
+          // Fetch the default agent ID for this organization
+          const orgResult = await client.execute({
+            sql: `SELECT default_agent_id FROM organizations WHERE id = ?`,
+            args: [currentUser.organization_id]
+          })
+          
+          const defaultAgentId = orgResult.rows[0]?.default_agent_id ? String(orgResult.rows[0].default_agent_id) : null
+          logger.info(`GET /api/agents - Default agent ID for org ${currentUser.organization_id} is ${defaultAgentId || 'not set'}`)
+
           // Fetch all agents (users) from the organization along with their settings
           const result = await client.execute({
             sql: `
@@ -1258,6 +1267,9 @@ const startServer = async () => {
               carrierContracts: [],
               stateCarrierSettings: []
             }
+            
+            // Check if this agent is the default agent
+            const isDefault = defaultAgentId ? String(row.id) === defaultAgentId : false
 
             return {
               id: String(row.id),
@@ -1267,13 +1279,18 @@ const startServer = async () => {
               phone: row.phone || '',
               isAdmin: Boolean(row.is_admin),
               isAgent: Boolean(row.is_agent),
+              isDefault: isDefault,
               carriers: settings.carrierContracts || [],
               stateLicenses: settings.stateLicenses || []
             }
           })
 
           logger.info(`GET /api/agents - Returning ${agents.length} agents`)
-          return agents
+          // Return both agents and the default agent ID
+          return {
+            agents,
+            defaultAgentId
+          }
 
         } catch (e) {
           logger.error(`Error fetching agents: ${e}`)

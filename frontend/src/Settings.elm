@@ -8,7 +8,7 @@ import File exposing (File)
 import File.Select as Select
 import Html exposing (..)
 import Html.Attributes exposing (..)
-import Html.Events exposing (onCheck, onClick, onInput)
+import Html.Events exposing (onCheck, onClick, onInput, preventDefaultOn)
 import Http exposing (expectJson, jsonBody)
 import Json.Decode as Decode exposing (Decoder)
 import Json.Decode.Pipeline as Pipeline
@@ -102,6 +102,8 @@ type alias Model =
     , linkCopied : Bool
     , selfOnboardingUrl : Maybe String
     , logo : Maybe String
+    , hover : Bool
+    , uploadingLogo : Bool
     }
 
 
@@ -165,6 +167,9 @@ type Msg
     | CopySelfOnboardingLink
     | LinkCopied Bool
     | GotSelfOnboardingUrl (Result Http.Error SelfOnboardingUrlResponse)
+    | DragEnter
+    | DragLeave
+    | GotFiles File (List File)
 
 
 type alias SettingsResponse =
@@ -197,6 +202,8 @@ init flags =
       , linkCopied = False
       , selfOnboardingUrl = Nothing
       , logo = Nothing
+      , hover = False
+      , uploadingLogo = False
       }
     , Cmd.batch
         [ fetchSettings
@@ -572,20 +579,27 @@ update msg model =
             , Select.file [ "image/png", "image/jpeg" ] GotLogo
             )
 
+        DragEnter ->
+            ( { model | hover = True }, Cmd.none )
+
+        DragLeave ->
+            ( { model | hover = False }, Cmd.none )
+
+        GotFiles file files ->
+            ( { model | hover = False, uploadingLogo = True }, Task.perform GotLogoUrl (File.toUrl file) )
+
         GotLogo file ->
-            ( model
-            , Task.perform GotLogoUrl (File.toUrl file)
-            )
+            ( { model | uploadingLogo = True }, Task.perform GotLogoUrl (File.toUrl file) )
 
         GotLogoUrl url ->
             case model.orgSettings of
                 Just settings ->
-                    ( { model | logo = Just url, orgSettings = Just { settings | logo = Just url } }
+                    ( { model | logo = Just url, uploadingLogo = False, orgSettings = Just { settings | logo = Just url } }
                     , saveSettings { settings = Just { settings | logo = Just url }, logo = Just url }
                     )
 
                 Nothing ->
-                    ( model, Cmd.none )
+                    ( { model | logo = Just url, uploadingLogo = False }, Cmd.none )
 
         LogoUploaded result ->
             case result of
@@ -663,7 +677,7 @@ encodeSettings settings =
         , ( "emailSendPolicyAnniversary", Encode.bool settings.emailSendPolicyAnniversary )
         , ( "emailSendAep", Encode.bool settings.emailSendAep )
         , ( "smartSendEnabled", Encode.bool settings.smartSendEnabled )
-        , ( "brandName", Encode.string settings.brandName )
+        , ( "name", Encode.string settings.brandName )
         , ( "primaryColor", Encode.string settings.primaryColor )
         , ( "secondaryColor", Encode.string settings.secondaryColor )
         , ( "logo", Maybe.withDefault Encode.null (Maybe.map Encode.string settings.logo) )
@@ -747,25 +761,33 @@ viewBottomBar model =
         ]
 
 
-viewSettingsContent : Maybe Settings -> Bool -> List String -> String -> Model -> Html Msg
-viewSettingsContent maybeSettings canEdit expandedSections planType model =
-    case maybeSettings of
-        Just settings ->
-            div [ class "space-y-6" ]
-                [ viewBrandSettings settings model
-                , viewEmailSettings settings
-                , viewSelfOnboardingLink model
-                , viewExpandableSection "Carrier Contracts"
-                    (viewCarriersGrid settings model)
-                    expandedSections
-                , viewExpandableSection "State & Carrier Settings"
-                    (viewStateCarrierGrid settings model)
-                    expandedSections
-                ]
+viewSettings : Model -> Html Msg
+viewSettings model =
+    div [ class "space-y-8" ]
+        [ case model.orgSettings of
+            Just settings ->
+                div [ class "space-y-6" ]
+                    [ viewBrandSettings settings model
+                    , viewSelfOnboardingLink model
+                    , div [ class "bg-white shadow rounded-lg p-6" ]
+                        [ h2 [ class "text-lg font-medium mb-4" ] [ text "Carrier Contracts" ]
+                        , viewCarriersGrid settings model
+                        ]
 
-        Nothing ->
-            div [ class "text-gray-500 italic" ]
-                [ text "Using organization settings" ]
+                    {--
+                    , viewEmailSettings settings
+                    , viewExpandableSection "State & Carrier Settings"
+                        (viewStateCarrierGrid settings model)
+                        model.expandedSections
+                    --}
+                    ]
+
+            Nothing ->
+                div [ class "text-gray-500 italic" ]
+                    [ text "Loading settings..." ]
+
+        --, viewBottomBar model
+        ]
 
 
 viewBrandSettings : Settings -> Model -> Html Msg
@@ -783,6 +805,8 @@ viewBrandSettings settings model =
                         ]
                         []
                     )
+
+                {--
                 , viewFormGroup "Primary Color"
                     (div [ class "flex items-center space-x-4" ]
                         [ input
@@ -819,8 +843,24 @@ viewBrandSettings settings model =
                             []
                         ]
                     )
+                --}
                 , viewFormGroup "Logo"
-                    (div [ class "flex items-center space-x-4" ]
+                    (div
+                        [ class
+                            ("flex items-center space-x-4 p-4 border rounded-md border-dashed text-center cursor-pointer transition-colors "
+                                ++ (if model.hover then
+                                        "border-purple-600 bg-purple-50"
+
+                                    else
+                                        "border-gray-200 hover:bg-gray-50"
+                                   )
+                            )
+                        , onClick UploadLogo
+                        , hijackOn "dragenter" (Decode.succeed DragEnter)
+                        , hijackOn "dragover" (Decode.succeed DragEnter)
+                        , hijackOn "dragleave" (Decode.succeed DragLeave)
+                        , hijackOn "drop" dropDecoder
+                        ]
                         [ case model.logo of
                             Just logoUrl ->
                                 div [ class "flex items-center space-x-4" ]
@@ -829,19 +869,32 @@ viewBrandSettings settings model =
                                         , class "h-16 w-16 object-contain border border-gray-200 rounded"
                                         ]
                                         []
-                                    , button
-                                        [ class "px-4 py-2 text-sm text-purple-600 hover:text-purple-800"
-                                        , onClick UploadLogo
+                                    , div [ class "flex flex-col items-start" ]
+                                        [ div [ class "text-purple-600 font-medium" ] [ text "Change Logo" ]
+                                        , div [ class "text-gray-500 text-sm mt-1" ] [ text "Click or drag and drop to change" ]
                                         ]
-                                        [ text "Change Logo" ]
                                     ]
 
                             Nothing ->
-                                button
-                                    [ class "px-4 py-2 text-sm text-purple-600 hover:text-purple-800 border border-purple-200 rounded"
-                                    , onClick UploadLogo
-                                    ]
-                                    [ text "Upload Logo" ]
+                                if model.uploadingLogo then
+                                    div [ class "flex flex-col items-center w-full" ]
+                                        [ div [ class "animate-spin rounded-full h-10 w-10 border-t-2 border-b-2 border-purple-500 mb-4" ] []
+                                        , div [ class "text-gray-500" ] [ text "Uploading..." ]
+                                        ]
+
+                                else
+                                    div [ class "flex flex-col items-center w-full" ]
+                                        [ div [ class "rounded-full bg-gray-100 p-3 mb-3" ]
+                                            [ svg [ viewBox "0 0 24 24", Svg.Attributes.class "h-6 w-6 text-purple-600" ]
+                                                [ path [ d "M9 12V7.00002H4V12.0002L1 12.0001L6 17.0001L11 12.0001L9 12Z", fill "currentColor" ] []
+                                                , path [ d "M20 7L15 2L10 7H13V12H17V7H20Z", fill "currentColor" ] []
+                                                , path [ d "M20 19.0001H4V22.0001H20V19.0001Z", fill "currentColor" ] []
+                                                ]
+                                            ]
+                                        , div [ class "text-purple-600 font-medium" ] [ text "Click to upload" ]
+                                        , div [ class "text-gray-500 text-sm mt-1" ] [ text "or drag and drop your logo" ]
+                                        , div [ class "text-gray-400 text-xs mt-2" ] [ text "PNG and JPEG supported (Recommended: 240px width x 60px height)" ]
+                                        ]
                         ]
                     )
                 ]
@@ -874,7 +927,7 @@ viewSelfOnboardingLink model =
         [ h2 [ class "text-lg font-medium mb-4" ] [ text "Self Onboarding" ]
         , div [ class "space-y-4" ]
             [ p [ class "mb-4 text-gray-600" ]
-                [ text "Share this link with companies that need to self-onboard into your platform." ]
+                [ text "Share this link with clients to allow them to self-onboard into your account on the Medicare Max platform." ]
             , div [ class "flex items-center space-x-3" ]
                 [ let
                     slug =
@@ -1211,36 +1264,12 @@ viewHeader =
             [ div [ class "flex justify-between h-16" ]
                 [ div [ class "flex" ]
                     [ div [ class "flex-shrink-0 flex items-center" ]
-                        [ h1 [ class "text-xl font-semibold text-purple-600" ]
+                        [ h1 [ class "text-2xl font-semibold" ]
                             [ text "Organization Settings" ]
                         ]
                     ]
                 ]
             ]
-        ]
-
-
-viewSettings : Model -> Html Msg
-viewSettings model =
-    div [ class "space-y-8" ]
-        [ case model.orgSettings of
-            Just settings ->
-                div [ class "space-y-6" ]
-                    [ viewBrandSettings settings model
-                    , viewEmailSettings settings
-                    , viewSelfOnboardingLink model
-                    , viewExpandableSection "Carrier Contracts"
-                        (viewCarriersGrid settings model)
-                        model.expandedSections
-                    , viewExpandableSection "State & Carrier Settings"
-                        (viewStateCarrierGrid settings model)
-                        model.expandedSections
-                    ]
-
-            Nothing ->
-                div [ class "text-gray-500 italic" ]
-                    [ text "Loading settings..." ]
-        , viewBottomBar model
         ]
 
 
@@ -1251,3 +1280,22 @@ finalizeOrganization orgSlug =
         , body = Http.emptyBody
         , expect = Http.expectWhatever OrgFinalized
         }
+
+
+
+-- Helper functions for drag and drop
+
+
+dropDecoder : Decode.Decoder Msg
+dropDecoder =
+    Decode.at [ "dataTransfer", "files" ] (Decode.oneOrMore GotFiles File.decoder)
+
+
+hijackOn : String -> Decode.Decoder msg -> Attribute msg
+hijackOn event decoder =
+    preventDefaultOn event (Decode.map hijack decoder)
+
+
+hijack : msg -> ( msg, Bool )
+hijack msg =
+    ( msg, True )

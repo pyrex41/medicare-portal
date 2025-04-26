@@ -71,6 +71,7 @@ type alias Model =
     , secondaryColor : String
     , logo : Maybe String
     , uploadingLogo : Bool
+    , hover : Bool
     , key : Nav.Key
     , selectedCarriers : List Carrier
     , useSmartSend : Bool
@@ -243,6 +244,7 @@ init key url =
             , secondaryColor = "#9F7AEA"
             , logo = Nothing
             , uploadingLogo = False
+            , hover = False
             , key = key
             , selectedCarriers = []
             , useSmartSend = True
@@ -284,6 +286,9 @@ type Msg
     | PrimaryColorChanged String
     | SecondaryColorChanged String
     | UploadLogo
+    | DragEnter
+    | DragLeave
+    | GotFiles File (List File)
     | GotLogo File
     | GotLogoUrl String
     | ContinueClicked
@@ -337,6 +342,15 @@ update msg model =
 
         UploadLogo ->
             ( model, Select.file [ "image/png" ] GotLogo )
+
+        DragEnter ->
+            ( { model | hover = True }, Cmd.none )
+
+        DragLeave ->
+            ( { model | hover = False }, Cmd.none )
+
+        GotFiles file files ->
+            ( { model | hover = False, uploadingLogo = True }, Task.perform GotLogoUrl (File.toUrl file) )
 
         GotLogo file ->
             ( { model | uploadingLogo = True }, Task.perform GotLogoUrl (File.toUrl file) )
@@ -794,8 +808,20 @@ viewCompany model =
                     ]
                 ]
             , div
-                [ class "mt-8 p-6 border border-gray-200 rounded-lg border-dashed text-center cursor-pointer hover:bg-gray-50 transition-colors"
+                [ class
+                    ("mt-8 p-6 border rounded-lg border-dashed text-center cursor-pointer transition-colors "
+                        ++ (if model.hover then
+                                "border-indigo-600 bg-indigo-50"
+
+                            else
+                                "border-gray-200 hover:bg-gray-50"
+                           )
+                    )
                 , onClick UploadLogo
+                , hijackOn "dragenter" (Decode.succeed DragEnter)
+                , hijackOn "dragover" (Decode.succeed DragEnter)
+                , hijackOn "dragleave" (Decode.succeed DragLeave)
+                , hijackOn "drop" dropDecoder
                 ]
                 [ case model.logo of
                     Just logoUrl ->
@@ -824,6 +850,8 @@ viewCompany model =
                                 , div [ class "text-gray-400 text-xs mt-2" ] [ text "PNG only (Recommended: 240px width x 60px height)" ]
                                 ]
                 ]
+
+            {--
             , div [ class "space-y-4 mt-8" ]
                 [ div [ class "space-y-2" ]
                     [ label [ class "block text-sm font-medium text-gray-700" ] [ text "Primary Brand Color" ]
@@ -852,6 +880,7 @@ viewCompany model =
                         ]
                     ]
                 ]
+            --}
             ]
         , div [ class "mt-10 w-full max-w-md" ]
             [ button
@@ -1112,7 +1141,7 @@ viewAgentForm model =
                     [ label [ class "block text-sm font-medium text-gray-700 mb-1" ]
                         [ text "First Name" ]
                     , input
-                        [ class "shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md"
+                        [ class "shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full px-3 py-2 text-base border-gray-300 rounded-md"
                         , type_ "text"
                         , placeholder "First name"
                         , value model.newAgentFirstName
@@ -1124,7 +1153,7 @@ viewAgentForm model =
                     [ label [ class "block text-sm font-medium text-gray-700 mb-1" ]
                         [ text "Last Name" ]
                     , input
-                        [ class "shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md"
+                        [ class "shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full px-3 py-2 text-base border-gray-300 rounded-md"
                         , type_ "text"
                         , placeholder "Last name"
                         , value model.newAgentLastName
@@ -1138,7 +1167,7 @@ viewAgentForm model =
                     [ label [ class "block text-sm font-medium text-gray-700 mb-1" ]
                         [ text "Email" ]
                     , input
-                        [ class "shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md"
+                        [ class "shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full px-3 py-2 text-base border-gray-300 rounded-md"
                         , type_ "email"
                         , placeholder "Email address"
                         , value model.newAgentEmail
@@ -1150,7 +1179,7 @@ viewAgentForm model =
                     [ label [ class "block text-sm font-medium text-gray-700 mb-1" ]
                         [ text "Phone" ]
                     , input
-                        [ class "shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md"
+                        [ class "shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full px-3 py-2 text-base border-gray-300 rounded-md"
                         , type_ "tel"
                         , placeholder "Phone number"
                         , value model.newAgentPhone
@@ -1755,3 +1784,22 @@ processCheckoutData : CheckoutData -> Cmd Msg
 processCheckoutData checkoutData =
     -- After a small delay to allow UI to update, process the checkout data
     Task.perform (\_ -> ProcessCheckoutData checkoutData) (Task.succeed ())
+
+
+
+-- Helper functions for drag and drop
+
+
+dropDecoder : Decode.Decoder Msg
+dropDecoder =
+    Decode.at [ "dataTransfer", "files" ] (Decode.oneOrMore GotFiles File.decoder)
+
+
+hijackOn : String -> Decode.Decoder msg -> Attribute msg
+hijackOn event decoder =
+    preventDefaultOn event (Decode.map hijack decoder)
+
+
+hijack : msg -> ( msg, Bool )
+hijack msg =
+    ( msg, True )

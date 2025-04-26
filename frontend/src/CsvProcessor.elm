@@ -34,7 +34,6 @@ type alias ColumnMapping =
     , lastName : String
     , email : String
     , phoneNumber : String
-    , state : String
     , currentCarrier : String
     , effectiveDate : String
     , birthDate : String
@@ -61,7 +60,6 @@ emptyColumnMapping =
     , lastName = ""
     , email = ""
     , phoneNumber = ""
-    , state = ""
     , currentCarrier = ""
     , effectiveDate = ""
     , birthDate = ""
@@ -88,7 +86,6 @@ type alias ProcessedContact =
     , lastName : String
     , email : String
     , phoneNumber : String
-    , state : String
     , currentCarrier : String
     , effectiveDate : String
     , birthDate : String
@@ -205,7 +202,6 @@ suggestColumnMappings headers =
     , lastName = findBestHeader "lastName" (Maybe.withDefault [] (Dict.get "lastName" fieldVariations)) headers
     , email = findBestHeader "email" (Maybe.withDefault [] (Dict.get "email" fieldVariations)) headers
     , phoneNumber = findBestHeader "phoneNumber" (Maybe.withDefault [] (Dict.get "phoneNumber" fieldVariations)) headers
-    , state = findBestHeader "state" (Maybe.withDefault [] (Dict.get "state" fieldVariations)) headers
     , currentCarrier = findBestHeader "currentCarrier" (Maybe.withDefault [] (Dict.get "currentCarrier" fieldVariations)) headers
     , effectiveDate = findBestHeader "effectiveDate" (Maybe.withDefault [] (Dict.get "effectiveDate" fieldVariations)) headers
     , birthDate = findBestHeader "birthDate" (Maybe.withDefault [] (Dict.get "birthDate" fieldVariations)) headers
@@ -459,7 +455,6 @@ createFieldVariations =
         , ( "lastName", [ "last_name", "lastname", "last name", "lname", "last", "surname", "family name", "familyname" ] )
         , ( "email", [ "email_address", "emailaddress", "email address", "e_mail", "e-mail" ] )
         , ( "phoneNumber", [ "phone_number", "phonenumber", "phone", "cell", "mobile", "telephone", "contact_number", "contact number", "phone number", "cell number", "mobile number" ] )
-        , ( "state", [ "st", "province", "region", "state code", "statecode" ] )
         , ( "currentCarrier", [ "current_carrier", "current carrier", "carrier", "insurance_provider", "insurance provider", "provider", "current_provider", "current provider", "insurance", "insurance carrier", "insurance_carrier", "insurancecarrier" ] )
         , ( "effectiveDate", [ "effective_date", "effectivedate", "effective date", "start_date", "startdate", "start date", "date_effective", "date effective", "coverage date", "plan start date" ] )
         , ( "birthDate", [ "birth_date", "birthdate", "birth date", "dob", "date_of_birth", "date of birth", "born", "birthday" ] )
@@ -487,7 +482,6 @@ transformCsvData csvContent columnMapping =
                             , "last_name"
                             , "email"
                             , "phone_number"
-                            , "state"
                             , "current_carrier"
                             , "effective_date"
                             , "birth_date"
@@ -503,7 +497,6 @@ transformCsvData csvContent columnMapping =
                             , ( columnMapping.lastName, "last_name" )
                             , ( columnMapping.email, "email" )
                             , ( columnMapping.phoneNumber, "phone_number" )
-                            , ( columnMapping.state, "state" )
                             , ( columnMapping.currentCarrier, "current_carrier" )
                             , ( columnMapping.effectiveDate, "effective_date" )
                             , ( columnMapping.birthDate, "birth_date" )
@@ -525,7 +518,6 @@ transformCsvData csvContent columnMapping =
                                             , columnMapping.lastName
                                             , columnMapping.email
                                             , columnMapping.phoneNumber
-                                            , columnMapping.state
                                             , columnMapping.currentCarrier
                                             , columnMapping.effectiveDate
                                             , columnMapping.birthDate
@@ -569,10 +561,35 @@ transformCsvData csvContent columnMapping =
 
 
 
--- Add function to process CSV data into contacts
+-- Add function to validate an email address
 
 
-processCsvToContacts : String -> ColumnMapping -> CarrierMapping -> Result Error (List ProcessedContact)
+isValidEmail : String -> Bool
+isValidEmail email =
+    not (String.isEmpty (String.trim email))
+        && String.contains "@" email
+        && String.contains "." email
+        && String.length email
+        > 5
+
+
+
+-- Add a type for invalid contacts with reason
+
+
+type alias InvalidContact =
+    { rowData : List String
+    , email : String
+    , reason : String
+    , rowNumber : Int
+    }
+
+
+
+-- Update the return type to include both valid and invalid contacts
+
+
+processCsvToContacts : String -> ColumnMapping -> CarrierMapping -> Result Error { valid : List ProcessedContact, invalid : List InvalidContact }
 processCsvToContacts csvContent columnMapping carrierMapping =
     case Csv.Parser.parse { fieldSeparator = ',' } csvContent of
         Ok rows ->
@@ -593,7 +610,6 @@ processCsvToContacts csvContent columnMapping carrierMapping =
                             , lastName = getColumnIndex columnMapping.lastName
                             , email = getColumnIndex columnMapping.email
                             , phoneNumber = getColumnIndex columnMapping.phoneNumber
-                            , state = getColumnIndex columnMapping.state
                             , currentCarrier = getColumnIndex columnMapping.currentCarrier
                             , effectiveDate = getColumnIndex columnMapping.effectiveDate
                             , birthDate = getColumnIndex columnMapping.birthDate
@@ -603,8 +619,8 @@ processCsvToContacts csvContent columnMapping carrierMapping =
                             , planType = getColumnIndex columnMapping.planType
                             }
 
-                        -- Process each row into a contact
-                        processRow : List String -> Maybe ProcessedContact
+                        -- Process each row, categorizing as valid or invalid
+                        processRow : List String -> ( Maybe ProcessedContact, Maybe InvalidContact )
                         processRow row =
                             let
                                 getValue : Maybe Int -> String
@@ -636,27 +652,69 @@ processCsvToContacts csvContent columnMapping carrierMapping =
                                             String.toLower (String.trim val)
                                     in
                                     lower == "yes" || lower == "true" || lower == "1" || lower == "y"
+
+                                -- Get email value
+                                email =
+                                    getValue indices.email
+
+                                -- Check if email is valid
+                                emailValid =
+                                    isValidEmail email
                             in
-                            Just
-                                { firstName = getValue indices.firstName
-                                , lastName = getValue indices.lastName
-                                , email = getValue indices.email
-                                , phoneNumber = getValue indices.phoneNumber |> String.filter Char.isDigit
-                                , state = getValue indices.state
-                                , currentCarrier = mappedCarrier
-                                , effectiveDate = getValue indices.effectiveDate
-                                , birthDate = getValue indices.birthDate
-                                , tobaccoUser = getValue indices.tobaccoUser |> parseTobaccoUser
-                                , gender = getValue indices.gender
-                                , zipCode = getValue indices.zipCode
-                                , planType = getValue indices.planType
-                                }
+                            if not emailValid then
+                                ( Nothing
+                                , Just
+                                    { rowData = row
+                                    , email = email
+                                    , reason = "Invalid email format"
+                                    , rowNumber = 0
+                                    }
+                                )
+
+                            else
+                                ( Just
+                                    { firstName = getValue indices.firstName
+                                    , lastName = getValue indices.lastName
+                                    , email = email
+                                    , phoneNumber = getValue indices.phoneNumber |> String.filter Char.isDigit
+                                    , currentCarrier = mappedCarrier
+                                    , effectiveDate = getValue indices.effectiveDate
+                                    , birthDate = getValue indices.birthDate
+                                    , tobaccoUser = getValue indices.tobaccoUser |> parseTobaccoUser
+                                    , gender = getValue indices.gender
+                                    , zipCode = getValue indices.zipCode
+                                    , planType = getValue indices.planType
+                                    }
+                                , Nothing
+                                )
+
+                        -- Process all rows except header
+                        processed =
+                            rows
+                                |> List.drop 1
+                                |> List.indexedMap
+                                    (\index row ->
+                                        let
+                                            ( maybeContact, maybeInvalidContact ) =
+                                                processRow row
+
+                                            updatedInvalidContact =
+                                                maybeInvalidContact
+                                                    |> Maybe.map (\contact -> { contact | rowNumber = index + 1 })
+                                        in
+                                        ( maybeContact, updatedInvalidContact )
+                                    )
+
+                        -- Separate valid and invalid contacts
+                        validContacts =
+                            processed
+                                |> List.filterMap Tuple.first
+
+                        invalidContacts =
+                            processed
+                                |> List.filterMap Tuple.second
                     in
-                    -- Process all rows except header
-                    rows
-                        |> List.drop 1
-                        |> List.filterMap processRow
-                        |> Ok
+                    Ok { valid = validContacts, invalid = invalidContacts }
 
                 Nothing ->
                     Err NoHeaders

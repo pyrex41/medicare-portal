@@ -39,6 +39,19 @@ export interface User {
   organization_name?: string;
 }
 
+export interface BaseSettings {
+  stateLicenses: string[];
+  carrierContracts: string[];
+  stateCarrierSettings: any[];
+  allowAgentSettings: boolean;
+  emailSendBirthday: boolean;
+  emailSendPolicyAnniversary: boolean;
+  emailSendAep: boolean;
+  smartSendEnabled: boolean;
+  brandName?: string;
+  logo?: string | null;
+}
+
 export interface UserContext {
   store: {
     db: Database;

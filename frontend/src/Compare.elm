@@ -52,7 +52,7 @@ type alias CompareParams =
 
 
 type alias ContactResponse =
-    { contact : Contact
+    { contact : Maybe Contact
     , agent : Agent
     , orgSlug : String
     , orgName : String
@@ -805,42 +805,63 @@ update msg model =
             , Cmd.none
             )
 
-        GotContactData result ->
-            case result of
-                Ok response ->
-                    let
-                        -- Update model with contact data
-                        updatedModel =
-                            { model
-                                | contact = Just response.contact
-                                , agent = Just response.agent
-                                , orgSlug = Just response.orgSlug
-                                , orgName = Just response.orgName
-                                , orgLogo = response.orgLogo
-                                , carrierContracts = response.carrierContracts
-                                , loadingContact = False
-                                , name = Just (response.contact.firstName ++ " " ++ response.contact.lastName)
-                                , gender = Just response.contact.gender
-                                , tobacco = Just response.contact.tobacco
-                                , state = Just response.contact.state
-                                , zip = Just response.contact.zipCode
-                                , age = Just response.contact.age
-                                , currentCarrier = response.contact.currentCarrier
-                                , planType = response.contact.planType
-                            }
-                    in
-                    ( updatedModel
-                    , fetchPlans updatedModel
-                    )
-
-                Err error ->
-                    ( { model
-                        | error = Just "This quote link appears to be invalid or has expired. Please get a new quote to continue."
+        GotContactData (Ok response) ->
+            let
+                -- Update model with contact data
+                updatedModel0 =
+                    { model
+                        | contact = response.contact
+                        , agent = Just response.agent
+                        , orgSlug = Just response.orgSlug
+                        , orgName = Just response.orgName
+                        , orgLogo = response.orgLogo
+                        , carrierContracts = response.carrierContracts
                         , loadingContact = False
-                        , isLoading = False
-                      }
-                    , Cmd.none
-                    )
+                    }
+
+                updatedModel =
+                    case response.contact of
+                        Just contact ->
+                            { updatedModel0
+                                | name = Just (contact.firstName ++ " " ++ contact.lastName)
+                                , gender = Just contact.gender
+                                , tobacco = Just contact.tobacco
+                                , state = Just contact.state
+                                , zip = Just contact.zipCode
+                                , age = Just contact.age
+                                , currentCarrier = contact.currentCarrier
+                                , planType = contact.planType
+                            }
+
+                        Nothing ->
+                            updatedModel0
+
+                cmd =
+                    case response.contact of
+                        Just _ ->
+                            fetchPlans updatedModel
+
+                        Nothing ->
+                            Nav.pushUrl
+                                model.key
+                                ("/self-onboarding/"
+                                    ++ response.orgSlug
+                                    ++ "?quoteId="
+                                    ++ Maybe.withDefault "" model.quoteId
+                                )
+            in
+            ( updatedModel
+            , cmd
+            )
+
+        GotContactData (Err _) ->
+            ( { model
+                | error = Just "This quote link appears to be invalid or has expired. Please get a new quote to continue."
+                , loadingContact = False
+                , isLoading = False
+              }
+            , Nav.pushUrl model.key "/error?message=This%20quote%20link%20appears%20to%20be%20invalid%20or%20has%20expired.%20Please%20get%20a%20new%20quote%20to%20continue."
+            )
 
         ShowLocationModal ->
             ( { model
@@ -1800,13 +1821,13 @@ formatPhoneNumber phone =
 
 contactResponseDecoder : Decoder ContactResponse
 contactResponseDecoder =
-    D.map6 ContactResponse
-        (D.field "contact" contactDecoder)
-        (D.field "agent" agentDecoder)
-        (D.field "orgSlug" D.string)
-        (D.field "orgName" D.string)
-        (D.field "orgLogo" (D.nullable D.string))
-        (D.field "carrierContracts" (D.list carrierDecoder))
+    D.succeed ContactResponse
+        |> Pipeline.optional "contact" (D.oneOf [ D.map Just contactDecoder, D.succeed Nothing ]) Nothing
+        |> Pipeline.required "agent" agentDecoder
+        |> Pipeline.required "orgSlug" D.string
+        |> Pipeline.required "orgName" D.string
+        |> Pipeline.required "orgLogo" (D.nullable D.string)
+        |> Pipeline.required "carrierContracts" (D.list carrierDecoder)
 
 
 contactDecoder : Decoder Contact

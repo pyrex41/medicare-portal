@@ -105,9 +105,9 @@ view model =
                 text ""
             , div [ class "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6" ]
                 [ -- Stats cards
-                  viewStatsCard "Quotes Sent" "912" "text-purple-600"
-                , viewStatsCard "Quotes Viewed" "912" "text-purple-600"
-                , viewStatsCard "Follow Ups Requested" "912" "text-purple-600"
+                  viewStatsCard "Quotes Sent" "0" "text-purple-600"
+                , viewStatsCard "Quotes Viewed" "0" "text-purple-600"
+                , viewStatsCard "Follow Ups Requested" "0" "text-purple-600"
                 ]
             , div [ class "mt-6 sm:mt-8 grid grid-cols-1 lg:grid-cols-4 gap-4 sm:gap-6" ]
                 [ div [ class "lg:col-span-3" ]

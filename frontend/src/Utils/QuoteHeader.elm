@@ -12,7 +12,7 @@ viewHeader maybeImage maybeName =
                 img [ src logo, alt "Organization Logo", class "h-16 max-w-[240px] md:max-w-[300px] object-contain px-4" ] []
 
             ( _, Just name ) ->
-                div [ class "text-2xl font-bold text-[#101828] leading-[1.2]" ] [ text name ]
+                div [ class "text-4xl font-bold text-[#101828] leading-[1.2]" ] [ text name ]
 
             _ ->
                 text ""

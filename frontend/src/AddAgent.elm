@@ -203,7 +203,7 @@ type Msg
     | CancelAddAgent
     | RemoveAgent String
     | FetchAgents
-    | GotAgents (Result Http.Error (List Agent))
+    | GotAgents (Result Http.Error AgentsResponse)
     | GotCurrentUser (Result Http.Error CurrentUserResponse)
     | UpdateAgentField String String String
     | ToggleAgentExpanded String
@@ -233,6 +233,12 @@ type alias CurrentUserResponse =
 type alias EmailResponse =
     { available : Bool
     , message : String
+    }
+
+
+type alias AgentsResponse =
+    { agents : List Agent
+    , defaultAgentId : Maybe String
     }
 
 
@@ -377,7 +383,7 @@ viewSetupHeader model =
 
 viewNormalHeader : Html Msg
 viewNormalHeader =
-    div [ class "mb-8 flex justify-center items-center" ]
+    div [ class "mb-8 flex justify-left items-center" ]
         [ h1 [ class "text-2xl font-semibold text-gray-900" ]
             [ text "Manage Agents" ]
         ]
@@ -392,7 +398,7 @@ viewBasicInfo model =
                     [ text "First Name" ]
                 , input
                     ([ type_ "text"
-                     , class "mt-1 px-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-500"
+                     , class "mt-1 px-3 py-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-500 text-base"
                      , value
                         (if isAdminBecomingAgent model then
                             case model.currentUser of
@@ -421,7 +427,7 @@ viewBasicInfo model =
                     [ text "Last Name" ]
                 , input
                     ([ type_ "text"
-                     , class "mt-1 px-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-500"
+                     , class "mt-1 px-3 py-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-500 text-base"
                      , value
                         (if isAdminBecomingAgent model then
                             case model.currentUser of
@@ -452,7 +458,7 @@ viewBasicInfo model =
                     [ text "Email" ]
                 , input
                     ([ type_ "email"
-                     , class "mt-1 px-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-500"
+                     , class "mt-1 px-3 py-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-500 text-base"
                      , value
                         (if isAdminBecomingAgent model then
                             Maybe.map .email model.currentUser |> Maybe.withDefault ""
@@ -477,7 +483,7 @@ viewBasicInfo model =
                     [ text "Phone" ]
                 , input
                     [ type_ "tel"
-                    , class "mt-1 px-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                    , class "mt-1 px-3 py-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-base"
                     , value model.displayPhone
                     , onInput UpdatePhone
                     , placeholder "(555) 555-5555"
@@ -497,87 +503,102 @@ viewAgentsList model =
 
           else
             text ""
-        , div [ class "grid grid-cols-1 gap-6" ]
-            (List.map
-                (\agent ->
-                    let
-                        isSelfUser =
-                            case model.currentUser of
-                                Just user ->
-                                    user.id == agent.id
+        , div [ class "bg-blue-50 border border-blue-200 text-blue-700 px-4 py-3 rounded mb-6" ]
+            [ div [ class "font-medium" ] [ text "Default Agent" ]
+            , p [ class "text-sm mt-1" ]
+                [ text "The default agent is automatically assigned to contacts who don't have an agent assigned. They also become the fallback when an agent is deleted, if another agent is not selected." ]
+            ]
+        , if model.isLoading then
+            div [ class "flex justify-center items-center py-12" ]
+                [ div [ class "animate-spin rounded-full h-12 w-12 border-4 border-blue-500 border-t-transparent" ] []
+                , p [ class "ml-4 text-gray-500" ] [ text "Loading agents..." ]
+                ]
 
-                                Nothing ->
-                                    False
+          else
+            div [ class "grid grid-cols-1 gap-6" ]
+                (List.map
+                    (\agent ->
+                        let
+                            isSelfUser =
+                                case model.currentUser of
+                                    Just user ->
+                                        user.id == agent.id
 
-                        isDefault =
-                            model.defaultAgentId == Just agent.id
+                                    Nothing ->
+                                        False
 
-                        cardBackgroundClass =
-                            if isDefault then
-                                "bg-blue-50"
+                            isDefault =
+                                model.defaultAgentId == Just agent.id
 
-                            else
-                                "bg-white"
-                    in
-                    div [ class (cardBackgroundClass ++ " shadow rounded-lg p-6") ]
-                        [ div [ class "flex items-center justify-between" ]
-                            [ div [ class "flex items-center" ]
-                                [ div [ class "ml-4" ]
-                                    [ div [ class "text-lg font-medium text-gray-900" ]
-                                        [ text (agent.firstName ++ " " ++ agent.lastName) ]
-                                    , div [ class "text-sm text-gray-500" ]
-                                        [ text agent.email ]
-                                    ]
-                                ]
-                            , div [ class "flex items-center space-x-4" ]
-                                [ if not isDefault then
-                                    button
-                                        [ class "px-3 py-1 text-sm text-blue-600 hover:text-blue-800 font-medium border border-blue-600 rounded-md hover:bg-blue-50"
-                                        , onClick (SetDefaultAgent agent.id)
+                            cardBackgroundClass =
+                                if isDefault then
+                                    "bg-blue-50"
+
+                                else
+                                    "bg-white"
+                        in
+                        div [ class (cardBackgroundClass ++ " shadow rounded-lg p-6") ]
+                            [ div [ class "flex items-center justify-between" ]
+                                [ div [ class "flex items-center" ]
+                                    [ div [ class "ml-4" ]
+                                        [ div [ class "text-lg font-medium text-gray-900" ]
+                                            [ text (agent.firstName ++ " " ++ agent.lastName) ]
+                                        , div [ class "text-sm text-gray-500" ]
+                                            [ text agent.email ]
                                         ]
-                                        [ text "Set as Default" ]
-
-                                  else
-                                    div [ class "px-3 py-1 text-sm text-blue-600 font-medium" ]
-                                        [ text "Default Agent" ]
-                                , button
-                                    [ class "text-blue-600 hover:text-blue-800 font-medium"
-                                    , onClick (ToggleAgentExpanded agent.id)
                                     ]
-                                    [ text "Edit" ]
-                                , button
-                                    [ class
-                                        ("text-red-400 "
-                                            ++ (if isSelfUser then
-                                                    "opacity-50 cursor-not-allowed"
+                                , div [ class "flex items-center space-x-4" ]
+                                    [ if not isDefault then
+                                        button
+                                            [ class "px-3 py-1 text-sm text-blue-600 hover:text-blue-800 font-medium border border-blue-600 rounded-md hover:bg-blue-50"
+                                            , onClick (SetDefaultAgent agent.id)
+                                            ]
+                                            [ text "Set as Default" ]
 
-                                                else
-                                                    "hover:text-red-500"
-                                               )
-                                        )
-                                    , onClick (DeleteAgent agent.id)
-                                    , disabled isSelfUser
-                                    , title
-                                        (if isSelfUser then
-                                            "You cannot delete your own account"
+                                      else
+                                        div [ class "px-3 py-1 text-sm text-blue-600 font-medium" ]
+                                            [ text "Default Agent" ]
+                                    , button
+                                        [ class "text-blue-600 hover:text-blue-800 font-medium"
+                                        , onClick (ToggleAgentExpanded agent.id)
+                                        ]
+                                        [ text "Edit" ]
+                                    , button
+                                        [ class
+                                            ("text-red-400 "
+                                                ++ (if isSelfUser || isDefault then
+                                                        "opacity-50 cursor-not-allowed"
 
-                                         else
-                                            "Delete"
-                                        )
+                                                    else
+                                                        "hover:text-red-500"
+                                                   )
+                                            )
+                                        , onClick (DeleteAgent agent.id)
+                                        , disabled (isSelfUser || isDefault)
+                                        , title
+                                            (if isSelfUser then
+                                                "You cannot delete your own account"
+
+                                             else if isDefault then
+                                                "You cannot delete the default agent"
+
+                                             else
+                                                "Delete"
+                                            )
+                                        ]
+                                        [ text "Delete" ]
                                     ]
-                                    [ text "Delete" ]
                                 ]
-                            ]
-                        , if agent.expanded then
-                            div [ class "border-t border-gray-200 mt-4 pt-4" ]
-                                [ viewAgentDetails model agent ]
+                            , if agent.expanded then
+                                div [ class "border-t border-gray-200 mt-4 pt-4" ]
+                                    [ viewAgentDetails model agent ]
 
-                          else
-                            text ""
-                        ]
+                              else
+                                text ""
+                            ]
+                    )
+                    model.agents
                 )
-                model.agents
-            )
         , div [ class "mt-8 bg-white shadow rounded-lg p-6" ]
             [ if model.showAddForm then
                 div [ class "space-y-6" ]
@@ -705,7 +726,7 @@ viewAgentDetails model agent =
                         ]
                     , input
                         [ type_ "text"
-                        , class "mt-1 px-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-500"
+                        , class "mt-1 px-3 py-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-500 text-base"
                         , value agent.firstName
                         , onInput (onFieldInput "firstName")
                         , disabled (not canEditField)
@@ -719,7 +740,7 @@ viewAgentDetails model agent =
                         ]
                     , input
                         [ type_ "text"
-                        , class "mt-1 px-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-500"
+                        , class "mt-1 px-3 py-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-500 text-base"
                         , value agent.lastName
                         , onInput (onFieldInput "lastName")
                         , disabled (not canEditField)
@@ -735,7 +756,7 @@ viewAgentDetails model agent =
                         ]
                     , input
                         [ type_ "email"
-                        , class "mt-1 px-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-500"
+                        , class "mt-1 px-3 py-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-500 text-base"
                         , value agent.email
                         , onInput (onFieldInput "email")
                         , disabled (not canEditField)
@@ -749,7 +770,7 @@ viewAgentDetails model agent =
                         ]
                     , input
                         [ type_ "tel"
-                        , class "mt-1 px-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                        , class "mt-1 px-3 py-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-base"
                         , value formattedPhone
                         , onInput (onFieldInput "phone")
                         , placeholder "(555) 555-5555"
@@ -930,7 +951,10 @@ update msg model =
 
             else
                 ( { model | error = Nothing }
-                , Nav.pushUrl model.key "/add-agents"
+                , Cmd.batch
+                    [ Nav.pushUrl model.key "/add-agents"
+                    , fetchAgents -- Also refresh agents list when not in setup mode
+                    ]
                 )
 
         AgentSaved (Err _) ->
@@ -1008,8 +1032,11 @@ update msg model =
 
         GotAgents result ->
             case result of
-                Ok agents ->
+                Ok response ->
                     let
+                        agents =
+                            response.agents
+
                         finalAgents =
                             if model.isSetup then
                                 -- In setup mode, make sure we have at least the current user as an agent
@@ -1040,14 +1067,20 @@ update msg model =
                                 -- In normal mode, use the API result
                                 agents
                     in
-                    ( { model | agents = finalAgents }, Cmd.none )
+                    ( { model
+                        | agents = finalAgents
+                        , defaultAgentId = response.defaultAgentId
+                        , isLoading = False
+                      }
+                    , Cmd.none
+                    )
 
                 Err error ->
                     case error of
                         Http.BadStatus 403 ->
                             -- For 403, keep the current user in the agents list
                             -- Don't show an error since this is expected for non-admin users
-                            ( model, Cmd.none )
+                            ( { model | isLoading = False }, Cmd.none )
 
                         _ ->
                             let
@@ -1068,7 +1101,7 @@ update msg model =
                                         Http.BadBody message ->
                                             "Data error: " ++ message
                             in
-                            ( { model | error = Just errorMessage }, Cmd.none )
+                            ( { model | error = Just errorMessage, isLoading = False }, Cmd.none )
 
         GotCurrentUser result ->
             case result of
@@ -1414,7 +1447,7 @@ update msg model =
 
                 Err _ ->
                     ( { model
-                        | error = Just "Failed to delete agent"
+                        | error = Just "Failed to delete agent -- cannot delete default agent or current user"
                         , isLoading = False
                       }
                     , Cmd.none
@@ -1538,10 +1571,10 @@ update msg model =
         SetDefaultAgentResult result ->
             case result of
                 Ok _ ->
-                    ( { model | isLoading = False }, Cmd.none )
+                    ( { model | isLoading = False }, fetchAgents )
 
                 Err _ ->
-                    ( { model | isLoading = False }, Cmd.none )
+                    ( { model | isLoading = False, error = Just "Failed to set default agent" }, Cmd.none )
 
 
 
@@ -1632,7 +1665,7 @@ fetchAgents =
                             Err (Http.BadStatus metadata.statusCode)
 
                         Http.GoodStatus_ metadata body ->
-                            case Decode.decodeString (Decode.list agentDecoder) body of
+                            case Decode.decodeString agentsResponseDecoder body of
                                 Ok value ->
                                     Ok value
 
@@ -1640,6 +1673,13 @@ fetchAgents =
                                     Err (Http.BadBody (Decode.errorToString err))
                 )
         }
+
+
+agentsResponseDecoder : Decoder AgentsResponse
+agentsResponseDecoder =
+    Decode.map2 AgentsResponse
+        (Decode.field "agents" (Decode.list agentDecoder))
+        (Decode.field "defaultAgentId" (Decode.nullable Decode.string))
 
 
 agentDecoder : Decoder Agent

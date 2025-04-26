@@ -366,7 +366,6 @@ init flags url key =
 
         currentPath =
             url.path
-                |> Debug.log "currentPath"
 
         maybeUserEmail =
             case model.url.query of
@@ -388,9 +387,6 @@ init flags url key =
 
                 Nothing ->
                     Nothing
-
-        _ =
-            Debug.log "maybeUserEmail on init" maybeUserEmail
 
         -- Check session and also immediately try to render public routes
         cmds0 =
@@ -2526,6 +2522,7 @@ updatePage url ( model, cmd ) =
                                                             , lastName = user.lastName
                                                             , isAdmin = user.isAdmin
                                                             , isAgent = user.isAgent
+                                                            , isDefault = False -- Add isDefault field
                                                             , organizationId = String.toInt user.organizationId |> Maybe.withDefault 0
                                                             , isActive = True -- Assume active
                                                             , phone = "" -- Default empty

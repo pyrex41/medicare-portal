@@ -15,10 +15,18 @@ if [ ! -f "$SQL_FILE" ]; then
     exit 1
 fi
 
-echo "Applying migration from $SQL_FILE to all org databases..."
+echo "Applying migration from $SQL_FILE to org databases from medicare-portal..."
 
-# Get all org databases
-ORG_DBS=$(turso db list | grep "org-" | awk '{print $1}')
+# Get organization databases from medicare-portal
+ORG_DBS=$(turso db shell medicare-portal "SELECT turso_db_url FROM organizations WHERE turso_db_url IS NOT NULL;" | grep -v "TURSO DB URL" | while read url; do
+    # Strip protocol if present (https:// or libsql://)
+    clean_url=$(echo "$url" | sed -E 's#^(https://|libsql://)##')
+    
+    # Extract the first part before the first period and remove -pyrex41 suffix
+    db_name=$(echo "$clean_url" | cut -d. -f1 | sed 's/-pyrex41$//')
+    
+    echo "$db_name"
+done)
 
 # Check if any org databases were found
 if [ -z "$ORG_DBS" ]; then

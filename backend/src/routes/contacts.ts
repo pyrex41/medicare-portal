@@ -29,7 +29,7 @@ interface ContactImport {
   last_name: string;
   email: string;
   phone_number: string;
-  state: string;
+  state?: string;
   current_carrier: string;
   effective_date: string;
   birth_date: string;
@@ -437,8 +437,9 @@ export const contactsRoutes = new Elysia({ prefix: '/api/contacts' })
         // Convert contacts array to CSV string
         const csvData = stringify(body.contacts, {
           header: true,
+          
           columns: [
-            'first_name', 'last_name', 'email', 'phone_number', 'state',
+            'first_name', 'last_name', 'email', 'phone_number',
             'current_carrier', 'effective_date', 'birth_date', 'tobacco_user',
             'gender', 'zip_code', 'plan_type'
           ]

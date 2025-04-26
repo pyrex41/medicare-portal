@@ -25,19 +25,19 @@ import Utils.MyDate exposing (dateFromMonthDayYear)
 
 type alias Contact =
     { id : Int
-    , firstName : String
-    , lastName : String
+    , firstName : Maybe String
+    , lastName : Maybe String
     , email : String
-    , phoneNumber : String
-    , state : String
+    , phoneNumber : Maybe String
+    , state : Maybe String
     , contactOwnerId : Maybe Int
     , contactOwner : Maybe User
     , currentCarrier : Maybe String
-    , effectiveDate : String
-    , birthDate : String
-    , tobaccoUser : Bool
-    , gender : String
-    , zipCode : String
+    , effectiveDate : Maybe String
+    , birthDate : Maybe String
+    , tobaccoUser : Maybe Bool
+    , gender : Maybe String
+    , zipCode : Maybe String
     , planType : Maybe String
     , status : String
     , agentId : Maybe Int
@@ -212,19 +212,19 @@ contactDecoder : Decoder Contact
 contactDecoder =
     Decode.succeed Contact
         |> Pipeline.required "id" Decode.int
-        |> Pipeline.required "first_name" Decode.string
-        |> Pipeline.required "last_name" Decode.string
+        |> Pipeline.required "first_name" (Decode.nullable Decode.string)
+        |> Pipeline.required "last_name" (Decode.nullable Decode.string)
         |> Pipeline.required "email" Decode.string
-        |> Pipeline.optional "phone_number" Decode.string ""
-        |> Pipeline.required "state" Decode.string
+        |> Pipeline.optional "phone_number" (Decode.nullable Decode.string) Nothing
+        |> Pipeline.required "state" (Decode.nullable Decode.string)
         |> Pipeline.optional "contact_owner_id" (Decode.nullable Decode.int) Nothing
         |> Pipeline.optional "contact_owner" (Decode.nullable userDecoder) Nothing
         |> Pipeline.optional "current_carrier" (Decode.nullable Decode.string) Nothing
-        |> Pipeline.required "effective_date" Decode.string
-        |> Pipeline.required "birth_date" Decode.string
-        |> Pipeline.required "tobacco_user" Decode.bool
-        |> Pipeline.required "gender" Decode.string
-        |> Pipeline.required "zip_code" Decode.string
+        |> Pipeline.required "effective_date" (Decode.nullable Decode.string)
+        |> Pipeline.required "birth_date" (Decode.nullable Decode.string)
+        |> Pipeline.required "tobacco_user" (Decode.nullable Decode.bool)
+        |> Pipeline.required "gender" (Decode.nullable Decode.string)
+        |> Pipeline.required "zip_code" (Decode.nullable Decode.string)
         |> Pipeline.optional "plan_type" (Decode.nullable Decode.string) Nothing
         |> Pipeline.optional "status" Decode.string "New"
         |> Pipeline.required "agent_id" (Decode.nullable Decode.int)
@@ -443,9 +443,37 @@ update msg model =
             ( model, Cmd.none )
 
         GotContact (Ok contact) ->
-            case safeStringToDate contact.effectiveDate of
+            let
+                defaultDate =
+                    Date.fromCalendarDate 1970 Jan 1
+
+                effectiveDateResult =
+                    case contact.effectiveDate of
+                        Just date ->
+                            if String.isEmpty date then
+                                Ok defaultDate
+
+                            else
+                                safeStringToDate date
+
+                        Nothing ->
+                            Ok defaultDate
+
+                birthDateResult =
+                    case contact.birthDate of
+                        Just date ->
+                            if String.isEmpty date then
+                                Ok defaultDate
+
+                            else
+                                safeStringToDate date
+
+                        Nothing ->
+                            Ok defaultDate
+            in
+            case effectiveDateResult of
                 Ok effectiveDate ->
-                    case safeStringToDate contact.birthDate of
+                    case birthDateResult of
                         Ok birthDate ->
                             let
                                 planType =
@@ -485,7 +513,7 @@ update msg model =
                                         birthDate
                                         model.emailSchedule.currentDate
                                         planType
-                                        contact.state
+                                        (Maybe.withDefault "" contact.state)
                                         stateCarrierSettings
                                         stateLicenses
                             in
@@ -503,10 +531,14 @@ update msg model =
                             )
 
                         Err _ ->
-                            ( { model | error = Just "Invalid birth date format" }, Cmd.none )
+                            ( { model | contact = Just contact, error = Just "Invalid birth date format" }
+                            , Cmd.none
+                            )
 
                 Err _ ->
-                    ( { model | error = Just "Invalid effective date format" }, Cmd.none )
+                    ( { model | contact = Just contact, error = Just "Invalid effective date format" }
+                    , Cmd.none
+                    )
 
         GotContact (Err error) ->
             case error of
@@ -542,18 +574,18 @@ update msg model =
                         | showModal = EditModal
                         , editForm =
                             { id = Just contact.id
-                            , firstName = contact.firstName
-                            , lastName = contact.lastName
+                            , firstName = Maybe.withDefault "" contact.firstName
+                            , lastName = Maybe.withDefault "" contact.lastName
                             , email = contact.email
-                            , phoneNumber = contact.phoneNumber
-                            , state = contact.state
+                            , phoneNumber = Maybe.withDefault "" contact.phoneNumber
+                            , state = Maybe.withDefault "" contact.state
                             , contactOwnerId = contact.contactOwnerId
                             , currentCarrier = Maybe.withDefault "" contact.currentCarrier
-                            , effectiveDate = contact.effectiveDate
-                            , birthDate = contact.birthDate
-                            , tobaccoUser = contact.tobaccoUser
-                            , gender = contact.gender
-                            , zipCode = contact.zipCode
+                            , effectiveDate = Maybe.withDefault "" contact.effectiveDate
+                            , birthDate = Maybe.withDefault "" contact.birthDate
+                            , tobaccoUser = Maybe.withDefault False contact.tobaccoUser
+                            , gender = Maybe.withDefault "" contact.gender
+                            , zipCode = Maybe.withDefault "" contact.zipCode
                             , planType = contact.planType |> Maybe.withDefault ""
                             }
                       }
@@ -945,8 +977,16 @@ view model =
                     Just contact ->
                         div []
                             [ viewHeader contact model
+                            , if model.error /= Nothing then
+                                div [ class "mb-8 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700" ]
+                                    [ text (Maybe.withDefault "An error occurred" model.error)
+                                    , button [ class "ml-2 underline", onClick BackToContacts ] [ text "Back to Contacts" ]
+                                    ]
+
+                              else
+                                text ""
                             , viewContactSummary contact model.quoteUrl model.isGeneratingQuote model.healthStatus model.eligibilityQuestions model.followUps model.timeZone model.showAllFollowUps
-                            , if model.orgSettings /= Nothing then
+                            , if model.orgSettings /= Nothing && model.error == Nothing then
                                 div [ class "bg-white rounded-lg border border-gray-200 p-6 mb-8" ]
                                     [ viewFutureActivity (getScheduledEmails model.emailSchedule) ]
 
@@ -998,7 +1038,7 @@ viewHeader contact model =
     div [ class "flex justify-between items-center mb-8" ]
         [ div [ class "flex items-center gap-4" ]
             [ h1 [ class "text-2xl font-semibold" ]
-                [ text (contact.firstName ++ " " ++ contact.lastName) ]
+                [ text (Maybe.withDefault "" contact.firstName ++ " " ++ Maybe.withDefault "" contact.lastName) ]
             , viewEmailStatus contact.status
             ]
         , div [ class "flex gap-2" ]
@@ -1087,22 +1127,22 @@ viewContactSummary contact quoteUrl isGeneratingQuote healthStatus eligibilityQu
         [ div [ class "bg-white rounded-lg border border-gray-200 p-6 mb-8" ]
             [ h2 [ class "text-lg font-medium mb-6" ] [ text "Contact Summary" ]
             , div [ class "grid grid-cols-2 gap-x-8 gap-y-6" ]
-                [ viewField "Date of Birth" contact.birthDate
+                [ viewField "Date of Birth" (Maybe.withDefault "" contact.birthDate)
                 , viewField "Contact Owner" (Maybe.map .firstName contact.contactOwner |> Maybe.withDefault "Default")
-                , viewField "Phone Number" (formatPhoneNumber contact.phoneNumber)
+                , viewField "Phone Number" (formatPhoneNumber (Maybe.withDefault "" contact.phoneNumber))
                 , viewField "Email" contact.email
                 , viewField "Current Carrier" (Maybe.withDefault "" contact.currentCarrier)
-                , viewField "Gender" contact.gender
+                , viewField "Gender" (Maybe.withDefault "" contact.gender)
                 , viewField "Tobacco Use"
-                    (if contact.tobaccoUser then
+                    (if Maybe.withDefault False contact.tobaccoUser then
                         "Yes"
 
                      else
                         "No"
                     )
-                , viewField "State" contact.state
-                , viewField "Zip Code" contact.zipCode
-                , viewField "Effective Date" contact.effectiveDate
+                , viewField "State" (Maybe.withDefault "" contact.state)
+                , viewField "Zip Code" (Maybe.withDefault "" contact.zipCode)
+                , viewField "Effective Date" (Maybe.withDefault "" contact.effectiveDate)
                 , viewField "Plan Type" (Maybe.withDefault "" contact.planType)
                 , viewQuoteField quoteUrl isGeneratingQuote
                 , viewHealthStatusField healthStatus eligibilityQuestions
@@ -1918,7 +1958,8 @@ questionTypeDecoder =
                     Decode.succeed (FollowUpQuestion parentId)
 
                 else
-                    Decode.fail ("Unknown question type: " ++ typeStr)
+                    -- Treat other question types as main questions instead of failing
+                    Decode.succeed MainQuestion
             )
 
 

@@ -1,10 +1,9 @@
 import { Elysia } from 'elysia';
 import { validateSession } from '../services/auth';
 import { Database } from '../database';
-import { type User } from '../types';
+import { type User, type BaseSettings } from '../types';
 import { logger } from '../logger';
-import { type Cookie } from '@elysiajs/cookie';
-import { type BaseSettings } from '../types';
+import { cookie } from '@elysiajs/cookie';
 
 interface StateCarrierSetting {
   state: string;
@@ -35,7 +34,8 @@ const defaultSettings: BaseSettings = {
   emailSendBirthday: true,
   emailSendPolicyAnniversary: true,
   emailSendAep: true,
-  smartSendEnabled: false
+  smartSendEnabled: false,
+  brandName: ""
 };
 
 // Helper function to generate default state/carrier settings
@@ -54,7 +54,7 @@ export const settingsRoutes = new Elysia()
   .get('/api/settings', async ({ cookie }) => {
     logger.info('GET /api/settings - Starting');
     
-    const user = await validateSession(cookie.session);
+    const user = await validateSession(cookie.session.toString());
     if (!user?.id) {
         return { success: false, error: 'No authenticated user' };
     }
@@ -62,9 +62,9 @@ export const settingsRoutes = new Elysia()
     const db = new Database();
 
     try {
-        // Get organization settings and logo
-        const orgRow = await db.fetchOne<{ org_settings: string | null, logo_data: string | null }>(
-            'SELECT org_settings, logo_data FROM organizations WHERE id = ?',
+        // Get organization settings, logo, and name
+        const orgRow = await db.fetchOne<{ org_settings: string | null, logo_data: string | null, name: string }>(
+            'SELECT org_settings, logo_data, name FROM organizations WHERE id = ?',
             [user.organization_id]
         );
         
@@ -76,6 +76,11 @@ export const settingsRoutes = new Elysia()
             orgSettings = orgRow?.org_settings 
                 ? { ...defaultSettings, ...JSON.parse(orgRow.org_settings) }
                 : { ...defaultSettings };
+
+            // If brandName is not set in settings, use the organization name
+            if (!orgSettings.brandName && orgRow?.name) {
+                orgSettings.brandName = orgRow.name;
+            }
 
             // If we have states and carriers but no settings array, generate them
             if (orgSettings.stateLicenses.length > 0 && 
@@ -120,6 +125,7 @@ export const settingsRoutes = new Elysia()
 
         const response = {
             success: true,
+            name: orgRow?.name || null,
             orgSettings,
             logo: orgRow?.logo_data || null,
             agentSettings,
@@ -163,12 +169,18 @@ export const settingsRoutes = new Elysia()
             logger.info('Updating organization settings');
             
             // Extract logo from settings if it exists
-            const { logo, ...settingsWithoutLogo } = typedBody.settings || typedBody;
+            const settingsObj = typedBody.settings || typedBody;
+            const name = 'name' in settingsObj ? settingsObj.name : null;
+            const logo = 'logo' in settingsObj ? settingsObj.logo : null;
+            const settingsWithoutLogo = { ...settingsObj };
+            if ('logo' in settingsWithoutLogo) {
+                delete (settingsWithoutLogo as any).logo;
+            }
             
             // Update organization settings and logo separately
             await db.execute(
-                'UPDATE organizations SET org_settings = ?, logo_data = ? WHERE id = ?',
-                [JSON.stringify(settingsWithoutLogo), logo || null, user.organization_id]
+                'UPDATE organizations SET org_settings = ?, logo_data = ?, name = ? WHERE id = ?',
+                [JSON.stringify(settingsWithoutLogo), logo || null, name || null, user.organization_id]
             );
 
             // For basic tier, also update the admin agent's settings
@@ -241,7 +253,7 @@ export const settingsRoutes = new Elysia()
 
   // Update the GI recommendations endpoint to use Elysia style
   .get('/api/settings/gi-recommendations', async ({ cookie }) => {
-    const user = await validateSession(cookie.session);
+    const user = await validateSession(cookie.session.toString());
     if (!user?.id) {
       return { success: false, error: 'No authenticated user' };
     }
@@ -249,14 +261,14 @@ export const settingsRoutes = new Elysia()
     const db = new Database();
 
     try {
-      const recommendations = await db.fetchAll<{ state: string; carrier: string }>(
+      const recommendations = await db.fetchAll(
         `SELECT state, carrier
          FROM guaranteed_issue_recommendations
          ORDER BY carrier, state`
       );
 
       // Transform the results to match the expected format
-      const formattedRecommendations = recommendations.map(rec => ({
+      const formattedRecommendations = recommendations.map((rec: { state: string; carrier: string }) => ({
         state: rec.state,
         carrier: rec.carrier,
         active: true,
@@ -266,14 +278,14 @@ export const settingsRoutes = new Elysia()
       return formattedRecommendations;
 
     } catch (error) {
-      logger.error('Error fetching GI recommendations:', error);
+      logger.error(`Error fetching GI recommendations: ${error}`);
       return { success: false, error: 'Failed to fetch GI recommendations' };
     }
   })
 
   // Fetch the logo for the organization
   .get('/api/settings/logo', async ({ cookie }) => {
-    const user = await validateSession(cookie.session);
+    const user = await validateSession(cookie.session.toString());
     if (!user?.id) {
       return { success: false, error: 'No authenticated user' };
     }
@@ -296,7 +308,7 @@ export const settingsRoutes = new Elysia()
       };
 
     } catch (error) {
-      logger.error('Error fetching organization logo:', error);
+      logger.error(`Error fetching organization logo: ${error}`);
       return { success: false, error: 'Failed to fetch organization logo' };
     }
   })
@@ -319,7 +331,7 @@ export const settingsRoutes = new Elysia()
         logo: logo.logo_data
       };
     } catch (error) {
-      logger.error('Error fetching organization logo:', error);
+      logger.error(`Error fetching organization logo: ${error}`);
       return { success: false, error: 'Failed to fetch organization logo' };
     }
   })
@@ -327,7 +339,7 @@ export const settingsRoutes = new Elysia()
 
   // Update carriers endpoint to use Elysia style
   .get('/api/settings/carriers', async ({ cookie }) => {
-    const user = await validateSession(cookie.session);
+    const user = await validateSession(cookie.session.toString());
     if (!user?.id) {
       return { success: false, error: 'No authenticated user' };
     }
@@ -335,7 +347,7 @@ export const settingsRoutes = new Elysia()
     const db = new Database();
 
     try {
-      const carriers = await db.fetchAll<{ name: string }>(
+      const carriers = await db.fetchAll(
         `SELECT name
          FROM carriers
          ORDER BY name`
@@ -344,13 +356,13 @@ export const settingsRoutes = new Elysia()
       return carriers;
 
     } catch (error) {
-      logger.error('Error fetching carriers:', error);
+      logger.error(`Error fetching carriers: ${error}`);
       return { success: false, error: 'Failed to fetch carriers' };
     }
   })
 
   .get('/api/settings/carriers-with-aliases', async ({ cookie }) => {
-    const user = await validateSession(cookie.session);
+    const user = await validateSession(cookie.session.toString());
     if (!user?.id) {
       return { success: false, error: 'No authenticated user' };
     }
@@ -358,19 +370,19 @@ export const settingsRoutes = new Elysia()
     const db = new Database();
 
     try {
-      const carriers = await db.fetchAll<{ name: string, aliases: string | null }>(
+      const carriers = await db.fetchAll(
         `SELECT name, aliases
          FROM carriers
          ORDER BY name`
       );
 
-      return carriers.map(carrier => ({
+      return carriers.map((carrier: { name: string, aliases: string | null }) => ({
         name: carrier.name,
         aliases: carrier.aliases ? JSON.parse(carrier.aliases) : []
       }));
 
     } catch (error) {
-      logger.error('Error fetching carriers with aliases:', error);
+      logger.error(`Error fetching carriers with aliases: ${error}`);
       return { success: false, error: 'Failed to fetch carriers with aliases' };
     }
   }); 
