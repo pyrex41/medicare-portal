@@ -516,27 +516,26 @@ viewAcceptButtonsAgent model info =
                     ]
 
             Nothing ->
-                text ""
-        , if model.isSubmittingFollowUp then
-            button
-                [ class "flex items-center justify-center w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] transition cursor-wait"
-                , type_ "button"
-                ]
-                [ div [ class "animate-spin rounded-full h-5 w-5 border-2 border-[#03045E] border-t-transparent" ] [] ]
+                if model.isSubmittingFollowUp then
+                    button
+                        [ class "flex items-center justify-center w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] transition cursor-wait"
+                        , type_ "button"
+                        ]
+                        [ div [ class "animate-spin rounded-full h-5 w-5 border-2 border-[#03045E] border-t-transparent" ] [] ]
 
-          else
-            button
-                [ class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
-                , type_ "button"
-                , onClick RequestFollowUp
-                ]
-                [ div [ class "flex items-center space-x-3" ]
-                    [ span [ class "w-6 h-6 flex items-center justify-center" ]
-                        [ MyIcon.phoneIncoming 24 "#03045E" ]
-                    , span [ class "font-semibold text-base" ]
-                        [ text ("Request a Call from " ++ info.agent.firstName) ]
-                    ]
-                ]
+                else
+                    button
+                        [ class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
+                        , type_ "button"
+                        , onClick RequestFollowUp
+                        ]
+                        [ div [ class "flex items-center space-x-3" ]
+                            [ span [ class "w-6 h-6 flex items-center justify-center" ]
+                                [ MyIcon.phoneIncoming 24 "#03045E" ]
+                            , span [ class "font-semibold text-base" ]
+                                [ text ("Request a Call from " ++ info.agent.firstName) ]
+                            ]
+                        ]
         , if not (String.isEmpty info.agent.phone) then
             a
                 [ href ("tel:" ++ info.agent.phone)
@@ -575,27 +574,26 @@ viewAcceptButtonsOrg model info =
                     ]
 
             Nothing ->
-                text ""
-        , if model.isSubmittingFollowUp then
-            button
-                [ class "flex items-center justify-center w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] transition cursor-wait"
-                , type_ "button"
-                ]
-                [ div [ class "animate-spin rounded-full h-5 w-5 border-2 border-[#03045E] border-t-transparent" ] [] ]
+                if model.isSubmittingFollowUp then
+                    button
+                        [ class "flex items-center justify-center w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] transition cursor-wait"
+                        , type_ "button"
+                        ]
+                        [ div [ class "animate-spin rounded-full h-5 w-5 border-2 border-[#03045E] border-t-transparent" ] [] ]
 
-          else
-            button
-                [ class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
-                , type_ "button"
-                , onClick RequestFollowUp
-                ]
-                [ div [ class "flex items-center space-x-3" ]
-                    [ span [ class "w-6 h-6 flex items-center justify-center" ]
-                        [ MyIcon.phoneIncoming 24 "#03045E" ]
-                    , span [ class "font-semibold text-base" ]
-                        [ text "Request a Call" ]
-                    ]
-                ]
+                else
+                    button
+                        [ class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
+                        , type_ "button"
+                        , onClick RequestFollowUp
+                        ]
+                        [ div [ class "flex items-center space-x-3" ]
+                            [ span [ class "w-6 h-6 flex items-center justify-center" ]
+                                [ MyIcon.phoneIncoming 24 "#03045E" ]
+                            , span [ class "font-semibold text-base" ]
+                                [ text "Request a Call" ]
+                            ]
+                        ]
         , if not (String.isEmpty info.agent.phone) then
             a
                 [ href ("tel:" ++ info.agent.phone)
@@ -780,39 +778,43 @@ viewGenericButtons model info =
 viewGenericButtonsAgent : Model -> ScheduleInfo -> Html Msg
 viewGenericButtonsAgent model info =
     div [ class "space-y-4" ]
-        [ a
-            [ class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
-            , href (makeCalendlyUrl model)
-            , target "_blank"
-            , onClick CalendlyOpened
-            ]
-            [ div [ class "flex items-center space-x-3" ]
-                [ span [ class "w-6 h-6 flex items-center justify-center" ]
-                    [ MyIcon.calendarDays 24 "#03045E" ]
-                , span [ class "font-semibold text-base" ]
-                    [ text ("Schedule a Call with " ++ info.agent.firstName) ]
-                ]
-            ]
-        , if model.isSubmittingFollowUp then
-            button
-                [ class "flex items-center justify-center w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] transition cursor-wait"
-                , type_ "button"
-                ]
-                [ div [ class "animate-spin rounded-full h-5 w-5 border-2 border-[#03045E] border-t-transparent" ] [] ]
-
-          else
-            button
-                [ class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
-                , type_ "button"
-                , onClick RequestFollowUp
-                ]
-                [ div [ class "flex items-center space-x-3" ]
-                    [ span [ class "w-6 h-6 flex items-center justify-center" ]
-                        [ MyIcon.phoneIncoming 24 "#03045E" ]
-                    , span [ class "font-semibold text-base" ]
-                        [ text ("Request a Call from " ++ info.agent.firstName) ]
+        [ case model.redirectUrl of
+            Just _ ->
+                a
+                    [ class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
+                    , href (makeCalendlyUrl model)
+                    , target "_blank"
+                    , onClick CalendlyOpened
                     ]
-                ]
+                    [ div [ class "flex items-center space-x-3" ]
+                        [ span [ class "w-6 h-6 flex items-center justify-center" ]
+                            [ MyIcon.calendarDays 24 "#03045E" ]
+                        , span [ class "font-semibold text-base" ]
+                            [ text ("Schedule a Call with " ++ info.agent.firstName) ]
+                        ]
+                    ]
+
+            Nothing ->
+                if model.isSubmittingFollowUp then
+                    button
+                        [ class "flex items-center justify-center w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] transition cursor-wait"
+                        , type_ "button"
+                        ]
+                        [ div [ class "animate-spin rounded-full h-5 w-5 border-2 border-[#03045E] border-t-transparent" ] [] ]
+
+                else
+                    button
+                        [ class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
+                        , type_ "button"
+                        , onClick RequestFollowUp
+                        ]
+                        [ div [ class "flex items-center space-x-3" ]
+                            [ span [ class "w-6 h-6 flex items-center justify-center" ]
+                                [ MyIcon.phoneIncoming 24 "#03045E" ]
+                            , span [ class "font-semibold text-base" ]
+                                [ text ("Request a Call from " ++ info.agent.firstName) ]
+                            ]
+                        ]
         , if not (String.isEmpty info.agent.phone) then
             a
                 [ href ("tel:" ++ info.agent.phone)
@@ -851,27 +853,26 @@ viewGenericButtonsOrg model info =
                     ]
 
             Nothing ->
-                text ""
-        , if model.isSubmittingFollowUp then
-            button
-                [ class "flex items-center justify-center w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] transition cursor-wait"
-                , type_ "button"
-                ]
-                [ div [ class "animate-spin rounded-full h-5 w-5 border-2 border-[#03045E] border-t-transparent" ] [] ]
+                if model.isSubmittingFollowUp then
+                    button
+                        [ class "flex items-center justify-center w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] transition cursor-wait"
+                        , type_ "button"
+                        ]
+                        [ div [ class "animate-spin rounded-full h-5 w-5 border-2 border-[#03045E] border-t-transparent" ] [] ]
 
-          else
-            button
-                [ class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
-                , type_ "button"
-                , onClick RequestFollowUp
-                ]
-                [ div [ class "flex items-center space-x-3" ]
-                    [ span [ class "w-6 h-6 flex items-center justify-center" ]
-                        [ MyIcon.phoneIncoming 24 "#03045E" ]
-                    , span [ class "font-semibold text-base" ]
-                        [ text "Request a Call" ]
-                    ]
-                ]
+                else
+                    button
+                        [ class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
+                        , type_ "button"
+                        , onClick RequestFollowUp
+                        ]
+                        [ div [ class "flex items-center space-x-3" ]
+                            [ span [ class "w-6 h-6 flex items-center justify-center" ]
+                                [ MyIcon.phoneIncoming 24 "#03045E" ]
+                            , span [ class "font-semibold text-base" ]
+                                [ text "Request a Call" ]
+                            ]
+                        ]
         , if not (String.isEmpty info.organization.orgPhone) then
             a
                 [ href ("tel:" ++ info.organization.orgPhone)
