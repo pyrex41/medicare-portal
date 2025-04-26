@@ -2067,8 +2067,9 @@ viewMobileTooltip model =
                                 , onClick (ToggleMobileTooltip Nothing)
                                 ]
                                 [ text "×" ]
-                            , div [ class "font-bold text-gray-800 text-base pb-2" ] [ text tooltipPlan.name ]
-                            , div [ class "text-sm text-gray-700" ] [ text ("Plan " ++ tooltipPlan.planType ++ " Discount") ]
+                            , div [ class "font-bold text-gray-800 text-base pb-2" ] [ text (tooltipPlan.name ++ " Discount") ]
+
+                            --, div [ class "text-sm text-gray-700" ] [ text ("Plan " ++ tooltipPlan.planType ++ " Discount") ]
                             , div [ class "pt-3" ] [ text description ]
                             ]
                         ]
