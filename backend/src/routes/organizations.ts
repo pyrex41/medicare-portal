@@ -741,9 +741,9 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
       // Create Turso database for the organization
       const { url, token } = await turso.createOrganizationDatabase(orgId.toString());
 
-      // Update organization with Turso database credentials
+      // Update organization with Turso database credentials and default org_signature to false
       await db.execute(
-        'UPDATE organizations SET turso_db_url = ?, turso_auth_token = ? WHERE id = ?',
+        'UPDATE organizations SET turso_db_url = ?, turso_auth_token = ?, org_signature = 0 WHERE id = ?',
         [url, token, orgId]
       );
 

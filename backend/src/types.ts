@@ -50,6 +50,9 @@ export interface BaseSettings {
   smartSendEnabled: boolean;
   brandName?: string;
   logo?: string | null;
+  orgSignature?: boolean;
+  phone?: string;
+  redirectUrl?: string;
 }
 
 export interface UserContext {

@@ -27,15 +27,17 @@ interface AgentSettingsResponse {
 }
 
 const defaultSettings: BaseSettings = {
-  stateLicenses: [],
-  carrierContracts: [],
-  stateCarrierSettings: [],
-  allowAgentSettings: true,
-  emailSendBirthday: true,
-  emailSendPolicyAnniversary: true,
-  emailSendAep: true,
-  smartSendEnabled: false,
-  brandName: ""
+    stateLicenses: [],
+    carrierContracts: [],
+    stateCarrierSettings: [],
+    allowAgentSettings: false,
+    emailSendBirthday: false,
+    emailSendPolicyAnniversary: false,
+    emailSendAep: false,
+    smartSendEnabled: false,
+    brandName: "",
+    logo: null,
+    orgSignature: false
 };
 
 // Helper function to generate default state/carrier settings
@@ -63,8 +65,8 @@ export const settingsRoutes = new Elysia()
 
     try {
         // Get organization settings, logo, and name
-        const orgRow = await db.fetchOne<{ org_settings: string | null, logo_data: string | null, name: string }>(
-            'SELECT org_settings, logo_data, name FROM organizations WHERE id = ?',
+        const orgRow = await db.fetchOne<{ org_settings: string | null, logo_data: string | null, name: string, org_signature: boolean, phone: string | null, redirect_url: string | null }>(
+            'SELECT org_settings, logo_data, name, org_signature, phone, redirect_url FROM organizations WHERE id = ?',
             [user.organization_id]
         );
         
@@ -80,6 +82,15 @@ export const settingsRoutes = new Elysia()
             // If brandName is not set in settings, use the organization name
             if (!orgSettings.brandName && orgRow?.name) {
                 orgSettings.brandName = orgRow.name;
+            }
+
+            // Add phone and redirectUrl from database columns if available
+            if (orgRow?.phone) {
+                orgSettings.phone = orgRow.phone;
+            }
+            
+            if (orgRow?.redirect_url) {
+                orgSettings.redirectUrl = orgRow.redirect_url;
             }
 
             // If we have states and carriers but no settings array, generate them
@@ -128,6 +139,7 @@ export const settingsRoutes = new Elysia()
             name: orgRow?.name || null,
             orgSettings,
             logo: orgRow?.logo_data || null,
+            orgSignature: orgRow?.org_signature || false,
             agentSettings,
             canEditOrgSettings
         };
@@ -167,11 +179,15 @@ export const settingsRoutes = new Elysia()
 
         if (scope === 'org') {
             logger.info('Updating organization settings');
+            logger.info(`Organization settings body: ${JSON.stringify(typedBody, null, 2)}`);
             
             // Extract logo from settings if it exists
             const settingsObj = typedBody.settings || typedBody;
             const name = 'name' in settingsObj ? settingsObj.name : null;
             const logo = 'logo' in settingsObj ? settingsObj.logo : null;
+            const orgSignature = 'orgSignature' in settingsObj ? settingsObj.orgSignature : false;
+            const phone = 'phone' in settingsObj ? settingsObj.phone : null;
+            const redirectUrl = 'redirectUrl' in settingsObj ? settingsObj.redirectUrl : null;
             const settingsWithoutLogo = { ...settingsObj };
             if ('logo' in settingsWithoutLogo) {
                 delete (settingsWithoutLogo as any).logo;
@@ -179,8 +195,9 @@ export const settingsRoutes = new Elysia()
             
             // Update organization settings and logo separately
             await db.execute(
-                'UPDATE organizations SET org_settings = ?, logo_data = ?, name = ? WHERE id = ?',
-                [JSON.stringify(settingsWithoutLogo), logo || null, name || null, user.organization_id]
+                'UPDATE organizations SET org_settings = ?, logo_data = ?, name = ?, org_signature = ?, phone = ?, redirect_url = ? WHERE id = ?',
+                [JSON.stringify(settingsWithoutLogo), logo || null, name || null, orgSignature, 
+                 orgSignature ? phone : null, orgSignature ? redirectUrl : null, user.organization_id]
             );
 
             // For basic tier, also update the admin agent's settings

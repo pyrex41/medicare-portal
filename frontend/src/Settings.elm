@@ -126,6 +126,9 @@ type alias Settings =
     , primaryColor : String
     , secondaryColor : String
     , logo : Maybe String
+    , orgSignature : Bool
+    , phone : String
+    , redirectUrl : String
     }
 
 
@@ -144,6 +147,7 @@ type Msg
     | ToggleEmailAnniversary Bool
     | ToggleEmailAep Bool
     | ToggleSmartSend Bool
+    | ToggleOrgSignature Bool
     | AddCarrierContract String
     | RemoveCarrierContract String
     | UpdateStateCarrierSetting String Bool Bool
@@ -156,6 +160,8 @@ type Msg
     | UpdateBrandName String
     | UpdatePrimaryColor String
     | UpdateSecondaryColor String
+    | UpdatePhone String
+    | UpdateRedirectUrl String
     | UploadLogo
     | GotLogo File
     | GotLogoUrl String
@@ -336,6 +342,9 @@ update msg model =
 
         ToggleSmartSend value ->
             updateSettings model (\s -> { s | smartSendEnabled = value })
+
+        ToggleOrgSignature value ->
+            updateSettings model (\s -> { s | orgSignature = value })
 
         AddCarrierContract carrier ->
             updateSettings model
@@ -574,6 +583,12 @@ update msg model =
         UpdateSecondaryColor color ->
             updateSettings model (\s -> { s | secondaryColor = color })
 
+        UpdatePhone phone ->
+            updateSettings model (\s -> { s | phone = phone })
+
+        UpdateRedirectUrl url ->
+            updateSettings model (\s -> { s | redirectUrl = url })
+
         UploadLogo ->
             ( model
             , Select.file [ "image/png", "image/jpeg" ] GotLogo
@@ -681,6 +696,9 @@ encodeSettings settings =
         , ( "primaryColor", Encode.string settings.primaryColor )
         , ( "secondaryColor", Encode.string settings.secondaryColor )
         , ( "logo", Maybe.withDefault Encode.null (Maybe.map Encode.string settings.logo) )
+        , ( "orgSignature", Encode.bool settings.orgSignature )
+        , ( "phone", Encode.string settings.phone )
+        , ( "redirectUrl", Encode.string settings.redirectUrl )
         ]
 
 
@@ -805,96 +823,35 @@ viewBrandSettings settings model =
                         ]
                         []
                     )
-
-                {--
-                , viewFormGroup "Primary Color"
-                    (div [ class "flex items-center space-x-4" ]
-                        [ input
-                            [ type_ "color"
-                            , class "w-16 h-10 p-1 border border-gray-300 rounded"
-                            , value settings.primaryColor
-                            , onInput UpdatePrimaryColor
-                            ]
-                            []
-                        , input
-                            [ type_ "text"
-                            , class "flex-1 px-4 py-2 border border-gray-300 rounded-md focus:ring-purple-500 focus:border-purple-500"
-                            , value settings.primaryColor
-                            , onInput UpdatePrimaryColor
-                            ]
-                            []
+                , viewFormGroup "Organization Contact Info"
+                    (div [ class "mt-2" ]
+                        [ checkbox "Use organization info instead of agent info" settings.orgSignature ToggleOrgSignature
+                        , p [ class "text-gray-500 text-sm mt-1 ml-7" ] [ text "When enabled, quote pages and schedule pages will show organization info instead of the specific agent's contact info" ]
                         ]
                     )
-                , viewFormGroup "Secondary Color"
-                    (div [ class "flex items-center space-x-4" ]
-                        [ input
-                            [ type_ "color"
-                            , class "w-16 h-10 p-1 border border-gray-300 rounded"
-                            , value settings.secondaryColor
-                            , onInput UpdateSecondaryColor
-                            ]
-                            []
-                        , input
-                            [ type_ "text"
-                            , class "flex-1 px-4 py-2 border border-gray-300 rounded-md focus:ring-purple-500 focus:border-purple-500"
-                            , value settings.secondaryColor
-                            , onInput UpdateSecondaryColor
-                            ]
-                            []
+                , viewFormGroup "Phone Number"
+                    (input
+                        [ type_ "tel"
+                        , class "w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-purple-500 focus:border-purple-500"
+                        , classList [ ( "bg-gray-100", not settings.orgSignature ) ]
+                        , value settings.phone
+                        , onInput UpdatePhone
+                        , disabled (not settings.orgSignature)
                         ]
+                        []
                     )
-                --}
-                , viewFormGroup "Logo"
-                    (div
-                        [ class
-                            ("flex items-center space-x-4 p-4 border rounded-md border-dashed text-center cursor-pointer transition-colors "
-                                ++ (if model.hover then
-                                        "border-purple-600 bg-purple-50"
-
-                                    else
-                                        "border-gray-200 hover:bg-gray-50"
-                                   )
-                            )
-                        , onClick UploadLogo
-                        , hijackOn "dragenter" (Decode.succeed DragEnter)
-                        , hijackOn "dragover" (Decode.succeed DragEnter)
-                        , hijackOn "dragleave" (Decode.succeed DragLeave)
-                        , hijackOn "drop" dropDecoder
-                        ]
-                        [ case model.logo of
-                            Just logoUrl ->
-                                div [ class "flex items-center space-x-4" ]
-                                    [ img
-                                        [ src logoUrl
-                                        , class "h-16 w-16 object-contain border border-gray-200 rounded"
-                                        ]
-                                        []
-                                    , div [ class "flex flex-col items-start" ]
-                                        [ div [ class "text-purple-600 font-medium" ] [ text "Change Logo" ]
-                                        , div [ class "text-gray-500 text-sm mt-1" ] [ text "Click or drag and drop to change" ]
-                                        ]
-                                    ]
-
-                            Nothing ->
-                                if model.uploadingLogo then
-                                    div [ class "flex flex-col items-center w-full" ]
-                                        [ div [ class "animate-spin rounded-full h-10 w-10 border-t-2 border-b-2 border-purple-500 mb-4" ] []
-                                        , div [ class "text-gray-500" ] [ text "Uploading..." ]
-                                        ]
-
-                                else
-                                    div [ class "flex flex-col items-center w-full" ]
-                                        [ div [ class "rounded-full bg-gray-100 p-3 mb-3" ]
-                                            [ svg [ viewBox "0 0 24 24", Svg.Attributes.class "h-6 w-6 text-purple-600" ]
-                                                [ path [ d "M9 12V7.00002H4V12.0002L1 12.0001L6 17.0001L11 12.0001L9 12Z", fill "currentColor" ] []
-                                                , path [ d "M20 7L15 2L10 7H13V12H17V7H20Z", fill "currentColor" ] []
-                                                , path [ d "M20 19.0001H4V22.0001H20V19.0001Z", fill "currentColor" ] []
-                                                ]
-                                            ]
-                                        , div [ class "text-purple-600 font-medium" ] [ text "Click to upload" ]
-                                        , div [ class "text-gray-500 text-sm mt-1" ] [ text "or drag and drop your logo" ]
-                                        , div [ class "text-gray-400 text-xs mt-2" ] [ text "PNG and JPEG supported (Recommended: 240px width x 60px height)" ]
-                                        ]
+                , viewFormGroup "Calendar Redirect URL"
+                    (div []
+                        [ input
+                            [ type_ "text"
+                            , class "w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-purple-500 focus:border-purple-500"
+                            , classList [ ( "bg-gray-100", not settings.orgSignature ) ]
+                            , value settings.redirectUrl
+                            , onInput UpdateRedirectUrl
+                            , disabled (not settings.orgSignature)
+                            ]
+                            []
+                        , p [ class "text-gray-500 text-xs mt-1" ] [ text "Optional URL where users will be redirected to schedule appointments (e.g., your calendly link)" ]
                         ]
                     )
                 ]
@@ -1183,6 +1140,9 @@ settingsObjectDecoder =
         |> Pipeline.optional "primaryColor" Decode.string "#6B46C1"
         |> Pipeline.optional "secondaryColor" Decode.string "#9F7AEA"
         |> Pipeline.optional "logo" (Decode.nullable Decode.string) Nothing
+        |> Pipeline.optional "orgSignature" Decode.bool False
+        |> Pipeline.optional "phone" Decode.string ""
+        |> Pipeline.optional "redirectUrl" Decode.string ""
 
 
 stateCarrierSettingDecoder : Decoder StateCarrierSetting
