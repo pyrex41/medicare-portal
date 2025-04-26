@@ -31,6 +31,7 @@ import { contactsRoutes } from './routes/contacts'
 import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
+import { readdirSync } from 'fs'
 
 
 // At the top of the file, add interface for ZIP data
@@ -399,6 +400,32 @@ const startServer = async () => {
     logger.info(`Current working directory: ${process.cwd()}`)
     logger.info(`Is production mode: ${process.env.NODE_ENV === 'production'}`)
     
+    // Check for frontend files
+    logger.info(`Checking for SPA files:`)
+    const locations = [
+      { name: 'public', path: join(process.cwd(), 'public') },
+      { name: 'parent dist', path: join(process.cwd(), '..', 'dist') }
+    ];
+    
+    for (const loc of locations) {
+      const exists = existsSync(loc.path);
+      logger.info(`${loc.name} directory (${loc.path}): ${exists ? 'EXISTS' : 'MISSING'}`);
+      
+      if (exists) {
+        try {
+          const files = readdirSync(loc.path);
+          logger.info(`${loc.name} contents: ${files.join(', ')}`);
+          
+          const indexPath = join(loc.path, 'index.html');
+          if (existsSync(indexPath)) {
+            logger.info(`✅ Found SPA at: ${indexPath}`);
+          }
+        } catch (err) {
+          logger.error(`Error reading ${loc.name} directory: ${err}`);
+        }
+      }
+    }
+    
     // Log available environment variables (without values for security)
     logger.info(`Available environment variables: ${Object.keys(process.env).join(', ')}`)
     
@@ -427,6 +454,16 @@ const startServer = async () => {
         allowedHeaders: ['Content-Type', 'Cookie'],  // Add Cookie to allowed headers
         credentials: true,
         preflight: true
+      }))
+      // Add static file serving
+      .use(staticPlugin({
+        assets: join(process.cwd(), 'public'), // Public static files
+        prefix: '/'
+      }))
+      // Try parent dist directory if it exists
+      .use(staticPlugin({
+        assets: join(process.cwd(), '..', 'dist'), // Parent dist static files
+        prefix: '/'
       }))
       // Add SPA route auth bypass handler
       .onRequest(({ request }) => {
@@ -2352,6 +2389,64 @@ const startServer = async () => {
         } catch (e) {
           logger.error(`Error fetching follow-up requests: ${e instanceof Error ? e.message : String(e)}`)
           throw new Error(e instanceof Error ? e.message : String(e))
+        }
+      })
+      // Add a catch-all route handler for SPA routes
+      .all('*', async ({ request, set }) => {
+        const url = new URL(request.url);
+        const path = url.pathname;
+        
+        // Skip API routes
+        if (path.startsWith('/api/')) {
+          set.status = 404;
+          return { error: 'API endpoint not found' };
+        }
+        
+        // Skip files with extensions (static assets)
+        if (path.includes('.') && !path.endsWith('/')) {
+          set.status = 404;
+          return { error: 'File not found' };
+        }
+        
+        // For all other routes, serve the SPA index.html
+        logger.info(`Serving SPA for route: ${path}`);
+        
+        // Determine the path to index.html based on environment
+        let indexPath = '';
+        
+        // Check multiple possible locations for the index.html file
+        const possiblePaths = [
+          join(process.cwd(), 'dist', 'index.html'),  // Main dist directory
+          join(process.cwd(), '..', 'dist', 'index.html'), // Parent dist directory
+          join(process.cwd(), 'public', 'index.html'), // Public directory
+          join(process.cwd(), '..', 'frontend', 'dist', 'index.html') // Frontend dist directory
+        ];
+        
+        // Try each path until we find one that exists
+        for (const possiblePath of possiblePaths) {
+          logger.info(`Checking for SPA at: ${possiblePath}`);
+          if (existsSync(possiblePath)) {
+            indexPath = possiblePath;
+            logger.info(`Found SPA at: ${indexPath}`);
+            break;
+          }
+        }
+        
+        if (!indexPath || !existsSync(indexPath)) {
+          logger.error(`Cannot find SPA index.html file to serve for route: ${path}`);
+          set.status = 404;
+          return { error: 'SPA file not found' };
+        }
+        
+        // Read and serve the index.html file
+        try {
+          const content = readFileSync(indexPath, 'utf-8');
+          set.headers['Content-Type'] = 'text/html';
+          return content;
+        } catch (error) {
+          logger.error(`Error reading SPA index.html: ${error}`);
+          set.status = 500;
+          return { error: 'Error serving SPA' };
         }
       })
       .listen(8000)
