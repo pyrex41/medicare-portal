@@ -117,13 +117,13 @@ carrierToNaics carrier =
 
         Humana ->
             [ "12634" -- Humana Ins Co of NY
-            , "60052" -- Humana Insurance Company
-            , "60219" -- Humana Insurance Company
-            , "60984" -- Humana Insurance Company
+            , "60052" -- Humana Insurance Company -- Achieve in CA, NJ, SC
+            , "60219" -- Humana Insurance Company -- Achieve in PA, TX
+            , "60984" -- Humana Insurance Company -- Achieve in many states
             , "69671" -- Humana Insurance Company
-            , "70580" -- Humana Insurance Company
-            , "73288" -- Humana Ins Co
-            , "88595" -- Humana Insurance Company
+            , "70580" -- Humana Insurance Company -- Value in AR, ID, MT, NJ
+            , "73288" -- Humana Ins Co -- Achieve in GA
+            , "88595" -- Humana Insurance Company -- Achieve in DE, MT, NH, SD, WY, WI
             , "95158" -- Humana Insurance Company
             ]
 

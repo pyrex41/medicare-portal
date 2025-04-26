@@ -33,6 +33,7 @@ import Time
 import Url exposing (Url)
 import Url.Parser as UrlParser
 import Url.Parser.Query as Query
+import Utils.DiscountDescription exposing (discountDescription)
 import Utils.QuoteHeader exposing (viewHeader)
 
 
@@ -118,6 +119,7 @@ type alias Plan =
     , state : String
     , tobacco : Bool
     , coverageSummary : CoverageList
+    , discountDescription : Maybe String
     }
 
 
@@ -181,11 +183,13 @@ type alias Model =
     , submittingLocation : Bool
     , editingEffectiveDate : Maybe String
     , fetchNewPlans : Bool
+    , discountCsvString : Maybe String
     }
 
 
 type Msg
     = GotPlans (Result Http.Error Plans)
+    | GotDiscountCsvString (Result Http.Error String)
     | TogglePlanType
     | SelectPlan Plan
     | SelectPlanCard Plan
@@ -266,6 +270,7 @@ init key maybeParams =
             , carrierContracts = []
             , currentDate = Nothing
             , effectiveDate = Nothing
+            , discountCsvString = Nothing
             , orgId = Nothing
             , orgName = Nothing
             , orgLogo = Nothing
@@ -296,6 +301,7 @@ init key maybeParams =
                     , Cmd.batch
                         [ fetchContactData quoteId
                         , Task.perform GotCurrentDate Date.today
+                        , fetchDiscountCsvString
                         ]
                     )
 
@@ -336,6 +342,14 @@ fetchContactData quoteId =
     Http.get
         { url = "/api/quotes/decode/" ++ quoteId
         , expect = Http.expectJson GotContactData contactResponseDecoder
+        }
+
+
+fetchDiscountCsvString : Cmd Msg
+fetchDiscountCsvString =
+    Http.get
+        { url = "/api/data/public/hhd.csv"
+        , expect = Http.expectString GotDiscountCsvString
         }
 
 
@@ -506,6 +520,7 @@ groupQuotesByPlan responses model =
 
                 else
                     planNCoverageList
+            , discountDescription = Nothing
             }
 
         allQuotes =
@@ -578,6 +593,16 @@ planNCoverageList =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+        GotDiscountCsvString (Ok discountCsvString) ->
+            ( { model | discountCsvString = Just discountCsvString }
+            , Cmd.none
+            )
+
+        GotDiscountCsvString (Err _) ->
+            ( { model | error = Just "Failed to load discount CSV" }
+            , Cmd.none
+            )
+
         GotCarrierContracts (Ok carrierContracts) ->
             let
                 updatedModel =
@@ -606,8 +631,31 @@ update msg model =
             case result of
                 Ok plansRaw ->
                     let
-                        plans =
+                        plans0 =
                             filterPlansByCarrier plansRaw model.carrierContracts
+
+                        addDiscountDescriptions : Plan -> Plan
+                        addDiscountDescriptions plan =
+                            case ( model.discountCsvString, naicToCarrier plan.naic ) of
+                                ( Just discountCsvString, Just carrier ) ->
+                                    { plan
+                                        | discountDescription =
+                                            discountDescription
+                                                discountCsvString
+                                                carrier
+                                                plan.naic
+                                                plan.state
+                                                |> Result.toMaybe
+                                                |> Maybe.withDefault Nothing
+                                    }
+
+                                _ ->
+                                    plan
+
+                        plans =
+                            { planG = List.map addDiscountDescriptions plans0.planG
+                            , planN = List.map addDiscountDescriptions plans0.planN
+                            }
 
                         hasPlans =
                             not (List.isEmpty plans.planG && List.isEmpty plans.planN)
@@ -1492,9 +1540,25 @@ viewPlanCard model planTypeCode plan =
                     ]
                 , div [ class "flex items-center" ]
                     [ div [ class "w-[1px] h-[24px] bg-[#DCE2E5] mx-4" ] [] ]
-                , div [ class "flex items-center" ]
+                , div [ class "flex items-center relative group" ]
                     [ span [ class "text-sm font-medium text-[#667085]" ] [ text "Discount:" ]
                     , span [ class "text-lg font-bold text-[#667085] ml-1" ] [ text ("$" ++ String.fromInt (floor plan.priceDiscount)) ]
+                    , case plan.discountDescription of
+                        Just description ->
+                            div [ class "inline-flex ml-1 text-blue-500 cursor-help relative" ]
+                                [ svg [ Svg.Attributes.width "16", Svg.Attributes.height "16", Svg.Attributes.viewBox "0 0 24 24", Svg.Attributes.fill "none" ]
+                                    [ Svg.circle [ Svg.Attributes.cx "12", Svg.Attributes.cy "12", Svg.Attributes.r "10", Svg.Attributes.stroke "currentColor", Svg.Attributes.strokeWidth "2" ] []
+                                    , Svg.path [ Svg.Attributes.d "M12 8v4", Svg.Attributes.stroke "currentColor", Svg.Attributes.strokeWidth "2", Svg.Attributes.strokeLinecap "round" ] []
+                                    , Svg.path [ Svg.Attributes.d "M12 16h.01", Svg.Attributes.stroke "currentColor", Svg.Attributes.strokeWidth "2", Svg.Attributes.strokeLinecap "round" ] []
+                                    ]
+                                , div [ class "absolute bottom-full mb-2 right-0 w-48 p-2 bg-gray-800 text-white text-xs rounded shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200" ]
+                                    [ text description
+                                    , div [ class "absolute right-3 top-full -mt-1 border-4 border-transparent border-t-gray-800" ] []
+                                    ]
+                                ]
+
+                        Nothing ->
+                            text ""
                     ]
                 ]
             ]

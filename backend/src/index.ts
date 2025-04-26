@@ -465,6 +465,11 @@ const startServer = async () => {
         assets: join(process.cwd(), '..', 'dist'), // Parent dist static files
         prefix: '/'
       }))
+      // Add data directory for specific files
+      .use(staticPlugin({
+        assets: join(process.cwd(), 'data/public'), // Data files
+        prefix: '/api/data/public'
+      }))
       // Add SPA route auth bypass handler
       .onRequest(({ request }) => {
         const url = new URL(request.url);
