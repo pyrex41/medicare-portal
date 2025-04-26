@@ -8,6 +8,7 @@ import Html.Attributes exposing (..)
 import Html.Events exposing (onClick, onInput, onSubmit)
 import Http
 import Json.Decode as D
+import Json.Decode.Pipeline as P
 import Json.Encode as E
 import MyIcon
 import Url.Builder as Builder
@@ -112,6 +113,14 @@ type alias ExistingAnswer =
     , questionText : String
     , questionType : String
     , answer : Bool
+    , followUpAnswers : List FollowUpAnswer
+    }
+
+
+type alias FollowUpAnswer =
+    { questionId : Int
+    , questionText : String
+    , answer : AnswerType
     }
 
 
@@ -525,6 +534,17 @@ update msg model =
                                             { q
                                                 | answer = Just existingAnswer.answer
                                                 , isExpanded = existingAnswer.answer -- Auto-expand if answered Yes
+                                                , followUpQuestions =
+                                                    List.map
+                                                        (\fq ->
+                                                            case List.filter (\fa -> fa.questionId == fq.id && fa.questionText == fq.text) existingAnswer.followUpAnswers of
+                                                                followUpAnswer :: _ ->
+                                                                    { fq | answerType = followUpAnswer.answer }
+
+                                                                [] ->
+                                                                    fq
+                                                        )
+                                                        q.followUpQuestions
                                             }
 
                                         [] ->
@@ -571,9 +591,6 @@ update msg model =
                                         followUps
                         )
                         relevantQuestions
-
-                encodedAnswers =
-                    encodeAnswers relevantQuestions
             in
             if allRelevantQuestionsAnswered then
                 case model.quoteId of
@@ -653,14 +670,67 @@ encodeAnswers questions =
                     Just
                         ( String.fromInt q.id
                         , E.object
-                            [ ( "question_text", E.string q.text )
+                            [ ( "id", E.int q.id )
+                            , ( "question_text", E.string q.text )
                             , ( "question_type", E.string questionType )
                             , ( "answer", answerValue )
+                            , ( "follow_up_questions", encodeFollowUpQuestions q.followUpQuestions )
                             ]
                         )
             )
             questions
         )
+
+
+encodeAwnser : AnswerType -> Maybe E.Value
+encodeAwnser answerType =
+    case answerType of
+        BooleanAnswer maybeAnswer ->
+            case maybeAnswer of
+                Just answer ->
+                    Just (E.bool answer)
+
+                Nothing ->
+                    Nothing
+
+        TextAnswer text ->
+            Just (E.string text)
+
+
+encodeFollowUpQuestions : List FollowUpQuestion -> E.Value
+encodeFollowUpQuestions questions =
+    questions
+        |> List.filter
+            (\q ->
+                case q.answerType of
+                    TextAnswer "" ->
+                        False
+
+                    BooleanAnswer Nothing ->
+                        False
+
+                    _ ->
+                        True
+            )
+        |> List.map
+            (\q ->
+                E.object
+                    ([ ( "id", Just (E.int q.id) )
+                     , ( "question_text", Just (E.string q.text) )
+                     , ( "answer", encodeAwnser q.answerType )
+                     ]
+                        |> List.filterMap
+                            (\( key, value ) ->
+                                case value of
+                                    Just v ->
+                                        Just ( key, v )
+
+                                    Nothing ->
+                                        Nothing
+                            )
+                    )
+            )
+        |> E.list identity
 
 
 iconToSvg : Icon -> Color -> Html msg
@@ -1123,12 +1193,28 @@ existingAnswersResponseDecoder =
 
 existingAnswerDecoder : D.Decoder ExistingAnswer
 existingAnswerDecoder =
-    D.map4 ExistingAnswer
-        (D.succeed 0)
-        -- Will be replaced with the key from the dict
-        (D.field "question_text" D.string)
-        (D.field "question_type" D.string)
-        (D.field "answer" D.bool)
+    D.succeed ExistingAnswer
+        |> P.required "id" D.int
+        |> P.required "question_text" D.string
+        |> P.required "question_type" D.string
+        |> P.required "answer" D.bool
+        |> P.required "follow_up_questions" (D.list followUpAnswerDecoder)
+
+
+followUpAnswerDecoder : D.Decoder FollowUpAnswer
+followUpAnswerDecoder =
+    D.succeed FollowUpAnswer
+        |> P.required "id" D.int
+        |> P.required "question_text" D.string
+        |> P.required "answer" answerTypeDecoder
+
+
+answerTypeDecoder : D.Decoder AnswerType
+answerTypeDecoder =
+    D.oneOf
+        [ D.map (\b -> BooleanAnswer (Just b)) D.bool
+        , D.map TextAnswer D.string
+        ]
 
 
 dictToAnswerList : Dict String ExistingAnswer -> List ExistingAnswer
