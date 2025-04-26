@@ -14,7 +14,6 @@ if (!root) {
 customElements.define('stripe-checkout', class extends HTMLElement {
   private stripe: any;
   private checkout: any;
-  private static activeInstance: HTMLElement | null = null;
 
   constructor() {
     super();

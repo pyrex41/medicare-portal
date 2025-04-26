@@ -133,7 +133,7 @@ fetchSubscriptionStatus : Cmd Msg
 fetchSubscriptionStatus =
     Http.get
         { url = "/api/stripe/subscription-status"
-        , expect = Http.expectJson (Debug.log "API Response" >> GotSubscriptionStatus) subscriptionStatusDecoder
+        , expect = Http.expectJson GotSubscriptionStatus subscriptionStatusDecoder
         }
 
 
