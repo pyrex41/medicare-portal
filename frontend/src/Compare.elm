@@ -184,6 +184,7 @@ type alias Model =
     , editingEffectiveDate : Maybe String
     , fetchNewPlans : Bool
     , discountCsvString : Maybe String
+    , activeTooltipPlan : Maybe Plan
     }
 
 
@@ -218,6 +219,7 @@ type Msg
     | UpdateEffectiveDate String
     | SubmitLocationUpdate
     | GotLocationUpdate (Result Http.Error LocationUpdateResponse)
+    | ToggleMobileTooltip (Maybe Plan)
     | NoOp
 
 
@@ -290,6 +292,7 @@ init key maybeParams =
             , submittingLocation = False
             , editingEffectiveDate = Nothing
             , fetchNewPlans = False
+            , activeTooltipPlan = Nothing
             }
     in
     case maybeParams of
@@ -1109,6 +1112,11 @@ update msg model =
                     , Cmd.none
                     )
 
+        ToggleMobileTooltip plan ->
+            ( { model | activeTooltipPlan = plan }
+            , Cmd.none
+            )
+
         NoOp ->
             ( model, Cmd.none )
 
@@ -1501,6 +1509,14 @@ viewPlanCard model planTypeCode plan =
 
             else
                 "border border-[#D4D4D4]"
+
+        isTooltipActive =
+            case model.activeTooltipPlan of
+                Just activePlan ->
+                    activePlan.id == plan.id
+
+                Nothing ->
+                    False
     in
     div [ class "flex flex-col" ]
         [ div
@@ -1545,15 +1561,31 @@ viewPlanCard model planTypeCode plan =
                     , span [ class "text-lg font-bold text-[#667085] ml-1" ] [ text ("$" ++ String.fromInt (floor plan.priceDiscount)) ]
                     , case plan.discountDescription of
                         Just description ->
-                            div [ class "inline-flex ml-1 text-blue-500 cursor-help relative" ]
-                                [ svg [ Svg.Attributes.width "16", Svg.Attributes.height "16", Svg.Attributes.viewBox "0 0 24 24", Svg.Attributes.fill "none" ]
-                                    [ Svg.circle [ Svg.Attributes.cx "12", Svg.Attributes.cy "12", Svg.Attributes.r "10", Svg.Attributes.stroke "currentColor", Svg.Attributes.strokeWidth "2" ] []
-                                    , Svg.path [ Svg.Attributes.d "M12 8v4", Svg.Attributes.stroke "currentColor", Svg.Attributes.strokeWidth "2", Svg.Attributes.strokeLinecap "round" ] []
-                                    , Svg.path [ Svg.Attributes.d "M12 16h.01", Svg.Attributes.stroke "currentColor", Svg.Attributes.strokeWidth "2", Svg.Attributes.strokeLinecap "round" ] []
+                            div [ class "inline-flex ml-1 relative" ]
+                                [ -- Desktop hover tooltip (hidden on mobile)
+                                  div [ class "hidden sm:inline-flex text-blue-500 cursor-help" ]
+                                    [ svg [ Svg.Attributes.width "16", Svg.Attributes.height "16", Svg.Attributes.viewBox "0 0 24 24", Svg.Attributes.fill "none" ]
+                                        [ Svg.circle [ Svg.Attributes.cx "12", Svg.Attributes.cy "12", Svg.Attributes.r "10", Svg.Attributes.stroke "currentColor", Svg.Attributes.strokeWidth "2" ] []
+                                        , Svg.path [ Svg.Attributes.d "M12 8v4", Svg.Attributes.stroke "currentColor", Svg.Attributes.strokeWidth "2", Svg.Attributes.strokeLinecap "round" ] []
+                                        , Svg.path [ Svg.Attributes.d "M12 16h.01", Svg.Attributes.stroke "currentColor", Svg.Attributes.strokeWidth "2", Svg.Attributes.strokeLinecap "round" ] []
+                                        ]
+                                    , div [ class "absolute bottom-full mb-2 right-0 w-48 p-2 bg-gray-800 text-white text-xs rounded shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200" ]
+                                        [ text description
+                                        , div [ class "absolute right-3 top-full -mt-1 border-4 border-transparent border-t-gray-800" ] []
+                                        ]
                                     ]
-                                , div [ class "absolute bottom-full mb-2 right-0 w-48 p-2 bg-gray-800 text-white text-xs rounded shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200" ]
-                                    [ text description
-                                    , div [ class "absolute right-3 top-full -mt-1 border-4 border-transparent border-t-gray-800" ] []
+
+                                -- Mobile tap tooltip icon (hidden on desktop)
+                                , div
+                                    [ class "sm:hidden inline-flex text-blue-500 cursor-pointer z-10"
+                                    , Html.Events.stopPropagationOn "click"
+                                        (D.succeed ( ToggleMobileTooltip (Just plan), True ))
+                                    ]
+                                    [ svg [ Svg.Attributes.width "16", Svg.Attributes.height "16", Svg.Attributes.viewBox "0 0 24 24", Svg.Attributes.fill "none" ]
+                                        [ Svg.circle [ Svg.Attributes.cx "12", Svg.Attributes.cy "12", Svg.Attributes.r "10", Svg.Attributes.stroke "currentColor", Svg.Attributes.strokeWidth "2" ] []
+                                        , Svg.path [ Svg.Attributes.d "M12 8v4", Svg.Attributes.stroke "currentColor", Svg.Attributes.strokeWidth "2", Svg.Attributes.strokeLinecap "round" ] []
+                                        , Svg.path [ Svg.Attributes.d "M12 16h.01", Svg.Attributes.stroke "currentColor", Svg.Attributes.strokeWidth "2", Svg.Attributes.strokeLinecap "round" ] []
+                                        ]
                                     ]
                                 ]
 
@@ -1663,6 +1695,7 @@ view model =
         , viewQualificationModal model
         , viewRatesModal model
         , viewLocationModal model
+        , viewMobileTooltip model
         ]
     }
 
@@ -2009,3 +2042,41 @@ getNextEffectiveDates currentDate count =
                     |> Date.floor Date.Month
                     |> Date.toIsoString
             )
+
+
+
+-- Mobile tooltip overlay
+
+
+viewMobileTooltip : Model -> Html Msg
+viewMobileTooltip model =
+    case model.activeTooltipPlan of
+        Just tooltipPlan ->
+            case tooltipPlan.discountDescription of
+                Just description ->
+                    div
+                        [ class "sm:hidden fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4"
+                        , onClick (ToggleMobileTooltip Nothing)
+                        ]
+                        [ div
+                            [ class "bg-white rounded-lg p-4 max-w-xs w-full shadow-lg text-sm relative"
+                            , Html.Events.stopPropagationOn "click" (D.succeed ( NoOp, True ))
+                            ]
+                            [ button
+                                [ class "absolute top-2 right-2 text-gray-500"
+                                , onClick (ToggleMobileTooltip Nothing)
+                                ]
+                                [ text "×" ]
+                            , div [ class "font-bold text-gray-800 text-base pb-2" ] [ text tooltipPlan.name ]
+                            , div [ class "text-sm text-gray-700" ] [ text ("Plan " ++ tooltipPlan.planType ++ " Discount") ]
+                            , div [ class "pt-3" ] [ text description ]
+                            ]
+                        ]
+
+                Nothing ->
+                    -- If no description, close the tooltip
+                    div [ onClick (ToggleMobileTooltip Nothing) ] []
+
+        Nothing ->
+            -- No active tooltip
+            text ""
