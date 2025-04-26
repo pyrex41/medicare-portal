@@ -169,8 +169,8 @@ export const quotesRoutes = (app: Elysia) => {
             
             const mainDb = new Database();
             logger.info(`Fetching organization details for orgId: ${decoded.orgId}`);
-            const result = await mainDb.fetchOne<{ slug: string, org_settings: string, name: string, logo_data: string }>(
-                'SELECT slug, org_settings, name, logo_data FROM organizations WHERE id = ?',
+            const result = await mainDb.fetchOne<{ slug: string, org_settings: string, name: string, logo_data: string, phone: string, redirect_url: string, org_signature: boolean }>(
+                'SELECT slug, org_settings, name, logo_data, phone, redirect_url, org_signature FROM organizations WHERE id = ?',
                 [decoded.orgId]
             );
 
@@ -293,6 +293,9 @@ export const quotesRoutes = (app: Elysia) => {
                 orgSlug: orgSlug || null,
                 orgName: result.name,
                 orgLogo: result.logo_data || null,
+                orgPhone: result.phone || null,
+                orgRedirectUrl: result.redirect_url || null,
+                orgSignature: Boolean(result.org_signature) || false,
                 carrierContracts: carrierContracts || null,
                 agent: {
                     firstName: agent.first_name,

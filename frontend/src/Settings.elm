@@ -854,6 +854,64 @@ viewBrandSettings settings model =
                         , p [ class "text-gray-500 text-xs mt-1" ] [ text "Optional URL where users will be redirected to schedule appointments (e.g., your calendly link)" ]
                         ]
                     )
+                , viewFormGroup "Logo"
+                    (div []
+                        [ if model.uploadingLogo then
+                            div [ class "flex justify-center items-center h-32" ]
+                                [ div [ class "animate-spin rounded-full h-8 w-8 border-2 border-purple-500 border-t-transparent" ] []
+                                ]
+
+                          else
+                            div
+                                [ class "border-2 border-dashed border-gray-300 rounded-lg p-6 flex flex-col items-center justify-center"
+                                , classList [ ( "bg-purple-50 border-purple-300", model.hover ) ]
+                                , hijackOn "dragenter" (Decode.succeed DragEnter)
+                                , hijackOn "dragover" (Decode.succeed DragEnter)
+                                , hijackOn "dragleave" (Decode.succeed DragLeave)
+                                , hijackOn "drop" dropDecoder
+                                ]
+                                [ case model.logo of
+                                    Just logoUrl ->
+                                        div [ class "flex flex-col items-center space-y-4" ]
+                                            [ img
+                                                [ src logoUrl
+                                                , class "h-24 w-auto object-contain"
+                                                ]
+                                                []
+                                            , button
+                                                [ class "px-4 py-2 text-sm text-purple-600 hover:text-purple-800 border border-purple-200 rounded"
+                                                , onClick UploadLogo
+                                                ]
+                                                [ text "Change Logo" ]
+                                            ]
+
+                                    Nothing ->
+                                        div [ class "flex flex-col items-center space-y-4 text-center" ]
+                                            [ svg
+                                                [ Svg.Attributes.class "h-10 w-10 text-gray-400"
+                                                , viewBox "0 0 20 20"
+                                                , fill "currentColor"
+                                                ]
+                                                [ path
+                                                    [ fillRule "evenodd"
+                                                    , d "M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
+                                                    , clipRule "evenodd"
+                                                    ]
+                                                    []
+                                                ]
+                                            , div []
+                                                [ p [ class "text-gray-500" ] [ text "Drag and drop your logo here" ]
+                                                , p [ class "text-gray-400 text-xs" ] [ text "or" ]
+                                                , button
+                                                    [ class "mt-2 px-4 py-2 text-sm text-purple-600 hover:text-purple-800 border border-purple-200 rounded"
+                                                    , onClick UploadLogo
+                                                    ]
+                                                    [ text "Upload Logo" ]
+                                                ]
+                                            ]
+                                ]
+                        ]
+                    )
                 ]
             ]
         ]
@@ -1024,7 +1082,7 @@ viewStateCarrierGrid settings model =
                     [ label [ class "font-medium text-gray-700" ]
                         [ text "Use SmartSend for Guaranteed Issue" ]
                     , p [ class "text-gray-500 mt-1" ]
-                        [ text "When enabled, SmartSend will automatically identify which carriers offer full compensation for Guaranteed Issue (GI) policies." ]
+                        [ text "When enabled, SmartSend will automatically identify which carriers offer full carrier compensation for Guaranteed Issue (GI) policies." ]
                     ]
                 ]
             , div [ class "mt-4 p-4 bg-gray-50 rounded-md mb-8" ]
