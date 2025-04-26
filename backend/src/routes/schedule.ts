@@ -24,8 +24,8 @@ export const scheduleRoutes = (app: Elysia) => {
             const mainDb = new Database();
             
             // Get organization info including slug
-            const orgResult = await mainDb.fetchOne<{ name: string, logo_data: string | null, slug: string }>(
-                'SELECT name, logo_data, slug FROM organizations WHERE id = ?',
+            const orgResult = await mainDb.fetchOne<{ name: string, logo_data: string | null, slug: string, phone: string | null, redirect_url: string | null, org_signature: boolean }>(
+                'SELECT name, logo_data, slug, phone, redirect_url, org_signature FROM organizations WHERE id = ?',
                 [orgId]
             );
 
@@ -91,13 +91,16 @@ export const scheduleRoutes = (app: Elysia) => {
                 organization: {
                     name: orgResult.name,
                     logo: orgResult.logo_data,
-                    slug: orgResult.slug
+                    slug: orgResult.slug,
+                    phone: orgResult.phone,
+                    redirectUrl: orgResult.redirect_url
                 },
                 agent: {
                     name: `${agent.first_name} ${agent.last_name}`,
                     firstName: agent.first_name,
                     phone: agent.phone || ""
-                }
+                },
+                useOrg: Boolean(orgResult.org_signature)
             };
 
         } catch (error) {

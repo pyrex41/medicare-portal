@@ -7,6 +7,7 @@ import Html.Attributes exposing (..)
 import Html.Events exposing (onClick, onInput, onSubmit)
 import Http
 import Json.Decode as D
+import Json.Decode.Pipeline as P
 import Json.Encode as E
 import List.Extra
 import MyIcon
@@ -26,6 +27,8 @@ type alias OrgInfo =
     { orgName : Maybe String
     , orgLogo : Maybe String
     , orgSlug : String
+    , orgPhone : String
+    , orgRedirectUrl : Maybe String
     }
 
 
@@ -48,6 +51,7 @@ type alias ScheduleInfo =
     { contact : ContactInfo
     , organization : OrgInfo
     , agent : AgentInfo
+    , useOrg : Bool
     }
 
 
@@ -128,10 +132,10 @@ init key maybeQuoteId maybeStatus =
       , quoteId = maybeQuoteId
       , key = key
       , status = status
-      , redirectUrl = Just "https://calendly.com/josh-musick-medicaremax/medicare-max-demo?month=2025-04" --"https://calendly.com/medicareschool-max/30min"
+      , redirectUrl = Nothing --Just "https://calendly.com/josh-musick-medicaremax/medicare-max-demo?month=2025-04" --"https://calendly.com/medicareschool-max/30min"
       , scheduleInfo = Nothing
       , isLoading = True
-      , demoMode = True -- sets CTA to demo mode always
+      , demoMode = False -- sets CTA to demo mode always
       , demoRedirectUrl = Just "https://calendly.com/josh-musick-medicaremax/medicare-max-demo?month=2025-04" --"https://calendly.com/medicareschool-max/30min"
       }
     , Cmd.batch commands
@@ -157,18 +161,21 @@ agentInfoDecoder =
 
 orgInfoDecoder : D.Decoder OrgInfo
 orgInfoDecoder =
-    D.map3 OrgInfo
-        (D.at [ "name" ] (D.nullable D.string))
-        (D.at [ "logo" ] (D.nullable D.string))
-        (D.at [ "slug" ] D.string)
+    D.succeed OrgInfo
+        |> P.required "name" (D.nullable D.string)
+        |> P.required "logo" (D.nullable D.string)
+        |> P.required "slug" D.string
+        |> P.required "phone" D.string
+        |> P.optional "redirectUrl" (D.nullable D.string) Nothing
 
 
 scheduleInfoDecoder : D.Decoder ScheduleInfo
 scheduleInfoDecoder =
-    D.map3 ScheduleInfo
-        (D.field "contact" contactInfoDecoder)
-        (D.field "organization" orgInfoDecoder)
-        (D.field "agent" agentInfoDecoder)
+    D.succeed ScheduleInfo
+        |> P.required "contact" contactInfoDecoder
+        |> P.required "organization" orgInfoDecoder
+        |> P.required "agent" agentInfoDecoder
+        |> P.optional "useOrg" D.bool True
 
 
 submitResponseDecoder : D.Decoder SubmitResponse
@@ -226,6 +233,7 @@ update msg model =
                         , name = Just (info.contact.firstName ++ " " ++ info.contact.lastName)
                         , phoneNumber = Just info.contact.phoneNumber
                         , isLoading = False
+                        , redirectUrl = info.organization.orgRedirectUrl
                       }
                     , Cmd.none
                     )
@@ -481,20 +489,34 @@ viewCTA model =
 
 viewAcceptButtons : Model -> ScheduleInfo -> Html Msg
 viewAcceptButtons model info =
+    if info.useOrg then
+        viewAcceptButtonsOrg model info
+
+    else
+        viewAcceptButtonsAgent model info
+
+
+viewAcceptButtonsAgent : Model -> ScheduleInfo -> Html Msg
+viewAcceptButtonsAgent model info =
     div [ class "space-y-4" ]
-        [ a
-            [ class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
-            , href (makeCalendlyUrl model)
-            , target "_blank"
-            , onClick CalendlyOpened
-            ]
-            [ div [ class "flex items-center space-x-3" ]
-                [ span [ class "w-6 h-6 flex items-center justify-center" ]
-                    [ MyIcon.calendarDays 24 "#03045E" ]
-                , span [ class "font-semibold text-base" ]
-                    [ text ("Schedule a Call with " ++ info.agent.firstName) ]
-                ]
-            ]
+        [ case model.redirectUrl of
+            Just _ ->
+                a
+                    [ class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
+                    , href (makeCalendlyUrl model)
+                    , target "_blank"
+                    , onClick CalendlyOpened
+                    ]
+                    [ div [ class "flex items-center space-x-3" ]
+                        [ span [ class "w-6 h-6 flex items-center justify-center" ]
+                            [ MyIcon.calendarDays 24 "#03045E" ]
+                        , span [ class "font-semibold text-base" ]
+                            [ text ("Schedule a Call with " ++ info.agent.firstName) ]
+                        ]
+                    ]
+
+            Nothing ->
+                text ""
         , if model.isSubmittingFollowUp then
             button
                 [ class "flex items-center justify-center w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] transition cursor-wait"
@@ -524,7 +546,66 @@ viewAcceptButtons model info =
                     [ span [ class "w-6 h-6 flex items-center justify-center" ]
                         [ MyIcon.phoneOutgoing 24 "#03045E" ]
                     , span [ class "font-semibold text-base" ]
-                        [ text ("Give " ++ info.agent.firstName ++ " a call: " ++ formatPhoneNumber info.agent.phone) ]
+                        [ text ("Give " ++ info.agent.firstName ++ " Call: " ++ formatPhoneNumber info.agent.phone) ]
+                    ]
+                ]
+
+          else
+            text ""
+        ]
+
+
+viewAcceptButtonsOrg : Model -> ScheduleInfo -> Html Msg
+viewAcceptButtonsOrg model info =
+    div [ class "space-y-4" ]
+        [ case info.organization.orgRedirectUrl of
+            Just _ ->
+                a
+                    [ class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
+                    , href (makeCalendlyUrlHelper model info.organization.orgRedirectUrl)
+                    , target "_blank"
+                    , onClick CalendlyOpened
+                    ]
+                    [ div [ class "flex items-center space-x-3" ]
+                        [ span [ class "w-6 h-6 flex items-center justify-center" ]
+                            [ MyIcon.calendarDays 24 "#03045E" ]
+                        , span [ class "font-semibold text-base" ]
+                            [ text "Schedule a Call" ]
+                        ]
+                    ]
+
+            Nothing ->
+                text ""
+        , if model.isSubmittingFollowUp then
+            button
+                [ class "flex items-center justify-center w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] transition cursor-wait"
+                , type_ "button"
+                ]
+                [ div [ class "animate-spin rounded-full h-5 w-5 border-2 border-[#03045E] border-t-transparent" ] [] ]
+
+          else
+            button
+                [ class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
+                , type_ "button"
+                , onClick RequestFollowUp
+                ]
+                [ div [ class "flex items-center space-x-3" ]
+                    [ span [ class "w-6 h-6 flex items-center justify-center" ]
+                        [ MyIcon.phoneIncoming 24 "#03045E" ]
+                    , span [ class "font-semibold text-base" ]
+                        [ text "Request a Call" ]
+                    ]
+                ]
+        , if not (String.isEmpty info.agent.phone) then
+            a
+                [ href ("tel:" ++ info.agent.phone)
+                , class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
+                ]
+                [ div [ class "flex items-center space-x-3" ]
+                    [ span [ class "w-6 h-6 flex items-center justify-center" ]
+                        [ MyIcon.phoneOutgoing 24 "#03045E" ]
+                    , span [ class "font-semibold text-base" ]
+                        [ text ("Call Now: " ++ formatPhoneNumber info.organization.orgPhone) ]
                     ]
                 ]
 
@@ -535,6 +616,15 @@ viewAcceptButtons model info =
 
 viewDeclineButtons : Model -> ScheduleInfo -> Html Msg
 viewDeclineButtons model info =
+    if info.useOrg then
+        viewDeclineButtonsOrg model info
+
+    else
+        viewDeclineButtonsAgent model info
+
+
+viewDeclineButtonsAgent : Model -> ScheduleInfo -> Html Msg
+viewDeclineButtonsAgent model info =
     div [ class "space-y-4" ]
         [ a
             [ class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
@@ -593,8 +683,102 @@ viewDeclineButtons model info =
         ]
 
 
+viewDeclineButtonsOrg : Model -> ScheduleInfo -> Html Msg
+viewDeclineButtonsOrg model info =
+    div [ class "space-y-4" ]
+        [ case info.organization.orgRedirectUrl of
+            Just _ ->
+                a
+                    [ class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
+                    , href (makeCalendlyUrlHelper model info.organization.orgRedirectUrl)
+                    , target "_blank"
+                    , onClick CalendlyOpened
+                    ]
+                    [ div [ class "flex items-center space-x-3" ]
+                        [ span [ class "w-6 h-6 flex items-center justify-center" ]
+                            [ MyIcon.calendarDays 24 "#03045E" ]
+                        , span [ class "font-semibold text-base" ]
+                            [ text "Schedule a Call" ]
+                        ]
+                    ]
+
+            Nothing ->
+                text ""
+        , if model.isSubmittingAEP then
+            button
+                [ class "flex items-center justify-center w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] transition cursor-wait"
+                , type_ "button"
+                ]
+                [ div [ class "animate-spin rounded-full h-5 w-5 border-2 border-[#03045E] border-t-transparent" ] [] ]
+
+          else
+            button
+                [ class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
+                , type_ "button"
+                , onClick RequestAEP
+                ]
+                [ div [ class "flex items-center space-x-3" ]
+                    [ span [ class "w-6 h-6 flex items-center justify-center" ]
+                        [ MyIcon.clipboardPlus 24 "#03045E" ]
+                    , span [ class "font-semibold text-base" ]
+                        [ text "Get on the Advantage Plan List" ]
+                    ]
+                ]
+        , if not (String.isEmpty info.organization.orgPhone) then
+            a
+                [ href ("tel:" ++ info.organization.orgPhone)
+                , class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
+                ]
+                [ div [ class "flex items-center space-x-3" ]
+                    [ span [ class "w-6 h-6 flex items-center justify-center" ]
+                        [ MyIcon.phoneOutgoing 24 "#03045E" ]
+                    , span [ class "font-semibold text-base" ]
+                        [ text ("Call Now: " ++ formatPhoneNumber info.organization.orgPhone) ]
+                    ]
+                ]
+
+          else
+            text ""
+        , div [ class "mt-8 mb-4" ]
+            [ h3 [ class "text-[#03045E] font-bold text-base mb-3" ]
+                [ text "Interested in an Advantage Plan?" ]
+            , p [ class "text-[#03045E] text-sm mb-6 leading-relaxed" ]
+                [ text "We can switch you to an Advantage Plan during the Annual Enrollment Period (Oct. 15 - Dec. 7) - Click below and we will be sure to reach out at the end of September to to begin the Advantage Plan Process." ]
+            , if model.isSubmittingAEP then
+                button
+                    [ class "flex items-center justify-center w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] transition cursor-wait"
+                    , type_ "button"
+                    ]
+                    [ div [ class "animate-spin rounded-full h-5 w-5 border-2 border-[#03045E] border-t-transparent" ] [] ]
+
+              else
+                button
+                    [ class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
+                    , type_ "button"
+                    , onClick RequestAEP
+                    ]
+                    [ div [ class "flex items-center space-x-3" ]
+                        [ span [ class "w-6 h-6 flex items-center justify-center" ]
+                            [ MyIcon.clipboardPlus 24 "#03045E" ]
+                        , span [ class "font-semibold text-base" ]
+                            [ text "Get on the Advantage Plan List" ]
+                        ]
+                    ]
+            ]
+        ]
+
+
 viewGenericButtons : Model -> ScheduleInfo -> Html Msg
 viewGenericButtons model info =
+    if info.useOrg then
+        viewGenericButtonsOrg model info
+
+    else
+        viewGenericButtonsAgent model info
+
+
+viewGenericButtonsAgent : Model -> ScheduleInfo -> Html Msg
+viewGenericButtonsAgent model info =
     div [ class "space-y-4" ]
         [ a
             [ class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
@@ -639,6 +823,65 @@ viewGenericButtons model info =
                         [ MyIcon.phoneOutgoing 24 "#03045E" ]
                     , span [ class "font-semibold text-base" ]
                         [ text ("Give " ++ info.agent.firstName ++ " a call: " ++ formatPhoneNumber info.agent.phone) ]
+                    ]
+                ]
+
+          else
+            text ""
+        ]
+
+
+viewGenericButtonsOrg : Model -> ScheduleInfo -> Html Msg
+viewGenericButtonsOrg model info =
+    div [ class "space-y-4" ]
+        [ case info.organization.orgRedirectUrl of
+            Just _ ->
+                a
+                    [ class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
+                    , href (makeCalendlyUrlHelper model info.organization.orgRedirectUrl)
+                    , target "_blank"
+                    , onClick CalendlyOpened
+                    ]
+                    [ div [ class "flex items-center space-x-3" ]
+                        [ span [ class "w-6 h-6 flex items-center justify-center" ]
+                            [ MyIcon.calendarDays 24 "#03045E" ]
+                        , span [ class "font-semibold text-base" ]
+                            [ text "Schedule a Call" ]
+                        ]
+                    ]
+
+            Nothing ->
+                text ""
+        , if model.isSubmittingFollowUp then
+            button
+                [ class "flex items-center justify-center w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] transition cursor-wait"
+                , type_ "button"
+                ]
+                [ div [ class "animate-spin rounded-full h-5 w-5 border-2 border-[#03045E] border-t-transparent" ] [] ]
+
+          else
+            button
+                [ class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
+                , type_ "button"
+                , onClick RequestFollowUp
+                ]
+                [ div [ class "flex items-center space-x-3" ]
+                    [ span [ class "w-6 h-6 flex items-center justify-center" ]
+                        [ MyIcon.phoneIncoming 24 "#03045E" ]
+                    , span [ class "font-semibold text-base" ]
+                        [ text "Request a Call" ]
+                    ]
+                ]
+        , if not (String.isEmpty info.organization.orgPhone) then
+            a
+                [ href ("tel:" ++ info.organization.orgPhone)
+                , class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
+                ]
+                [ div [ class "flex items-center space-x-3" ]
+                    [ span [ class "w-6 h-6 flex items-center justify-center" ]
+                        [ MyIcon.phoneOutgoing 24 "#03045E" ]
+                    , span [ class "font-semibold text-base" ]
+                        [ text ("Call Now: " ++ formatPhoneNumber info.organization.orgPhone) ]
                     ]
                 ]
 
