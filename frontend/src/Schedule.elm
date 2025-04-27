@@ -227,13 +227,25 @@ update msg model =
         GotScheduleInfo result ->
             case result of
                 Ok info ->
+                    let
+                        safeRedirectUrl =
+                            info.organization.orgRedirectUrl
+                                |> Maybe.map
+                                    (\url ->
+                                        if String.startsWith "http" url then
+                                            url
+
+                                        else
+                                            "https://" ++ url
+                                    )
+                    in
                     ( { model
                         | scheduleInfo = Just info
                         , email = Just info.contact.email
                         , name = Just (info.contact.firstName ++ " " ++ info.contact.lastName)
                         , phoneNumber = Just info.contact.phoneNumber
                         , isLoading = False
-                        , redirectUrl = info.organization.orgRedirectUrl
+                        , redirectUrl = safeRedirectUrl
                       }
                     , Cmd.none
                     )
@@ -561,7 +573,7 @@ viewAcceptButtonsOrg model info =
             Just _ ->
                 a
                     [ class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
-                    , href (makeCalendlyUrlHelper model info.organization.orgRedirectUrl)
+                    , href (makeCalendlyUrl model)
                     , target "_blank"
                     , onClick CalendlyOpened
                     ]
@@ -688,7 +700,7 @@ viewDeclineButtonsOrg model info =
             Just _ ->
                 a
                     [ class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
-                    , href (makeCalendlyUrlHelper model info.organization.orgRedirectUrl)
+                    , href (makeCalendlyUrl model)
                     , target "_blank"
                     , onClick CalendlyOpened
                     ]
@@ -840,7 +852,7 @@ viewGenericButtonsOrg model info =
             Just _ ->
                 a
                     [ class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
-                    , href (makeCalendlyUrlHelper model info.organization.orgRedirectUrl)
+                    , href (makeCalendlyUrl model)
                     , target "_blank"
                     , onClick CalendlyOpened
                     ]
