@@ -1752,7 +1752,7 @@ const startServer = async () => {
               agentSettings: user.agentSettings ? JSON.parse(user.agentSettings) : null
             }
           }
-          logger.info(`GET /api/me - Sending response`)
+          logger.info(`GET /api/me - Sending response ${JSON.stringify(response)}`)
           return response
 
         } catch (e) {

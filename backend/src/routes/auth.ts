@@ -310,9 +310,10 @@ export function createAuthRoutes() {
           email: string;
           first_name: string;
           last_name: string;
+          is_admin: boolean;
           organization_slug: string;
         }>(
-          `SELECT u.id, u.email, u.first_name, u.last_name, o.slug as organization_slug
+          `SELECT u.id, u.email, u.first_name, u.last_name, u.is_admin, o.slug as organization_slug
            FROM sessions s
            JOIN users u ON s.user_id = u.id
            JOIN organizations o ON u.organization_id = o.id
@@ -329,6 +330,7 @@ export function createAuthRoutes() {
             organizationSlug: "",
             first_name: "",
             last_name: "",
+            is_admin: false,
             id: ""
           };
         }
@@ -344,6 +346,7 @@ export function createAuthRoutes() {
           organizationSlug: sessionUser.organization_slug,
           first_name: sessionUser.first_name,
           last_name: sessionUser.last_name,
+          is_admin: sessionUser.is_admin,
           id: sessionUser.id
         };
       } catch (error) {
@@ -359,6 +362,7 @@ export function createAuthRoutes() {
           organizationSlug: "",
           first_name: "",
           last_name: "",
+          is_admin: false,
           id: ""
         };
       }

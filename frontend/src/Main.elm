@@ -73,6 +73,7 @@ type alias SessionResponse =
     , organizationSlug : String
     , firstName : String
     , lastName : String
+    , isAdmin : Bool
     , id : String
     }
 
@@ -89,7 +90,7 @@ verificationDecoder =
 
 sessionDecoder : Decoder SessionResponse
 sessionDecoder =
-    Decode.map7 SessionResponse
+    Decode.map8 SessionResponse
         (Decode.field "valid" Decode.bool)
         (Decode.field "session" Decode.string)
         (Decode.field "email" Decode.string)
@@ -102,6 +103,12 @@ sessionDecoder =
         (Decode.oneOf
             [ Decode.field "lastName" Decode.string
             , Decode.field "last_name" Decode.string
+            ]
+        )
+        (Decode.oneOf
+            [ Decode.field "is_admin" Decode.bool
+            , Decode.field "is_admin" Decode.int
+                |> Decode.map (\i -> i == 1)
             ]
         )
         (Decode.field "id" (Decode.map String.fromInt Decode.int))
@@ -833,8 +840,8 @@ update msg model =
                             user =
                                 { id = response.id
                                 , email = response.email
-                                , isAdmin = False -- We'll get this from /api/me endpoint
-                                , isAgent = False -- We'll get this from /api/me endpoint
+                                , isAdmin = response.isAdmin
+                                , isAgent = True -- We'll get this from /api/me endpoint
                                 , organizationSlug = response.organizationSlug
                                 , organizationId = response.organizationSlug -- Use the org slug as org ID for now
                                 , firstName = response.firstName
