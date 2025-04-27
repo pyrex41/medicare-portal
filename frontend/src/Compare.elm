@@ -1718,7 +1718,7 @@ viewMedicareAdvantageOffRamp model =
                     [ h3 [ class "text-lg sm:text-xl font-bold text-[#101828] -tracking-[0.02em]" ]
                         [ text "Looking for even lower premiums?" ]
                     , p [ class "text-sm sm:text-base text-[#667085] max-w-2xl" ]
-                        [ text "Medicare Advantage plans can offer lower (often zero) monthly costs with different coverage options. While we think supplement plans are usually offer a better overall value, the right Advantage plan can be a great option if you are looking to reduce your monthly expenses.  Let us help you find a plan that best suits your needs." ]
+                        [ text "Medicare Advantage plans can offer lower (often zero) monthly costs with different coverage options. While we think supplement plans typically offer a better overall value, the right Advantage plan can be a great option if you are looking to reduce your monthly expenses.  Let us help you find a plan that best suits your needs." ]
                     ]
                 ]
             , div [ class "sm:ml-4 flex justify-center sm:justify-start" ]
