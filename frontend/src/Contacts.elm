@@ -12,7 +12,6 @@ module Contacts exposing
 import Browser
 import Browser.Events
 import Browser.Navigation as Nav
-import Components.LimitBanner as LimitBanner
 import Csv.Decode as CsvDecode
 import Csv.Parser as CsvParser
 import CsvProcessor exposing (CarrierMapping, ColumnMapping, extractHeaders, extractUniqueValues, processCsvToContacts, suggestCarrierMappings, suggestColumnMappings)
@@ -116,7 +115,6 @@ type alias Model =
     , carriers : List String
     , agents : List User
     , key : Nav.Key
-    , limitBanner : LimitBanner.Model
     , pagination : PaginationState -- Add this field
     }
 
@@ -315,9 +313,6 @@ init key maybeUser =
         initialAddForm =
             { emptyForm | contactOwnerId = defaultOwnerId }
 
-        ( limitBannerModel, limitBannerCmd ) =
-            LimitBanner.init
-
         initialPagination =
             { currentPage = 1
             , totalPages = 1
@@ -352,24 +347,29 @@ init key maybeUser =
             , carriers = []
             , agents = []
             , key = key
-            , limitBanner = limitBannerModel
             , pagination = initialPagination
             }
+
+        -- Always fetch contacts and current time
+        baseCommands =
+            [ fetchContacts initialModel
+            , Task.perform GotCurrentTime Time.now
+            ]
+
+        -- Only add these commands if we need them
+        userCommands =
+            if maybeUser == Nothing then
+                [ fetchCurrentUser ]
+
+            else
+                []
+
+        -- We need these data regardless of whether we have user data
+        dataCommands =
+            [ fetchCarriers, fetchAgents ]
     in
     ( initialModel
-    , Cmd.batch
-        [ fetchContacts initialModel
-        , if maybeUser == Nothing then
-            -- Only fetch the user if not provided
-            fetchCurrentUser
-
-          else
-            Cmd.none
-        , Task.perform GotCurrentTime Time.now
-        , fetchCarriers
-        , fetchAgents
-        , Cmd.map LimitBannerMsg limitBannerCmd
-        ]
+    , Cmd.batch (baseCommands ++ userCommands ++ dataCommands)
     )
 
 
@@ -506,7 +506,6 @@ type Msg
     | SelectReassignAgent Int
     | ReassignSelectedContacts
     | ContactsReassigned (Result Http.Error ReassignResponse)
-    | LimitBannerMsg LimitBanner.Msg
     | ChangePage Int
     | ChangeItemsPerPage Int
     | UpdateColumnMapping String String
@@ -1432,15 +1431,6 @@ update msg model =
         ContactsReassigned (Err _) ->
             ( { model | error = Just "Failed to reassign contacts", showModal = NoModal }, Cmd.none )
 
-        LimitBannerMsg limitBannerMsg ->
-            let
-                ( updatedLimitBannerModel, limitBannerCmd ) =
-                    LimitBanner.update limitBannerMsg model.limitBanner
-            in
-            ( { model | limitBanner = updatedLimitBannerModel }
-            , Cmd.map LimitBannerMsg limitBannerCmd
-            )
-
         ChangePage page ->
             let
                 updatedModel =
@@ -1902,10 +1892,7 @@ view : Model -> Html Msg
 view model =
     div [ class "min-h-screen bg-white" ]
         [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" ]
-            [ -- Limit banner - use our reusable component
-              LimitBanner.view model.limitBanner
-                |> Html.map LimitBannerMsg
-            , -- Stats Section - Make more compact with reduced margins
+            [ -- Stats Section - Make more compact with reduced margins
               div [ class "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-6" ]
                 [ statsCard "Total Contacts" (String.fromInt model.pagination.totalItems)
                 , statsCard "Emails Sent" "0"

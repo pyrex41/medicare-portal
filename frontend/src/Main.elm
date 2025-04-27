@@ -393,18 +393,27 @@ init flags url key =
             case initialSession of
                 Verified _ ->
                     -- If we have a session, also fetch the current user immediately
-                    [ fetchCurrentUser, directPageUpdate ]
+                    -- But don't use directPageUpdate for protected routes to prevent duplicate initialization
+                    [ fetchCurrentUser ]
 
                 _ ->
-                    [ directPageUpdate ]
+                    []
+
+        -- Only add directPageUpdate for public routes to prevent duplicate initialization
+        cmdsWithPageUpdate =
+            if isPublicRoute then
+                cmds0 ++ [ directPageUpdate ]
+
+            else
+                cmds0
 
         cmds =
             case ( currentPath, maybeUserEmail ) of
                 ( "/walkthrough", Just userEmail ) ->
-                    cmds0 ++ [ setSession userEmail ]
+                    cmdsWithPageUpdate ++ [ setSession userEmail ]
 
                 _ ->
-                    cmds0
+                    cmdsWithPageUpdate
     in
     -- For public routes, immediately try to render without waiting for session
     if isPublicRoute then
@@ -850,8 +859,8 @@ update msg model =
                                     , isSetup = isInSetup
                                 }
                         in
-                        Cmd.batch [ fetchCurrentUser, updatePage model.url ( newModel, Cmd.none ) |> Tuple.second ]
-                            |> (\cmd -> ( newModel, cmd ))
+                        -- Just update the page, which will handle fetching user data if needed
+                        updatePage model.url ( newModel, Cmd.none )
 
                     else
                         let
@@ -2535,10 +2544,7 @@ updatePage url ( model, cmd ) =
                                                 Contacts.init modelWithUpdatedSetup.key contactsUser
                                         in
                                         ( { modelWithUpdatedSetup | page = ContactsPage contactsModel }
-                                        , Cmd.batch
-                                            [ Cmd.map ContactsMsg contactsCmd
-                                            , authCmd
-                                            ]
+                                        , Cmd.map ContactsMsg contactsCmd
                                         )
 
                                     ProtectedRoute ProfileRoute ->
