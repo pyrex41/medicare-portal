@@ -49,6 +49,7 @@ type PlanType
 type alias CompareParams =
     { quoteId : Maybe String
     , orgId : Maybe String
+    , tid : Maybe String
     }
 
 
@@ -223,6 +224,7 @@ type Msg
     | GotLocationUpdate (Result Http.Error LocationUpdateResponse)
     | ToggleMobileTooltip (Maybe Plan)
     | NoOp
+    | LogTrackingClickResult (Result Http.Error ())
 
 
 type alias Flags =
@@ -241,6 +243,48 @@ type alias Flags =
 
 
 -- INIT
+
+
+logTrackingClick : CompareParams -> Cmd Msg
+logTrackingClick params =
+    let
+        ss =
+            case params.quoteId of
+                Just quoteId ->
+                    String.split "-" quoteId
+
+                Nothing ->
+                    []
+
+        orgId =
+            List.head ss |> Maybe.withDefault ""
+
+        contactId =
+            case List.tail ss of
+                Just ssTail ->
+                    List.head ssTail |> Maybe.withDefault ""
+
+                Nothing ->
+                    ""
+    in
+    case ( params.tid, params.quoteId ) of
+        ( Just tid, Just quoteId ) ->
+            Http.post
+                { url = "/api/tracking/log-tracking-click"
+                , body =
+                    Http.jsonBody
+                        (E.object
+                            [ ( "tid", E.string (Maybe.withDefault "" params.tid) )
+                            , ( "quoteId", E.string quoteId )
+                            , ( "orgId", E.string orgId )
+                            , ( "contactId", E.string contactId )
+                            ]
+                        )
+                , expect = Http.expectJson (\result -> LogTrackingClickResult result) (D.succeed ())
+                }
+
+        _ ->
+            Cmd.none
 
 
 init : Nav.Key -> Maybe CompareParams -> ( Model, Cmd Msg )
@@ -308,6 +352,7 @@ init key maybeParams =
                         [ fetchContactData quoteId
                         , Task.perform GotCurrentDate Date.today
                         , fetchDiscountCsvString
+                        , logTrackingClick params
                         ]
                     )
 
@@ -599,6 +644,14 @@ planNCoverageList =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+        LogTrackingClickResult result ->
+            case result of
+                Ok _ ->
+                    ( model, Cmd.none )
+
+                Err _ ->
+                    ( model, Cmd.none )
+
         GotDiscountCsvString (Ok discountCsvString) ->
             ( { model | discountCsvString = Just discountCsvString }
             , Cmd.none

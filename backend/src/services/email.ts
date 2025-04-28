@@ -1,7 +1,8 @@
-  import sgMail from '@sendgrid/mail';
+import sgMail from '@sendgrid/mail';
 import { logger } from '../logger';
 import crypto from 'crypto';
 import { Database } from '../database';
+import { generateTrackingId, addTrackingToUrl } from '../utils/tracking';
 
 interface MagicLinkEmailParams {
   email: string;
@@ -27,6 +28,17 @@ export class EmailService {
       throw new Error('Missing SENDGRID_API_KEY environment variable');
     }
     sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+  }
+
+  /**
+   * Generates a tracking ID for an email link
+   * Format: tid-[orgId]-[contactId]-[timestamp]
+   * @param orgId Organization ID
+   * @param contactId Contact ID
+   * @returns Tracking ID string
+   */
+  generateTrackingId(orgId: number | string, contactId: number | string): string {
+    return generateTrackingId(orgId, contactId, 'em');
   }
 
   /**
@@ -117,6 +129,7 @@ export class EmailService {
     quoteUrl: string;
     planType: string;
     organization?: {
+      id?: number;
       name?: string;
       logo_data?: string;
       primary_color?: string;
@@ -124,6 +137,7 @@ export class EmailService {
       website?: string;
     };
     phone?: string;
+    contactId?: number | string;
   }) {
     try {
       const { email, firstName, lastName, quoteUrl, planType, organization } = params;
@@ -133,6 +147,17 @@ export class EmailService {
       const phone = organization?.phone || '';
       const website = organization?.website || '';
       const websiteUrl = website.startsWith('http') ? website : `https://${website}`;
+      
+      // Generate tracking ID if organization and contactId are available
+      let trackedQuoteUrl = quoteUrl;
+      if (organization?.id && params.contactId) {
+        const trackingId = this.generateTrackingId(organization.id, params.contactId);
+        
+        // Add tracking ID to quote URL
+        trackedQuoteUrl = addTrackingToUrl(quoteUrl, trackingId);
+        
+        logger.info(`Added tracking ID ${trackingId} to quote URL for contact ${params.contactId}`);
+      }
       
       // Format phone number if present
       const formatPhoneNumber = (phoneStr: string): string => {
@@ -174,7 +199,7 @@ export class EmailService {
           name: orgName || 'MedicareMax'
         },
         subject: 'Your Personalized Medicare Quote',
-        text: `Hello ${fullName},\n\nWe recently reviewed Medigap premiums for your zip code and found some options that might interest you. These plans offer the same comprehensive benefits you currently enjoy, potentially at a better value. We've done the research to find plans that maintain your coverage while possibly reducing your costs.\n\nReview your options here: ${quoteUrl}\n\nMany Medicare beneficiaries don't realize they can be paying different rates for identical coverage. We'd be happy to show you your options and potential savings. If we don't find a better value now, we'll keep monitoring rates and reach out when we find something promising.\n\nIf you have any questions, please give me a call: ${formattedPhone}\n\nBest,\n${orgName}\nYour Medicare Specialist\n${formattedPhone}`,
+        text: `Hello ${fullName},\n\nWe recently reviewed Medigap premiums for your zip code and found some options that might interest you. These plans offer the same comprehensive benefits you currently enjoy, potentially at a better value. We've done the research to find plans that maintain your coverage while possibly reducing your costs.\n\nReview your options here: ${trackedQuoteUrl}\n\nMany Medicare beneficiaries don't realize they can be paying different rates for identical coverage. We'd be happy to show you your options and potential savings. If we don't find a better value now, we'll keep monitoring rates and reach out when we find something promising.\n\nIf you have any questions, please give me a call: ${formattedPhone}\n\nBest,\n${orgName}\nYour Medicare Specialist\n${formattedPhone}`,
         attachments: []
       };
       
@@ -307,7 +332,7 @@ export class EmailService {
                         </div>
                         
                         <div class="button-wrapper">
-                          <a href="${quoteUrl}" target="_blank" class="cta-button" style="background-color:rgb(3, 3, 20); color: #ffffff !important; text-decoration: none; font-weight: bold;">  
+                          <a href="${trackedQuoteUrl}" target="_blank" class="cta-button" style="background-color:rgb(3, 3, 20); color: #ffffff !important; text-decoration: none; font-weight: bold;">  
                             Review Your Medicare Options
                           </a>
                         </div>
@@ -351,7 +376,7 @@ export class EmailService {
       const msgContent = `
         Hi ${firstName},
         We recently reviewed Medigap premiums for your zip code and found some options that might interest you. Click the link below to review your options:
-        ${quoteUrl}  
+        ${trackedQuoteUrl}  
       `
       // Get client's phone number from params
       const clientPhone = params.phone;
@@ -362,7 +387,7 @@ export class EmailService {
         const bodyToSend = {
           phone: clientE164Phone,
           firstName: firstName,
-          quoteUrl: quoteUrl,
+          quoteUrl: trackedQuoteUrl,
           orgName: orgName
         }
         logger.info(JSON.stringify(bodyToSend));

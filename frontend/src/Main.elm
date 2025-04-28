@@ -11,6 +11,7 @@ import Components.AccountStatusBanner as AccountStatusBanner
 import Contact
 import Contacts
 import Dashboard
+import Dict exposing (Dict)
 import Eligibility
 import Home
 import Html exposing (Html, a, button, div, h1, img, nav, p, text)
@@ -252,6 +253,7 @@ type Msg
     | StripeMsg Stripe.Msg
     | TogglePaymentStatus
     | SetSessionResponse (Result Http.Error SetSessionResponseAlias)
+    | LogTrackingClickResult (Result Http.Error ())
 
 
 type alias Flags =
@@ -374,26 +376,13 @@ init flags url key =
         currentPath =
             url.path
 
+        queryDict : Dict String String
+        queryDict =
+            getQueryDict model.url.query
+
+        maybeUserEmail : Maybe String
         maybeUserEmail =
-            case model.url.query of
-                Just queryString ->
-                    let
-                        queryParams =
-                            String.split "&" queryString
-                                |> List.filterMap
-                                    (\param ->
-                                        case String.split "=" param of
-                                            [ "email", value ] ->
-                                                Just value
-
-                                            _ ->
-                                                Nothing
-                                    )
-                    in
-                    List.head queryParams
-
-                Nothing ->
-                    Nothing
+            Dict.get "email" queryDict
 
         -- Check session and also immediately try to render public routes
         cmds0 =
@@ -414,13 +403,16 @@ init flags url key =
             else
                 cmds0
 
-        cmds =
+        cmds1 =
             case ( currentPath, maybeUserEmail ) of
                 ( "/walkthrough", Just userEmail ) ->
                     cmdsWithPageUpdate ++ [ setSession userEmail ]
 
                 _ ->
                     cmdsWithPageUpdate
+
+        cmds =
+            cmds1
     in
     -- For public routes, immediately try to render without waiting for session
     if isPublicRoute then
@@ -432,9 +424,31 @@ init flags url key =
         ( model, Cmd.batch (cmds ++ [ checkSession ]) )
 
 
+getQueryDict : Maybe String -> Dict String String
+getQueryDict maybeQueryString =
+    case maybeQueryString of
+        Just queryString ->
+            queryString
+                |> String.split "&"
+                |> List.filterMap
+                    (\param ->
+                        case String.split "=" param of
+                            [ key0, value ] ->
+                                Just ( key0, value )
+
+                            _ ->
+                                Nothing
+                    )
+                |> Dict.fromList
+
+        Nothing ->
+            Dict.empty
+
+
 type alias CompareParams =
     { quoteId : Maybe String
     , orgId : Maybe String
+    , tid : Maybe String
     }
 
 
@@ -538,9 +552,10 @@ setupProgressDecoder =
 
 compareParamsParser : Query.Parser CompareParams
 compareParamsParser =
-    Query.map2 CompareParams
+    Query.map3 CompareParams
         (Query.string "id")
         (Query.string "orgId")
+        (Query.string "tid")
 
 
 
@@ -560,8 +575,13 @@ routeParser =
         , map (PublicRoute ScheduleMainRoute) (s "schedule-main")
         , map (\orgSlug token -> PublicRoute (VerifyRoute (VerifyParams orgSlug token)))
             (s "auth" </> s "verify" </> string </> string)
-        , map (PublicRoute << CompareRoute) (s "compare" <?> compareParamsParser)
-        , map (\quoteId -> PublicRoute (CompareRoute { quoteId = Just quoteId, orgId = Nothing }))
+        , oneOf
+            [ map (\quoteId tid -> PublicRoute (CompareRoute { quoteId = Just quoteId, orgId = Nothing, tid = tid }))
+                (s "compare" </> string <?> Query.string "tid")
+            , map (PublicRoute << CompareRoute)
+                (s "compare" <?> compareParamsParser)
+            ]
+        , map (\quoteId -> PublicRoute (CompareRoute { quoteId = Just quoteId, orgId = Nothing, tid = Nothing }))
             (s "compare" </> string)
         , map (PublicRoute << QuoteRoute)
             (s "quote"
@@ -620,6 +640,14 @@ routeParser =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+        LogTrackingClickResult result ->
+            case result of
+                Ok _ ->
+                    ( model, Cmd.none )
+
+                Err _ ->
+                    ( model, Cmd.none )
+
         SetSessionResponse result ->
             case result of
                 Ok sessionResponse ->

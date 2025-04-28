@@ -434,6 +434,26 @@ export class Database {
         ]
       },
       {
+        name: 'tracking_clicks',
+        createStatement: `CREATE TABLE IF NOT EXISTS tracking_clicks (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          tracking_id TEXT NOT NULL,
+          path TEXT NOT NULL,
+          query TEXT,
+          contact_id INTEGER,
+          ip_address TEXT,
+          user_agent TEXT,
+          referrer TEXT,
+          clicked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
+        )`,
+        indexStatements: [
+          `CREATE INDEX IF NOT EXISTS idx_tracking_clicks_tracking_id ON tracking_clicks(tracking_id)`,
+          `CREATE INDEX IF NOT EXISTS idx_tracking_clicks_contact_id ON tracking_clicks(contact_id)`,
+          `CREATE INDEX IF NOT EXISTS idx_tracking_clicks_clicked_at ON tracking_clicks(clicked_at)`
+        ]
+      },
+      {
         name: 'leads',
         createStatement: `CREATE TABLE IF NOT EXISTS leads (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1139,6 +1159,24 @@ export class Database {
             `CREATE INDEX IF NOT EXISTS idx_contact_events_contact_id ON contact_events(contact_id)`,
             `CREATE INDEX IF NOT EXISTS idx_contact_events_lead_id ON contact_events(lead_id)`,
             `CREATE INDEX IF NOT EXISTS idx_contact_events_type ON contact_events(event_type)`
+          ]
+        },
+        {
+          name: 'tracking_clicks',
+          createSql: `
+            CREATE TABLE IF NOT EXISTS tracking_clicks (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              tracking_id TEXT NOT NULL,
+              contact_id INTEGER,
+              quote_id TEXT,
+              clicked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+              FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
+            )
+          `,
+          indexSqls: [
+            `CREATE INDEX IF NOT EXISTS idx_tracking_clicks_tracking_id ON tracking_clicks(tracking_id)`,
+            `CREATE INDEX IF NOT EXISTS idx_tracking_clicks_contact_id ON tracking_clicks(contact_id)`,
+            `CREATE INDEX IF NOT EXISTS idx_tracking_clicks_clicked_at ON tracking_clicks(clicked_at)`,
           ]
         },
         {

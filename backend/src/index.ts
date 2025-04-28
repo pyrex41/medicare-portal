@@ -32,6 +32,7 @@ import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
 import { readdirSync } from 'fs'
+import { parseTrackingId } from './utils/tracking'
 
 
 // At the top of the file, add interface for ZIP data
@@ -1919,6 +1920,56 @@ const startServer = async () => {
           };
         }
       })
+      // Add API endpoint for tracking clicks
+      .post('/api/tracking/log-tracking-click', async ({ body, request }: { body: { tid: string, orgId: string, contactId?: string, quoteId?: string }, request: Request }) => {
+        try {
+          logger.info(`Received tracking click: ${JSON.stringify(body)}`);
+          
+          // Extract tracking data from request
+          const { tid, orgId, contactId, quoteId } = body;
+          
+          if (!tid) {
+            logger.warn('Missing tracking ID in click tracking request');
+            return { success: false, message: 'Missing tracking ID' };
+          }
+          
+          if (!orgId) {
+            logger.warn('Missing organization ID in click tracking request');
+            return { success: false, message: 'Missing organization ID' };
+          }
+          
+          try {
+            // Get organization database using the provided orgId
+            const orgDb = await Database.getOrInitOrgDb(orgId);
+            
+            // Insert the tracking click record with the updated schema
+            await orgDb.execute(
+              `INSERT INTO tracking_clicks (
+                tracking_id, contact_id, quote_id
+              ) VALUES (?, ?, ?)`,
+              [tid, contactId ? parseInt(contactId, 10) : null, quoteId || null]
+            );
+            
+            logger.info(`Successfully logged tracking click with ID: ${tid} for organization ${orgId}`);
+            
+            return { success: true };
+          } catch (dbError) {
+            logger.error(`Error storing tracking data: ${dbError}`);
+            return { 
+              success: false, 
+              message: 'Error recording tracking click', 
+              error: 'Database error' 
+            };
+          }
+        } catch (error) {
+          logger.error(`Error processing tracking click: ${error}`);
+          return { 
+            success: false, 
+            message: 'Failed to process tracking click', 
+            error: 'Internal server error' 
+          };
+        }
+      })
       // Send quote email to contact
       .post('/api/contacts/:contactId/send-quote-email', async ({ params, request, body }) => {
         try {
@@ -1971,13 +2022,14 @@ const startServer = async () => {
           
           // Fetch organization data
           const organization = await db.fetchOne<{
+            id: number;
             name: string;
             logo_data: string;
             primary_color: string;
             phone: string;
             website: string;
           }>(
-            'SELECT name, logo_data, primary_color, phone, website FROM organizations WHERE id = ?',
+            'SELECT id, name, logo_data, primary_color, phone, website FROM organizations WHERE id = ?',
             [user.organization_id]
           );
           
@@ -1997,7 +2049,8 @@ const startServer = async () => {
             quoteUrl,
             planType: contact.plan_type,
             organization: organization || undefined,
-            phone: contact.phone_number
+            phone: contact.phone_number,
+            contactId: contactId
           });
 
           // Record in email tracking table
