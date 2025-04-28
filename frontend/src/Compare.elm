@@ -1721,7 +1721,7 @@ viewMedicareAdvantageOffRamp model =
                 , div [ class "flex flex-col" ]
                     [ h3 [ class "text-lg sm:text-xl font-bold text-[#101828] -tracking-[0.02em]" ]
                         [ text "Looking to dramatically lower your monthly costs?" ]
-                    , p [ class "text-sm sm:text-base text-[#667085] max-w-2xl" ]
+                    , p [ class "text-sm sm:text-base text-[#667085]" ]
                         [ text "Medicare Advantage plans offer $0 monthly premiums with drug coverage included. These plans have improved a lot over recent years, with more benefits and flexibility than ever. If saving money is your priority, let's find the right plan for you." ]
                     ]
                 ]
