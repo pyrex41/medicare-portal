@@ -11,6 +11,8 @@ import Json.Decode as D
 import Json.Decode.Pipeline as P
 import Json.Encode as E
 import MyIcon
+import Svg exposing (path, svg)
+import Svg.Attributes exposing (d, fill, fillRule, height, stroke, strokeLinecap, strokeLinejoin, strokeWidth, viewBox, width)
 import Url.Builder as Builder
 import Utils.QuoteHeader exposing (viewHeader)
 
@@ -338,6 +340,7 @@ update msg model =
                                 Nothing ->
                                     []
                            )
+                        ++ [ Builder.string "status" "decline" ]
                     )
                 )
             )
@@ -883,15 +886,7 @@ view model =
                         (viewQuestionsWithFollowUps model
                             ++ [ viewSubmitButton model ]
                         )
-                    , div [ class "text-center mt-3 sm:mt-4" ]
-                        [ button
-                            [ onClick SkipQuestions
-                            , class "text-blue-600 hover:text-blue-800 underline text-sm py-2"
-                            , type_ "button"
-                            , disabled model.isSubmitting
-                            ]
-                            [ text "Skip" ]
-                        ]
+                    , viewMedicareAdvantageOffRamp model
                     ]
             ]
         ]
@@ -1138,6 +1133,63 @@ viewSubmitButton model =
 
           else
             text "Next"
+        ]
+
+
+viewMedicareAdvantageOffRamp : Model -> Html Msg
+viewMedicareAdvantageOffRamp model =
+    div [ class "mt-12" ]
+        [ div [ class "w-full h-px bg-[#DCE2E5] mb-8" ] [] -- Gray divider
+        , div [ class "bg-white rounded-[10px] border border-[#DCE2E5] shadow-[0_1px_2px_rgba(16,24,40,0.05)]" ]
+            [ div [ class "px-4 sm:px-6 py-4 sm:py-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 sm:gap-0" ]
+                [ div [ class "flex items-start gap-4" ]
+                    [ -- Icon for the section
+                      div [ class "w-12 h-12 rounded-full bg-[#F9F5FF] flex items-center justify-center flex-shrink-0" ]
+                        [ svg [ Svg.Attributes.width "26", Svg.Attributes.height "26", Svg.Attributes.viewBox "0 0 24 24", Svg.Attributes.fill "none" ]
+                            [ path
+                                [ Svg.Attributes.d "M12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22Z"
+                                , Svg.Attributes.stroke "#7F56D9"
+                                , Svg.Attributes.strokeWidth "2"
+                                , Svg.Attributes.strokeLinecap "round"
+                                , Svg.Attributes.strokeLinejoin "round"
+                                ]
+                                []
+                            , path
+                                [ Svg.Attributes.d "M12 8V12"
+                                , Svg.Attributes.stroke "#7F56D9"
+                                , Svg.Attributes.strokeWidth "2"
+                                , Svg.Attributes.strokeLinecap "round"
+                                , Svg.Attributes.strokeLinejoin "round"
+                                ]
+                                []
+                            , path
+                                [ Svg.Attributes.d "M12 16H12.01"
+                                , Svg.Attributes.stroke "#7F56D9"
+                                , Svg.Attributes.strokeWidth "2"
+                                , Svg.Attributes.strokeLinecap "round"
+                                , Svg.Attributes.strokeLinejoin "round"
+                                ]
+                                []
+                            ]
+                        ]
+                    , div [ class "flex flex-col" ]
+                        [ h3 [ class "text-lg sm:text-xl font-bold text-[#101828] -tracking-[0.02em]" ]
+                            [ text "Looking to dramatically lower your monthly costs?" ]
+                        , p [ class "text-sm sm:text-base text-[#667085]" ]
+                            [ text "Medicare Advantage plans offer $0 monthly premiums with drug coverage included. These plans have improved a lot over recent years, with more benefits and flexibility than ever. If saving money is your priority, let's find the right plan for you." ]
+                        ]
+                    ]
+                , div [ class "sm:ml-4 flex justify-center sm:justify-start" ]
+                    [ button
+                        [ onClick SkipQuestions
+                        , class "whitespace-nowrap bg-[#03045E] text-white px-5 sm:px-4 py-3 sm:py-2 rounded-lg hover:bg-[#02034D] transition-colors text-sm sm:text-base w-full sm:w-auto text-center"
+                        , type_ "button"
+                        , disabled model.isSubmitting
+                        ]
+                        [ text "Explore Options" ]
+                    ]
+                ]
+            ]
         ]
 
 

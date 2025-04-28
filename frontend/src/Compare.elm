@@ -1740,7 +1740,7 @@ viewMedicareAdvantageOffRamp model =
                                                 )
                                             |> Maybe.withDefault "?"
                                 in
-                                "/schedule" ++ orgQ ++ "id=" ++ id
+                                "/schedule" ++ orgQ ++ "id=" ++ id ++ "&status=decline"
 
                             Nothing ->
                                 "/contact"

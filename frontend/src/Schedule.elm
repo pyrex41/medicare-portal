@@ -986,7 +986,7 @@ getMessage status =
             "Based on your answers, you look like a good candidate to switch plans. Let's schedule a follow-up to discuss your options or jump on a call now."
 
         Decline ->
-            "Based on your answers, you may not qualify for this plan. However, there are some options and we'd love to help you find a different plan that's a perfect fit for your needs."
+            "Based on your answers, a Medicare Advantage Plan may be a better fit for you. We'd love to help you explore your options and find a plan that's a perfect fit for your needs."
 
         Generic ->
             "Let's schedule a follow-up call to discuss your Medicare options and find the best plan for your needs."
