@@ -1,4 +1,4 @@
-import sgMail from '@sendgrid/mail';
+  import sgMail from '@sendgrid/mail';
 import { logger } from '../logger';
 import crypto from 'crypto';
 import { Database } from '../database';

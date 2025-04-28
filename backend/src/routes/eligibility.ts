@@ -210,10 +210,19 @@ export const eligibilityRoutes = (app: Elysia) => {
                     };
                 }
                 
-                // Verify contact exists in this org
+                // Ensure contactId is a number for database operations
+                const contactIdNum = parseInt(contactId, 10);
+                if (isNaN(contactIdNum)) {
+                    return {
+                        success: false,
+                        error: 'Invalid contact ID format'
+                    };
+                }
+
+                // Verify contact exists in this org using the number
                 const contact = await orgDb.fetchOne(
                     'SELECT id FROM contacts WHERE id = ?',
-                    [contactId]
+                    [contactIdNum]
                 );
                 
                 if (!contact) {
@@ -231,25 +240,33 @@ export const eligibilityRoutes = (app: Elysia) => {
                 );
                 
                 // Store the eligibility answers
+                const verifiedQuoteId = data.quote_id || "";
                 const answersJson = JSON.stringify(data.answers);
                 
-                // Check if we already have answers for this contact
+                // Determine the quote ID to save, defaulting to empty string if null
+                const finalQuoteId = verifiedQuoteId ?? "";
+                
+                logger.info(`Saving eligibility answers for contact_id: ${contactIdNum}, quote_id: ${finalQuoteId}`);
+                
+                // Check if we already have answers for this contact using the number
                 const existingAnswers = await orgDb.fetchOne(
                     'SELECT id FROM eligibility_answers WHERE contact_id = ?',
-                    [contactId]
+                    [contactIdNum]
                 );
                 
                 if (existingAnswers) {
-                    // Update existing answers
+                    // Update existing answers using the number
+                    logger.info(`Updating existing answers for contact_id: ${contactIdNum}`);
                     await orgDb.execute(
                         'UPDATE eligibility_answers SET answers = ?, quote_id = ?, created_at = CURRENT_TIMESTAMP WHERE contact_id = ?',
-                        [answersJson, data.quote_id || null, contactId]
+                        [answersJson, finalQuoteId, contactIdNum]
                     );
                 } else {
-                    // Insert new answers
+                    // Insert new answers using the number
+                    logger.info(`Inserting new answers for contact_id: ${contactIdNum}`);
                     await orgDb.execute(
-                        'INSERT INTO eligibility_answers (contact_id, quote_id, answers) VALUES (?, ?, ?)',
-                        [contactId, data.quote_id || null, answersJson]
+                        'INSERT INTO eligibility_answers (contact_id, quote_id, answers) VALUES (?, ?, ?)', 
+                        [contactIdNum, finalQuoteId, answersJson]
                     );
                 }
                 
@@ -265,20 +282,20 @@ export const eligibilityRoutes = (app: Elysia) => {
                     )
                 };
                 
-                // Add a record to contact_events
+                // Add a record to contact_events using the number
                 await orgDb.execute(
                     `INSERT INTO contact_events 
                     (contact_id, event_type, metadata) 
-                    VALUES (?, ?, ?)`,
+                    VALUES (?, ?, ?)`, 
                     [
-                        contactId,
+                        contactIdNum,
                         'eligibility_answered',
                         JSON.stringify(analyticsData)
                     ]
                 );
                 
                 return {
-                    contactId,
+                    contactId: contactIdNum.toString(), // Return as string if needed by frontend
                     orgName: orgDetails?.name || 'Medicare Max',
                     orgLogo: orgDetails?.logo_data || null
                 };

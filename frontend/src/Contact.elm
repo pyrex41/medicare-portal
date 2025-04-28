@@ -124,6 +124,14 @@ type alias EligibilityQuestion =
     , text : String
     , questionType : QuestionType
     , answer : Maybe (Either Bool String)
+    , followUpQuestions : List EligibilityFollowUp
+    }
+
+
+type alias EligibilityFollowUp =
+    { id : Int
+    , text : String
+    , answer : Maybe (Either Bool String)
     }
 
 
@@ -1931,11 +1939,24 @@ parseEligibilityAnswers jsonStr =
 
 eligibilityQuestionDecoder : Decode.Decoder EligibilityQuestion
 eligibilityQuestionDecoder =
-    Decode.map4 EligibilityQuestion
+    Decode.map5 EligibilityQuestion
         (Decode.succeed 0)
         -- Temporary ID that will be replaced
         (Decode.field "question_text" Decode.string)
         (Decode.field "question_type" questionTypeDecoder)
+        (Decode.field "answer" answerDecoder)
+        (Decode.oneOf
+            [ Decode.field "follow_up_questions" (Decode.list followUpQuestionDecoder)
+            , Decode.succeed [] -- Default to empty list if missing
+            ]
+        )
+
+
+followUpQuestionDecoder : Decode.Decoder EligibilityFollowUp
+followUpQuestionDecoder =
+    Decode.map3 EligibilityFollowUp
+        (Decode.field "id" Decode.int)
+        (Decode.field "question_text" Decode.string)
         (Decode.field "answer" answerDecoder)
 
 
@@ -2092,22 +2113,6 @@ viewHealthAssessmentContent questions =
 viewMainQuestionWithFollowups : List EligibilityQuestion -> EligibilityQuestion -> Html Msg
 viewMainQuestionWithFollowups allQuestions mainQuestion =
     let
-        followUps =
-            List.filter
-                (\q ->
-                    case q.questionType of
-                        FollowUpQuestion parentId ->
-                            parentId == mainQuestion.id
-
-                        MainQuestion ->
-                            False
-                )
-                allQuestions
-                |> List.sortBy .id
-
-        hasFollowUps =
-            not (List.isEmpty followUps)
-
         isYes =
             case mainQuestion.answer of
                 Just (Left True) ->
@@ -2161,22 +2166,22 @@ viewMainQuestionWithFollowups allQuestions mainQuestion =
                     ]
                 ]
             ]
-        , if isYes && hasFollowUps then
+        , if isYes && not (List.isEmpty mainQuestion.followUpQuestions) then
             div [ class "divide-y divide-gray-100" ]
-                (List.map viewFollowUpQuestionAnswer followUps)
+                (List.map viewFollowUpQuestionAnswer mainQuestion.followUpQuestions)
 
           else
             text ""
         ]
 
 
-viewFollowUpQuestionAnswer : EligibilityQuestion -> Html Msg
-viewFollowUpQuestionAnswer question =
+viewFollowUpQuestionAnswer : EligibilityFollowUp -> Html Msg
+viewFollowUpQuestionAnswer followUp =
     div [ class "p-4 bg-white" ]
         [ div [ class "font-medium text-sm text-gray-700 mb-1" ]
-            [ text question.text ]
+            [ text followUp.text ]
         , div [ class "text-sm" ]
-            [ case question.answer of
+            [ case followUp.answer of
                 Just (Left isYes) ->
                     div
                         [ class
