@@ -53,6 +53,7 @@ export interface BaseSettings {
   orgSignature?: boolean;
   phone?: string;
   redirectUrl?: string;
+  signature?: string;
 }
 
 export interface UserContext {

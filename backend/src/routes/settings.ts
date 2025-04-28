@@ -37,7 +37,8 @@ const defaultSettings: BaseSettings = {
     smartSendEnabled: false,
     brandName: "",
     logo: null,
-    orgSignature: false
+    orgSignature: false,
+    signature: ""
 };
 
 // Helper function to generate default state/carrier settings
@@ -65,8 +66,8 @@ export const settingsRoutes = new Elysia()
 
     try {
         // Get organization settings, logo, and name
-        const orgRow = await db.fetchOne<{ org_settings: string | null, logo_data: string | null, name: string, org_signature: boolean, phone: string | null, redirect_url: string | null }>(
-            'SELECT org_settings, logo_data, name, org_signature, phone, redirect_url FROM organizations WHERE id = ?',
+        const orgRow = await db.fetchOne<{ org_settings: string | null, logo_data: string | null, name: string, org_signature: boolean, phone: string | null, redirect_url: string | null, signature: string | null }>(
+            'SELECT org_settings, logo_data, name, org_signature, phone, redirect_url, signature FROM organizations WHERE id = ?',
             [user.organization_id]
         );
         
@@ -78,6 +79,16 @@ export const settingsRoutes = new Elysia()
             orgSettings = orgRow?.org_settings 
                 ? { ...defaultSettings, ...JSON.parse(orgRow.org_settings) }
                 : { ...defaultSettings };
+
+            // Prioritize signature, then fall back to organization name
+            if (!orgSettings.signature && orgRow?.signature) {
+                orgSettings.signature = orgRow.signature;
+            }
+            
+            // If signature is still not set, use organization name
+            if (!orgSettings.signature && orgRow?.name) {
+                orgSettings.signature = orgRow.name;
+            }
 
             // If brandName is not set in settings, use the organization name
             if (!orgSettings.brandName && orgRow?.name) {
@@ -92,7 +103,7 @@ export const settingsRoutes = new Elysia()
             if (orgRow?.redirect_url) {
                 orgSettings.redirectUrl = orgRow.redirect_url;
             }
-
+            
             // If we have states and carriers but no settings array, generate them
             if (orgSettings.stateLicenses.length > 0 && 
                 orgSettings.carrierContracts.length > 0 && 
@@ -188,6 +199,7 @@ export const settingsRoutes = new Elysia()
             const orgSignature = 'orgSignature' in settingsObj ? settingsObj.orgSignature : false;
             const phone = 'phone' in settingsObj ? settingsObj.phone : null;
             const redirectUrl = 'redirectUrl' in settingsObj ? settingsObj.redirectUrl : null;
+            const signature = 'signature' in settingsObj ? settingsObj.signature : null;
             const settingsWithoutLogo = { ...settingsObj };
             if ('logo' in settingsWithoutLogo) {
                 delete (settingsWithoutLogo as any).logo;
@@ -195,9 +207,9 @@ export const settingsRoutes = new Elysia()
             
             // Update organization settings and logo separately
             await db.execute(
-                'UPDATE organizations SET org_settings = ?, logo_data = ?, name = ?, org_signature = ?, phone = ?, redirect_url = ? WHERE id = ?',
+                'UPDATE organizations SET org_settings = ?, logo_data = ?, name = ?, org_signature = ?, phone = ?, redirect_url = ?, signature = ? WHERE id = ?',
                 [JSON.stringify(settingsWithoutLogo), logo || null, name || null, orgSignature, 
-                 orgSignature ? phone : null, orgSignature ? redirectUrl : null, user.organization_id]
+                 orgSignature ? phone : null, orgSignature ? redirectUrl : null, orgSignature ? signature : null, user.organization_id]
             );
 
             // For basic tier, also update the admin agent's settings

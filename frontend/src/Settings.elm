@@ -129,6 +129,7 @@ type alias Settings =
     , orgSignature : Bool
     , phone : String
     , redirectUrl : String
+    , signature : String
     }
 
 
@@ -162,6 +163,7 @@ type Msg
     | UpdateSecondaryColor String
     | UpdatePhone String
     | UpdateRedirectUrl String
+    | UpdateSignature String
     | UploadLogo
     | GotLogo File
     | GotLogoUrl String
@@ -589,6 +591,9 @@ update msg model =
         UpdateRedirectUrl url ->
             updateSettings model (\s -> { s | redirectUrl = url })
 
+        UpdateSignature signature ->
+            updateSettings model (\s -> { s | signature = signature })
+
         UploadLogo ->
             ( model
             , Select.file [ "image/png", "image/jpeg" ] GotLogo
@@ -699,6 +704,7 @@ encodeSettings settings =
         , ( "orgSignature", Encode.bool settings.orgSignature )
         , ( "phone", Encode.string settings.phone )
         , ( "redirectUrl", Encode.string settings.redirectUrl )
+        , ( "signature", Encode.string settings.signature )
         ]
 
 
@@ -837,6 +843,17 @@ viewBrandSettings settings model =
                         , value settings.phone
                         , onInput UpdatePhone
                         , disabled (not settings.orgSignature)
+                        ]
+                        []
+                    )
+                , viewFormGroup "Email Signature"
+                    (textarea
+                        [ class "w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-purple-500 focus:border-purple-500"
+                        , classList [ ( "bg-gray-100", not settings.orgSignature ) ]
+                        , value settings.signature
+                        , onInput UpdateSignature
+                        , disabled (not settings.orgSignature)
+                        , rows 3
                         ]
                         []
                     )
@@ -1201,6 +1218,7 @@ settingsObjectDecoder =
         |> Pipeline.optional "orgSignature" Decode.bool False
         |> Pipeline.optional "phone" Decode.string ""
         |> Pipeline.optional "redirectUrl" Decode.string ""
+        |> Pipeline.optional "signature" Decode.string ""
 
 
 stateCarrierSettingDecoder : Decoder StateCarrierSetting

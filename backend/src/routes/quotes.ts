@@ -169,8 +169,8 @@ export const quotesRoutes = (app: Elysia) => {
             
             const mainDb = new Database();
             logger.info(`Fetching organization details for orgId: ${decoded.orgId}`);
-            const result = await mainDb.fetchOne<{ slug: string, org_settings: string, name: string, logo_data: string, phone: string, redirect_url: string, org_signature: boolean }>(
-                'SELECT slug, org_settings, name, logo_data, phone, redirect_url, org_signature FROM organizations WHERE id = ?',
+            const result = await mainDb.fetchOne<{ slug: string, org_settings: string, name: string, logo_data: string, phone: string, redirect_url: string, org_signature: boolean, signature: string | null }>(
+                'SELECT slug, org_settings, name, logo_data, phone, redirect_url, org_signature, signature FROM organizations WHERE id = ?',
                 [decoded.orgId]
             );
 
@@ -195,6 +195,9 @@ export const quotesRoutes = (app: Elysia) => {
             }
             
             const carrierContracts = orgSettings?.carrierContracts || [];
+
+            // Get signature from either orgSettings, database column, or fall back to org name
+            let signature = orgSettings?.signature || result.signature || result.name;
 
             // First try to get the assigned agent from the contact
             const contactQuery = 'SELECT zip_code, birth_date, tobacco_user, gender, email, first_name, last_name, current_carrier, phone_number, plan_type, agent_id FROM contacts WHERE id = ?';
@@ -296,6 +299,7 @@ export const quotesRoutes = (app: Elysia) => {
                 orgPhone: result.phone || null,
                 orgRedirectUrl: result.redirect_url || null,
                 orgSignature: Boolean(result.org_signature) || false,
+                orgSignatureText: signature,
                 carrierContracts: carrierContracts || null,
                 agent: {
                     firstName: agent.first_name,
@@ -392,7 +396,7 @@ export const quotesRoutes = (app: Elysia) => {
             // Return quotes from response data
             set.status = 200; // Explicitly set 200 status
             return response.data;
-        } catch (error) {
+        } catch (error: any) {
             logger.error(`Error fetching quotes: ${error}`);
             if (axios.isAxiosError(error)) {
                 logger.error(`Axios error details: ${JSON.stringify({
@@ -410,9 +414,9 @@ export const quotesRoutes = (app: Elysia) => {
         try {
             const db = new Database();
             
-            // Get organization info including redirect URL
-            const orgResult = await db.fetchOne<{ redirect_url: string | null }>(
-                'SELECT redirect_url FROM organizations WHERE id = ?',
+            // Get organization info including redirect URL and signature
+            const orgResult = await db.fetchOne<{ redirect_url: string | null, name: string, signature: string | null, org_settings: string | null }>(
+                'SELECT redirect_url, name, signature, org_settings FROM organizations WHERE id = ?',
                 [params.orgId]
             );
 
@@ -437,10 +441,25 @@ export const quotesRoutes = (app: Elysia) => {
                 throw new Error('No active agents or admins found');
             }
 
+            // Parse org settings to try to get signature from there first
+            let orgSettings = {};
+            try {
+                if (orgResult.org_settings) {
+                    orgSettings = JSON.parse(orgResult.org_settings);
+                }
+            } catch (e) {
+                logger.warn(`Error parsing org settings: ${e}`);
+            }
+
+            // Prioritize signature in this order: orgSettings, signature column, org name
+            const signature = (orgSettings as any)?.signature || orgResult.signature || orgResult.name;
+
             return {
                 success: true,
                 redirect_url: orgResult.redirect_url,
-                agent_name: `${defaultAgent.first_name} ${defaultAgent.last_name}`
+                agent_name: `${defaultAgent.first_name} ${defaultAgent.last_name}`,
+                org_name: orgResult.name,
+                signature: signature
             };
         } catch (e) {
             logger.error(`Error getting org redirect info: ${e}`);
