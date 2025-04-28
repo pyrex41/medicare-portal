@@ -391,6 +391,8 @@ export class Database {
             last_emailed DATETIME,
             phone_number TEXT NOT NULL DEFAULT '',
             status TEXT NOT NULL DEFAULT '',
+            aep_request BOOLEAN DEFAULT FALSE,
+            aep_request_date DATETIME,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )`,
@@ -1105,6 +1107,8 @@ export class Database {
               last_emailed DATETIME,
               phone_number TEXT,
               status TEXT NOT NULL DEFAULT '',
+              aep_request BOOLEAN DEFAULT FALSE,
+              aep_request_date DATETIME,
               created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
               updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
