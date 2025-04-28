@@ -296,6 +296,7 @@ export function createSelfServiceRoutes() {
         }
         
         // Send email to the contact
+        /*
         try {
           logger.info(`[7/6] Sending welcome email to contact ${contactId}`);
 
@@ -351,7 +352,8 @@ export function createSelfServiceRoutes() {
           logger.error(`Error sending welcome email: ${emailError}`);
           // We still want to return success for the signup even if email fails
         }
-        
+        */
+       
         // Return success response
         set.status = 200;
         return { 
