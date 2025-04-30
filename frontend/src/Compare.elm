@@ -125,6 +125,27 @@ type alias Plan =
     }
 
 
+isPlanExcluded : Plan -> Bool
+isPlanExcluded plan =
+    case plan.naic of
+        "60380" ->
+            case plan.state of
+                "CA" ->
+                    True
+
+                "OR" ->
+                    True
+
+                "WA" ->
+                    True
+
+                _ ->
+                    False
+
+        _ ->
+            False
+
+
 type alias Plans =
     { planG : List Plan
     , planN : List Plan
@@ -712,8 +733,14 @@ update msg model =
                                     plan
 
                         plans =
-                            { planG = List.map addDiscountDescriptions plans0.planG
-                            , planN = List.map addDiscountDescriptions plans0.planN
+                            { planG =
+                                plans0.planG
+                                    |> List.map addDiscountDescriptions
+                                    |> List.filter (\plan -> not (isPlanExcluded plan))
+                            , planN =
+                                plans0.planN
+                                    |> List.map addDiscountDescriptions
+                                    |> List.filter (\plan -> not (isPlanExcluded plan))
                             }
 
                         hasPlans =
