@@ -606,9 +606,9 @@ viewAcceptButtonsOrg model info =
                                 [ text "Request a Call" ]
                             ]
                         ]
-        , if not (String.isEmpty info.agent.phone) then
+        , if not (String.isEmpty info.organization.orgPhone) then
             a
-                [ href ("tel:" ++ info.agent.phone)
+                [ href ("tel:" ++ info.organization.orgPhone)
                 , class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
                 ]
                 [ div [ class "flex items-center space-x-3" ]
