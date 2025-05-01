@@ -139,6 +139,24 @@ isPlanExcluded plan =
                 "WA" ->
                     True
 
+                "OK" ->
+                    True
+
+                "ID" ->
+                    True
+
+                "MD" ->
+                    True
+
+                "VA" ->
+                    True
+
+                "NV" ->
+                    True
+
+                "MO" ->
+                    True
+
                 _ ->
                     False
 
