@@ -119,6 +119,7 @@ type alias Model =
     , pagination : PaginationState
     , quotesSent : Int
     , quotesViewed : Int
+    , healthQuestionsCompleted : Int
     , isLoadingDashboardStats : Bool
     , dashboardStatsError : Maybe String
     }
@@ -355,6 +356,7 @@ init key maybeUser =
             , pagination = initialPagination
             , quotesSent = 0
             , quotesViewed = 0
+            , healthQuestionsCompleted = 0
             , isLoadingDashboardStats = True
             , dashboardStatsError = Nothing
             }
@@ -529,7 +531,7 @@ type Msg
     | EmailValidationCompleted (List { email : String, reason : String })
       -- Dashboard stats messages
     | FetchDashboardStats
-    | GotDashboardStats (Result Http.Error { success : Bool, stats : { quotesSent : Int, quotesViewed : Int, followUpsRequested : Int } })
+    | GotDashboardStats (Result Http.Error { success : Bool, stats : { quotesSent : Int, quotesViewed : Int, followUpsRequested : Int, healthQuestionsCompleted : Int } })
 
 
 type ContactFormField
@@ -1907,6 +1909,7 @@ update msg model =
                             | isLoadingDashboardStats = False
                             , quotesSent = response.stats.quotesSent
                             , quotesViewed = response.stats.quotesViewed
+                            , healthQuestionsCompleted = response.stats.healthQuestionsCompleted
                             , dashboardStatsError = Nothing
                           }
                         , Cmd.none
@@ -1934,7 +1937,7 @@ view model =
     div [ class "min-h-screen bg-white" ]
         [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" ]
             [ -- Stats Section - Make more compact with reduced margins
-              div [ class "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 mb-6" ]
+              div [ class "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-6" ]
                 [ if model.isLoadingContacts then
                     statsCardWithSpinner "Total Contacts"
 
@@ -1956,6 +1959,14 @@ view model =
 
                   else
                     statsCard "Quotes Viewed" (String.fromInt model.quotesViewed)
+                , if model.isLoadingDashboardStats then
+                    statsCardWithSpinner "Health Questions"
+
+                  else if model.dashboardStatsError /= Nothing then
+                    statsCard "Health Questions" "Error"
+
+                  else
+                    statsCard "Health Questions" (String.fromInt model.healthQuestionsCompleted)
                 ]
             , -- Table Container with overflow handling - reduced vertical spacing
               div [ class "overflow-x-auto max-w-7xl mx-auto" ]
@@ -2360,7 +2371,7 @@ fetchDashboardStats =
         }
 
 
-dashboardStatsResponseDecoder : Decode.Decoder { success : Bool, stats : { quotesSent : Int, quotesViewed : Int, followUpsRequested : Int } }
+dashboardStatsResponseDecoder : Decode.Decoder { success : Bool, stats : { quotesSent : Int, quotesViewed : Int, followUpsRequested : Int, healthQuestionsCompleted : Int } }
 dashboardStatsResponseDecoder =
     Decode.map2
         (\success stats ->
@@ -2372,18 +2383,20 @@ dashboardStatsResponseDecoder =
         (Decode.field "stats" dashboardStatsDecoder)
 
 
-dashboardStatsDecoder : Decode.Decoder { quotesSent : Int, quotesViewed : Int, followUpsRequested : Int }
+dashboardStatsDecoder : Decode.Decoder { quotesSent : Int, quotesViewed : Int, followUpsRequested : Int, healthQuestionsCompleted : Int }
 dashboardStatsDecoder =
-    Decode.map3
-        (\quotesSent quotesViewed followUpsRequested ->
+    Decode.map4
+        (\quotesSent quotesViewed followUpsRequested healthQuestionsCompleted ->
             { quotesSent = quotesSent
             , quotesViewed = quotesViewed
             , followUpsRequested = followUpsRequested
+            , healthQuestionsCompleted = healthQuestionsCompleted
             }
         )
         (Decode.field "quotesSent" Decode.int)
         (Decode.field "quotesViewed" Decode.int)
         (Decode.field "followUpsRequested" Decode.int)
+        (Decode.field "healthQuestionsCompleted" Decode.int)
 
 
 submitEditFormWithFlag : ContactForm -> Bool -> Cmd Msg

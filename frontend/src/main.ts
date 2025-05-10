@@ -1,14 +1,12 @@
 import './styles.css'
 import { Elm } from './Main.elm'
+import * as Chartist from 'chartist';
+import 'chartist/dist/index.css';
 
 // Declare Stripe for TypeScript
 declare const Stripe: any;
-
-const root = document.querySelector('#app')
-if (!root) {
-  console.error('Could not find root element')
-  throw new Error('Could not find root element')
-}
+// Declare Chartist for TypeScript
+// declare const Chartist: any;
 
 // Define the Stripe Checkout custom element
 customElements.define('stripe-checkout', class extends HTMLElement {
@@ -381,6 +379,39 @@ customElements.define('stripe-checkout', class extends HTMLElement {
   }
 });
 
+// Define the Chartist custom element
+customElements.define('chartist-bar', class extends HTMLElement {
+  static get observedAttributes() { return ['data']; }
+  connectedCallback() { this.renderChart(); }
+  attributeChangedCallback() { this.renderChart(); }
+  renderChart() {
+    const dataAttr = this.getAttribute('data');
+    if (!dataAttr) return;
+    let chartData;
+    try {
+      chartData = JSON.parse(dataAttr);
+    } catch (e) {
+      this.textContent = 'Invalid chart data';
+      return;
+    }
+    this.innerHTML = '';
+    const chartDiv = document.createElement('div');
+    chartDiv.style.height = '100%';
+    chartDiv.style.width = '100%';
+    this.appendChild(chartDiv);
+    new Chartist.BarChart(chartDiv, chartData, {
+      stackBars: true,
+      axisY: { onlyInteger: true }
+    });
+  }
+});
+
+const root = document.querySelector('#app');
+if (!root) {
+  console.error('Could not find root element');
+  throw new Error('Could not find root element');
+}
+
 // Initialize Elm app
 try {
   console.log('Initializing Elm application...');
@@ -411,7 +442,7 @@ try {
   // Setup IntersectionObserver for phone section
   if (app.ports && app.ports.viewingPhone) {
     setTimeout(() => {
-      const phoneSection = document.querySelector('.relative.h-\\[400px\\].w-\\[280px\\].rounded-\\[30px\\].overflow-hidden')
+      const phoneSection = document.getElementById('phone-experience-section')
       
       if (phoneSection) {
         console.log('Found phone section, setting up IntersectionObserver')

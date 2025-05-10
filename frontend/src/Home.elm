@@ -372,6 +372,7 @@ view model =
                             [ text "Your Client's Personalized Experience" ]
                         , div
                             [ class "relative h-[400px] w-[280px] rounded-[30px] overflow-hidden mb-4"
+                            , id "phone-experience-section"
                             ]
                             [ div [ class (phoneContentClass model.activeExperienceTab Email) ]
                                 [ img
