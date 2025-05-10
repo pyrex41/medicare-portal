@@ -34,6 +34,7 @@ import Task
 import Time
 import Url exposing (Url)
 import Url.Builder as Url
+import Utils.Formatters exposing (formatPhoneNumber)
 
 
 
@@ -526,7 +527,7 @@ type Msg
     | UpdateCarrierMapping String String
     | GotCarriersForMapping (List String) (Result Http.Error (List { name : String, aliases : List String }))
     | EmailValidationCompleted (List { email : String, reason : String })
-    -- Dashboard stats messages
+      -- Dashboard stats messages
     | FetchDashboardStats
     | GotDashboardStats (Result Http.Error { success : Bool, stats : { quotesSent : Int, quotesViewed : Int, followUpsRequested : Int } })
 
@@ -1892,12 +1893,12 @@ update msg model =
 
                 _ ->
                     ( model, Cmd.none )
-                    
+
         FetchDashboardStats ->
             ( { model | isLoadingDashboardStats = True, dashboardStatsError = Nothing }
             , fetchDashboardStats
             )
-            
+
         GotDashboardStats result ->
             case result of
                 Ok response ->
@@ -1910,6 +1911,7 @@ update msg model =
                           }
                         , Cmd.none
                         )
+
                     else
                         ( { model | isLoadingDashboardStats = False, dashboardStatsError = Just "Failed to load dashboard data." }
                         , Cmd.none
@@ -1935,19 +1937,24 @@ view model =
               div [ class "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 mb-6" ]
                 [ if model.isLoadingContacts then
                     statsCardWithSpinner "Total Contacts"
+
                   else
                     statsCard "Total Contacts" (String.fromInt model.pagination.totalItems)
                 , if model.isLoadingDashboardStats then
                     statsCardWithSpinner "Quotes Sent"
+
                   else if model.dashboardStatsError /= Nothing then
                     statsCard "Quotes Sent" "Error"
-                  else 
+
+                  else
                     statsCard "Quotes Sent" (String.fromInt model.quotesSent)
                 , if model.isLoadingDashboardStats then
                     statsCardWithSpinner "Quotes Viewed"
+
                   else if model.dashboardStatsError /= Nothing then
                     statsCard "Quotes Viewed" "Error"
-                  else 
+
+                  else
                     statsCard "Quotes Viewed" (String.fromInt model.quotesViewed)
                 ]
             , -- Table Container with overflow handling - reduced vertical spacing
@@ -2163,11 +2170,12 @@ statsCard title value =
         , div [ class "text-2xl sm:text-4xl font-bold mt-1 sm:mt-2 text-[#03045E]" ] [ text value ]
         ]
 
+
 statsCardWithSpinner : String -> Html Msg
 statsCardWithSpinner title =
     div [ class "bg-white rounded-lg shadow-xl p-4 sm:p-6" ]
         [ div [ class "text-gray-600 text-xs sm:text-sm" ] [ text title ]
-        , div [ class "text-2xl sm:text-4xl font-bold mt-1 sm:mt-2 text-[#03045E] flex items-center justify-center" ] 
+        , div [ class "text-2xl sm:text-4xl font-bold mt-1 sm:mt-2 text-[#03045E] flex items-center justify-center" ]
             [ div [ class "animate-spin rounded-full h-8 w-8 border-t-2 border-l-2 border-purple-500" ] [] ]
         ]
 
@@ -2351,16 +2359,18 @@ fetchDashboardStats =
         , expect = Http.expectJson GotDashboardStats dashboardStatsResponseDecoder
         }
 
+
 dashboardStatsResponseDecoder : Decode.Decoder { success : Bool, stats : { quotesSent : Int, quotesViewed : Int, followUpsRequested : Int } }
 dashboardStatsResponseDecoder =
-    Decode.map2 
-        (\success stats -> 
+    Decode.map2
+        (\success stats ->
             { success = success
             , stats = stats
             }
         )
         (Decode.field "success" Decode.bool)
         (Decode.field "stats" dashboardStatsDecoder)
+
 
 dashboardStatsDecoder : Decode.Decoder { quotesSent : Int, quotesViewed : Int, followUpsRequested : Int }
 dashboardStatsDecoder =
@@ -3376,8 +3386,6 @@ formatUploadError message =
 -- Add this new subscription function
 
 
-
-
 subscriptions : Model -> Sub Msg
 subscriptions model =
     Sub.batch
@@ -4089,33 +4097,6 @@ fetchCurrentUser =
         { url = "/api/me"
         , expect = Http.expectJson GotCurrentUser userDecoder
         }
-
-
-formatPhoneNumber : String -> String
-formatPhoneNumber phone =
-    if String.isEmpty phone then
-        ""
-
-    else
-        let
-            digits =
-                String.filter Char.isDigit phone
-                    |> String.left 10
-
-            len =
-                String.length digits
-        in
-        if len == 0 then
-            ""
-
-        else if len <= 3 then
-            "(" ++ digits
-
-        else if len <= 6 then
-            "(" ++ String.left 3 digits ++ ") " ++ String.dropLeft 3 digits
-
-        else
-            "(" ++ String.left 3 digits ++ ") " ++ String.slice 3 6 digits ++ "-" ++ String.dropLeft 6 digits
 
 
 viewFilterDropdown : Model -> FilterType -> Html Msg

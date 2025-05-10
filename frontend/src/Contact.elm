@@ -16,6 +16,7 @@ import Json.Encode as Encode
 import Process
 import Task
 import Time exposing (Month(..), Posix, Zone)
+import Utils.Formatters exposing (formatPhoneNumber)
 import Utils.MyDate exposing (dateFromMonthDayYear)
 
 
@@ -1540,33 +1541,6 @@ viewLoading =
 viewSpinner : Html msg
 viewSpinner =
     div [ class "animate-spin rounded-full h-5 w-5 border-2 border-purple-500 border-t-transparent" ] []
-
-
-formatPhoneNumber : String -> String
-formatPhoneNumber phone =
-    if String.isEmpty phone then
-        ""
-
-    else
-        let
-            digits =
-                String.filter Char.isDigit phone
-                    |> String.left 10
-
-            len =
-                String.length digits
-        in
-        if len == 0 then
-            ""
-
-        else if len <= 3 then
-            "(" ++ digits
-
-        else if len <= 6 then
-            "(" ++ String.left 3 digits ++ ") " ++ String.dropLeft 3 digits
-
-        else
-            "(" ++ String.left 3 digits ++ ") " ++ String.slice 3 6 digits ++ "-" ++ String.dropLeft 6 digits
 
 
 
