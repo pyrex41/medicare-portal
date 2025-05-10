@@ -115,7 +115,11 @@ type alias Model =
     , carriers : List String
     , agents : List User
     , key : Nav.Key
-    , pagination : PaginationState -- Add this field
+    , pagination : PaginationState
+    , quotesSent : Int
+    , quotesViewed : Int
+    , isLoadingDashboardStats : Bool
+    , dashboardStatsError : Maybe String
     }
 
 
@@ -348,12 +352,17 @@ init key maybeUser =
             , agents = []
             , key = key
             , pagination = initialPagination
+            , quotesSent = 0
+            , quotesViewed = 0
+            , isLoadingDashboardStats = True
+            , dashboardStatsError = Nothing
             }
 
         -- Always fetch contacts and current time
         baseCommands =
             [ fetchContacts initialModel
             , Task.perform GotCurrentTime Time.now
+            , fetchDashboardStats
             ]
 
         -- Only add these commands if we need them
@@ -517,6 +526,9 @@ type Msg
     | UpdateCarrierMapping String String
     | GotCarriersForMapping (List String) (Result Http.Error (List { name : String, aliases : List String }))
     | EmailValidationCompleted (List { email : String, reason : String })
+    -- Dashboard stats messages
+    | FetchDashboardStats
+    | GotDashboardStats (Result Http.Error { success : Bool, stats : { quotesSent : Int, quotesViewed : Int, followUpsRequested : Int } })
 
 
 type ContactFormField
@@ -1880,6 +1892,33 @@ update msg model =
 
                 _ ->
                     ( model, Cmd.none )
+                    
+        FetchDashboardStats ->
+            ( { model | isLoadingDashboardStats = True, dashboardStatsError = Nothing }
+            , fetchDashboardStats
+            )
+            
+        GotDashboardStats result ->
+            case result of
+                Ok response ->
+                    if response.success then
+                        ( { model
+                            | isLoadingDashboardStats = False
+                            , quotesSent = response.stats.quotesSent
+                            , quotesViewed = response.stats.quotesViewed
+                            , dashboardStatsError = Nothing
+                          }
+                        , Cmd.none
+                        )
+                    else
+                        ( { model | isLoadingDashboardStats = False, dashboardStatsError = Just "Failed to load dashboard data." }
+                        , Cmd.none
+                        )
+
+                Err httpError ->
+                    ( { model | isLoadingDashboardStats = False, dashboardStatsError = Just "Error loading dashboard stats." }
+                    , Cmd.none
+                    )
 
 
 
@@ -1893,11 +1932,20 @@ view model =
     div [ class "min-h-screen bg-white" ]
         [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" ]
             [ -- Stats Section - Make more compact with reduced margins
-              div [ class "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-6" ]
+              div [ class "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 mb-6" ]
                 [ statsCard "Total Contacts" (String.fromInt model.pagination.totalItems)
-                , statsCard "Emails Sent" "0"
-                , statsCard "Emails Clicked" "0"
-                , statsCard "Quotes Created" "0"
+                , if model.isLoadingDashboardStats then
+                    statsCard "Quotes Sent" "Loading..."
+                  else if model.dashboardStatsError /= Nothing then
+                    statsCard "Quotes Sent" "Error"
+                  else 
+                    statsCard "Quotes Sent" (String.fromInt model.quotesSent)
+                , if model.isLoadingDashboardStats then
+                    statsCard "Quotes Viewed" "Loading..."
+                  else if model.dashboardStatsError /= Nothing then
+                    statsCard "Quotes Viewed" "Error"
+                  else 
+                    statsCard "Quotes Viewed" (String.fromInt model.quotesViewed)
                 ]
             , -- Table Container with overflow handling - reduced vertical spacing
               div [ class "overflow-x-auto max-w-7xl mx-auto" ]
@@ -2283,6 +2331,38 @@ submitAddForm form =
         , body = Http.jsonBody (encodeContactForm form)
         , expect = Http.expectJson ContactAdded contactDecoder
         }
+
+
+fetchDashboardStats : Cmd Msg
+fetchDashboardStats =
+    Http.get
+        { url = "/api/dashboard/stats"
+        , expect = Http.expectJson GotDashboardStats dashboardStatsResponseDecoder
+        }
+
+dashboardStatsResponseDecoder : Decode.Decoder { success : Bool, stats : { quotesSent : Int, quotesViewed : Int, followUpsRequested : Int } }
+dashboardStatsResponseDecoder =
+    Decode.map2 
+        (\success stats -> 
+            { success = success
+            , stats = stats
+            }
+        )
+        (Decode.field "success" Decode.bool)
+        (Decode.field "stats" dashboardStatsDecoder)
+
+dashboardStatsDecoder : Decode.Decoder { quotesSent : Int, quotesViewed : Int, followUpsRequested : Int }
+dashboardStatsDecoder =
+    Decode.map3
+        (\quotesSent quotesViewed followUpsRequested ->
+            { quotesSent = quotesSent
+            , quotesViewed = quotesViewed
+            , followUpsRequested = followUpsRequested
+            }
+        )
+        (Decode.field "quotesSent" Decode.int)
+        (Decode.field "quotesViewed" Decode.int)
+        (Decode.field "followUpsRequested" Decode.int)
 
 
 submitEditFormWithFlag : ContactForm -> Bool -> Cmd Msg
@@ -3283,6 +3363,8 @@ formatUploadError message =
 
 
 -- Add this new subscription function
+
+
 
 
 subscriptions : Model -> Sub Msg

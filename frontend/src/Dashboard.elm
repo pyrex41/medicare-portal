@@ -9,6 +9,9 @@ import Components.LimitBanner as LimitBanner exposing (LimitWarning(..))
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (..)
+import Http
+import Json.Decode as Decode exposing (Decoder)
+import Json.Decode.Pipeline as Pipeline
 import Time
 
 
@@ -16,6 +19,12 @@ type alias Model =
     { hovering : Maybe Point
     , limitBanner : LimitBanner.Model
     , showTutorialModal : Bool
+    , quotesSent : Int
+    , quotesViewed : Int
+    , followUpsRequested : Int
+    , statsLoading : Bool
+    , statsError : Maybe String
+    , chartData : List ChartData
     }
 
 
@@ -39,11 +48,52 @@ type Msg
     | LimitBannerMsg LimitBanner.Msg
     | CloseTutorialModal
     | OpenTutorialModal
+    | FetchDashboardStats
+    | GotDashboardStats (Result Http.Error DashboardStatsResponse)
 
 
 type alias Flags =
     { isPostPayment : Maybe Bool
     }
+
+
+type alias DashboardStats =
+    { quotesSent : Int
+    , quotesViewed : Int
+    , followUpsRequested : Int
+    , chartData : List ChartData
+    }
+
+
+type alias DashboardStatsResponse =
+    { success : Bool
+    , stats : DashboardStats
+    }
+
+
+dashboardStatsDecoder : Decoder DashboardStats
+dashboardStatsDecoder =
+    Decode.succeed DashboardStats
+        |> Pipeline.required "quotesSent" Decode.int
+        |> Pipeline.required "quotesViewed" Decode.int
+        |> Pipeline.required "followUpsRequested" Decode.int
+        |> Pipeline.required "chartData" (Decode.list chartDataDecoder)
+
+
+chartDataDecoder : Decoder ChartData
+chartDataDecoder =
+    Decode.succeed ChartData
+        |> Pipeline.required "x" Decode.float
+        |> Pipeline.required "sends" Decode.float
+        |> Pipeline.required "views" Decode.float
+        |> Pipeline.required "followUps" Decode.float
+
+
+dashboardStatsResponseDecoder : Decoder DashboardStatsResponse
+dashboardStatsResponseDecoder =
+    Decode.succeed DashboardStatsResponse
+        |> Pipeline.required "success" Decode.bool
+        |> Pipeline.required "stats" dashboardStatsDecoder
 
 
 init : Flags -> ( Model, Cmd Msg )
@@ -55,9 +105,45 @@ init flags =
     ( { hovering = Nothing
       , limitBanner = limitBannerModel
       , showTutorialModal = Maybe.withDefault False flags.isPostPayment
+      , quotesSent = 0
+      , quotesViewed = 0
+      , followUpsRequested = 0
+      , statsLoading = True
+      , statsError = Nothing
+      , chartData = chartData
       }
-    , Cmd.map LimitBannerMsg limitBannerCmd
+    , Cmd.batch
+        [ Cmd.map LimitBannerMsg limitBannerCmd
+        , fetchDashboardStats
+        ]
     )
+
+
+fetchDashboardStats : Cmd Msg
+fetchDashboardStats =
+    Http.get
+        { url = "/api/dashboard/stats"
+        , expect = Http.expectJson GotDashboardStats dashboardStatsResponseDecoder
+        }
+
+
+httpErrorToString : Http.Error -> String
+httpErrorToString error =
+    case error of
+        Http.BadUrl url ->
+            "Bad URL: " ++ url
+
+        Http.Timeout ->
+            "Request timed out"
+
+        Http.NetworkError ->
+            "Network error"
+
+        Http.BadStatus code ->
+            "Bad status: " ++ String.fromInt code
+
+        Http.BadBody message ->
+            "Bad body: " ++ message
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -87,6 +173,34 @@ update msg model =
             , Cmd.none
             )
 
+        FetchDashboardStats ->
+            ( { model | statsLoading = True, statsError = Nothing }
+            , fetchDashboardStats
+            )
+
+        GotDashboardStats result ->
+            case result of
+                Ok response ->
+                    if response.success then
+                        ( { model
+                            | statsLoading = False
+                            , quotesSent = response.stats.quotesSent
+                            , quotesViewed = response.stats.quotesViewed
+                            , followUpsRequested = response.stats.followUpsRequested
+                            , chartData = response.stats.chartData
+                          }
+                        , Cmd.none
+                        )
+                    else
+                        ( { model | statsLoading = False, statsError = Just "Failed to load dashboard data." }
+                        , Cmd.none
+                        )
+
+                Err httpError ->
+                    ( { model | statsLoading = False, statsError = Just (httpErrorToString httpError) }
+                    , Cmd.none
+                    )
+
         NoOp ->
             ( model, Cmd.none )
 
@@ -105,9 +219,24 @@ view model =
                 text ""
             , div [ class "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6" ]
                 [ -- Stats cards
-                  viewStatsCard "Quotes Sent" "0" "text-purple-600"
-                , viewStatsCard "Quotes Viewed" "0" "text-purple-600"
-                , viewStatsCard "Follow Ups Requested" "0" "text-purple-600"
+                  if model.statsLoading then
+                    viewStatsCard "Quotes Sent" "Loading..." "text-gray-400"
+                  else if model.statsError /= Nothing then
+                    viewStatsCard "Quotes Sent" "Error" "text-red-600"
+                  else 
+                    viewStatsCard "Quotes Sent" (String.fromInt model.quotesSent) "text-purple-600"
+                , if model.statsLoading then
+                    viewStatsCard "Quotes Viewed" "Loading..." "text-gray-400"
+                  else if model.statsError /= Nothing then
+                    viewStatsCard "Quotes Viewed" "Error" "text-red-600"
+                  else 
+                    viewStatsCard "Quotes Viewed" (String.fromInt model.quotesViewed) "text-blue-600"
+                , if model.statsLoading then
+                    viewStatsCard "Upcoming Renewals" "Loading..." "text-gray-400"
+                  else if model.statsError /= Nothing then
+                    viewStatsCard "Upcoming Renewals" "Error" "text-red-600"
+                  else 
+                    viewStatsCard "Upcoming Renewals" (String.fromInt model.followUpsRequested) "text-green-600"
                 ]
             , div [ class "mt-6 sm:mt-8 grid grid-cols-1 lg:grid-cols-4 gap-4 sm:gap-6" ]
                 [ div [ class "lg:col-span-3" ]
@@ -127,7 +256,7 @@ view model =
                                 ]
                             , div [ class "flex items-center" ]
                                 [ div [ class "w-3 h-3 rounded-full bg-[#03045E] mr-1.5 sm:mr-2" ] []
-                                , text "Follow-up Requests"
+                                , text "Upcoming Renewals"
                                 ]
                             ]
                         ]
@@ -181,9 +310,25 @@ viewTutorialModal =
 
 viewStatsCard : String -> String -> String -> Html Msg
 viewStatsCard title value colorClass =
+    let
+        subtitle =
+            case title of
+                "Quotes Sent" ->
+                    "Total emails sent with quotes"
+                
+                "Quotes Viewed" ->
+                    "Unique contacts who've viewed quotes"
+                
+                "Upcoming Renewals" ->
+                    "Upcoming scheduled policy renewals"
+                
+                _ ->
+                    ""
+    in
     div [ class "bg-white rounded-lg shadow-xl p-4 sm:p-6" ]
         [ div [ class "text-gray-600 text-xs sm:text-sm" ] [ text title ]
         , div [ class "text-2xl sm:text-4xl font-bold mt-1 sm:mt-2 text-[#03045E]" ] [ text value ]
+        , div [ class "text-gray-500 text-xs mt-1" ] [ text subtitle ]
         ]
 
 
@@ -252,7 +397,7 @@ viewChart model =
                 , C.bar .followUps [ CA.color "#03045E" ]
                 ]
             ]
-            chartData
+            model.chartData
         ]
 
 
