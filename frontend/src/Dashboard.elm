@@ -220,19 +220,19 @@ view model =
             , div [ class "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6" ]
                 [ -- Stats cards
                   if model.statsLoading then
-                    viewStatsCard "Quotes Sent" "Loading..." "text-gray-400"
+                    viewStatsCardWithSpinner "Quotes Sent" "text-purple-600"
                   else if model.statsError /= Nothing then
                     viewStatsCard "Quotes Sent" "Error" "text-red-600"
                   else 
                     viewStatsCard "Quotes Sent" (String.fromInt model.quotesSent) "text-purple-600"
                 , if model.statsLoading then
-                    viewStatsCard "Quotes Viewed" "Loading..." "text-gray-400"
+                    viewStatsCardWithSpinner "Quotes Viewed" "text-blue-600"
                   else if model.statsError /= Nothing then
                     viewStatsCard "Quotes Viewed" "Error" "text-red-600"
                   else 
                     viewStatsCard "Quotes Viewed" (String.fromInt model.quotesViewed) "text-blue-600"
                 , if model.statsLoading then
-                    viewStatsCard "Upcoming Renewals" "Loading..." "text-gray-400"
+                    viewStatsCardWithSpinner "Upcoming Renewals" "text-green-600"
                   else if model.statsError /= Nothing then
                     viewStatsCard "Upcoming Renewals" "Error" "text-red-600"
                   else 
@@ -328,6 +328,31 @@ viewStatsCard title value colorClass =
     div [ class "bg-white rounded-lg shadow-xl p-4 sm:p-6" ]
         [ div [ class "text-gray-600 text-xs sm:text-sm" ] [ text title ]
         , div [ class "text-2xl sm:text-4xl font-bold mt-1 sm:mt-2 text-[#03045E]" ] [ text value ]
+        , div [ class "text-gray-500 text-xs mt-1" ] [ text subtitle ]
+        ]
+
+
+viewStatsCardWithSpinner : String -> String -> Html Msg
+viewStatsCardWithSpinner title colorClass =
+    let
+        subtitle =
+            case title of
+                "Quotes Sent" ->
+                    "Total emails sent with quotes"
+                
+                "Quotes Viewed" ->
+                    "Unique contacts who've viewed quotes"
+                
+                "Upcoming Renewals" ->
+                    "Upcoming scheduled policy renewals"
+                
+                _ ->
+                    ""
+    in
+    div [ class "bg-white rounded-lg shadow-xl p-4 sm:p-6" ]
+        [ div [ class "text-gray-600 text-xs sm:text-sm" ] [ text title ]
+        , div [ class ("text-2xl sm:text-4xl font-bold mt-1 sm:mt-2 flex items-center justify-center " ++ colorClass) ]
+            [ div [ class "animate-spin rounded-full h-8 w-8 border-t-2 border-l-2 border-purple-500" ] [] ]
         , div [ class "text-gray-500 text-xs mt-1" ] [ text subtitle ]
         ]
 

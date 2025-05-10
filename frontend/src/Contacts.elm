@@ -1933,15 +1933,18 @@ view model =
         [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" ]
             [ -- Stats Section - Make more compact with reduced margins
               div [ class "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 mb-6" ]
-                [ statsCard "Total Contacts" (String.fromInt model.pagination.totalItems)
+                [ if model.isLoadingContacts then
+                    statsCardWithSpinner "Total Contacts"
+                  else
+                    statsCard "Total Contacts" (String.fromInt model.pagination.totalItems)
                 , if model.isLoadingDashboardStats then
-                    statsCard "Quotes Sent" "Loading..."
+                    statsCardWithSpinner "Quotes Sent"
                   else if model.dashboardStatsError /= Nothing then
                     statsCard "Quotes Sent" "Error"
                   else 
                     statsCard "Quotes Sent" (String.fromInt model.quotesSent)
                 , if model.isLoadingDashboardStats then
-                    statsCard "Quotes Viewed" "Loading..."
+                    statsCardWithSpinner "Quotes Viewed"
                   else if model.dashboardStatsError /= Nothing then
                     statsCard "Quotes Viewed" "Error"
                   else 
@@ -2158,6 +2161,14 @@ statsCard title value =
     div [ class "bg-white rounded-lg shadow-xl p-4 sm:p-6" ]
         [ div [ class "text-gray-600 text-xs sm:text-sm" ] [ text title ]
         , div [ class "text-2xl sm:text-4xl font-bold mt-1 sm:mt-2 text-[#03045E]" ] [ text value ]
+        ]
+
+statsCardWithSpinner : String -> Html Msg
+statsCardWithSpinner title =
+    div [ class "bg-white rounded-lg shadow-xl p-4 sm:p-6" ]
+        [ div [ class "text-gray-600 text-xs sm:text-sm" ] [ text title ]
+        , div [ class "text-2xl sm:text-4xl font-bold mt-1 sm:mt-2 text-[#03045E] flex items-center justify-center" ] 
+            [ div [ class "animate-spin rounded-full h-8 w-8 border-t-2 border-l-2 border-purple-500" ] [] ]
         ]
 
 
