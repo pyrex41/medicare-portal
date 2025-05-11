@@ -60,53 +60,49 @@ export function createDashboardRoutes() {
 
         // 3. Get "Upcoming Renewals" count from email_schedules
         const followUpsSql = `
-          SELECT COUNT(*) as count 
-          FROM email_schedules 
+          SELECT COUNT(*) as count
+          FROM email_schedules
           WHERE status = 'pre-scheduled'
         `
         const followUpsResult = await orgDb.fetchOne<{ count: number }>(followUpsSql)
         const followUpsRequested = followUpsResult?.count || 0
 
-        // Generate synthetic chart data for past 12 months, with current month in middle
+        // 4. Get "Health Questions Completed" count - unique contacts who have completed health questions
+        const healthQuestionsCompletedSql = `
+          SELECT COUNT(DISTINCT contact_id) as count
+          FROM eligibility_answers
+        `
+        const healthQuestionsResult = await orgDb.fetchOne<{ count: number }>(healthQuestionsCompletedSql)
+        const healthQuestionsCompleted = healthQuestionsResult?.count || 0
+        logger.info(`Health Questions Completed count: ${healthQuestionsCompleted}`)
+
+        // Show data for all 12 months, with real data for current month and zeros for others
         const currentMonth = new Date().getMonth(); // 0-11
-        
-        // Create array of dummy chart data for each month
+
+        // Create array of chart data for all months
         const chartData = [];
         const monthsToShow = 12;
-        
-        // Generate data for each month, starting 6 months ago and showing 12 months total
-        const startMonth = (currentMonth - 6 + 12) % 12; // Go back 6 months, wrap around 
-        
+
+        // Create entries for all 12 months, but only put real data in current month
         for (let i = 0; i < monthsToShow; i++) {
-          const monthIndex = (startMonth + i) % 12;
-          
-          // Make current month have some activity
-          const isCurrentMonth = monthIndex === currentMonth;
-          
-          // Scale activity based on proximity to current month
-          const proximity = Math.abs(i - 6) / 6; // 0 = current month, 1 = farthest month
-          const randomFactor = Math.random() * 0.5 + 0.5; // 0.5-1.0 random factor
-          
+          // Only the current month has actual data, rest are zeros
+          const isCurrentMonth = i === currentMonth;
+
           let sentValue = 0;
           let viewedValue = 0;
           let followUpValue = 0;
-          
+
           if (isCurrentMonth) {
             // Use real data for current month
             sentValue = quotesSent;
-            viewedValue = quotesViewed / 2; // Reduce to make chart more readable
+            viewedValue = quotesViewed;
             followUpValue = followUpsRequested;
-          } else {
-            // Synthetic data for other months, diminishing with distance
-            sentValue = Math.round((quotesSent * 0.8 * (1 - proximity) * randomFactor));
-            viewedValue = Math.round((quotesViewed * 0.4 * (1 - proximity) * randomFactor));
-            followUpValue = Math.round((followUpsRequested * 0.6 * (1 - proximity) * randomFactor));
           }
-          
+
           chartData.push({
-            x: i, // 0-11 for the months, starting with 0 = 6 months ago
+            x: i, // 0-11 for months (Jan-Dec)
             sends: sentValue,
-            views: viewedValue, 
+            views: viewedValue,
             followUps: followUpValue
           });
         }
@@ -121,6 +117,7 @@ export function createDashboardRoutes() {
             quotesSent,
             quotesViewed,
             followUpsRequested,
+            healthQuestionsCompleted,
             chartData
           }
         }
