@@ -548,13 +548,13 @@ customElements.define('chartist-funnel', class extends HTMLElement {
       if (Array.isArray(chartData.series)) {
         if (chartData.series.length === 1 && Array.isArray(chartData.series[0])) {
           // Format: { series: [[v1, v2, v3, v4]] }
-          values = chartData.series[0].map(v => parseFloat(v) || 0);
+          values = chartData.series[0].map((v: any) => parseFloat(v) || 0);
         } else if (chartData.series.length > 0 && Array.isArray(chartData.series[0]) && chartData.series[0].length === 1) {
           // Format: { series: [[v1], [v2], [v3], [v4]] }
-          values = chartData.series.map(s => parseFloat(s[0]) || 0);
+          values = chartData.series.map((s: any[]) => parseFloat(s[0]) || 0);
         } else {
           // Format: { series: [v1, v2, v3, v4] }
-          values = chartData.series.map(v => parseFloat(v) || 0);
+          values = chartData.series.map((v: any) => parseFloat(v) || 0);
         }
       }
 
