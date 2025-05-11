@@ -379,7 +379,7 @@ customElements.define('stripe-checkout', class extends HTMLElement {
   }
 });
 
-// Define the Chartist custom element
+// Define the Chartist Bar chart custom element (existing implementation)
 customElements.define('chartist-bar', class extends HTMLElement {
   static get observedAttributes() { return ['data']; }
   connectedCallback() { this.renderChart(); }
@@ -399,10 +399,231 @@ customElements.define('chartist-bar', class extends HTMLElement {
     chartDiv.style.height = '100%';
     chartDiv.style.width = '100%';
     this.appendChild(chartDiv);
+    
+    // Add custom CSS for series colors
+    const style = document.createElement('style');
+    style.textContent = `
+      .ct-series-a .ct-bar, .ct-series-a .ct-line, .ct-series-a .ct-point { stroke: #03045e !important; }
+      .ct-series-b .ct-bar, .ct-series-b .ct-line, .ct-series-b .ct-point { stroke: #0077b6 !important; }
+      .ct-series-c .ct-bar, .ct-series-c .ct-line, .ct-series-c .ct-point { stroke: #00b4d8 !important; }
+      .ct-series-d .ct-bar, .ct-series-d .ct-line, .ct-series-d .ct-point { stroke: #48cae4 !important; }
+    `;
+    this.appendChild(style);
+    
     new Chartist.BarChart(chartDiv, chartData, {
-      stackBars: true,
+      stackBars: false,
       axisY: { onlyInteger: true }
     });
+  }
+});
+
+// Define the Chartist Line chart custom element (new)
+customElements.define('chartist-line', class extends HTMLElement {
+  static get observedAttributes() { return ['data']; }
+  connectedCallback() { this.renderChart(); }
+  attributeChangedCallback() { this.renderChart(); }
+  renderChart() {
+    const dataAttr = this.getAttribute('data');
+    if (!dataAttr) return;
+    let chartData;
+    try {
+      chartData = JSON.parse(dataAttr);
+    } catch (e) {
+      this.textContent = 'Invalid chart data';
+      return;
+    }
+    this.innerHTML = '';
+    const chartDiv = document.createElement('div');
+    chartDiv.style.height = '100%';
+    chartDiv.style.width = '100%';
+    this.appendChild(chartDiv);
+    
+    // Add custom CSS for series colors
+    const style = document.createElement('style');
+    style.textContent = `
+      .ct-series-a .ct-bar, .ct-series-a .ct-line, .ct-series-a .ct-point { stroke: #03045e !important; }
+      .ct-series-b .ct-bar, .ct-series-b .ct-line, .ct-series-b .ct-point { stroke: #0077b6 !important; }
+      .ct-series-c .ct-bar, .ct-series-c .ct-line, .ct-series-c .ct-point { stroke: #00b4d8 !important; }
+      .ct-series-d .ct-bar, .ct-series-d .ct-line, .ct-series-d .ct-point { stroke: #48cae4 !important; }
+    `;
+    this.appendChild(style);
+    
+    new Chartist.LineChart(chartDiv, chartData, {
+      fullWidth: true,
+      chartPadding: {
+        right: 40
+      },
+      lineSmooth: Chartist.Interpolation.cardinal({
+        tension: 0.2
+      }),
+      axisY: {
+        onlyInteger: true
+      }
+    });
+  }
+});
+
+// Define the Chartist Funnel chart custom element
+customElements.define('chartist-funnel', class extends HTMLElement {
+  static get observedAttributes() { return ['data']; }
+  connectedCallback() { this.renderChart(); }
+  attributeChangedCallback() { this.renderChart(); }
+  renderChart() {
+    const dataAttr = this.getAttribute('data');
+    if (!dataAttr) return;
+    let chartData;
+    try {
+      chartData = JSON.parse(dataAttr);
+    } catch (e) {
+      this.textContent = 'Invalid chart data';
+      return;
+    }
+    
+    this.innerHTML = '';
+    
+    // Custom parent container for better layout control
+    const chartContainer = document.createElement('div');
+    chartContainer.className = 'funnel-chart-container';
+    chartContainer.style.height = '100%';
+    chartContainer.style.width = '100%';
+    chartContainer.style.display = 'flex';
+    chartContainer.style.flexDirection = 'column';
+    chartContainer.style.justifyContent = 'space-between';
+    this.appendChild(chartContainer);
+    
+    // Add custom CSS with improved styling
+    const style = document.createElement('style');
+    style.textContent = `
+      .funnel-chart-container {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        padding: 10px 20px;
+        height: 100%;
+        box-sizing: border-box;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-around;
+      }
+      .funnel-bar {
+        height: 35px;
+        border-radius: 4px;
+        margin: 10px 0;
+        position: relative;
+        overflow: visible;
+        transition: width 0.3s ease-in-out;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      }
+      .funnel-bar-label {
+        position: absolute;
+        left: -140px;
+        width: 130px;
+        text-align: right;
+        font-size: 14px;
+        font-weight: 500;
+        line-height: 35px;
+        color: #333;
+      }
+      .funnel-bar-value {
+        position: absolute;
+        right: -45px;
+        font-size: 14px;
+        font-weight: 500;
+        line-height: 35px;
+        color: #666;
+      }
+      .funnel-bar-quotes-sent { background-color: #03045e; }
+      .funnel-bar-quotes-viewed { background-color: #0077b6; }
+      .funnel-bar-health-completed { background-color: #48cae4; }
+    `;
+    this.appendChild(style);
+    
+    // For a clean funnel visualization, create custom HTML bars
+    if (chartData && chartData.labels && chartData.series) {
+      console.log('Funnel chart data:', chartData);
+
+      // Extract values from the chartData
+      // Each series should be a single data point from the most recent data
+      let values = [];
+
+      // Try to extract values from series in the correct format
+      if (Array.isArray(chartData.series)) {
+        if (chartData.series.length === 1 && Array.isArray(chartData.series[0])) {
+          // Format: { series: [[v1, v2, v3, v4]] }
+          values = chartData.series[0].map(v => parseFloat(v) || 0);
+        } else if (chartData.series.length > 0 && Array.isArray(chartData.series[0]) && chartData.series[0].length === 1) {
+          // Format: { series: [[v1], [v2], [v3], [v4]] }
+          values = chartData.series.map(s => parseFloat(s[0]) || 0);
+        } else {
+          // Format: { series: [v1, v2, v3, v4] }
+          values = chartData.series.map(v => parseFloat(v) || 0);
+        }
+      }
+
+      // Ensure we have 4 values
+      while (values.length < 4) values.push(0);
+      values = values.slice(0, 4);
+
+      console.log('Funnel values:', values);
+
+      // Find the max value for scaling
+      // Use 2x the Quotes Sent value as the maximum scale to make the drop-off less steep
+      const quotesSentValue = values[0] || 1;
+      const maxValue = Math.max(quotesSentValue * 2, 1); // 2x the Quotes Sent value, with minimum of 1
+
+      // Define custom bar data with actual values - in reverse order for proper funnel flow
+      // Health Completed (smallest) at the top, Quotes Sent (largest) at the bottom
+      const barData = [
+        { label: 'Health Completed', class: 'funnel-bar-health-completed', value: values[3] || 0, display: Math.round(values[3] || 0) },
+        { label: 'Quotes Viewed', class: 'funnel-bar-quotes-viewed', value: values[1] || 0, display: Math.round(values[1] || 0) },
+        { label: 'Quotes Sent', class: 'funnel-bar-quotes-sent', value: values[0] || 0, display: Math.round(values[0] || 0) }
+      ];
+
+      // Container for better spacing
+      const innerContainer = document.createElement('div');
+      innerContainer.style.paddingLeft = '140px'; // Space for labels
+      innerContainer.style.paddingRight = '60px'; // Space for values
+      innerContainer.style.width = '100%';
+      innerContainer.style.position = 'relative';
+      chartContainer.appendChild(innerContainer);
+
+      // Create a bar for each item
+      barData.forEach(item => {
+        const barContainer = document.createElement('div');
+        barContainer.style.display = 'flex';
+        barContainer.style.alignItems = 'center';
+        barContainer.style.position = 'relative';
+        barContainer.style.marginBottom = '25px';
+
+        const barLabel = document.createElement('div');
+        barLabel.className = 'funnel-bar-label';
+        barLabel.textContent = item.label;
+        barContainer.appendChild(barLabel);
+
+        const bar = document.createElement('div');
+        bar.className = `funnel-bar ${item.class}`;
+
+        // Scale the width based on value (relative to max value)
+        const percentage = Math.max(5, (item.value / maxValue) * 100);
+        bar.style.width = `${percentage}%`;
+
+        // Add the value as text inside the bar if it's large enough
+        if (percentage > 15) {
+          bar.style.color = 'white';
+          bar.style.paddingLeft = '12px';
+          bar.style.display = 'flex';
+          bar.style.alignItems = 'center';
+          bar.textContent = item.display.toString();
+        }
+
+        // Add a separate value label outside the bar
+        const valueLabel = document.createElement('div');
+        valueLabel.className = 'funnel-bar-value';
+        valueLabel.textContent = item.display.toString();
+        barContainer.appendChild(valueLabel);
+
+        barContainer.appendChild(bar);
+        innerContainer.appendChild(barContainer);
+      });
+    }
   }
 });
 
