@@ -912,10 +912,10 @@ update msg model =
                         , body = Http.jsonBody encodedBody
                         , expect =
                             Http.expectJson QuoteEmailSent
-                                (Decode.map3 (\s m r -> { success = s, message = m, trackingRecord = r })
-                                    (Decode.field "success" Decode.bool)
-                                    (Decode.field "message" Decode.string)
-                                    (Decode.field "trackingRecord" (Decode.nullable emailTrackingDecoder))
+                                (Decode.succeed (\s m r -> { success = s, message = m, trackingRecord = r })
+                                    |> Pipeline.required "success" Decode.bool
+                                    |> Pipeline.required "message" Decode.string
+                                    |> Pipeline.optional "trackingRecord" (Decode.nullable emailTrackingDecoder) Nothing
                                 )
                         }
                     )

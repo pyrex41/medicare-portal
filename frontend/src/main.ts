@@ -2,6 +2,7 @@ import './styles.css'
 import { Elm } from './Main.elm'
 import * as Chartist from 'chartist';
 import 'chartist/dist/index.css';
+import { setupLineChartAnimations, setupBarChartAnimations, animateFunnelChart } from './chart-animations';
 
 // Declare Stripe for TypeScript
 declare const Stripe: any;
@@ -400,20 +401,70 @@ customElements.define('chartist-bar', class extends HTMLElement {
     chartDiv.style.width = '100%';
     this.appendChild(chartDiv);
     
-    // Add custom CSS for series colors
+    // Add custom CSS for series colors and enhanced styling
     const style = document.createElement('style');
     style.textContent = `
-      .ct-series-a .ct-bar, .ct-series-a .ct-line, .ct-series-a .ct-point { stroke: #03045e !important; }
-      .ct-series-b .ct-bar, .ct-series-b .ct-line, .ct-series-b .ct-point { stroke: #0077b6 !important; }
-      .ct-series-c .ct-bar, .ct-series-c .ct-line, .ct-series-c .ct-point { stroke: #00b4d8 !important; }
-      .ct-series-d .ct-bar, .ct-series-d .ct-line, .ct-series-d .ct-point { stroke: #48cae4 !important; }
+      .ct-series-a .ct-bar, .ct-series-a .ct-line, .ct-series-a .ct-point {
+        stroke: #03045e !important;
+        stroke-width: 2px;
+      }
+      .ct-series-b .ct-bar, .ct-series-b .ct-line, .ct-series-b .ct-point {
+        stroke: #0077b6 !important;
+        stroke-width: 2px;
+      }
+      .ct-series-c .ct-bar, .ct-series-c .ct-line, .ct-series-c .ct-point {
+        stroke: #00b4d8 !important;
+        stroke-width: 2px;
+      }
+      .ct-series-d .ct-bar, .ct-series-d .ct-line, .ct-series-d .ct-point {
+        stroke: #48cae4 !important;
+        stroke-width: 2px;
+      }
+
+      /* Enhanced styling for bar chart */
+      .ct-bar {
+        stroke-linecap: round;
+      }
+
+      /* Grid styling */
+      .ct-grid {
+        stroke: rgba(0,0,0,0.1) !important;
+        stroke-dasharray: 2px;
+      }
+
+      /* Better label styling */
+      .ct-label {
+        font-size: 12px !important;
+        color: #555 !important;
+        fill: #555 !important;
+      }
     `;
     this.appendChild(style);
-    
-    new Chartist.BarChart(chartDiv, chartData, {
+
+    const chart = new Chartist.BarChart(chartDiv, chartData, {
       stackBars: false,
-      axisY: { onlyInteger: true }
+      axisY: { onlyInteger: true },
+      chartPadding: {
+        right: 40,
+        left: 20,
+        top: 20,
+        bottom: 20
+      },
+      seriesBarDistance: 15,
+      // Responsive options for bar chart
+      plugins: [
+        // Optional: add a tooltip plugin if desired
+        // Chartist.plugins?.tooltip && Chartist.plugins.tooltip()
+      ]
     });
+
+    // Apply bar chart animations
+    try {
+      console.log('Setting up bar chart animations');
+      setupBarChartAnimations(chart);
+    } catch (e) {
+      console.error('Error setting up bar chart animations:', e);
+    }
   }
 });
 
@@ -438,28 +489,80 @@ customElements.define('chartist-line', class extends HTMLElement {
     chartDiv.style.width = '100%';
     this.appendChild(chartDiv);
     
-    // Add custom CSS for series colors
+    // Add custom CSS for series colors and enhanced styling
     const style = document.createElement('style');
     style.textContent = `
-      .ct-series-a .ct-bar, .ct-series-a .ct-line, .ct-series-a .ct-point { stroke: #03045e !important; }
-      .ct-series-b .ct-bar, .ct-series-b .ct-line, .ct-series-b .ct-point { stroke: #0077b6 !important; }
-      .ct-series-c .ct-bar, .ct-series-c .ct-line, .ct-series-c .ct-point { stroke: #00b4d8 !important; }
-      .ct-series-d .ct-bar, .ct-series-d .ct-line, .ct-series-d .ct-point { stroke: #48cae4 !important; }
+      .ct-series-a .ct-bar, .ct-series-a .ct-line, .ct-series-a .ct-point {
+        stroke: #03045e !important;
+        stroke-width: 3px;
+      }
+      .ct-series-b .ct-bar, .ct-series-b .ct-line, .ct-series-b .ct-point {
+        stroke: #0077b6 !important;
+        stroke-width: 3px;
+      }
+      .ct-series-c .ct-bar, .ct-series-c .ct-line, .ct-series-c .ct-point {
+        stroke: #00b4d8 !important;
+        stroke-width: 3px;
+      }
+      .ct-series-d .ct-bar, .ct-series-d .ct-line, .ct-series-d .ct-point {
+        stroke: #48cae4 !important;
+        stroke-width: 3px;
+      }
+
+      /* Enhanced point styling */
+      .ct-point {
+        stroke-width: 8px !important;
+        fill: white !important;
+        stroke-linecap: round;
+      }
+
+      /* Grid styling */
+      .ct-grid {
+        stroke: rgba(0,0,0,0.1) !important;
+        stroke-dasharray: 2px;
+      }
+
+      /* Better label styling */
+      .ct-label {
+        font-size: 12px !important;
+        color: #555 !important;
+        fill: #555 !important;
+      }
+
+      /* Area under the line */
+      .ct-area {
+        fill-opacity: 0.1;
+      }
     `;
     this.appendChild(style);
-    
-    new Chartist.LineChart(chartDiv, chartData, {
+
+    const chart = new Chartist.LineChart(chartDiv, chartData, {
       fullWidth: true,
       chartPadding: {
-        right: 40
+        right: 40,
+        left: 20,
+        top: 20,
+        bottom: 20
       },
       lineSmooth: Chartist.Interpolation.cardinal({
         tension: 0.2
       }),
       axisY: {
         onlyInteger: true
-      }
+      },
+      showPoint: true,
+      plugins: [
+        // No plugins currently to avoid build error
+      ]
     });
+
+    // Apply line chart animations
+    try {
+      console.log('Setting up line chart animations');
+      setupLineChartAnimations(chart);
+    } catch (e) {
+      console.error('Error setting up line chart animations:', e);
+    }
   }
 });
 
@@ -491,7 +594,7 @@ customElements.define('chartist-funnel', class extends HTMLElement {
     chartContainer.style.justifyContent = 'space-between';
     this.appendChild(chartContainer);
     
-    // Add custom CSS with improved styling
+    // Add custom CSS with improved styling and animations
     const style = document.createElement('style');
     style.textContent = `
       .funnel-chart-container {
@@ -509,8 +612,10 @@ customElements.define('chartist-funnel', class extends HTMLElement {
         margin: 10px 0;
         position: relative;
         overflow: visible;
-        transition: width 0.3s ease-in-out;
+        transition: width 0.8s cubic-bezier(0.22, 0.61, 0.36, 1), opacity 0.6s ease;
         box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        opacity: 1;
+        transform-origin: left center;
       }
       .funnel-bar-label {
         position: absolute;
@@ -521,6 +626,7 @@ customElements.define('chartist-funnel', class extends HTMLElement {
         font-weight: 500;
         line-height: 35px;
         color: #333;
+        transition: opacity 0.4s ease, transform 0.5s ease;
       }
       .funnel-bar-value {
         position: absolute;
@@ -529,10 +635,20 @@ customElements.define('chartist-funnel', class extends HTMLElement {
         font-weight: 500;
         line-height: 35px;
         color: #666;
+        transition: opacity 0.4s ease, transform 0.5s ease;
       }
-      .funnel-bar-quotes-sent { background-color: #03045e; }
-      .funnel-bar-quotes-viewed { background-color: #0077b6; }
-      .funnel-bar-health-completed { background-color: #48cae4; }
+      .funnel-bar-quotes-sent {
+        background-color: #03045e;
+        background-image: linear-gradient(to right, #03045e, #073286);
+      }
+      .funnel-bar-quotes-viewed {
+        background-color: #0077b6;
+        background-image: linear-gradient(to right, #0077b6, #0091d9);
+      }
+      .funnel-bar-health-completed {
+        background-color: #48cae4;
+        background-image: linear-gradient(to right, #48cae4, #79ddf2);
+      }
     `;
     this.appendChild(style);
     
@@ -596,6 +712,8 @@ customElements.define('chartist-funnel', class extends HTMLElement {
         const barLabel = document.createElement('div');
         barLabel.className = 'funnel-bar-label';
         barLabel.textContent = item.label;
+        barLabel.style.opacity = '0'; // Hide initially for animation
+        barLabel.style.transform = 'translateY(10px)'; // Position for animation
         barContainer.appendChild(barLabel);
 
         const bar = document.createElement('div');
@@ -603,7 +721,12 @@ customElements.define('chartist-funnel', class extends HTMLElement {
 
         // Scale the width based on value (relative to max value)
         const percentage = Math.max(5, (item.value / maxValue) * 100);
-        bar.style.width = `${percentage}%`;
+        const percentageStr = `${percentage}%`;
+
+        // Store the original width for animation purposes, but start with 0 width for animation
+        bar.setAttribute('data-original-width', percentageStr);
+        bar.style.width = '0%';  // Start with width 0 for animation
+        bar.style.opacity = '0'; // Start hidden for smooth animation
 
         // Add the value as text inside the bar if it's large enough
         if (percentage > 15) {
@@ -618,11 +741,19 @@ customElements.define('chartist-funnel', class extends HTMLElement {
         const valueLabel = document.createElement('div');
         valueLabel.className = 'funnel-bar-value';
         valueLabel.textContent = item.display.toString();
+        valueLabel.style.opacity = '0'; // Hide initially for animation
+        valueLabel.style.transform = 'translateY(10px)'; // Position for animation
         barContainer.appendChild(valueLabel);
 
         barContainer.appendChild(bar);
         innerContainer.appendChild(barContainer);
       });
+
+      // Apply animation to the funnel chart after rendering
+      // Use a small timeout to ensure DOM is fully ready
+      setTimeout(() => {
+        animateFunnelChart(innerContainer);
+      }, 50);
     }
   }
 });

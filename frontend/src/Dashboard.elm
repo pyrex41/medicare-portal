@@ -12,7 +12,9 @@ import Json.Encode as Encode
 import Time
 
 
+
 -- MODEL
+
 
 type alias Model =
     { limitBanner : LimitBanner.Model
@@ -32,6 +34,8 @@ type alias Model =
 
 
 -- This is the data structure from the API
+
+
 type alias ChartDataFromAPI =
     { x : Float -- timestamp or month index
     , sends : Float
@@ -43,10 +47,13 @@ type alias ChartDataFromAPI =
 
 
 -- This is the data structure for Chartist.js
+
+
 type alias ChartistJsData =
     { labels : List String
     , series : List (List Float)
     }
+
 
 type TimeFilter
     = Last7Days
@@ -55,10 +62,12 @@ type TimeFilter
     | YearToDate
     | CustomRange Time.Posix Time.Posix
 
+
 type ChartView
     = TrendView
     | FunnelView
     | ComparisonView
+
 
 type alias Renewal =
     { id : String
@@ -70,7 +79,9 @@ type alias Renewal =
     }
 
 
+
 -- MESSAGES
+
 
 type Msg
     = NoOp
@@ -106,6 +117,7 @@ type alias DashboardStatsResponse =
     , stats : DashboardStats
     }
 
+
 type alias RenewalResponse =
     { success : Bool
     , renewals : List Renewal
@@ -129,7 +141,11 @@ chartDataFromAPIDecoder =
         |> Pipeline.required "sends" Decode.float
         |> Pipeline.required "views" Decode.float
         |> Pipeline.required "followUps" Decode.float
-        |> Pipeline.optional "healthCompleted" Decode.float 0.0 -- Default to 0 if not present
+        |> Pipeline.optional "healthCompleted" Decode.float 0.0
+
+
+
+-- Default to 0 if not present
 
 
 dashboardStatsResponseDecoder : Decoder DashboardStatsResponse
@@ -137,6 +153,7 @@ dashboardStatsResponseDecoder =
     Decode.succeed DashboardStatsResponse
         |> Pipeline.required "success" Decode.bool
         |> Pipeline.required "stats" dashboardStatsDecoder
+
 
 renewalDecoder : Decoder Renewal
 renewalDecoder =
@@ -148,6 +165,7 @@ renewalDecoder =
         |> Pipeline.required "date" Decode.string
         |> Pipeline.required "policyType" Decode.string
 
+
 renewalResponseDecoder : Decoder RenewalResponse
 renewalResponseDecoder =
     Decode.succeed RenewalResponse
@@ -155,9 +173,11 @@ renewalResponseDecoder =
         |> Pipeline.required "renewals" (Decode.list renewalDecoder)
 
 
--- HELPERS
 
+-- HELPERS
 -- Function to encode ChartistJsData to JSON
+
+
 encodeChartistJsData : ChartistJsData -> Encode.Value
 encodeChartistJsData data =
     Encode.object
@@ -165,7 +185,11 @@ encodeChartistJsData data =
         , ( "series", Encode.list (Encode.list Encode.float) data.series )
         ]
 
+
+
 -- Helper to format month float to short string (e.g., 0.0 -> "Jan")
+
+
 formatMonthLabel : Float -> String
 formatMonthLabel x =
     let
@@ -212,45 +236,65 @@ formatMonthLabel x =
         _ ->
             ""
 
+
+
 -- Calculate percentages and rates
+
+
 calculateViewRate : Model -> Float
 calculateViewRate model =
     if model.quotesSent == 0 then
         0
+
     else
         toFloat model.quotesViewed / toFloat model.quotesSent * 100
+
 
 calculateFollowUpRate : Model -> Float
 calculateFollowUpRate model =
     if model.quotesViewed == 0 then
         0
+
     else
         toFloat model.followUpsRequested / toFloat model.quotesViewed * 100
+
 
 calculateCompletionRate : Model -> Float
 calculateCompletionRate model =
     if model.quotesSent == 0 then
         0
+
     else
         toFloat model.healthQuestionsCompleted / toFloat model.quotesSent * 100
 
+
+
 -- Helper to get API endpoint based on time filter
+
+
 timeFilterToApiParam : TimeFilter -> String
 timeFilterToApiParam filter =
     case filter of
         Last7Days ->
             "7days"
+
         Last30Days ->
             "30days"
+
         Last90Days ->
             "90days"
+
         YearToDate ->
             "ytd"
+
         CustomRange start end ->
-            "custom"  -- Would need to append date parameters
+            "custom"
 
 
+
+-- Would need to append date parameters
 -- INIT
+
 
 init : Flags -> ( Model, Cmd Msg )
 init flags =
@@ -279,18 +323,24 @@ init flags =
     )
 
 
+
 -- HTTP
+
 
 fetchDashboardStats : TimeFilter -> Cmd Msg
 fetchDashboardStats timeFilter =
     let
-        timeParam = timeFilterToApiParam timeFilter
-        url = "/api/dashboard/stats?period=" ++ timeParam
+        timeParam =
+            timeFilterToApiParam timeFilter
+
+        url =
+            "/api/dashboard/stats?period=" ++ timeParam
     in
     Http.get
         { url = url
         , expect = Http.expectJson GotDashboardStats dashboardStatsResponseDecoder
         }
+
 
 fetchRenewals : Cmd Msg
 fetchRenewals =
@@ -319,7 +369,9 @@ httpErrorToString error =
             "Bad body: " ++ message
 
 
+
 -- UPDATE
+
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
@@ -395,6 +447,7 @@ update msg model =
                         ( { model | upcomingRenewals = response.renewals }
                         , Cmd.none
                         )
+
                     else
                         ( model
                         , Cmd.none
@@ -428,8 +481,10 @@ viewChartist chartistDataJson chartView =
             case chartView of
                 TrendView ->
                     "chartist-line"
+
                 FunnelView ->
                     "chartist-funnel"
+
                 ComparisonView ->
                     "chartist-bar"
     in
@@ -440,7 +495,9 @@ viewChartist chartistDataJson chartView =
         []
 
 
+
 -- VIEW
+
 
 view : Model -> Document Msg
 view model =
@@ -451,6 +508,7 @@ view model =
                 |> Html.map LimitBannerMsg
             , if model.showTutorialModal then
                 viewTutorialModal
+
               else
                 text ""
             , viewDashboardHeader model
@@ -460,76 +518,102 @@ view model =
         ]
     }
 
+
 viewDashboardHeader : Model -> Html Msg
 viewDashboardHeader model =
     div [ class "flex flex-col sm:flex-row justify-between items-center mb-6" ]
-        [ h1 [ class "text-2xl font-bold text-gray-800 mb-4 sm:mb-0" ] 
-             [ text "MedicareMax Dashboard" ]
+        [ h1 [ class "text-2xl font-bold text-gray-800 mb-4 sm:mb-0" ]
+            [ text "MedicareMax Dashboard" ]
         , div [ class "flex space-x-2" ]
             [ select
                 [ class "bg-white border border-gray-300 rounded-md px-3 py-2 text-sm"
-                , onInput (\value -> 
-                    case value of
-                        "7days" -> SelectTimeFilter Last7Days
-                        "30days" -> SelectTimeFilter Last30Days
-                        "90days" -> SelectTimeFilter Last90Days
-                        "ytd" -> SelectTimeFilter YearToDate
-                        _ -> NoOp
-                  )
+                , onInput
+                    (\value ->
+                        case value of
+                            "7days" ->
+                                SelectTimeFilter Last7Days
+
+                            "30days" ->
+                                SelectTimeFilter Last30Days
+
+                            "90days" ->
+                                SelectTimeFilter Last90Days
+
+                            "ytd" ->
+                                SelectTimeFilter YearToDate
+
+                            _ ->
+                                NoOp
+                    )
                 ]
                 [ option [ value "7days" ] [ text "Last 7 Days" ]
                 , option [ value "30days", selected (model.selectedTimeFilter == Last30Days) ] [ text "Last 30 Days" ]
                 , option [ value "90days" ] [ text "Last 90 Days" ]
                 , option [ value "ytd" ] [ text "Year to Date" ]
                 ]
-            , button 
+            , button
                 [ class "bg-[#03045e] text-white px-4 py-2 rounded-md text-sm hover:bg-opacity-90"
                 , onClick FetchDashboardStats
-                ] 
+                ]
                 [ text "Refresh" ]
             ]
         ]
 
+
 viewStatsCards : Model -> Html Msg
 viewStatsCards model =
     let
-        viewRate = calculateViewRate model |> round
-        followUpRate = calculateFollowUpRate model |> round
-        completionRate = calculateCompletionRate model |> round
+        viewRate =
+            calculateViewRate model |> round
+
+        followUpRate =
+            calculateFollowUpRate model |> round
+
+        completionRate =
+            calculateCompletionRate model |> round
     in
     div [ class "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-6" ]
         [ -- Quotes Sent card
           if model.statsLoading then
             viewStatsCardWithSpinner "Quotes Sent" "text-[#03045e]"
+
           else if model.statsError /= Nothing then
             viewStatsCard "Quotes Sent" "Error" "text-red-600" "Failed to load data"
+
           else
             viewStatsCard "Quotes Sent" (String.fromInt model.quotesSent) "text-[#03045e]" "Total emails sent with quotes"
-        
+
         -- View Rate card
         , if model.statsLoading then
             viewStatsCardWithSpinner "View Rate" "text-[#0077b6]"
+
           else if model.statsError /= Nothing then
             viewStatsCard "View Rate" "Error" "text-red-600" "Failed to load data"
+
           else
             viewStatsCard "View Rate" (String.fromInt viewRate ++ "%") "text-[#0077b6]" (String.fromInt model.quotesViewed ++ " quotes viewed")
-        
+
         -- Upcoming Emails card
         , if model.statsLoading then
             viewStatsCardWithSpinner "Upcoming Emails" "text-[#00b4d8]"
+
           else if model.statsError /= Nothing then
             viewStatsCard "Upcoming Emails" "Error" "text-red-600" "Failed to load data"
+
           else
             viewStatsCard "Upcoming Emails" (String.fromInt model.followUpsRequested) "text-[#00b4d8]" "Upcoming scheduled emails"
-        
+
         -- Completion Rate card
         , if model.statsLoading then
             viewStatsCardWithSpinner "Completion Rate" "text-[#48cae4]"
+
           else if model.statsError /= Nothing then
             viewStatsCard "Completion Rate" "Error" "text-red-600" "Failed to load data"
+
           else
             viewStatsCard "Completion Rate" (String.fromInt completionRate ++ "%") "text-[#48cae4]" (String.fromInt model.healthQuestionsCompleted ++ " health questions completed")
         ]
+
 
 viewMainContent : Model -> Html Msg
 viewMainContent model =
@@ -539,30 +623,42 @@ viewMainContent model =
             [ div [ class "flex justify-between items-center mb-4" ]
                 [ h2 [ class "text-lg font-semibold text-gray-800" ] [ text "Performance Metrics" ]
                 , div [ class "flex space-x-2" ]
-                    [ button 
-                        [ class ("px-3 py-1 text-sm rounded-md " ++ 
-                            if model.selectedChartView == TrendView then 
-                                "bg-[#03045e] text-white" 
-                            else 
-                                "bg-gray-100")
+                    [ button
+                        [ class
+                            ("px-3 py-1 text-sm rounded-md "
+                                ++ (if model.selectedChartView == TrendView then
+                                        "bg-[#03045e] text-white"
+
+                                    else
+                                        "bg-gray-100"
+                                   )
+                            )
                         , onClick (SelectChartView TrendView)
                         ]
                         [ text "Trend" ]
-                    , button 
-                        [ class ("px-3 py-1 text-sm rounded-md " ++ 
-                            if model.selectedChartView == FunnelView then 
-                                "bg-[#03045e] text-white" 
-                            else 
-                                "bg-gray-100")
+                    , button
+                        [ class
+                            ("px-3 py-1 text-sm rounded-md "
+                                ++ (if model.selectedChartView == FunnelView then
+                                        "bg-[#03045e] t ext-white"
+
+                                    else
+                                        "bg-gray-100"
+                                   )
+                            )
                         , onClick (SelectChartView FunnelView)
                         ]
                         [ text "Funnel" ]
-                    , button 
-                        [ class ("px-3 py-1 text-sm rounded-md " ++ 
-                            if model.selectedChartView == ComparisonView then 
-                                "bg-[#03045e] text-white" 
-                            else 
-                                "bg-gray-100")
+                    , button
+                        [ class
+                            ("px-3 py-1 text-sm rounded-md "
+                                ++ (if model.selectedChartView == ComparisonView then
+                                        "bg-[#03045e] text-white"
+
+                                    else
+                                        "bg-gray-100"
+                                   )
+                            )
                         , onClick (SelectChartView ComparisonView)
                         ]
                         [ text "Comparison" ]
@@ -604,6 +700,7 @@ viewMainContent model =
                                             { labels = [ "Quotes Sent", "Quotes Viewed", "Upcoming Emails", "Health Completed" ]
                                             , series = [ [ toFloat model.quotesSent, toFloat model.quotesViewed, toFloat model.followUpsRequested, toFloat model.healthQuestionsCompleted ] ]
                                             }
+
                                         Nothing ->
                                             -- Even if there's no chart data, we can still use the model values
                                             { labels = [ "Quotes Sent", "Quotes Viewed", "Upcoming Emails", "Health Completed" ]
@@ -660,24 +757,27 @@ viewMainContent model =
           div [ class "lg:col-span-1 bg-white rounded-lg shadow-xl p-4" ]
             [ div [ class "flex justify-between items-center mb-4" ]
                 [ h2 [ class "text-lg font-semibold text-gray-800" ] [ text "Upcoming Renewals" ]
-                , span [ class "bg-[#03045e] text-white text-xs px-2 py-1 rounded-full" ] 
+                , span [ class "bg-[#03045e] text-white text-xs px-2 py-1 rounded-full" ]
                     [ text (String.fromInt (List.length model.upcomingRenewals) ++ " Total") ]
                 ]
             , if model.statsLoading then
                 div [ class "h-full w-full flex items-center justify-center py-8" ]
                     [ div [ class "animate-spin rounded-full h-8 w-8 border-t-2 border-l-2 border-[#03045e]" ] [] ]
+
               else if List.isEmpty model.upcomingRenewals then
                 div [ class "text-center py-8 text-gray-500" ]
                     [ text "No upcoming renewals at this time." ]
+
               else
                 div [ class "space-y-4 max-h-[400px] overflow-y-auto" ]
                     (List.map viewRenewalItem model.upcomingRenewals)
             , div [ class "mt-4 text-center" ]
-                [ button [ class "text-[#03045e] text-sm font-medium" ] 
+                [ button [ class "text-[#03045e] text-sm font-medium" ]
                     [ text "View All Renewals" ]
                 ]
             ]
         ]
+
 
 viewRenewalItem : Renewal -> Html Msg
 viewRenewalItem renewal =
@@ -700,15 +800,15 @@ viewRenewalItem renewal =
             , text renewal.phone
             ]
         , div [ class "mt-2 flex space-x-2" ]
-            [ button 
+            [ button
                 [ class "bg-[#0077b6] text-white text-xs px-3 py-1 rounded"
                 , onClick (SendReminderToContact renewal.id)
-                ] 
+                ]
                 [ text "Send Reminder" ]
-            , button 
+            , button
                 [ class "bg-gray-100 text-gray-800 text-xs px-3 py-1 rounded"
                 , onClick (CallContact renewal.id)
-                ] 
+                ]
                 [ text "Call" ]
             ]
         ]
