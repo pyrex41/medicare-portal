@@ -392,7 +392,9 @@ update msg model =
 
                     else
                         ( { model | loadingResumeData = True }
-                        , saveCompanyDetails model
+                        , Cmd.batch
+                            [ saveCompanyDetails model
+                            ]
                         )
 
                 2 ->
@@ -401,7 +403,7 @@ update msg model =
 
                     else
                         ( { model | frame = model.frame + 1 }
-                        , Cmd.none
+                        , saveLicensingSettings model
                         )
 
                 3 ->
