@@ -262,6 +262,12 @@ findBestCarrierMatch carrierName standardCarriers =
                 "uhica" ->
                     Just "United Healthcare"
 
+                "united healthcare" ->
+                    Just "United Healthcare"
+
+                "unitedhealthcare" ->
+                    Just "United Healthcare"
+
                 "ace / chubb" ->
                     Just "Ace Chubb"
 
@@ -285,6 +291,9 @@ findBestCarrierMatch carrierName standardCarriers =
 
                 "blue shield" ->
                     Just "Blue Cross Blue Shield"
+
+                "humana" ->
+                    Just "Humana"
 
                 "humana gold" ->
                     Just "Humana"

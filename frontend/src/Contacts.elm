@@ -330,7 +330,12 @@ init key maybeUser =
             }
     in
     ( model
-    , Cmd.batch [ fetchContacts model, fetchDashboardStats ]
+    , Cmd.batch
+        [ fetchContacts model
+        , fetchDashboardStats
+        , fetchAgents
+        , fetchCarriers
+        ]
     )
 
 
@@ -519,7 +524,9 @@ update msg model =
             ( { model | showModal = AddModal }, Cmd.none )
 
         ChooseMultipleContacts ->
-            ( { model | showModal = CsvUploadModal (emptyUploadState model) }, Cmd.none )
+            ( { model | showModal = CsvUploadModal (emptyUploadState model) }
+            , Cmd.batch [ fetchAgents, fetchCarriers ]
+            )
 
         ShowAddModal ->
             ( { model | showModal = AddModal }, Cmd.none )
@@ -1114,7 +1121,9 @@ update msg model =
             ( model, Cmd.none )
 
         ShowCsvUploadModal ->
-            ( { model | showModal = CsvUploadModal (emptyUploadState model) }, Cmd.none )
+            ( { model | showModal = CsvUploadModal (emptyUploadState model) }
+            , Cmd.batch [ fetchAgents, fetchCarriers ]
+            )
 
         DragEnter ->
             case model.showModal of
@@ -2199,8 +2208,9 @@ viewTableRow model contact =
                             in
                             case defaultAgent of
                                 Just agent ->
-                                    agent.firstName ++ " " ++ agent.lastName ++ " (Default)"
+                                    agent.firstName ++ " " ++ agent.lastName
 
+                                --++ " (Default)"
                                 Nothing ->
                                     "Default"
 
