@@ -81,6 +81,7 @@ type Msg
     | GotEmailCheckResponse Int (Result Http.Error EmailCheckResponse)
     | SubmitForm
     | GotSignupResponse (Result Http.Error SignupResponse)
+    | BlurEmail
 
 
 type alias SignupResponse =
@@ -109,6 +110,9 @@ update msg model =
 
         UpdateEmail value ->
             let
+                newCounter =
+                    model.debounceCounter + 1
+
                 newModel =
                     { model
                         | email = value
@@ -121,18 +125,16 @@ update msg model =
 
                             else
                                 Checking
-                        , debounceCounter = model.debounceCounter + 1
+                        , debounceCounter = newCounter
+                        , error = Nothing -- Clear any previous error on email change
                     }
-
-                counter =
-                    newModel.debounceCounter
             in
             ( newModel
             , if String.isEmpty value || not (isValidEmailFormat value) then
                 Cmd.none
 
               else
-                debounceEmailCheck counter
+                debounceEmailCheck newCounter
             )
 
         UpdatePhone value ->
@@ -234,6 +236,13 @@ update msg model =
                     , Cmd.none
                     )
 
+        BlurEmail ->
+            if isValidEmailFormat model.email then
+                ( model, checkEmailAvailability model.debounceCounter model.email )
+
+            else
+                ( model, Cmd.none )
+
 
 
 -- VIEW
@@ -321,6 +330,7 @@ viewForm model =
                     , id "email"
                     , value model.email
                     , onInput UpdateEmail
+                    , onBlur BlurEmail
                     , class "mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-base py-2.5 px-3"
                     , placeholder "you@example.com"
                     ]
