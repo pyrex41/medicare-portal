@@ -66,6 +66,7 @@ type TimeFilter
     | Last90Days
     | YearToDate
     | CustomRange Time.Posix Time.Posix
+    | Today
 
 
 type ChartView
@@ -310,6 +311,9 @@ timeFilterToApiParam filter =
 
         CustomRange start end ->
             "custom"
+
+        Today ->
+            "today"
 
 
 
@@ -563,6 +567,9 @@ viewDashboardHeader model =
                 , onInput
                     (\value ->
                         case value of
+                            "today" ->
+                                SelectTimeFilter Today
+
                             "7days" ->
                                 SelectTimeFilter Last7Days
 
@@ -579,10 +586,11 @@ viewDashboardHeader model =
                                 NoOp
                     )
                 ]
-                [ option [ value "7days" ] [ text "Last 7 Days" ]
+                [ option [ value "today", selected (model.selectedTimeFilter == Today) ] [ text "Today" ]
+                , option [ value "7days", selected (model.selectedTimeFilter == Last7Days) ] [ text "Last 7 Days" ]
                 , option [ value "30days", selected (model.selectedTimeFilter == Last30Days) ] [ text "Last 30 Days" ]
-                , option [ value "90days" ] [ text "Last 90 Days" ]
-                , option [ value "ytd" ] [ text "Year to Date" ]
+                , option [ value "90days", selected (model.selectedTimeFilter == Last90Days) ] [ text "Last 90 Days" ]
+                , option [ value "ytd", selected (model.selectedTimeFilter == YearToDate) ] [ text "Year to Date" ]
                 ]
             , button
                 [ class "bg-[#03045e] text-white px-4 py-2 rounded-md text-sm hover:bg-opacity-90"

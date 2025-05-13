@@ -72,6 +72,10 @@ type Context = {
   set: { status: number };
 };
 
+function normalizeEmail(email: string): string {
+    return email.trim().toLowerCase();
+}
+
 /**
  * Contacts API endpoints
  */
@@ -460,6 +464,22 @@ export const contactsRoutes = new Elysia({ prefix: '/api/contacts' })
         );
         
         logger.info(`Bulk import completed: ${result}`);
+
+        // After bulk import, handle re-activation from deleted_contacts
+        // This assumes the new org DB is now live and accessible via getOrInitOrgDb
+        if (body.contacts && body.contacts.length > 0) {
+          const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString()); // Connects to the NEW live DB
+          const importedEmails = body.contacts.map(contact => normalizeEmail(contact.email)).filter(Boolean);
+
+          if (importedEmails.length > 0) {
+            const placeholders = importedEmails.map(() => '?').join(',');
+            await orgDb.execute(
+              `DELETE FROM deleted_contacts WHERE LOWER(TRIM(email)) IN (${placeholders})`,
+              importedEmails
+            );
+            logger.info(`Cleared ${importedEmails.length} reactivated emails from deleted_contacts for org ${user.organization_id} post-bulk-import.`);
+          }
+        }
         
         return {
           success: true,
@@ -762,6 +782,115 @@ export const contactsRoutes = new Elysia({ prefix: '/api/contacts' })
     }
   })
   
+  // Add new POST endpoint for single contact creation/update
+  .post('', 
+    async ({ body, user, set }: { body: any; user: User; set: { status: number } }) => {
+      if (!user || !user.organization_id) {
+        set.status = 401;
+        return { success: false, message: 'Not authorized' };
+      }
+
+      // TODO: Define a proper schema for single contact body using t.Object
+      const contactData = body as ContactImport; // Assuming ContactImport for now, adjust as needed
+
+      if (!contactData || !contactData.email) {
+        set.status = 400;
+        return { success: false, message: 'Invalid contact data: email is required' };
+      }
+
+      try {
+        const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString());
+        const normalizedEmail = normalizeEmail(contactData.email);
+
+        // Handle re-activation: Remove from deleted_contacts if exists
+        await orgDb.execute(
+          'DELETE FROM deleted_contacts WHERE LOWER(TRIM(email)) = ?',
+          [normalizedEmail]
+        );
+        logger.info(`Cleared ${normalizedEmail} from deleted_contacts (if existed) for org ${user.organization_id} during contact creation/update.`);
+
+        // Logic to INSERT or UPDATE the contact in the 'contacts' table
+        // This assumes an UPSERT-like behavior based on email.
+        // Column names in 'contacts' table might differ slightly from ContactImport, adjust as needed.
+        const { 
+          first_name, last_name, email, phone_number, state, 
+          current_carrier, effective_date, birth_date, tobacco_user, 
+          gender, zip_code, plan_type 
+        } = contactData;
+
+        // Ensure zip_code and inferred_state are handled correctly
+        let inferredState = state; // Use provided state by default
+        if (zip_code && ZIP_DATA[zip_code]) {
+          inferredState = ZIP_DATA[zip_code].state;
+        }
+        if (!inferredState && state) { // Fallback if zip lookup failed but state was provided
+            inferredState = state;
+        } else if (!inferredState) {
+            inferredState = ''; // Default to empty string if no state can be determined
+            logger.warn(`No state could be determined for contact ${email}`);
+        }
+
+
+        const result = await orgDb.execute(`
+          INSERT INTO contacts (
+            first_name, last_name, email, phone_number, state, 
+            current_carrier, effective_date, birth_date, tobacco_user, 
+            gender, zip_code, plan_type, agent_id, created_at, updated_at, status
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'New')
+          ON CONFLICT(LOWER(TRIM(email))) DO UPDATE SET
+            first_name = excluded.first_name,
+            last_name = excluded.last_name,
+            phone_number = excluded.phone_number,
+            state = excluded.state,
+            current_carrier = excluded.current_carrier,
+            effective_date = excluded.effective_date,
+            birth_date = excluded.birth_date,
+            tobacco_user = excluded.tobacco_user,
+            gender = excluded.gender,
+            zip_code = excluded.zip_code,
+            plan_type = excluded.plan_type,
+            agent_id = excluded.agent_id, -- This might need to be handled differently if agent_id comes from user or elsewhere
+            updated_at = CURRENT_TIMESTAMP,
+            status = CASE WHEN contacts.status = 'Deleted' THEN 'Reactivated' ELSE contacts.status END -- Example status update
+          RETURNING id;
+        `, [
+          first_name, last_name, normalizedEmail, phone_number, inferredState,
+          current_carrier, effective_date, birth_date, tobacco_user ? 1 : 0,
+          gender, zip_code, plan_type, user.id // Assuming agent_id is the creating user's ID for new contacts
+        ]);
+        
+        const contactId = result.rows?.[0]?.id;
+
+        logger.info(`Successfully created/updated contact ${normalizedEmail} with ID ${contactId} for org ${user.organization_id}.`);
+        return { success: true, message: 'Contact created/updated successfully', contactId };
+
+      } catch (error) {
+        logger.error(`Error creating/updating contact: ${error}`);
+        set.status = 500;
+        return { success: false, message: 'Failed to create/update contact' };
+      }
+    },
+    {
+      // Define a proper schema for the request body using Elysia's 't' object
+      // This is a placeholder and should be refined based on actual Contact model fields for creation/update
+      body: t.Object({
+        first_name: t.String(),
+        last_name: t.String(),
+        email: t.String({ format: 'email' }), // Elysia can validate email format
+        phone_number: t.Optional(t.String()),
+        state: t.Optional(t.String()),
+        current_carrier: t.Optional(t.String()),
+        effective_date: t.Optional(t.String()), // Consider t.Date() or string format validation
+        birth_date: t.Optional(t.String()),     // Consider t.Date() or string format validation
+        tobacco_user: t.Optional(t.Boolean()),
+        gender: t.Optional(t.String()),
+        zip_code: t.Optional(t.String()),
+        plan_type: t.Optional(t.String())
+        // agent_id might be derived from the user session or explicitly passed
+      })
+    }
+  )
   // Add DELETE endpoint for contacts
   .delete('/', 
     async ({ body, set, request }) => {
@@ -772,46 +901,112 @@ export const contactsRoutes = new Elysia({ prefix: '/api/contacts' })
           return { error: 'Not authorized' };
         }
 
-        const contactIds = body;
-        if (!Array.isArray(contactIds) || contactIds.length === 0) {
-          throw new Error('No contact IDs provided');
+        const contactIdsToDelete = body as number[]; // Assuming body is an array of numbers (contact IDs)
+        if (!Array.isArray(contactIdsToDelete) || contactIdsToDelete.length === 0) {
+          set.status = 400;
+          return { error: 'No contact IDs provided' };
         }
         
-        logger.info(`DELETE /api/contacts - Attempting to delete ${contactIds.length} contacts for org ${user.organization_id}`);
+        logger.info(`DELETE /api/contacts - Attempting to move ${contactIdsToDelete.length} contacts to deleted_contacts for org ${user.organization_id}`);
         
-        // Get org-specific database
         const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString());
 
-        // Create placeholders for SQL IN clause
-        const placeholders = contactIds.map(() => '?').join(',');
-        
-        // First delete related records from email_send_tracking
-        const deleteEmailTrackingQuery = `
-          DELETE FROM email_send_tracking 
-          WHERE contact_id IN (${placeholders})
-        `;
-        await orgDb.execute(deleteEmailTrackingQuery, contactIds);
+        const successfullyMovedIds: number[] = [];
+        const failedToMoveIds: any[] = [];
 
-        // Then delete the contacts
-        const deleteContactsQuery = `
-          DELETE FROM contacts 
-          WHERE id IN (${placeholders})
-          RETURNING id
-        `;
+        for (const contactId of contactIdsToDelete) {
+          if (typeof contactId !== 'number') {
+            logger.warn(`Invalid contactId type: ${contactId}, skipping.`);
+            failedToMoveIds.push({ id: contactId, error: 'Invalid ID type' });
+            continue;
+          }
 
-        const result = await orgDb.execute(deleteContactsQuery, contactIds);
-        const deletedIds = result.rows?.map((row: { id: number }) => row.id) || [];
+          try {
+            await orgDb.transaction(async (tx) => {
+              // 1. Select the contact from the 'contacts' table
+              const contact = await tx.fetchOne<Contact>(
+                'SELECT * FROM contacts WHERE id = ?',
+                [contactId]
+              );
 
-        logger.info(`DELETE /api/contacts - Successfully deleted ${deletedIds.length} contacts from org ${user.organization_id}`);
+              if (!contact) {
+                logger.warn(`Contact with ID ${contactId} not found in contacts table for org ${user.organization_id}.`);
+                failedToMoveIds.push({ id: contactId, error: 'Not found' });
+                return; // Exit transaction for this contactId
+              }
+
+              const normalizedEmail = normalizeEmail(contact.email);
+
+              // 2. Insert into 'deleted_contacts' table
+              // Ensure all fields match the deleted_contacts schema
+              await tx.execute(`
+                INSERT INTO deleted_contacts (
+                  original_contact_id, first_name, last_name, email, phone_number, 
+                  current_carrier, plan_type, effective_date, birth_date, 
+                  tobacco_user, gender, state, zip_code, agent_id, status, deleted_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+              `, [
+                contact.id, contact.first_name, contact.last_name, normalizedEmail, contact.phone_number,
+                contact.current_carrier, contact.plan_type, contact.effective_date, contact.birth_date,
+                contact.tobacco_user, contact.gender, contact.state, contact.zip_code, 
+                contact.agent_id, contact.status
+              ]);
+
+              // 3. Delete from related tables (e.g., email_send_tracking, eligibility_answers, contact_events etc.)
+              // It's important to delete from child tables before deleting from the parent (contacts) if ON DELETE CASCADE is not set up for all relations
+              // or if you want to log/handle these deletions specifically.
+              // Assuming ON DELETE CASCADE is set for email_send_tracking, eligibility_answers on contacts.id
+              // If not, add explicit deletes here:
+              // await tx.execute('DELETE FROM email_send_tracking WHERE contact_id = ?', [contactId]);
+              // await tx.execute('DELETE FROM eligibility_answers WHERE contact_id = ?', [contactId]);
+              // await tx.execute('DELETE FROM contact_events WHERE contact_id = ?', [contactId]);
+              // etc.
+
+              // 4. Delete from 'contacts' table
+              await tx.execute(
+                'DELETE FROM contacts WHERE id = ?',
+                [contactId]
+              );
+              
+              successfullyMovedIds.push(contactId);
+              logger.info(`Successfully moved contact ID ${contactId} to deleted_contacts for org ${user.organization_id}`);
+            });
+          } catch (e) {
+            logger.error(`Error moving contact ID ${contactId} to deleted_contacts: ${e}`);
+            failedToMoveIds.push({ id: contactId, error: e instanceof Error ? e.message : String(e) });
+            // Transaction will be rolled back automatically by the Database class if an error is thrown from the callback
+          }
+        }
+
+        const responseMessage = `Moved ${successfullyMovedIds.length} contacts. Failed to move ${failedToMoveIds.length} contacts.`;
+        logger.info(`DELETE /api/contacts - Result for org ${user.organization_id}: ${responseMessage}`);
+
+        if (failedToMoveIds.length > 0) {
+          // Partial success, or complete failure if successfullyMovedIds is empty
+          set.status = successfullyMovedIds.length > 0 ? 207 : 500; // 207 Multi-Status or 500 Internal Server Error
+          return {
+            success: successfullyMovedIds.length > 0,
+            message: responseMessage,
+            successfully_moved_ids: successfullyMovedIds,
+            failed_to_move_ids: failedToMoveIds
+          };
+        }
 
         return {
           success: true,
-          deleted_ids: deletedIds,
-          message: `Successfully deleted ${deletedIds.length} contacts`
+          message: responseMessage,
+          successfully_moved_ids: successfullyMovedIds
         };
+
       } catch (e) {
-        logger.error(`Error deleting contacts: ${e}`);
-        throw new Error(String(e));
+        logger.error(`Error processing delete contacts request: ${e}`);
+        // Ensure set.status is managed by Elysia's error handling or set manually
+        const currentStatus = typeof set.status === 'number' ? set.status : 0;
+        if (currentStatus < 400) { // If not already an error status, set to 500
+            set.status = 500;
+        }
+        return { error: e instanceof Error ? e.message : 'Failed to delete contacts' };
       }
     },
     {

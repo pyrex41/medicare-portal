@@ -8,10 +8,9 @@ import path from 'path'
 import { parse } from 'csv-parse'
 import { pipeline } from 'stream/promises'
 import fetch, { Response } from 'node-fetch'
-import type { RequestInit, RequestInfo } from 'node-fetch'
+import type { RequestInit, RequestInfo, BodyInit } from 'node-fetch'
 import type { ContactCreate } from './types'
-import { Database as SqliteDatabase, open } from 'sqlite'
-import sqlite3 from 'sqlite3'
+
 import fsPromises from 'fs/promises'
 import Bun from 'bun'
 import { ZIP_DATA } from './index' // Import ZIP_DATA for state lookup
@@ -74,7 +73,7 @@ class ConnectionPool {
       url,
       authToken,
       concurrency: 25, // Lower concurrency to prevent rate limits
-      fetch: async (fetchUrl, options) => {
+      fetch: async (fetchUrl: RequestInfo, options: RequestInit) => {
         // Add custom fetch with retry for 429 errors
         const maxRetries = 3;
         for (let attempt = 0; attempt < maxRetries; attempt++) {
@@ -154,7 +153,7 @@ type CarrierMapping = {
 interface FetchOptions extends RequestInit {
   method?: string;
   headers?: Record<string, string>;
-  body?: string | null;
+  body?: BodyInit;
 }
 
 export class Database {
@@ -212,7 +211,7 @@ export class Database {
         url: normalizedUrl,
         authToken: token,
         concurrency: 25, // Reduced concurrency to prevent rate limits
-        fetch: async (fetchUrl, options) => {
+        fetch: async (fetchUrl: RequestInfo, options: RequestInit) => {
           // Add custom fetch with retry for 429 errors
           const maxRetries = 3;
           for (let attempt = 0; attempt < maxRetries; attempt++) {
@@ -554,7 +553,42 @@ export class Database {
           `CREATE INDEX IF NOT EXISTS idx_email_schedules_org_contact ON email_schedules (contact_id)`,
           `CREATE INDEX IF NOT EXISTS idx_email_schedules_org_send_date ON email_schedules (scheduled_send_date)`,
           `CREATE INDEX IF NOT EXISTS idx_email_schedules_status ON email_schedules (status)`,
-          `CREATE TRIGGER IF NOT EXISTS update_email_schedules_updated_at\nAFTER UPDATE ON email_schedules\nFOR EACH ROW\nBEGIN\n    UPDATE email_schedules\n    SET updated_at = CURRENT_TIMESTAMP\n    WHERE id = OLD.id;\nEND;`
+          `CREATE TRIGGER IF NOT EXISTS update_email_schedules_updated_at
+AFTER UPDATE ON email_schedules
+FOR EACH ROW
+BEGIN
+    UPDATE email_schedules
+    SET updated_at = CURRENT_TIMESTAMP
+    WHERE id = OLD.id;
+END;`
+        ]
+      },
+      {
+        name: 'deleted_contacts',
+        createSql: `
+          CREATE TABLE IF NOT EXISTS deleted_contacts (
+              original_contact_id INTEGER NOT NULL, -- The ID from the original 'contacts' table
+              first_name TEXT,
+              last_name TEXT,
+              email TEXT NOT NULL,        -- Must be normalized: lowercase, trimmed
+              phone_number TEXT,
+              current_carrier TEXT,       -- Optional: Include other relevant fields
+              plan_type TEXT,             -- Optional
+              effective_date TEXT,        -- Optional
+              birth_date TEXT,            -- Optional
+              tobacco_user INTEGER,       -- Optional
+              gender TEXT,                -- Optional
+              state TEXT,                 -- Optional
+              zip_code TEXT,              -- Optional
+              agent_id INTEGER,           -- Optional
+              status TEXT,                -- Optional: Original status before deletion
+              deleted_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL
+          )
+        `,
+        indexSqls: [
+          `CREATE INDEX IF NOT EXISTS idx_deleted_contacts_email_org ON deleted_contacts (LOWER(TRIM(email)))`,
+          `CREATE INDEX IF NOT EXISTS idx_deleted_contacts_deleted_at ON deleted_contacts (deleted_at)`,
+          `CREATE INDEX IF NOT EXISTS idx_deleted_contacts_original_id ON deleted_contacts (original_contact_id)`
         ]
       }
     ];
@@ -573,20 +607,24 @@ export class Database {
     for (const table of tables) {
       if (!tableSet.has(table.name)) {
         logger.info(`Adding create table operation for ${table.name}`);
-        batchOperations.push({
-          sql: table.createStatement,
-          args: []
-        });
+        if (table.createStatement) {
+          batchOperations.push({
+            sql: table.createStatement,
+            args: []
+          });
+        }
       }
       
       // Always add index creation statements, even for existing tables
       // This ensures all necessary indexes exist in all databases
-      for (const indexStatement of table.indexStatements) {
-        logger.info(`Ensuring index for ${table.name}: ${indexStatement}`);
-        batchOperations.push({
-          sql: indexStatement,
-          args: []
-        });
+      if (table.indexStatements) {
+        for (const indexStatement of table.indexStatements) {
+          logger.info(`Ensuring index for ${table.name}: ${indexStatement}`);
+          batchOperations.push({
+            sql: indexStatement,
+            args: []
+          });
+        }
       }
     }
     
@@ -1123,7 +1161,9 @@ export class Database {
         } catch (error) {
           // Rollback transaction on error
           try {
-            localDb.exec('ROLLBACK');
+            if (localDb) {
+              localDb.exec('ROLLBACK');
+            }
           } catch (rollbackError) {
             logger.error(`Error during transaction rollback: ${rollbackError}`);
           }
@@ -1155,7 +1195,7 @@ export class Database {
     try {
       // Get all existing tables at once
       const existingTables = await orgDb.fetchAll(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('contacts', 'contact_events', 'leads', 'eligibility_answers', 'email_send_tracking')"
+        "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('contacts', 'contact_events', 'tracking_clicks', 'leads', 'eligibility_answers', 'email_send_tracking', 'email_schedules', 'deleted_contacts')"
       );
 
       // Create a set of existing table names for faster lookup
@@ -1323,7 +1363,42 @@ export class Database {
             `CREATE INDEX IF NOT EXISTS idx_email_schedules_org_contact ON email_schedules (contact_id)`,
             `CREATE INDEX IF NOT EXISTS idx_email_schedules_org_send_date ON email_schedules (scheduled_send_date)`,
             `CREATE INDEX IF NOT EXISTS idx_email_schedules_status ON email_schedules (status)`,
-            `CREATE TRIGGER IF NOT EXISTS update_email_schedules_updated_at\nAFTER UPDATE ON email_schedules\nFOR EACH ROW\nBEGIN\n    UPDATE email_schedules\n    SET updated_at = CURRENT_TIMESTAMP\n    WHERE id = OLD.id;\nEND;`
+            `CREATE TRIGGER IF NOT EXISTS update_email_schedules_updated_at
+AFTER UPDATE ON email_schedules
+FOR EACH ROW
+BEGIN
+    UPDATE email_schedules
+    SET updated_at = CURRENT_TIMESTAMP
+    WHERE id = OLD.id;
+END;`
+          ]
+        },
+        {
+          name: 'deleted_contacts',
+          createSql: `
+            CREATE TABLE IF NOT EXISTS deleted_contacts (
+                original_contact_id INTEGER NOT NULL, -- The ID from the original 'contacts' table
+                first_name TEXT,
+                last_name TEXT,
+                email TEXT NOT NULL,        -- Must be normalized: lowercase, trimmed
+                phone_number TEXT,
+                current_carrier TEXT,       -- Optional: Include other relevant fields
+                plan_type TEXT,             -- Optional
+                effective_date TEXT,        -- Optional
+                birth_date TEXT,            -- Optional
+                tobacco_user INTEGER,       -- Optional
+                gender TEXT,                -- Optional
+                state TEXT,                 -- Optional
+                zip_code TEXT,              -- Optional
+                agent_id INTEGER,           -- Optional
+                status TEXT,                -- Optional: Original status before deletion
+                deleted_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL
+            )
+          `,
+          indexSqls: [
+            `CREATE INDEX IF NOT EXISTS idx_deleted_contacts_email_org ON deleted_contacts (LOWER(TRIM(email)))`,
+            `CREATE INDEX IF NOT EXISTS idx_deleted_contacts_deleted_at ON deleted_contacts (deleted_at)`,
+            `CREATE INDEX IF NOT EXISTS idx_deleted_contacts_original_id ON deleted_contacts (original_contact_id)`
           ]
         }
       ];

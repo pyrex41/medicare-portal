@@ -3452,6 +3452,38 @@ export function createDashboardRoutes() {
 
         logger.info(`Dashboard stats for org ${currentUser.organization_id}: Quotes Sent: ${quotesSent}, Manual Quotes Sent: ${manualQuotesSent}, Quotes Viewed: ${quotesViewed}, Renewals: ${followUpsRequested}`)
 
+        // UPCOMING EMAILS LOGIC
+        // Only include emails scheduled in the next 30 days and status = 'pre-scheduled'
+        const now = new Date();
+        const in30Days = new Date(now);
+        in30Days.setDate(now.getDate() + 30);
+        const startDate = now.toISOString().slice(0, 10);
+        const endDate = in30Days.toISOString().slice(0, 10);
+
+        // Total count
+        const upcomingTotalResult = await orgDb.fetchOne(
+          `SELECT COUNT(*) as total FROM email_schedules
+           WHERE status = 'pre-scheduled'
+             AND scheduled_send_date >= ?
+             AND scheduled_send_date <= ?`,
+          [startDate, endDate]
+        );
+        const upcomingEmailsTotal = upcomingTotalResult && typeof upcomingTotalResult.total === 'number' ? upcomingTotalResult.total : 0;
+
+        // First page (up to 20)
+        const upcomingEmailsPage = await orgDb.fetchAll(
+          `SELECT es.id, es.contact_id, es.email_type, es.scheduled_send_date, es.status,
+                  c.first_name, c.last_name
+           FROM email_schedules es
+           LEFT JOIN contacts c ON es.contact_id = c.id
+           WHERE es.status = 'pre-scheduled'
+             AND es.scheduled_send_date >= ?
+             AND es.scheduled_send_date <= ?
+           ORDER BY es.scheduled_send_date ASC
+           LIMIT 20 OFFSET 0`,
+          [startDate, endDate]
+        );
+
         return {
           success: true,
           stats: {
@@ -3460,7 +3492,9 @@ export function createDashboardRoutes() {
             quotesViewed,
             followUpsRequested,
             healthQuestionsCompleted,
-            chartData
+            chartData,
+            upcomingEmailsTotal,
+            upcomingEmailsPage
           }
         }
       } catch (error) {
@@ -7450,6 +7484,7 @@ import { generateQuoteId, decodeQuoteId } from '../utils/quoteId';
 import { getUserFromSession } from '../services/auth';
 import { readFileSync } from 'fs';
 import { EmailService } from '../services/email';
+import { get } from 'http';
 
 // Import ZIP_DATA
 interface ZipInfo {
@@ -7965,9 +8000,35 @@ export function createSelfServiceRoutes() {
         return { error: 'Internal server error' };
       }
     })
+    .get('/api/self-service-info', async ({ params, set, request }) => {
+      const userFromSession = await getUserFromSession(request);
+    
+      // Get organization from central database
+      const db = new Database();
+      const orgResult = await db.fetchOne<{ id: number, slug: string, logo_data: string | null }>(
+        'SELECT id, slug, logo_data FROM organizations WHERE id = ?',
+        [userFromSession?.organization_id]
+      );
+
+      // logger.info(`Org result: ${JSON.stringify(orgResult)}`);
+      
+      if (!orgResult) {
+        set.status = 404;
+        return { success: false, message: 'Organization not found' };
+      }
+      
+      return {
+        success: true,
+        orgId: userFromSession?.organization_id.toString(),
+        orgSlug: orgResult.slug,
+        selfOnboardingUrl: `${config.PUBLIC_URL}/self-onboarding/${orgResult.slug}`,
+        logo: orgResult.logo_data
+      };  
+    })
     .get('/api/self-service/:orgSlug', async ({ params, query, set, request }) => {
       const { orgSlug } = params;
       const { email, id } = query as { email?: string; id?: string };
+      
       
       logger.info(`Self-service request for orgSlug=${orgSlug}, email=${email || 'none'}, quoteId=${id || 'none'}`);
       
@@ -7975,7 +8036,7 @@ export function createSelfServiceRoutes() {
         // For the 'latest' slug, get the current user's organization
         if (orgSlug === 'latest') {
           const userFromSession = await getUserFromSession(request);
-          
+          logger.info(`User from session: ${JSON.stringify(userFromSession)}`);
           // Add type guard to check for organization_id
           if (!userFromSession || !('organization_id' in userFromSession) || !userFromSession.organization_id) {
             set.status = 401;
@@ -7988,6 +8049,8 @@ export function createSelfServiceRoutes() {
             'SELECT id, slug, logo_data FROM organizations WHERE id = ?',
             [userFromSession.organization_id]
           );
+
+          logger.info(`Org result: ${JSON.stringify(orgResult)}`);
           
           if (!orgResult) {
             set.status = 404;
@@ -11149,6 +11212,7 @@ import { logger } from '../logger';
 import crypto from 'crypto';
 import { Database } from '../database';
 import { generateTrackingId, addTrackingToUrl } from '../utils/tracking';
+import twilio from 'twilio';
 
 interface MagicLinkEmailParams {
   email: string;
@@ -11496,7 +11560,7 @@ export class EmailService {
 
                         <div style="font-size: 12px; color: #666666; margin-top: 30px; padding-top: 15px; border-top: 1px solid #eeeeee;">
                           <p style="margin: 5px 0;">
-                            Medicare Services<br>
+                            #${orgName ? orgName : ''}<br>
                             ${formattedPhone ? `Phone: <a href="tel:${phone}" style="color: #0066cc; text-decoration: none;">${formattedPhone}</a><br>` : ''}
                             ${website ? `Website: <a href="${websiteUrl}" target="_blank" style="color: #0066cc; text-decoration: underline;">${website}</a>` : ''}
                           </p>
@@ -11518,18 +11582,22 @@ export class EmailService {
       // also send out text via twilio / mds endpoint
       
       
-      const tempRetoolEndpoint = "https://api.retool.com/v1/workflows/2dfd31e1-b979-4f4d-a572-ca92879a3c09/startTrigger?workflowApiKey=retool_wk_e06f6026e4be4854bce04b77c90ee4c3"
+      // const tempRetoolEndpoint = "https://api.retool.com/v1/workflows/2dfd31e1-b979-4f4d-a572-ca92879a3c09/startTrigger?workflowApiKey=retool_wk_e06f6026e4be4854bce04b77c90ee4c3"
       const msgContent = `
-        Hi ${firstName},
-        We recently reviewed Medigap premiums for your zip code and found some options that might interest you. Click the link below to review your options:
+        Hi ${firstName}, this is the team from ${orgName}. We recently reviewed Medigap premiums for your zip code and found some options that might interest you. Click the link below to review your options:
         ${trackedQuoteUrl}  
       `
+
+      const accountSid = process.env.TWILIO_ACCOUNT_SID;
+      const authToken = process.env.TWILIO_AUTH_TOKEN;
+      const client = twilio(accountSid, authToken);
       // Get client's phone number from params
       const clientPhone = params.phone;
       const clientE164Phone = clientPhone ? formatE164(clientPhone) : null;
 
       if (clientE164Phone) {
         logger.info(`clientE164Phone: ${clientE164Phone}`);
+        /*
         const bodyToSend = {
           phone: clientE164Phone,
           firstName: firstName,
@@ -11545,12 +11613,16 @@ export class EmailService {
           },
           body: JSON.stringify(bodyToSend)
         });
-        if (twilioResponse.ok) {
-          logger.info(`Text sent successfully to ${clientE164Phone}`);
-          logger.info(await twilioResponse.json());
-        } else {
-          logger.error(`Error sending text: ${twilioResponse.statusText}`);
-        }
+        */
+
+
+        const twilioResponse = await client.messages.create({
+          body: msgContent,
+          from: process.env.TWILIO_PHONE_NUMBER,
+          to: clientE164Phone
+        });
+        logger.info(`Text sent successfully to ${clientE164Phone}`);
+        logger.info(JSON.stringify(twilioResponse));
       } else {
         logger.info('No client phone number provided - skipping text message');
       }
@@ -13442,7 +13514,7 @@ export class Database {
             contact_id INTEGER NOT NULL,
             email_type TEXT NOT NULL,
             scheduled_send_date TEXT NOT NULL,
-            scheduled_send_time TEXT NOT NULL,
+            scheduled_send_time TEXT NOT NULL DEFAULT '08:30:00',
             batch_id TEXT,
             status TEXT NOT NULL DEFAULT 'pre-scheduled',
             skip_reason TEXT,
@@ -13451,8 +13523,8 @@ export class Database {
           )
         `,
         indexStatements: [
-          `CREATE INDEX IF NOT EXISTS idx_email_schedules_org_contact ON email_schedules (org_id, contact_id)`,
-          `CREATE INDEX IF NOT EXISTS idx_email_schedules_org_send_date ON email_schedules (org_id, scheduled_send_date)`,
+          `CREATE INDEX IF NOT EXISTS idx_email_schedules_org_contact ON email_schedules (contact_id)`,
+          `CREATE INDEX IF NOT EXISTS idx_email_schedules_org_send_date ON email_schedules (scheduled_send_date)`,
           `CREATE INDEX IF NOT EXISTS idx_email_schedules_status ON email_schedules (status)`,
           `CREATE TRIGGER IF NOT EXISTS update_email_schedules_updated_at\nAFTER UPDATE ON email_schedules\nFOR EACH ROW\nBEGIN\n    UPDATE email_schedules\n    SET updated_at = CURRENT_TIMESTAMP\n    WHERE id = OLD.id;\nEND;`
         ]
@@ -14208,11 +14280,10 @@ export class Database {
           createSql: `
             CREATE TABLE IF NOT EXISTS email_schedules (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
-              org_id INTEGER NOT NULL,
               contact_id INTEGER NOT NULL,
               email_type TEXT NOT NULL,
               scheduled_send_date TEXT NOT NULL,
-              scheduled_send_time TEXT NOT NULL,
+              scheduled_send_time TEXT NOT NULL DEFAULT '08:30:00',
               batch_id TEXT,
               status TEXT NOT NULL DEFAULT 'pre-scheduled',
               skip_reason TEXT,
@@ -14221,8 +14292,8 @@ export class Database {
             )
           `,
           indexSqls: [
-            `CREATE INDEX IF NOT EXISTS idx_email_schedules_org_contact ON email_schedules (org_id, contact_id)`,
-            `CREATE INDEX IF NOT EXISTS idx_email_schedules_org_send_date ON email_schedules (org_id, scheduled_send_date)`,
+            `CREATE INDEX IF NOT EXISTS idx_email_schedules_org_contact ON email_schedules (contact_id)`,
+            `CREATE INDEX IF NOT EXISTS idx_email_schedules_org_send_date ON email_schedules (scheduled_send_date)`,
             `CREATE INDEX IF NOT EXISTS idx_email_schedules_status ON email_schedules (status)`,
             `CREATE TRIGGER IF NOT EXISTS update_email_schedules_updated_at\nAFTER UPDATE ON email_schedules\nFOR EACH ROW\nBEGIN\n    UPDATE email_schedules\n    SET updated_at = CURRENT_TIMESTAMP\n    WHERE id = OLD.id;\nEND;`
           ]
@@ -36055,16 +36126,47 @@ viewEditModal model =
 
 viewContactForm : ContactForm -> Bool -> Model -> Html Msg
 viewContactForm form isSubmitting model =
+    let
+        carrierOptions =
+            ( "", "Select a carrier" ) :: List.map (\c -> ( c, c )) (model.orgSettings |> Maybe.map .carrierContracts |> Maybe.withDefault []) ++ [ ( "Other", "Other" ) ]
+
+        planTypeOptions =
+            [ ( "", "Select a plan type" ), ( "Plan N", "Plan N" ), ( "Plan G", "Plan G" ), ( "Other", "Other" ) ]
+
+        agentOptions =
+            case model.orgSettings of
+                Just settings ->
+                    case settings.allowAgentSettings of
+                        True ->
+                            -- If agent settings are allowed, show all agents (if available)
+                            []
+
+                        -- TODO: Populate with agents if available in model
+                        False ->
+                            []
+
+                Nothing ->
+                    []
+
+        selectedCarrier =
+            form.currentCarrier
+
+        selectedPlanType =
+            form.planType
+
+        selectedAgentId =
+            form.contactOwnerId |> Maybe.map String.fromInt |> Maybe.withDefault ""
+    in
     Html.form [ onSubmit SubmitEditForm ]
-        [ div [ class "grid grid-cols-2 gap-x-8 gap-y-6" ]
-            [ viewFormInput "First Name" "text" form.firstName FirstName True model
-            , viewFormInput "Last Name" "text" form.lastName LastName True model
-            , viewFormInput "Email" "email" form.email Email True model
-            , viewFormInput "Phone Number" "text" (formatPhoneNumber form.phoneNumber) PhoneNumber True model
-            , viewFormInput "Current Carrier" "text" form.currentCarrier CurrentCarrier True model
-            , viewFormInput "Plan Type" "text" form.planType PlanType True model
-            , viewFormInput "Effective Date" "date" form.effectiveDate EffectiveDate True model
-            , viewFormInput "Birth Date" "date" form.birthDate BirthDate True model
+        [ div [ class "grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3" ]
+            [ viewFormInput "First Name" "text" form.firstName FirstName model True
+            , viewFormInput "Last Name" "text" form.lastName LastName model True
+            , viewFormInput "Email" "email" form.email Email model True
+            , viewFormInput "Phone Number" "text" form.phoneNumber PhoneNumber model False
+            , viewFormSelect "Current Carrier" selectedCarrier CurrentCarrier model carrierOptions
+            , viewFormSelect "Plan Type" selectedPlanType PlanType model planTypeOptions
+            , viewFormInput "Effective Date" "date" form.effectiveDate EffectiveDate model False
+            , viewFormInput "Birth Date" "date" form.birthDate BirthDate model False
             , viewFormRadioGroup "Tobacco User"
                 (if form.tobaccoUser then
                     "true"
@@ -36073,106 +36175,113 @@ viewContactForm form isSubmitting model =
                     "false"
                 )
                 TobaccoUser
+                model
                 [ ( "true", "Yes" ), ( "false", "No" ) ]
-            , viewFormRadioGroup "Gender" form.gender Gender [ ( "M", "Male" ), ( "F", "Female" ) ]
-            , div [ class "col-span-2 grid grid-cols-2 gap-x-8" ]
-                [ viewFormInput "ZIP Code" "text" form.zipCode ZipCode True model
-                , viewFormInput "State" "text" form.state State True model
+            , viewFormRadioGroup "Gender" form.gender Gender model [ ( "M", "Male" ), ( "F", "Female" ) ]
+            , div [ class "col-span-1 sm:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-x-4" ]
+                [ viewZipCodeField model form
+                , viewStateField form
                 ]
             ]
-        , div [ class "mt-10 flex justify-end space-x-4" ]
+        , if model.error /= Nothing && not model.emailExists then
+            div [ class "mt-2 text-red-600 text-xs" ] [ text (Maybe.withDefault "" model.error) ]
+
+          else
+            text ""
+        , div [ class "mt-4 flex justify-end space-x-2" ]
             [ button
                 [ type_ "button"
                 , onClick CloseModal
-                , class "px-6 py-3 bg-white text-gray-700 text-sm font-medium rounded-lg border-2 border-gray-200 hover:border-gray-300 hover:bg-gray-50 transition-colors duration-200 focus:ring-4 focus:ring-purple-100"
+                , class "px-3 py-1.5 bg-white text-gray-700 text-sm font-medium rounded-md border border-gray-200 hover:border-gray-300 hover:bg-gray-50 transition-colors duration-200 focus:ring-1 focus:ring-purple-100"
                 ]
                 [ text "Cancel" ]
             , if isSubmitting then
-                div [ class "px-6 py-3 flex items-center space-x-2" ] [ viewSpinner ]
+                div [ class "px-3 py-1.5 flex items-center" ] [ viewSpinner ]
 
               else
+                let
+                    isValid =
+                        String.length form.firstName > 0 && String.length form.lastName > 0 && String.length form.email > 0 && not model.emailExists && not model.isCheckingEmail
+                in
                 button
                     [ type_ "submit"
-                    , class "px-6 py-3 bg-purple-500 text-white text-sm font-medium rounded-lg hover:bg-purple-600 transition-colors duration-200 focus:ring-4 focus:ring-purple-200"
+                    , class
+                        ("px-3 py-1.5 text-white text-sm font-medium rounded-md transition-colors duration-200 focus:ring-1 focus:ring-purple-200 "
+                            ++ (if isValid then
+                                    "bg-purple-500 hover:bg-purple-600"
+
+                                else
+                                    "bg-gray-300 cursor-not-allowed"
+                               )
+                        )
+                    , Html.Attributes.disabled (not isValid)
                     ]
                     [ text "Save Changes" ]
             ]
         ]
 
 
-viewFormInput : String -> String -> String -> ContactFormField -> Bool -> Model -> Html Msg
-viewFormInput labelText inputType inputValue field isRequired model =
-    div [ class "form-group" ]
-        [ Html.label [ class "block text-sm font-medium text-gray-700 mb-2" ]
-            [ text labelText ]
-        , if field == Email then
-            div [ class "relative" ]
-                [ Html.input
-                    [ type_ inputType
-                    , class
-                        ("w-full px-4 py-3 bg-white border-[2.5px] rounded-lg text-gray-700 placeholder-gray-400 shadow-sm transition-all duration-200 "
-                            ++ (if model.emailExists then
-                                    "border-red-300 hover:border-red-400 focus:border-red-500 focus:ring-2 focus:ring-red-200"
+viewFormInput : String -> String -> String -> ContactFormField -> Model -> Bool -> Html Msg
+viewFormInput labelText inputType inputValue field model isRequired =
+    let
+        displayValue =
+            if field == PhoneNumber then
+                Utils.Formatters.formatPhoneNumber inputValue
 
-                                else
-                                    "border-purple-300 hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200"
-                               )
-                        )
-                    , Html.Attributes.value inputValue
-                    , onInput (UpdateEditForm field)
-                    , onBlur (CheckEmail inputValue)
-                    , required isRequired
-                    ]
-                    []
-                , if model.isCheckingEmail then
-                    div [ class "absolute right-3 top-3" ]
-                        [ viewSpinner ]
+            else
+                inputValue
 
-                  else if model.emailExists then
-                    div [ class "absolute right-3 top-3 text-red-500" ]
-                        [ text "✕" ]
+        inputHandler =
+            if field == PhoneNumber then
+                \val -> UpdateEditForm field (String.filter Char.isDigit val |> String.left 10)
 
-                  else if String.length inputValue > 0 then
-                    div [ class "absolute right-3 top-3 text-green-500" ]
-                        [ text "✓" ]
+            else
+                UpdateEditForm field
 
-                  else
-                    text ""
-                ]
+        placeholderText =
+            if field == PhoneNumber then
+                "(555) 555-5555"
 
-          else if field == State then
-            Html.input
-                [ type_ inputType
-                , class "w-full px-4 py-3 bg-white border-[2.5px] border-gray-200 rounded-lg text-gray-700 placeholder-gray-400 shadow-sm focus:ring-2 focus:ring-purple-200 focus:bg-white transition-all duration-200"
-                , Html.Attributes.value inputValue
-                , Html.Attributes.disabled True
-                , required isRequired
-                ]
-                []
-
-          else
-            Html.input
-                [ type_ inputType
-                , class "w-full px-4 py-3 bg-white border-[2.5px] border-purple-300 rounded-lg text-gray-700 placeholder-gray-400 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 focus:bg-white transition-all duration-200"
-                , Html.Attributes.value inputValue
-                , onInput (UpdateEditForm field)
-                , required isRequired
-                ]
-                []
+            else
+                ""
+    in
+    div [ class "form-group mb-3" ]
+        [ Html.label [ class "block text-xs font-medium text-gray-700 mb-1" ] [ text labelText ]
+        , Html.input
+            [ type_ inputType
+            , class "w-full px-2 py-1.5 bg-white border-[1.5px] border-purple-300 rounded-md text-sm text-gray-700 placeholder-gray-400 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-1 focus:ring-purple-200 focus:bg-white transition-all duration-200"
+            , Html.Attributes.value displayValue
+            , onInput inputHandler
+            , required isRequired
+            , placeholder placeholderText
+            ]
+            []
         ]
 
 
-viewFormRadioGroup : String -> String -> ContactFormField -> List ( String, String ) -> Html Msg
-viewFormRadioGroup labelText selectedValue field options =
-    div [ class "form-group" ]
-        [ Html.label [ class "block text-sm font-medium text-gray-700 mb-2" ]
-            [ text labelText ]
-        , div [ class "flex gap-4" ]
+viewFormSelect : String -> String -> ContactFormField -> Model -> List ( String, String ) -> Html Msg
+viewFormSelect labelText selectedValue field model options =
+    div [ class "form-group mb-3" ]
+        [ Html.label [ class "block text-xs font-medium text-gray-700 mb-1" ] [ text labelText ]
+        , Html.select
+            [ class "w-full px-2 py-1.5 bg-white border-[1.5px] border-purple-300 rounded-md text-sm text-gray-700 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-1 focus:ring-purple-200 focus:bg-white transition-all duration-200"
+            , Html.Attributes.value selectedValue
+            , onInput (UpdateEditForm field)
+            ]
+            (List.map (\( val, label ) -> Html.option [ value val, selected (val == selectedValue) ] [ text label ]) options)
+        ]
+
+
+viewFormRadioGroup : String -> String -> ContactFormField -> Model -> List ( String, String ) -> Html Msg
+viewFormRadioGroup labelText selectedValue field model options =
+    div [ class "form-group mb-3" ]
+        [ Html.label [ class "block text-xs font-medium text-gray-700 mb-1" ] [ text labelText ]
+        , div [ class "flex gap-2" ]
             (List.map
                 (\( val, txt ) ->
                     label
                         [ class
-                            ("flex items-center px-4 py-2 rounded-lg border-2 cursor-pointer transition-all duration-200 "
+                            ("flex items-center px-2 py-1 rounded-md border text-sm cursor-pointer transition-all duration-200 "
                                 ++ (if selectedValue == val then
                                         "border-purple-500 bg-purple-50 text-purple-700"
 
@@ -36185,7 +36294,7 @@ viewFormRadioGroup labelText selectedValue field options =
                             [ type_ "radio"
                             , value val
                             , checked (selectedValue == val)
-                            , onInput (UpdateEditForm field)
+                            , onInput (\_ -> UpdateEditForm field val)
                             , class "sr-only"
                             ]
                             []
@@ -36197,22 +36306,31 @@ viewFormRadioGroup labelText selectedValue field options =
         ]
 
 
-encodeContactForm : ContactForm -> Encode.Value
-encodeContactForm form =
-    Encode.object
-        [ ( "first_name", Encode.string form.firstName )
-        , ( "last_name", Encode.string form.lastName )
-        , ( "email", Encode.string form.email )
-        , ( "phone_number", Encode.string (String.filter Char.isDigit form.phoneNumber |> String.left 10) )
-        , ( "state", Encode.string form.state )
-        , ( "contact_owner_id", Maybe.map Encode.int form.contactOwnerId |> Maybe.withDefault Encode.null )
-        , ( "current_carrier", Encode.string form.currentCarrier )
-        , ( "effective_date", Encode.string form.effectiveDate )
-        , ( "birth_date", Encode.string form.birthDate )
-        , ( "tobacco_user", Encode.bool form.tobaccoUser )
-        , ( "gender", Encode.string form.gender )
-        , ( "zip_code", Encode.string form.zipCode )
-        , ( "plan_type", Encode.string form.planType )
+viewZipCodeField : Model -> ContactForm -> Html Msg
+viewZipCodeField model form =
+    div [ class "form-group mb-3" ]
+        [ Html.label [ class "block text-xs font-medium text-gray-700 mb-1" ] [ text "ZIP Code" ]
+        , Html.input
+            [ type_ "text"
+            , class "w-full px-2 py-1.5 bg-white border-[1.5px] border-purple-300 rounded-md text-sm text-gray-700 placeholder-gray-400 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-1 focus:ring-purple-200 focus:bg-white transition-all duration-200"
+            , Html.Attributes.value form.zipCode
+            , onInput (UpdateEditForm ZipCode)
+            ]
+            []
+        ]
+
+
+viewStateField : ContactForm -> Html Msg
+viewStateField form =
+    div [ class "form-group mb-3" ]
+        [ Html.label [ class "block text-xs font-medium text-gray-700 mb-1" ] [ text "State" ]
+        , Html.input
+            [ type_ "text"
+            , class "w-full px-2 py-1.5 bg-white border-[1.5px] border-gray-200 rounded-md text-sm text-gray-700 placeholder-gray-400 shadow-sm focus:ring-1 focus:ring-purple-200 focus:bg-white transition-all duration-200"
+            , Html.Attributes.value form.state
+            , Html.Attributes.disabled True
+            ]
+            []
         ]
 
 
@@ -36874,6 +36992,25 @@ viewFollowUpQuestionAnswer followUp =
             ]
         ]
 
+
+encodeContactForm : ContactForm -> Encode.Value
+encodeContactForm form =
+    Encode.object
+        [ ( "first_name", Encode.string form.firstName )
+        , ( "last_name", Encode.string form.lastName )
+        , ( "email", Encode.string form.email )
+        , ( "phone_number", Encode.string (String.filter Char.isDigit form.phoneNumber |> String.left 10) )
+        , ( "state", Encode.string form.state )
+        , ( "contact_owner_id", Maybe.map Encode.int form.contactOwnerId |> Maybe.withDefault Encode.null )
+        , ( "current_carrier", Encode.string form.currentCarrier )
+        , ( "effective_date", Encode.string form.effectiveDate )
+        , ( "birth_date", Encode.string form.birthDate )
+        , ( "tobacco_user", Encode.bool form.tobaccoUser )
+        , ( "gender", Encode.string form.gender )
+        , ( "zip_code", Encode.string form.zipCode )
+        , ( "plan_type", Encode.string form.planType )
+        ]
+
 ================
 File: frontend/src/Contacts.elm
 ================
@@ -37209,7 +37346,12 @@ init key maybeUser =
             }
     in
     ( model
-    , Cmd.batch [ fetchContacts model, fetchDashboardStats ]
+    , Cmd.batch
+        [ fetchContacts model
+        , fetchDashboardStats
+        , fetchAgents
+        , fetchCarriers
+        ]
     )
 
 
@@ -37359,7 +37501,7 @@ type Msg
     | EmailValidationCompleted (List { email : String, reason : String })
       -- Dashboard stats messages
     | FetchDashboardStats
-    | GotDashboardStats (Result Http.Error { success : Bool, stats : { quotesSent : Int, quotesViewed : Int, followUpsRequested : Int, healthQuestionsCompleted : Int } })
+    | GotDashboardStats (Result Http.Error { success : Bool, stats : { quotesSent : Int, manualQuotesSent : Int, quotesViewed : Int, followUpsRequested : Int, healthQuestionsCompleted : Int } })
 
 
 type ContactFormField
@@ -37398,7 +37540,9 @@ update msg model =
             ( { model | showModal = AddModal }, Cmd.none )
 
         ChooseMultipleContacts ->
-            ( { model | showModal = CsvUploadModal (emptyUploadState model) }, Cmd.none )
+            ( { model | showModal = CsvUploadModal (emptyUploadState model) }
+            , Cmd.batch [ fetchAgents, fetchCarriers ]
+            )
 
         ShowAddModal ->
             ( { model | showModal = AddModal }, Cmd.none )
@@ -37993,7 +38137,9 @@ update msg model =
             ( model, Cmd.none )
 
         ShowCsvUploadModal ->
-            ( { model | showModal = CsvUploadModal (emptyUploadState model) }, Cmd.none )
+            ( { model | showModal = CsvUploadModal (emptyUploadState model) }
+            , Cmd.batch [ fetchAgents, fetchCarriers ]
+            )
 
         DragEnter ->
             case model.showModal of
@@ -39078,8 +39224,9 @@ viewTableRow model contact =
                             in
                             case defaultAgent of
                                 Just agent ->
-                                    agent.firstName ++ " " ++ agent.lastName ++ " (Default)"
+                                    agent.firstName ++ " " ++ agent.lastName
 
+                                --++ " (Default)"
                                 Nothing ->
                                     "Default"
 
@@ -39204,7 +39351,7 @@ fetchDashboardStats =
         }
 
 
-dashboardStatsResponseDecoder : Decode.Decoder { success : Bool, stats : { quotesSent : Int, quotesViewed : Int, followUpsRequested : Int, healthQuestionsCompleted : Int } }
+dashboardStatsResponseDecoder : Decode.Decoder { success : Bool, stats : { quotesSent : Int, manualQuotesSent : Int, quotesViewed : Int, followUpsRequested : Int, healthQuestionsCompleted : Int } }
 dashboardStatsResponseDecoder =
     Decode.map2
         (\success stats ->
@@ -39216,17 +39363,19 @@ dashboardStatsResponseDecoder =
         (Decode.field "stats" dashboardStatsDecoder)
 
 
-dashboardStatsDecoder : Decode.Decoder { quotesSent : Int, quotesViewed : Int, followUpsRequested : Int, healthQuestionsCompleted : Int }
+dashboardStatsDecoder : Decode.Decoder { quotesSent : Int, manualQuotesSent : Int, quotesViewed : Int, followUpsRequested : Int, healthQuestionsCompleted : Int }
 dashboardStatsDecoder =
-    Decode.map4
-        (\quotesSent quotesViewed followUpsRequested healthQuestionsCompleted ->
+    Decode.map5
+        (\quotesSent manualQuotesSent quotesViewed followUpsRequested healthQuestionsCompleted ->
             { quotesSent = quotesSent
+            , manualQuotesSent = manualQuotesSent
             , quotesViewed = quotesViewed
             , followUpsRequested = followUpsRequested
             , healthQuestionsCompleted = healthQuestionsCompleted
             }
         )
         (Decode.field "quotesSent" Decode.int)
+        (Decode.field "manualQuotesSent" Decode.int)
         (Decode.field "quotesViewed" Decode.int)
         (Decode.field "followUpsRequested" Decode.int)
         (Decode.field "healthQuestionsCompleted" Decode.int)
@@ -41888,6 +42037,12 @@ findBestCarrierMatch carrierName standardCarriers =
                 "uhica" ->
                     Just "United Healthcare"
 
+                "united healthcare" ->
+                    Just "United Healthcare"
+
+                "unitedhealthcare" ->
+                    Just "United Healthcare"
+
                 "ace / chubb" ->
                     Just "Ace Chubb"
 
@@ -41911,6 +42066,9 @@ findBestCarrierMatch carrierName standardCarriers =
 
                 "blue shield" ->
                     Just "Blue Cross Blue Shield"
+
+                "humana" ->
+                    Just "Humana"
 
                 "humana gold" ->
                     Just "Humana"
@@ -42383,6 +42541,10 @@ type alias Model =
     , selectedTimeFilter : TimeFilter
     , selectedChartView : ChartView
     , upcomingRenewals : List Renewal
+    , upcomingEmailsTotal : Int
+    , upcomingEmailsPage : List UpcomingEmail
+    , upcomingEmailsPageNum : Int
+    , upcomingEmailsPageSize : Int
     }
 
 
@@ -42418,9 +42580,8 @@ type TimeFilter
 
 
 type ChartView
-    = TrendView
-    | FunnelView
-    | ComparisonView
+    = FunnelView
+    | TrendView
 
 
 type alias Renewal =
@@ -42464,6 +42625,8 @@ type alias DashboardStats =
     , followUpsRequested : Int
     , healthQuestionsCompleted : Int
     , chartData : List ChartDataFromAPI
+    , upcomingEmailsTotal : Int
+    , upcomingEmailsPage : List UpcomingEmail
     }
 
 
@@ -42479,6 +42642,17 @@ type alias RenewalResponse =
     }
 
 
+type alias UpcomingEmail =
+    { id : Int
+    , contactId : Int
+    , emailType : String
+    , scheduledSendDate : String
+    , status : String
+    , firstName : String
+    , lastName : String
+    }
+
+
 dashboardStatsDecoder : Decoder DashboardStats
 dashboardStatsDecoder =
     Decode.succeed DashboardStats
@@ -42488,6 +42662,8 @@ dashboardStatsDecoder =
         |> Pipeline.required "followUpsRequested" Decode.int
         |> Pipeline.required "healthQuestionsCompleted" Decode.int
         |> Pipeline.required "chartData" (Decode.list chartDataFromAPIDecoder)
+        |> Pipeline.required "upcomingEmailsTotal" Decode.int
+        |> Pipeline.required "upcomingEmailsPage" (Decode.list upcomingEmailDecoder)
 
 
 chartDataFromAPIDecoder : Decoder ChartDataFromAPI
@@ -42657,6 +42833,9 @@ init flags =
     let
         ( limitBannerModel, limitBannerCmd ) =
             LimitBanner.init
+
+        defaultUpcomingEmails =
+            { total = 0, emails = [], page = 1, pageSize = 20 }
     in
     ( { limitBanner = limitBannerModel
       , showTutorialModal = Maybe.withDefault False flags.isPostPayment
@@ -42669,8 +42848,12 @@ init flags =
       , statsError = Nothing
       , chartData = []
       , selectedTimeFilter = Last30Days
-      , selectedChartView = TrendView
+      , selectedChartView = FunnelView
       , upcomingRenewals = []
+      , upcomingEmailsTotal = 0
+      , upcomingEmailsPage = []
+      , upcomingEmailsPageNum = 1
+      , upcomingEmailsPageSize = 20
       }
     , Cmd.batch
         [ Cmd.map LimitBannerMsg limitBannerCmd
@@ -42773,6 +42956,8 @@ update msg model =
                             , followUpsRequested = response.stats.followUpsRequested
                             , healthQuestionsCompleted = response.stats.healthQuestionsCompleted
                             , chartData = response.stats.chartData
+                            , upcomingEmailsTotal = response.stats.upcomingEmailsTotal
+                            , upcomingEmailsPage = response.stats.upcomingEmailsPage
                           }
                         , Cmd.none
                         )
@@ -42841,14 +43026,11 @@ viewChartist chartistDataJson chartView =
     let
         chartType =
             case chartView of
-                TrendView ->
-                    "chartist-line"
-
                 FunnelView ->
                     "chartist-funnel"
 
-                ComparisonView ->
-                    "chartist-bar"
+                TrendView ->
+                    "chartist-line"
     in
     node chartType
         [ attribute "data" chartistDataJson
@@ -42885,7 +43067,7 @@ viewDashboardHeader : Model -> Html Msg
 viewDashboardHeader model =
     div [ class "flex flex-col sm:flex-row justify-between items-center mb-6" ]
         [ h1 [ class "text-2xl font-bold text-gray-800 mb-4 sm:mb-0" ]
-            [ text "MedicareMax Dashboard" ]
+            [ text "Dashboard" ]
         , div [ class "flex space-x-2" ]
             [ select
                 [ class "bg-white border border-gray-300 rounded-md px-3 py-2 text-sm"
@@ -42963,7 +43145,7 @@ viewStatsCards model =
             viewStatsCard "Upcoming Emails" "0" "text-red-600" "Failed to load data"
 
           else
-            viewStatsCard "Upcoming Emails" (String.fromInt model.followUpsRequested) "text-[#00b4d8]" "Upcoming scheduled emails"
+            viewStatsCard "Upcoming Emails" (String.fromInt model.upcomingEmailsTotal) "text-[#00b4d8]" "Scheduled emails in next 30 days"
 
         -- Completion Rate card
         , if model.statsLoading then
@@ -42988,21 +43170,8 @@ viewMainContent model =
                     [ button
                         [ class
                             ("px-3 py-1 text-sm rounded-md "
-                                ++ (if model.selectedChartView == TrendView then
-                                        "bg-[#03045e] text-white"
-
-                                    else
-                                        "bg-gray-100"
-                                   )
-                            )
-                        , onClick (SelectChartView TrendView)
-                        ]
-                        [ text "Trend" ]
-                    , button
-                        [ class
-                            ("px-3 py-1 text-sm rounded-md "
                                 ++ (if model.selectedChartView == FunnelView then
-                                        "bg-[#03045e] t ext-white"
+                                        "bg-[#03045e] text-white"
 
                                     else
                                         "bg-gray-100"
@@ -43014,16 +43183,16 @@ viewMainContent model =
                     , button
                         [ class
                             ("px-3 py-1 text-sm rounded-md "
-                                ++ (if model.selectedChartView == ComparisonView then
+                                ++ (if model.selectedChartView == TrendView then
                                         "bg-[#03045e] text-white"
 
                                     else
                                         "bg-gray-100"
                                    )
                             )
-                        , onClick (SelectChartView ComparisonView)
+                        , onClick (SelectChartView TrendView)
                         ]
-                        [ text "Comparison" ]
+                        [ text "Trend" ]
                     ]
                 ]
             , div [ class "h-64" ]
@@ -43069,8 +43238,8 @@ viewMainContent model =
                                             , series = [ [ toFloat model.quotesSent, toFloat model.quotesViewed, toFloat model.followUpsRequested, toFloat model.healthQuestionsCompleted ] ]
                                             }
 
-                                _ ->
-                                    -- For trend and comparison views
+                                TrendView ->
+                                    -- For trend view
                                     let
                                         labels =
                                             List.map (.x >> formatMonthLabel) model.chartData
@@ -43105,16 +43274,44 @@ viewMainContent model =
                     [ div [ class "w-3 h-3 rounded-full bg-[#0077b6] mr-1.5 sm:mr-2" ] []
                     , text "Quotes Viewed"
                     ]
+
+                {--
                 , div [ class "flex items-center" ]
                     [ div [ class "w-3 h-3 rounded-full bg-[#00b4d8] mr-1.5 sm:mr-2" ] []
                     , text "Upcoming Emails"
                     ]
+                --}
                 , div [ class "flex items-center" ]
                     [ div [ class "w-3 h-3 rounded-full bg-[#48cae4] mr-1.5 sm:mr-2" ] []
                     , text "Health Completed"
                     ]
                 ]
             ]
+        , -- Upcoming Emails section
+          div [ class "lg:col-span-1 bg-white rounded-lg shadow-xl p-4" ]
+            [ div [ class "flex justify-between items-center mb-4" ]
+                [ h2 [ class "text-lg font-semibold text-gray-800" ] [ text "Upcoming Emails" ]
+                , span [ class "bg-[#00b4d8] text-white text-xs px-2 py-1 rounded-full" ]
+                    [ text (String.fromInt model.upcomingEmailsTotal ++ " Total") ]
+                ]
+            , if model.statsLoading then
+                div [ class "h-full w-full flex items-center justify-center py-8" ]
+                    [ div [ class "animate-spin rounded-full h-8 w-8 border-t-2 border-l-2 border-[#00b4d8]" ] [] ]
+
+              else if model.statsError /= Nothing then
+                div [ class "text-center py-8 text-red-500" ]
+                    [ text "Error loading upcoming emails." ]
+
+              else if List.isEmpty model.upcomingEmailsPage then
+                div [ class "text-center py-8 text-gray-500" ]
+                    [ text "No upcoming emails scheduled in the next 30 days." ]
+
+              else
+                div [ class "space-y-4 max-h-[400px] overflow-y-auto" ]
+                    (List.map viewUpcomingEmailItem model.upcomingEmailsPage)
+            ]
+
+        {--
         , -- Renewals section
           div [ class "lg:col-span-1 bg-white rounded-lg shadow-xl p-4" ]
             [ div [ class "flex justify-between items-center mb-4" ]
@@ -43138,6 +43335,7 @@ viewMainContent model =
                     [ text "View All Renewals" ]
                 ]
             ]
+        --}
         ]
 
 
@@ -43227,9 +43425,67 @@ viewStatsCardWithSpinner title colorClass =
         ]
 
 
+viewUpcomingEmailItem : UpcomingEmail -> Html Msg
+viewUpcomingEmailItem email =
+    div [ class "border-b pb-3" ]
+        [ div [ class "flex justify-between items-start" ]
+            [ div []
+                [ div [ class "font-medium" ] [ text (email.firstName ++ " " ++ email.lastName) ]
+                , div [ class "text-sm text-gray-500" ] [ text (formatEmailType email.emailType) ]
+                ]
+            , div [ class "text-sm font-medium text-[#00b4d8]" ] [ text (formatDate email.scheduledSendDate) ]
+            ]
+        , div [ class "mt-2 flex items-center text-xs text-gray-500" ]
+            [ text ("Status: " ++ email.status) ]
+        ]
+
+
+formatEmailType : String -> String
+formatEmailType emailType =
+    case emailType of
+        "quote_email" ->
+            "Quote Email"
+
+        "follow_up_1" ->
+            "Follow-up #1"
+
+        "follow_up_2" ->
+            "Follow-up #2"
+
+        "follow_up_3" ->
+            "Follow-up #3"
+
+        "birthday" ->
+            "Birthday Email"
+
+        "anniversary" ->
+            "Anniversary Email"
+
+        _ ->
+            emailType
+
+
+formatDate : String -> String
+formatDate dateStr =
+    -- Simple formatting, could use a date library for better formatting
+    String.left 10 dateStr
+
+
 subscriptions : Model -> Sub Msg
 subscriptions _ =
     Sub.none
+
+
+upcomingEmailDecoder : Decode.Decoder UpcomingEmail
+upcomingEmailDecoder =
+    Decode.map7 UpcomingEmail
+        (Decode.field "id" Decode.int)
+        (Decode.field "contact_id" Decode.int)
+        (Decode.field "email_type" Decode.string)
+        (Decode.field "scheduled_send_date" Decode.string)
+        (Decode.field "status" Decode.string)
+        (Decode.field "first_name" Decode.string)
+        (Decode.field "last_name" Decode.string)
 
 ================
 File: frontend/src/Decline.elm
@@ -48716,7 +48972,7 @@ viewNavHeader model =
                         [ div [ class "shrink-0 flex items-center" ]
                             [ a
                                 [ href "#"
-                                , onClick (InternalLinkClicked "/")
+                                , onClick (InternalLinkClicked "/dashboard")
                                 , class "cursor-pointer"
                                 ]
                                 [ img
@@ -50264,14 +50520,14 @@ customElements.define('stripe-checkout', class extends HTMLElement {
   async mountCheckout() {
     console.log('[Stripe] Mounting checkout form');
     const priceId = this.getAttribute('price-id');
-    const meteredPriceId = this.getAttribute('metered-price-id');
+    // const meteredPriceId = this.getAttribute('metered-price-id');
     const firstName = this.getAttribute('first-name');
     const lastName = this.getAttribute('last-name');
     const email = this.getAttribute('email');
 
     console.log('[Stripe] Checkout attributes:', { 
       priceId, 
-      meteredPriceId, 
+      // meteredPriceId, 
       firstName, 
       lastName, 
       email: email ? `${email.substring(0, 3)}...${email.split('@')[1] ? '@' + email.split('@')[1] : ''}` : null 
@@ -50284,7 +50540,7 @@ customElements.define('stripe-checkout', class extends HTMLElement {
     }
 
     try {
-      console.log(`[Stripe] Creating checkout session with priceId: ${priceId}, meteredPriceId: ${meteredPriceId || 'none'}, email: ${email}`);
+      console.log(`[Stripe] Creating checkout session with priceId: ${priceId}, email: ${email}`);
       
       console.log('[Stripe] Sending request to /api/create-checkout-session');
       const response = await fetch('/api/create-checkout-session', {
@@ -50294,7 +50550,7 @@ customElements.define('stripe-checkout', class extends HTMLElement {
         },
         body: JSON.stringify({
           priceId,
-          meteredPriceId,
+          //meteredPriceId,
           customerEmail: email,
           customerName: `${firstName} ${lastName}`
         }),
@@ -50741,6 +50997,37 @@ customElements.define('chartist-line', class extends HTMLElement {
       ]
     });
 
+    // Apply animated line drawing effect (Chartist example style)
+    let seq = 0;
+    const delays = 80;
+    const durations = 500;
+
+    chart.on('created', () => {
+      seq = 0;
+    });
+
+    chart.on('draw', data => {
+      seq++;
+      if (data.type === 'line') {
+        data.element.animate({
+          opacity: {
+            begin: seq * delays + 1000,
+            dur: durations,
+            from: 0,
+            to: 1
+          }
+        });
+      }
+      // Optionally, you can animate points or labels here if desired
+    });
+
+    // Optionally, auto-update for demo (can be removed in production)
+    let timerId: any;
+    chart.on('created', () => {
+      if (timerId) clearTimeout(timerId);
+      timerId = setTimeout(chart.update.bind(chart), 12000);
+    });
+
     // Apply line chart animations
     try {
       console.log('Setting up line chart animations');
@@ -50866,9 +51153,9 @@ customElements.define('chartist-funnel', class extends HTMLElement {
       console.log('Funnel values:', values);
 
       // Find the max value for scaling
-      // Use 2x the Quotes Sent value as the maximum scale to make the drop-off less steep
-      const quotesSentValue = values[0] || 1;
-      const maxValue = Math.max(quotesSentValue * 2, 1); // 2x the Quotes Sent value, with minimum of 1
+      // Use square root scaling for a less steep drop-off
+      const scale = (v: number) => Math.sqrt(v);
+      const maxScaled = Math.max(...values.map(scale), 1);
 
       // Define custom bar data with actual values - in reverse order for proper funnel flow
       // Health Completed (smallest) at the top, Quotes Sent (largest) at the bottom
@@ -50904,8 +51191,8 @@ customElements.define('chartist-funnel', class extends HTMLElement {
         const bar = document.createElement('div');
         bar.className = `funnel-bar ${item.class}`;
 
-        // Scale the width based on value (relative to max value)
-        const percentage = Math.max(5, (item.value / maxValue) * 100);
+        // Scale the width based on value (relative to max value) using sqrt scaling
+        const percentage = Math.max(15, (scale(item.value) / maxScaled) * 100);
         const percentageStr = `${percentage}%`;
 
         // Store the original width for animation purposes, but start with 0 width for animation
@@ -50976,6 +51263,8 @@ try {
   (window as any).elmApp = app;
   (window as any).elmDebug = Elm;
   
+  console.log('app.ports', app.ports);
+
   // Setup IntersectionObserver for phone section
   if (app.ports && app.ports.viewingPhone) {
     setTimeout(() => {
@@ -51038,6 +51327,19 @@ try {
       }
     })
   }
+
+  // Serve VITE_ env variables to Elm upon request
+  app.ports.requestStripeProduct.subscribe(() => {
+    console.log('Requesting Stripe product IDs from Elm');
+    console.log('VITE_STRIPE_SUBSCRIPTION_ID', import.meta.env.VITE_STRIPE_SUBSCRIPTION_ID);
+    console.log('VITE_STRIPE_TIER_ID', import.meta.env.VITE_STRIPE_TIER_ID);
+    const subscriptionId = import.meta.env.VITE_STRIPE_SUBSCRIPTION_ID || '';
+    const tierId = import.meta.env.VITE_STRIPE_TIER_ID || '';
+    const out: [string, string] = [subscriptionId, tierId];
+    console.log("out", out);
+    app.ports.responseStripeProduct.send(out);
+  });
+  
 
   // Listen for payment completion from stripe-checkout
   document.addEventListener('payment-completed', (e: any) => {
@@ -51770,6 +52072,12 @@ port checkoutCompleted : (CheckoutData -> msg) -> Sub msg
 port checkoutError : (ErrorData -> msg) -> Sub msg
 
 
+port requestStripeProduct : () -> Cmd msg
+
+
+port responseStripeProduct : (( String, String ) -> msg) -> Sub msg
+
+
 
 -- MODEL
 
@@ -51825,6 +52133,8 @@ type alias Model =
     , newAgentIsAdmin : Bool
     , loadingResumeData : Bool
     , paymentStatus : PaymentStatus
+    , subscriptionPriceId : Maybe String
+    , tierPriceId : Maybe String
     }
 
 
@@ -51998,6 +52308,8 @@ init key url =
             , newAgentIsAdmin = True
             , loadingResumeData = False
             , paymentStatus = Loading
+            , subscriptionPriceId = Nothing
+            , tierPriceId = Nothing
             }
 
         -- Check if this is a direct page load with frame > 1
@@ -52005,9 +52317,12 @@ init key url =
             frame > 1 && (url.path == "/onboarding")
 
         redirectCommand =
-            case maybeUser of
+            case maybeUser |> Debug.log "maybeUser" of
                 Just user ->
-                    fetchResumeData user.email
+                    Cmd.batch
+                        [ fetchResumeData user.email
+                        , requestStripeProduct () |> Debug.log "requestStripeProduct"
+                        ]
 
                 Nothing ->
                     Nav.pushUrl key "/signup"
@@ -52058,6 +52373,7 @@ type Msg
     | CheckoutCompletedFromPort CheckoutData
     | CheckoutErrorFromPort ErrorData
     | ProcessCheckoutData CheckoutData
+    | ResponseStripeProduct ( String, String )
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -52128,7 +52444,9 @@ update msg model =
 
                     else
                         ( { model | loadingResumeData = True }
-                        , saveCompanyDetails model
+                        , Cmd.batch
+                            [ saveCompanyDetails model
+                            ]
                         )
 
                 2 ->
@@ -52137,7 +52455,7 @@ update msg model =
 
                     else
                         ( { model | frame = model.frame + 1 }
-                        , Cmd.none
+                        , saveLicensingSettings model
                         )
 
                 3 ->
@@ -52421,6 +52739,14 @@ update msg model =
 
         RefreshPage ->
             ( model, Nav.reload )
+
+        ResponseStripeProduct ( subscriptionPriceId, tierPriceId ) ->
+            ( { model
+                | subscriptionPriceId = Just subscriptionPriceId
+                , tierPriceId = Just tierPriceId
+              }
+            , Cmd.none
+            )
 
 
 
@@ -53007,16 +53333,22 @@ viewPayment model =
                             ]
 
                     else
-                        node "stripe-checkout"
-                            [ attribute "price-id" "price_1RHG4mCBUPXAZKNGem75yV4U" --"price_1RBStWCBUPXAZKNGwpimWl7v"
-                            , attribute "metered-price-id" "price_1RHG7kCBUPXAZKNGd5YvIzsw" --"price_1RBSvJCBUPXAZKNGQ1U9Hl8i"
+                        case ( model.subscriptionPriceId, model.tierPriceId ) of
+                            ( Just subscriptionPriceId, _ ) ->
+                                node "stripe-checkout"
+                                    [ attribute "price-id" subscriptionPriceId
 
-                            --, attribute "return-url" ("http://localhost:3000/walkthrough?payment_success=true&email=" ++ model.user.email)
-                            , attribute "first-name" model.user.firstName
-                            , attribute "last-name" model.user.lastName
-                            , attribute "email" model.user.email
-                            ]
-                            []
+                                    --, attribute "metered-price-id" tierPriceId
+                                    , attribute "first-name" model.user.firstName
+                                    , attribute "last-name" model.user.lastName
+                                    , attribute "email" model.user.email
+                                    ]
+                                    []
+
+                            _ ->
+                                div [ class "mt-4 p-3 bg-red-50 border border-red-200 rounded-md" ]
+                                    [ p [ class "text-red-700" ] [ text "Error loading Stripe product IDs" ]
+                                    ]
 
                 Continuing ->
                     div [ class "mt-4 p-3 bg-blue-50 border border-blue-200 rounded-md" ]
@@ -53026,16 +53358,22 @@ viewPayment model =
                         ]
 
                 ReadyToComplete ->
-                    node "stripe-checkout"
-                        [ attribute "price-id" "price_1RHG4mCBUPXAZKNGem75yV4U" --"price_1RBStWCBUPXAZKNGwpimWl7v"
-                        , attribute "metered-price-id" "price_1RHG7kCBUPXAZKNGd5YvIzsw" --"price_1RBSvJCBUPXAZKNGQ1U9Hl8i"
+                    case ( model.subscriptionPriceId, model.tierPriceId ) of
+                        ( Just subscriptionPriceId, _ ) ->
+                            node "stripe-checkout"
+                                [ attribute "price-id" subscriptionPriceId
 
-                        --, attribute "return-url" ("http://localhost:3000/walkthrough?payment_success=true&email=" ++ model.user.email)
-                        , attribute "first-name" model.user.firstName
-                        , attribute "last-name" model.user.lastName
-                        , attribute "email" model.user.email
-                        ]
-                        []
+                                --, attribute "metered-price-id" tierPriceId
+                                , attribute "first-name" model.user.firstName
+                                , attribute "last-name" model.user.lastName
+                                , attribute "email" model.user.email
+                                ]
+                                []
+
+                        _ ->
+                            div [ class "mt-4 p-3 bg-red-50 border border-red-200 rounded-md" ]
+                                [ p [ class "text-red-700" ] [ text "Error loading Stripe product IDs" ]
+                                ]
 
                 PaymentProcessing ->
                     div [ class "mt-4 p-3 bg-blue-50 border border-blue-200 rounded-md" ]
@@ -53102,6 +53440,7 @@ subscriptions _ =
         [ paymentCompleted PaymentCompletedFromPort
         , checkoutCompleted CheckoutCompletedFromPort
         , checkoutError CheckoutErrorFromPort
+        , responseStripeProduct ResponseStripeProduct
         ]
 
 
@@ -59652,13 +59991,8 @@ fetchCarriers =
 
 fetchSelfOnboardingUrl : Cmd Msg
 fetchSelfOnboardingUrl =
-    let
-        slug =
-            -- This is a placeholder, we'll get the actual slug in the backend
-            "latest"
-    in
     Http.get
-        { url = "/api/self-service/" ++ slug
+        { url = "/api/self-service-info/"
         , expect = Http.expectJson GotSelfOnboardingUrl selfOnboardingUrlDecoder
         }
 
@@ -60461,7 +60795,7 @@ viewCarriersGrid settings model =
             (List.map
                 (\carrier ->
                     checkbox carrier
-                        (List.member carrier settings.carrierContracts)
+                        (safeMember carrier carriersToUse)
                         (\checked ->
                             if checked then
                                 AddCarrierContract carrier
@@ -60473,6 +60807,21 @@ viewCarriersGrid settings model =
                 carriersToUse
             )
         ]
+
+
+safeMember : String -> List String -> Bool
+safeMember carrier carriers =
+    let
+        func : String -> String
+        func c =
+            c
+                |> String.toLower
+                |> String.trim
+                |> String.replace " " ""
+    in
+    carriers
+        |> List.map func
+        |> List.member (func carrier)
 
 
 viewStateCarrierGrid : Settings -> Model -> Html Msg
@@ -60826,6 +61175,7 @@ type Msg
     | GotEmailCheckResponse Int (Result Http.Error EmailCheckResponse)
     | SubmitForm
     | GotSignupResponse (Result Http.Error SignupResponse)
+    | BlurEmail
 
 
 type alias SignupResponse =
@@ -60854,6 +61204,9 @@ update msg model =
 
         UpdateEmail value ->
             let
+                newCounter =
+                    model.debounceCounter + 1
+
                 newModel =
                     { model
                         | email = value
@@ -60866,18 +61219,16 @@ update msg model =
 
                             else
                                 Checking
-                        , debounceCounter = model.debounceCounter + 1
+                        , debounceCounter = newCounter
+                        , error = Nothing -- Clear any previous error on email change
                     }
-
-                counter =
-                    newModel.debounceCounter
             in
             ( newModel
             , if String.isEmpty value || not (isValidEmailFormat value) then
                 Cmd.none
 
               else
-                debounceEmailCheck counter
+                debounceEmailCheck newCounter
             )
 
         UpdatePhone value ->
@@ -60979,6 +61330,13 @@ update msg model =
                     , Cmd.none
                     )
 
+        BlurEmail ->
+            if isValidEmailFormat model.email then
+                ( model, checkEmailAvailability model.debounceCounter model.email )
+
+            else
+                ( model, Cmd.none )
+
 
 
 -- VIEW
@@ -61066,6 +61424,7 @@ viewForm model =
                     , id "email"
                     , value model.email
                     , onInput UpdateEmail
+                    , onBlur BlurEmail
                     , class "mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-base py-2.5 px-3"
                     , placeholder "you@example.com"
                     ]
