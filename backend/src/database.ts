@@ -1308,7 +1308,6 @@ export class Database {
           createSql: `
             CREATE TABLE IF NOT EXISTS email_schedules (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
-              org_id INTEGER NOT NULL,
               contact_id INTEGER NOT NULL,
               email_type TEXT NOT NULL,
               scheduled_send_date TEXT NOT NULL,
@@ -1321,8 +1320,8 @@ export class Database {
             )
           `,
           indexSqls: [
-            `CREATE INDEX IF NOT EXISTS idx_email_schedules_org_contact ON email_schedules (org_id, contact_id)`,
-            `CREATE INDEX IF NOT EXISTS idx_email_schedules_org_send_date ON email_schedules (org_id, scheduled_send_date)`,
+            `CREATE INDEX IF NOT EXISTS idx_email_schedules_org_contact ON email_schedules (contact_id)`,
+            `CREATE INDEX IF NOT EXISTS idx_email_schedules_org_send_date ON email_schedules (scheduled_send_date)`,
             `CREATE INDEX IF NOT EXISTS idx_email_schedules_status ON email_schedules (status)`,
             `CREATE TRIGGER IF NOT EXISTS update_email_schedules_updated_at\nAFTER UPDATE ON email_schedules\nFOR EACH ROW\nBEGIN\n    UPDATE email_schedules\n    SET updated_at = CURRENT_TIMESTAMP\n    WHERE id = OLD.id;\nEND;`
           ]

@@ -65,9 +65,8 @@ type TimeFilter
 
 
 type ChartView
-    = TrendView
-    | FunnelView
-    | ComparisonView
+    = FunnelView
+    | TrendView
 
 
 type alias Renewal =
@@ -316,7 +315,7 @@ init flags =
       , statsError = Nothing
       , chartData = []
       , selectedTimeFilter = Last30Days
-      , selectedChartView = TrendView
+      , selectedChartView = FunnelView
       , upcomingRenewals = []
       }
     , Cmd.batch
@@ -488,14 +487,11 @@ viewChartist chartistDataJson chartView =
     let
         chartType =
             case chartView of
-                TrendView ->
-                    "chartist-line"
-
                 FunnelView ->
                     "chartist-funnel"
 
-                ComparisonView ->
-                    "chartist-bar"
+                TrendView ->
+                    "chartist-line"
     in
     node chartType
         [ attribute "data" chartistDataJson
@@ -635,21 +631,8 @@ viewMainContent model =
                     [ button
                         [ class
                             ("px-3 py-1 text-sm rounded-md "
-                                ++ (if model.selectedChartView == TrendView then
-                                        "bg-[#03045e] text-white"
-
-                                    else
-                                        "bg-gray-100"
-                                   )
-                            )
-                        , onClick (SelectChartView TrendView)
-                        ]
-                        [ text "Trend" ]
-                    , button
-                        [ class
-                            ("px-3 py-1 text-sm rounded-md "
                                 ++ (if model.selectedChartView == FunnelView then
-                                        "bg-[#03045e] t ext-white"
+                                        "bg-[#03045e] text-white"
 
                                     else
                                         "bg-gray-100"
@@ -661,16 +644,16 @@ viewMainContent model =
                     , button
                         [ class
                             ("px-3 py-1 text-sm rounded-md "
-                                ++ (if model.selectedChartView == ComparisonView then
+                                ++ (if model.selectedChartView == TrendView then
                                         "bg-[#03045e] text-white"
 
                                     else
                                         "bg-gray-100"
                                    )
                             )
-                        , onClick (SelectChartView ComparisonView)
+                        , onClick (SelectChartView TrendView)
                         ]
-                        [ text "Comparison" ]
+                        [ text "Trend" ]
                     ]
                 ]
             , div [ class "h-64" ]
@@ -716,8 +699,8 @@ viewMainContent model =
                                             , series = [ [ toFloat model.quotesSent, toFloat model.quotesViewed, toFloat model.followUpsRequested, toFloat model.healthQuestionsCompleted ] ]
                                             }
 
-                                _ ->
-                                    -- For trend and comparison views
+                                TrendView ->
+                                    -- For trend view
                                     let
                                         labels =
                                             List.map (.x >> formatMonthLabel) model.chartData
