@@ -556,6 +556,37 @@ customElements.define('chartist-line', class extends HTMLElement {
       ]
     });
 
+    // Apply animated line drawing effect (Chartist example style)
+    let seq = 0;
+    const delays = 80;
+    const durations = 500;
+
+    chart.on('created', () => {
+      seq = 0;
+    });
+
+    chart.on('draw', data => {
+      seq++;
+      if (data.type === 'line') {
+        data.element.animate({
+          opacity: {
+            begin: seq * delays + 1000,
+            dur: durations,
+            from: 0,
+            to: 1
+          }
+        });
+      }
+      // Optionally, you can animate points or labels here if desired
+    });
+
+    // Optionally, auto-update for demo (can be removed in production)
+    let timerId: any;
+    chart.on('created', () => {
+      if (timerId) clearTimeout(timerId);
+      timerId = setTimeout(chart.update.bind(chart), 12000);
+    });
+
     // Apply line chart animations
     try {
       console.log('Setting up line chart animations');
@@ -681,9 +712,9 @@ customElements.define('chartist-funnel', class extends HTMLElement {
       console.log('Funnel values:', values);
 
       // Find the max value for scaling
-      // Use 2x the Quotes Sent value as the maximum scale to make the drop-off less steep
-      const quotesSentValue = values[0] || 1;
-      const maxValue = Math.max(quotesSentValue * 2, 1); // 2x the Quotes Sent value, with minimum of 1
+      // Use square root scaling for a less steep drop-off
+      const scale = (v: number) => Math.sqrt(v);
+      const maxScaled = Math.max(...values.map(scale), 1);
 
       // Define custom bar data with actual values - in reverse order for proper funnel flow
       // Health Completed (smallest) at the top, Quotes Sent (largest) at the bottom
@@ -719,8 +750,8 @@ customElements.define('chartist-funnel', class extends HTMLElement {
         const bar = document.createElement('div');
         bar.className = `funnel-bar ${item.class}`;
 
-        // Scale the width based on value (relative to max value)
-        const percentage = Math.max(5, (item.value / maxValue) * 100);
+        // Scale the width based on value (relative to max value) using sqrt scaling
+        const percentage = Math.max(15, (scale(item.value) / maxScaled) * 100);
         const percentageStr = `${percentage}%`;
 
         // Store the original width for animation purposes, but start with 0 width for animation

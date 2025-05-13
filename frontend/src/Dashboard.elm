@@ -735,10 +735,13 @@ viewMainContent model =
                     [ div [ class "w-3 h-3 rounded-full bg-[#0077b6] mr-1.5 sm:mr-2" ] []
                     , text "Quotes Viewed"
                     ]
+
+                {--
                 , div [ class "flex items-center" ]
                     [ div [ class "w-3 h-3 rounded-full bg-[#00b4d8] mr-1.5 sm:mr-2" ] []
                     , text "Upcoming Emails"
                     ]
+                --}
                 , div [ class "flex items-center" ]
                     [ div [ class "w-3 h-3 rounded-full bg-[#48cae4] mr-1.5 sm:mr-2" ] []
                     , text "Health Completed"
