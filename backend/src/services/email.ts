@@ -3,6 +3,7 @@ import { logger } from '../logger';
 import crypto from 'crypto';
 import { Database } from '../database';
 import { generateTrackingId, addTrackingToUrl } from '../utils/tracking';
+import twilio from 'twilio';
 
 interface MagicLinkEmailParams {
   email: string;
@@ -350,7 +351,7 @@ export class EmailService {
 
                         <div style="font-size: 12px; color: #666666; margin-top: 30px; padding-top: 15px; border-top: 1px solid #eeeeee;">
                           <p style="margin: 5px 0;">
-                            Medicare Services<br>
+                            #${orgName ? orgName : ''}<br>
                             ${formattedPhone ? `Phone: <a href="tel:${phone}" style="color: #0066cc; text-decoration: none;">${formattedPhone}</a><br>` : ''}
                             ${website ? `Website: <a href="${websiteUrl}" target="_blank" style="color: #0066cc; text-decoration: underline;">${website}</a>` : ''}
                           </p>
@@ -372,18 +373,22 @@ export class EmailService {
       // also send out text via twilio / mds endpoint
       
       
-      const tempRetoolEndpoint = "https://api.retool.com/v1/workflows/2dfd31e1-b979-4f4d-a572-ca92879a3c09/startTrigger?workflowApiKey=retool_wk_e06f6026e4be4854bce04b77c90ee4c3"
+      // const tempRetoolEndpoint = "https://api.retool.com/v1/workflows/2dfd31e1-b979-4f4d-a572-ca92879a3c09/startTrigger?workflowApiKey=retool_wk_e06f6026e4be4854bce04b77c90ee4c3"
       const msgContent = `
-        Hi ${firstName},
-        We recently reviewed Medigap premiums for your zip code and found some options that might interest you. Click the link below to review your options:
+        Hi ${firstName}, this is the team from ${orgName}. We recently reviewed Medigap premiums for your zip code and found some options that might interest you. Click the link below to review your options:
         ${trackedQuoteUrl}  
       `
+
+      const accountSid = process.env.TWILIO_ACCOUNT_SID;
+      const authToken = process.env.TWILIO_AUTH_TOKEN;
+      const client = twilio(accountSid, authToken);
       // Get client's phone number from params
       const clientPhone = params.phone;
       const clientE164Phone = clientPhone ? formatE164(clientPhone) : null;
 
       if (clientE164Phone) {
         logger.info(`clientE164Phone: ${clientE164Phone}`);
+        /*
         const bodyToSend = {
           phone: clientE164Phone,
           firstName: firstName,
@@ -399,12 +404,16 @@ export class EmailService {
           },
           body: JSON.stringify(bodyToSend)
         });
-        if (twilioResponse.ok) {
-          logger.info(`Text sent successfully to ${clientE164Phone}`);
-          logger.info(await twilioResponse.json());
-        } else {
-          logger.error(`Error sending text: ${twilioResponse.statusText}`);
-        }
+        */
+
+
+        const twilioResponse = await client.messages.create({
+          body: msgContent,
+          from: process.env.TWILIO_PHONE_NUMBER,
+          to: clientE164Phone
+        });
+        logger.info(`Text sent successfully to ${clientE164Phone}`);
+        logger.info(JSON.stringify(twilioResponse));
       } else {
         logger.info('No client phone number provided - skipping text message');
       }
