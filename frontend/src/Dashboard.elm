@@ -20,6 +20,7 @@ type alias Model =
     { limitBanner : LimitBanner.Model
     , showTutorialModal : Bool
     , quotesSent : Int
+    , manualQuotesSent : Int
     , quotesViewed : Int
     , followUpsRequested : Int
     , healthQuestionsCompleted : Int
@@ -105,6 +106,7 @@ type alias Flags =
 
 type alias DashboardStats =
     { quotesSent : Int
+    , manualQuotesSent : Int
     , quotesViewed : Int
     , followUpsRequested : Int
     , healthQuestionsCompleted : Int
@@ -128,6 +130,7 @@ dashboardStatsDecoder : Decoder DashboardStats
 dashboardStatsDecoder =
     Decode.succeed DashboardStats
         |> Pipeline.required "quotesSent" Decode.int
+        |> Pipeline.required "manualQuotesSent" Decode.int
         |> Pipeline.required "quotesViewed" Decode.int
         |> Pipeline.required "followUpsRequested" Decode.int
         |> Pipeline.required "healthQuestionsCompleted" Decode.int
@@ -305,6 +308,7 @@ init flags =
     ( { limitBanner = limitBannerModel
       , showTutorialModal = Maybe.withDefault False flags.isPostPayment
       , quotesSent = 0
+      , manualQuotesSent = 0
       , quotesViewed = 0
       , followUpsRequested = 0
       , healthQuestionsCompleted = 0
@@ -404,9 +408,14 @@ update msg model =
             case result of
                 Ok response ->
                     if response.success then
+                        let
+                            totalQuotesSent =
+                                response.stats.quotesSent + response.stats.manualQuotesSent
+                        in
                         ( { model
                             | statsLoading = False
-                            , quotesSent = response.stats.quotesSent
+                            , quotesSent = totalQuotesSent
+                            , manualQuotesSent = response.stats.manualQuotesSent
                             , quotesViewed = response.stats.quotesViewed
                             , followUpsRequested = response.stats.followUpsRequested
                             , healthQuestionsCompleted = response.stats.healthQuestionsCompleted
@@ -578,7 +587,7 @@ viewStatsCards model =
             viewStatsCardWithSpinner "Quotes Sent" "text-[#03045e]"
 
           else if model.statsError /= Nothing then
-            viewStatsCard "Quotes Sent" "Error" "text-red-600" "Failed to load data"
+            viewStatsCard "Quotes Sent" "0" "text-red-600" "Failed to load data"
 
           else
             viewStatsCard "Quotes Sent" (String.fromInt model.quotesSent) "text-[#03045e]" "Total emails sent with quotes"
@@ -588,7 +597,7 @@ viewStatsCards model =
             viewStatsCardWithSpinner "View Rate" "text-[#0077b6]"
 
           else if model.statsError /= Nothing then
-            viewStatsCard "View Rate" "Error" "text-red-600" "Failed to load data"
+            viewStatsCard "View Rate" "0" "text-red-600" "Failed to load data"
 
           else
             viewStatsCard "View Rate" (String.fromInt viewRate ++ "%") "text-[#0077b6]" (String.fromInt model.quotesViewed ++ " quotes viewed")
@@ -598,7 +607,7 @@ viewStatsCards model =
             viewStatsCardWithSpinner "Upcoming Emails" "text-[#00b4d8]"
 
           else if model.statsError /= Nothing then
-            viewStatsCard "Upcoming Emails" "Error" "text-red-600" "Failed to load data"
+            viewStatsCard "Upcoming Emails" "0" "text-red-600" "Failed to load data"
 
           else
             viewStatsCard "Upcoming Emails" (String.fromInt model.followUpsRequested) "text-[#00b4d8]" "Upcoming scheduled emails"
@@ -608,7 +617,7 @@ viewStatsCards model =
             viewStatsCardWithSpinner "Completion Rate" "text-[#48cae4]"
 
           else if model.statsError /= Nothing then
-            viewStatsCard "Completion Rate" "Error" "text-red-600" "Failed to load data"
+            viewStatsCard "Completion Rate" "0" "text-red-600" "Failed to load data"
 
           else
             viewStatsCard "Completion Rate" (String.fromInt completionRate ++ "%") "text-[#48cae4]" (String.fromInt model.healthQuestionsCompleted ++ " health questions completed")

@@ -294,71 +294,103 @@ export class Database {
    * This method is used as a fallback when the database needs to be created on the fly
    */
   static async getOrInitOrgDb(orgId: string): Promise<Database> {
-    try {
-      const db = await Database.getOrgDb(orgId)
-      
-      await Database.ensureOrgSchema(db)
-      return db
-    } catch (error) {
-      if (error instanceof Error && error.message === 'Organization database not configured') {
-        logger.info(`No database found for org ${orgId}, initializing new database`)
-        const mainDb = new Database()
-        const orgExists = await mainDb.fetchOne<{ id: number }>(
-          'SELECT id FROM organizations WHERE id = ?',
-          [orgId]
-        )
-        if (!orgExists) throw new Error('Organization not found')
+    const mainDb = new Database();
+    const MAX_RETRIES = 10;
+    const RETRY_DELAY_MS = 500;
+    let retries = 0;
 
-        const turso = new TursoService()
-        logger.info(`Creating new Turso database for org ${orgId}`)
-        const { url, token } = await turso.createOrganizationDatabase(orgId)
-        logger.info(`Got new database URL: ${url}`)
-        logger.info(`Got new database token (length: ${token.length})`)
+    while (true) {
+      try {
+        // Try to get the org DB as usual
+        const db = await Database.getOrgDb(orgId)
+        await Database.ensureOrgSchema(db)
+        return db
+      } catch (error) {
+        if (error instanceof Error && error.message === 'Organization database not configured') {
+          // Try to atomically claim the right to provision the DB
+          const claimResult = await mainDb.execute(
+            `UPDATE organizations
+             SET is_db_provisioning = 1
+             WHERE id = ? AND is_db_provisioning = 0 AND (turso_db_url IS NULL OR turso_db_url = '')`,
+            [orgId]
+          );
 
-        // Verify we can connect with the new credentials
-        try {
-          logger.info('Verifying connection with new credentials...')
-          const testDb = new Database(url, token)
-          await testDb.execute('SELECT 1')
-          logger.info('Successfully verified connection with new credentials')
-        } catch (connError) {
-          logger.error(`Failed to verify connection with new credentials: ${connError instanceof Error ? connError.message : String(connError)}`)
-          throw new Error('Failed to verify connection with new database credentials')
+          if (claimResult.rowsAffected === 0) {
+            // Someone else is provisioning, wait and retry
+            if (retries++ >= MAX_RETRIES) {
+              throw new Error('Timed out waiting for organization DB provisioning');
+            }
+            await new Promise(res => setTimeout(res, RETRY_DELAY_MS));
+            continue;
+          }
+
+          // We have the lock, proceed to provision
+          try {
+            const orgExists = await mainDb.fetchOne<{ id: number }>(
+              'SELECT id FROM organizations WHERE id = ?',
+              [orgId]
+            )
+            if (!orgExists) throw new Error('Organization not found')
+
+            const turso = new TursoService()
+            logger.info(`Creating new Turso database for org ${orgId}`)
+            const { url, token } = await turso.createOrganizationDatabase(orgId)
+            logger.info(`Got new database URL: ${url}`)
+            logger.info(`Got new database token (length: ${token.length})`)
+
+            // Verify we can connect with the new credentials
+            try {
+              logger.info('Verifying connection with new credentials...')
+              const testDb = new Database(url, token)
+              await testDb.execute('SELECT 1')
+              logger.info('Successfully verified connection with new credentials')
+            } catch (connError) {
+              logger.error(`Failed to verify connection with new credentials: ${connError instanceof Error ? connError.message : String(connError)}`)
+              throw new Error('Failed to verify connection with new database credentials')
+            }
+
+            // Update organization with new credentials and clear provisioning flag
+            logger.info(`Updating organization ${orgId} with new database credentials`)
+            await mainDb.execute(
+              'UPDATE organizations SET turso_db_url = ?, turso_auth_token = ?, is_db_provisioning = 0 WHERE id = ?',
+              [url, token, orgId]
+            )
+
+            // Verify the update
+            const updatedOrg = await mainDb.fetchOne<{ turso_db_url: string, turso_auth_token: string }>(
+              'SELECT turso_db_url, turso_auth_token FROM organizations WHERE id = ?',
+              [orgId]
+            )
+            if (!updatedOrg) {
+              logger.error('Failed to fetch updated organization after credential update')
+              throw new Error('Failed to update organization credentials')
+            }
+            if (updatedOrg.turso_db_url !== url || updatedOrg.turso_auth_token !== token) {
+              logger.error('Organization credentials mismatch after update')
+              logger.error(`Expected URL: ${url}, got: ${updatedOrg.turso_db_url}`)
+              logger.error(`Expected token length: ${token.length}, got: ${updatedOrg.turso_auth_token.length}`)
+              throw new Error('Organization credentials mismatch after update')
+            }
+
+            logger.info(`Successfully initialized database for organization ${orgId}`)
+            const newDb = new Database(url, token)
+            await Database.ensureOrgSchema(newDb)
+            return newDb
+          } catch (provisionError) {
+            // On error, clear the provisioning flag so future attempts can retry
+            await mainDb.execute(
+              'UPDATE organizations SET is_db_provisioning = 0 WHERE id = ?',
+              [orgId]
+            )
+            throw provisionError
+          }
         }
-
-        // Update organization with new credentials
-        logger.info(`Updating organization ${orgId} with new database credentials`)
-        await mainDb.execute(
-          'UPDATE organizations SET turso_db_url = ?, turso_auth_token = ? WHERE id = ?',
-          [url, token, orgId]
-        )
-
-        // Verify the update
-        const updatedOrg = await mainDb.fetchOne<{ turso_db_url: string, turso_auth_token: string }>(
-          'SELECT turso_db_url, turso_auth_token FROM organizations WHERE id = ?',
-          [orgId]
-        )
-        if (!updatedOrg) {
-          logger.error('Failed to fetch updated organization after credential update')
-          throw new Error('Failed to update organization credentials')
+        logger.error(`Error in getOrInitOrgDb: ${error instanceof Error ? error.message : String(error)}`)
+        if (error instanceof Error && error.stack) {
+          logger.error(`Stack trace: ${error.stack}`)
         }
-        if (updatedOrg.turso_db_url !== url || updatedOrg.turso_auth_token !== token) {
-          logger.error('Organization credentials mismatch after update')
-          logger.error(`Expected URL: ${url}, got: ${updatedOrg.turso_db_url}`)
-          logger.error(`Expected token length: ${token.length}, got: ${updatedOrg.turso_auth_token.length}`)
-          throw new Error('Organization credentials mismatch after update')
-        }
-
-        logger.info(`Successfully initialized database for organization ${orgId}`)
-        const newDb = new Database(url, token)
-        await Database.ensureOrgSchema(newDb)
-        return newDb
+        throw error
       }
-      logger.error(`Error in getOrInitOrgDb: ${error instanceof Error ? error.message : String(error)}`)
-      if (error instanceof Error && error.stack) {
-        logger.error(`Stack trace: ${error.stack}`)
-      }
-      throw error
     }
   }
 
@@ -499,6 +531,30 @@ export class Database {
           `CREATE INDEX IF NOT EXISTS idx_email_tracking_message_id ON email_send_tracking(message_id)`,
           `CREATE INDEX IF NOT EXISTS idx_email_tracking_delivery_status ON email_send_tracking(delivery_status)`,
           `CREATE TRIGGER IF NOT EXISTS update_email_tracking_timestamp AFTER UPDATE ON email_send_tracking BEGIN UPDATE email_send_tracking SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id; END`
+        ]
+      },
+      {
+        name: 'email_schedules',
+        createStatement: `
+          CREATE TABLE IF NOT EXISTS email_schedules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            org_id INTEGER NOT NULL,
+            contact_id INTEGER NOT NULL,
+            email_type TEXT NOT NULL,
+            scheduled_send_date TEXT NOT NULL,
+            scheduled_send_time TEXT NOT NULL,
+            batch_id TEXT,
+            status TEXT NOT NULL DEFAULT 'pre-scheduled',
+            skip_reason TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          )
+        `,
+        indexStatements: [
+          `CREATE INDEX IF NOT EXISTS idx_email_schedules_org_contact ON email_schedules (org_id, contact_id)`,
+          `CREATE INDEX IF NOT EXISTS idx_email_schedules_org_send_date ON email_schedules (org_id, scheduled_send_date)`,
+          `CREATE INDEX IF NOT EXISTS idx_email_schedules_status ON email_schedules (status)`,
+          `CREATE TRIGGER IF NOT EXISTS update_email_schedules_updated_at\nAFTER UPDATE ON email_schedules\nFOR EACH ROW\nBEGIN\n    UPDATE email_schedules\n    SET updated_at = CURRENT_TIMESTAMP\n    WHERE id = OLD.id;\nEND;`
         ]
       }
     ];
@@ -1245,6 +1301,30 @@ export class Database {
             `CREATE INDEX IF NOT EXISTS idx_email_tracking_message_id ON email_send_tracking(message_id)`,
             `CREATE INDEX IF NOT EXISTS idx_email_tracking_delivery_status ON email_send_tracking(delivery_status)`,
             `CREATE TRIGGER IF NOT EXISTS update_email_tracking_timestamp AFTER UPDATE ON email_send_tracking BEGIN UPDATE email_send_tracking SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id; END`
+          ]
+        },
+        {
+          name: 'email_schedules',
+          createSql: `
+            CREATE TABLE IF NOT EXISTS email_schedules (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              org_id INTEGER NOT NULL,
+              contact_id INTEGER NOT NULL,
+              email_type TEXT NOT NULL,
+              scheduled_send_date TEXT NOT NULL,
+              scheduled_send_time TEXT NOT NULL,
+              batch_id TEXT,
+              status TEXT NOT NULL DEFAULT 'pre-scheduled',
+              skip_reason TEXT,
+              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+              updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+          `,
+          indexSqls: [
+            `CREATE INDEX IF NOT EXISTS idx_email_schedules_org_contact ON email_schedules (org_id, contact_id)`,
+            `CREATE INDEX IF NOT EXISTS idx_email_schedules_org_send_date ON email_schedules (org_id, scheduled_send_date)`,
+            `CREATE INDEX IF NOT EXISTS idx_email_schedules_status ON email_schedules (status)`,
+            `CREATE TRIGGER IF NOT EXISTS update_email_schedules_updated_at\nAFTER UPDATE ON email_schedules\nFOR EACH ROW\nBEGIN\n    UPDATE email_schedules\n    SET updated_at = CURRENT_TIMESTAMP\n    WHERE id = OLD.id;\nEND;`
           ]
         }
       ];

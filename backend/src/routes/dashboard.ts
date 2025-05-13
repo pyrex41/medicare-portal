@@ -48,6 +48,16 @@ export function createDashboardRoutes() {
         const quotesSent = quotesSentResult?.count || 0
         logger.info(`Quotes Sent count: ${quotesSent}`)
 
+        // 1b. "Manual Quotes Sent" - count manual quote emails from email_send_tracking
+        const manualQuotesSql = `
+          SELECT COUNT(*) as count
+          FROM email_send_tracking
+          WHERE email_type = 'quote_email' AND send_status = 'sent'
+        `;
+        const manualQuotesResult = await orgDb.fetchOne<{ count: number }>(manualQuotesSql);
+        const manualQuotesSent = manualQuotesResult?.count || 0;
+        logger.info(`Manual Quotes Sent count: ${manualQuotesSent}`);
+
         // 2. "Quotes Viewed" - count unique contacts who have viewed quotes
         const quotesViewedSql = `
           SELECT COUNT(DISTINCT contact_id) as count 
@@ -109,12 +119,13 @@ export function createDashboardRoutes() {
 
         // No need to transform the chart data anymore
 
-        logger.info(`Dashboard stats for org ${currentUser.organization_id}: Quotes Sent: ${quotesSent}, Quotes Viewed: ${quotesViewed}, Renewals: ${followUpsRequested}`)
+        logger.info(`Dashboard stats for org ${currentUser.organization_id}: Quotes Sent: ${quotesSent}, Manual Quotes Sent: ${manualQuotesSent}, Quotes Viewed: ${quotesViewed}, Renewals: ${followUpsRequested}`)
 
         return {
           success: true,
           stats: {
             quotesSent,
+            manualQuotesSent,
             quotesViewed,
             followUpsRequested,
             healthQuestionsCompleted,

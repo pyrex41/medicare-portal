@@ -73,6 +73,7 @@ backend/
       brand.ts
       contacts.ts
       contactTracking.ts
+      dashboard.ts
       eligibility.ts
       onboarding.ts
       organizations.ts
@@ -125,6 +126,7 @@ frontend/
       SetupLayout.elm
     Utils/
       DiscountDescription.elm
+      Formatters.elm
       MyDate.elm
       QuoteHeader.elm
       RandomOrgName.elm
@@ -136,6 +138,7 @@ frontend/
     Calculator.elm
     CarrierNaic.elm
     ChangePlan.elm
+    chart-animations.ts
     ChoosePlan.elm
     Compare.elm
     Contact.elm
@@ -3322,6 +3325,154 @@ export const createContactTrackingRoutes = () => {
       }
     );
 };
+
+================
+File: backend/src/routes/dashboard.ts
+================
+import { Elysia } from 'elysia'
+import { Database } from '../database'
+import { logger } from '../logger'
+import { getUserFromSession } from '../services/auth'
+
+/**
+ * Creates and configures dashboard-related routes
+ */
+export function createDashboardRoutes() {
+  return new Elysia({ prefix: '/api/dashboard' })
+    // Dashboard statistics endpoint
+    .get('/stats', async ({ request, set }) => {
+      try {
+        // Get current user from session
+        const currentUser = await getUserFromSession(request)
+        if (!currentUser || !currentUser.organization_id) {
+          set.status = 401
+          return {
+            success: false,
+            error: 'Authentication required'
+          }
+        }
+
+        // Get organization-specific database
+        const orgDb = await Database.getOrInitOrgDb(currentUser.organization_id.toString())
+
+        // For accurate counts, we need to be precise about what we're counting
+        // Log all tables to help diagnose
+        logger.info(`Checking available tables in org DB for ${currentUser.organization_id}`)
+        const tablesResult = await orgDb.fetchAll(
+          "SELECT name FROM sqlite_master WHERE type='table'"
+        )
+        logger.info(`Available tables: ${JSON.stringify(tablesResult.map((r: any) => r.name || r[0]))}`)
+        
+        // Better debug query to understand tracking_clicks structure
+        const sampleClicks = await orgDb.fetchAll(
+          "SELECT * FROM tracking_clicks LIMIT 5"
+        )
+        logger.info(`Sample tracking_clicks: ${JSON.stringify(sampleClicks)}`)
+        
+        // 1. "Quotes Sent" - count emails that have been sent (status = 'scheduled')
+        const quotesSentSql = `
+          SELECT COUNT(*) as count 
+          FROM email_schedules 
+          WHERE status = 'scheduled'
+        `
+        const quotesSentResult = await orgDb.fetchOne<{ count: number }>(quotesSentSql)
+        const quotesSent = quotesSentResult?.count || 0
+        logger.info(`Quotes Sent count: ${quotesSent}`)
+
+        // 1b. "Manual Quotes Sent" - count manual quote emails from email_send_tracking
+        const manualQuotesSql = `
+          SELECT COUNT(*) as count
+          FROM email_send_tracking
+          WHERE email_type = 'quote_email' AND send_status = 'sent'
+        `;
+        const manualQuotesResult = await orgDb.fetchOne<{ count: number }>(manualQuotesSql);
+        const manualQuotesSent = manualQuotesResult?.count || 0;
+        logger.info(`Manual Quotes Sent count: ${manualQuotesSent}`);
+
+        // 2. "Quotes Viewed" - count unique contacts who have viewed quotes
+        const quotesViewedSql = `
+          SELECT COUNT(DISTINCT contact_id) as count 
+          FROM tracking_clicks
+          WHERE contact_id IS NOT NULL
+        `
+        const quotesViewedResult = await orgDb.fetchOne<{ count: number }>(quotesViewedSql)
+        const quotesViewed = quotesViewedResult?.count || 0
+        logger.info(`Quotes Viewed count: ${quotesViewed}`)
+
+        // 3. Get "Upcoming Renewals" count from email_schedules
+        const followUpsSql = `
+          SELECT COUNT(*) as count
+          FROM email_schedules
+          WHERE status = 'pre-scheduled'
+        `
+        const followUpsResult = await orgDb.fetchOne<{ count: number }>(followUpsSql)
+        const followUpsRequested = followUpsResult?.count || 0
+
+        // 4. Get "Health Questions Completed" count - unique contacts who have completed health questions
+        const healthQuestionsCompletedSql = `
+          SELECT COUNT(DISTINCT contact_id) as count
+          FROM eligibility_answers
+        `
+        const healthQuestionsResult = await orgDb.fetchOne<{ count: number }>(healthQuestionsCompletedSql)
+        const healthQuestionsCompleted = healthQuestionsResult?.count || 0
+        logger.info(`Health Questions Completed count: ${healthQuestionsCompleted}`)
+
+        // Show data for all 12 months, with real data for current month and zeros for others
+        const currentMonth = new Date().getMonth(); // 0-11
+
+        // Create array of chart data for all months
+        const chartData = [];
+        const monthsToShow = 12;
+
+        // Create entries for all 12 months, but only put real data in current month
+        for (let i = 0; i < monthsToShow; i++) {
+          // Only the current month has actual data, rest are zeros
+          const isCurrentMonth = i === currentMonth;
+
+          let sentValue = 0;
+          let viewedValue = 0;
+          let followUpValue = 0;
+
+          if (isCurrentMonth) {
+            // Use real data for current month
+            sentValue = quotesSent;
+            viewedValue = quotesViewed;
+            followUpValue = followUpsRequested;
+          }
+
+          chartData.push({
+            x: i, // 0-11 for months (Jan-Dec)
+            sends: sentValue,
+            views: viewedValue,
+            followUps: followUpValue
+          });
+        }
+
+        // No need to transform the chart data anymore
+
+        logger.info(`Dashboard stats for org ${currentUser.organization_id}: Quotes Sent: ${quotesSent}, Manual Quotes Sent: ${manualQuotesSent}, Quotes Viewed: ${quotesViewed}, Renewals: ${followUpsRequested}`)
+
+        return {
+          success: true,
+          stats: {
+            quotesSent,
+            manualQuotesSent,
+            quotesViewed,
+            followUpsRequested,
+            healthQuestionsCompleted,
+            chartData
+          }
+        }
+      } catch (error) {
+        logger.error(`Error fetching dashboard stats: ${error}`)
+        set.status = 500
+        return {
+          success: false,
+          error: 'Failed to load dashboard stats'
+        }
+      }
+    })
+}
 
 ================
 File: backend/src/routes/eligibility.ts
@@ -13043,71 +13194,103 @@ export class Database {
    * This method is used as a fallback when the database needs to be created on the fly
    */
   static async getOrInitOrgDb(orgId: string): Promise<Database> {
-    try {
-      const db = await Database.getOrgDb(orgId)
-      
-      await Database.ensureOrgSchema(db)
-      return db
-    } catch (error) {
-      if (error instanceof Error && error.message === 'Organization database not configured') {
-        logger.info(`No database found for org ${orgId}, initializing new database`)
-        const mainDb = new Database()
-        const orgExists = await mainDb.fetchOne<{ id: number }>(
-          'SELECT id FROM organizations WHERE id = ?',
-          [orgId]
-        )
-        if (!orgExists) throw new Error('Organization not found')
+    const mainDb = new Database();
+    const MAX_RETRIES = 10;
+    const RETRY_DELAY_MS = 500;
+    let retries = 0;
 
-        const turso = new TursoService()
-        logger.info(`Creating new Turso database for org ${orgId}`)
-        const { url, token } = await turso.createOrganizationDatabase(orgId)
-        logger.info(`Got new database URL: ${url}`)
-        logger.info(`Got new database token (length: ${token.length})`)
+    while (true) {
+      try {
+        // Try to get the org DB as usual
+        const db = await Database.getOrgDb(orgId)
+        await Database.ensureOrgSchema(db)
+        return db
+      } catch (error) {
+        if (error instanceof Error && error.message === 'Organization database not configured') {
+          // Try to atomically claim the right to provision the DB
+          const claimResult = await mainDb.execute(
+            `UPDATE organizations
+             SET is_db_provisioning = 1
+             WHERE id = ? AND is_db_provisioning = 0 AND (turso_db_url IS NULL OR turso_db_url = '')`,
+            [orgId]
+          );
 
-        // Verify we can connect with the new credentials
-        try {
-          logger.info('Verifying connection with new credentials...')
-          const testDb = new Database(url, token)
-          await testDb.execute('SELECT 1')
-          logger.info('Successfully verified connection with new credentials')
-        } catch (connError) {
-          logger.error(`Failed to verify connection with new credentials: ${connError instanceof Error ? connError.message : String(connError)}`)
-          throw new Error('Failed to verify connection with new database credentials')
+          if (claimResult.rowsAffected === 0) {
+            // Someone else is provisioning, wait and retry
+            if (retries++ >= MAX_RETRIES) {
+              throw new Error('Timed out waiting for organization DB provisioning');
+            }
+            await new Promise(res => setTimeout(res, RETRY_DELAY_MS));
+            continue;
+          }
+
+          // We have the lock, proceed to provision
+          try {
+            const orgExists = await mainDb.fetchOne<{ id: number }>(
+              'SELECT id FROM organizations WHERE id = ?',
+              [orgId]
+            )
+            if (!orgExists) throw new Error('Organization not found')
+
+            const turso = new TursoService()
+            logger.info(`Creating new Turso database for org ${orgId}`)
+            const { url, token } = await turso.createOrganizationDatabase(orgId)
+            logger.info(`Got new database URL: ${url}`)
+            logger.info(`Got new database token (length: ${token.length})`)
+
+            // Verify we can connect with the new credentials
+            try {
+              logger.info('Verifying connection with new credentials...')
+              const testDb = new Database(url, token)
+              await testDb.execute('SELECT 1')
+              logger.info('Successfully verified connection with new credentials')
+            } catch (connError) {
+              logger.error(`Failed to verify connection with new credentials: ${connError instanceof Error ? connError.message : String(connError)}`)
+              throw new Error('Failed to verify connection with new database credentials')
+            }
+
+            // Update organization with new credentials and clear provisioning flag
+            logger.info(`Updating organization ${orgId} with new database credentials`)
+            await mainDb.execute(
+              'UPDATE organizations SET turso_db_url = ?, turso_auth_token = ?, is_db_provisioning = 0 WHERE id = ?',
+              [url, token, orgId]
+            )
+
+            // Verify the update
+            const updatedOrg = await mainDb.fetchOne<{ turso_db_url: string, turso_auth_token: string }>(
+              'SELECT turso_db_url, turso_auth_token FROM organizations WHERE id = ?',
+              [orgId]
+            )
+            if (!updatedOrg) {
+              logger.error('Failed to fetch updated organization after credential update')
+              throw new Error('Failed to update organization credentials')
+            }
+            if (updatedOrg.turso_db_url !== url || updatedOrg.turso_auth_token !== token) {
+              logger.error('Organization credentials mismatch after update')
+              logger.error(`Expected URL: ${url}, got: ${updatedOrg.turso_db_url}`)
+              logger.error(`Expected token length: ${token.length}, got: ${updatedOrg.turso_auth_token.length}`)
+              throw new Error('Organization credentials mismatch after update')
+            }
+
+            logger.info(`Successfully initialized database for organization ${orgId}`)
+            const newDb = new Database(url, token)
+            await Database.ensureOrgSchema(newDb)
+            return newDb
+          } catch (provisionError) {
+            // On error, clear the provisioning flag so future attempts can retry
+            await mainDb.execute(
+              'UPDATE organizations SET is_db_provisioning = 0 WHERE id = ?',
+              [orgId]
+            )
+            throw provisionError
+          }
         }
-
-        // Update organization with new credentials
-        logger.info(`Updating organization ${orgId} with new database credentials`)
-        await mainDb.execute(
-          'UPDATE organizations SET turso_db_url = ?, turso_auth_token = ? WHERE id = ?',
-          [url, token, orgId]
-        )
-
-        // Verify the update
-        const updatedOrg = await mainDb.fetchOne<{ turso_db_url: string, turso_auth_token: string }>(
-          'SELECT turso_db_url, turso_auth_token FROM organizations WHERE id = ?',
-          [orgId]
-        )
-        if (!updatedOrg) {
-          logger.error('Failed to fetch updated organization after credential update')
-          throw new Error('Failed to update organization credentials')
+        logger.error(`Error in getOrInitOrgDb: ${error instanceof Error ? error.message : String(error)}`)
+        if (error instanceof Error && error.stack) {
+          logger.error(`Stack trace: ${error.stack}`)
         }
-        if (updatedOrg.turso_db_url !== url || updatedOrg.turso_auth_token !== token) {
-          logger.error('Organization credentials mismatch after update')
-          logger.error(`Expected URL: ${url}, got: ${updatedOrg.turso_db_url}`)
-          logger.error(`Expected token length: ${token.length}, got: ${updatedOrg.turso_auth_token.length}`)
-          throw new Error('Organization credentials mismatch after update')
-        }
-
-        logger.info(`Successfully initialized database for organization ${orgId}`)
-        const newDb = new Database(url, token)
-        await Database.ensureOrgSchema(newDb)
-        return newDb
+        throw error
       }
-      logger.error(`Error in getOrInitOrgDb: ${error instanceof Error ? error.message : String(error)}`)
-      if (error instanceof Error && error.stack) {
-        logger.error(`Stack trace: ${error.stack}`)
-      }
-      throw error
     }
   }
 
@@ -13248,6 +13431,30 @@ export class Database {
           `CREATE INDEX IF NOT EXISTS idx_email_tracking_message_id ON email_send_tracking(message_id)`,
           `CREATE INDEX IF NOT EXISTS idx_email_tracking_delivery_status ON email_send_tracking(delivery_status)`,
           `CREATE TRIGGER IF NOT EXISTS update_email_tracking_timestamp AFTER UPDATE ON email_send_tracking BEGIN UPDATE email_send_tracking SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id; END`
+        ]
+      },
+      {
+        name: 'email_schedules',
+        createStatement: `
+          CREATE TABLE IF NOT EXISTS email_schedules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            org_id INTEGER NOT NULL,
+            contact_id INTEGER NOT NULL,
+            email_type TEXT NOT NULL,
+            scheduled_send_date TEXT NOT NULL,
+            scheduled_send_time TEXT NOT NULL,
+            batch_id TEXT,
+            status TEXT NOT NULL DEFAULT 'pre-scheduled',
+            skip_reason TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          )
+        `,
+        indexStatements: [
+          `CREATE INDEX IF NOT EXISTS idx_email_schedules_org_contact ON email_schedules (org_id, contact_id)`,
+          `CREATE INDEX IF NOT EXISTS idx_email_schedules_org_send_date ON email_schedules (org_id, scheduled_send_date)`,
+          `CREATE INDEX IF NOT EXISTS idx_email_schedules_status ON email_schedules (status)`,
+          `CREATE TRIGGER IF NOT EXISTS update_email_schedules_updated_at\nAFTER UPDATE ON email_schedules\nFOR EACH ROW\nBEGIN\n    UPDATE email_schedules\n    SET updated_at = CURRENT_TIMESTAMP\n    WHERE id = OLD.id;\nEND;`
         ]
       }
     ];
@@ -13995,6 +14202,30 @@ export class Database {
             `CREATE INDEX IF NOT EXISTS idx_email_tracking_delivery_status ON email_send_tracking(delivery_status)`,
             `CREATE TRIGGER IF NOT EXISTS update_email_tracking_timestamp AFTER UPDATE ON email_send_tracking BEGIN UPDATE email_send_tracking SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id; END`
           ]
+        },
+        {
+          name: 'email_schedules',
+          createSql: `
+            CREATE TABLE IF NOT EXISTS email_schedules (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              org_id INTEGER NOT NULL,
+              contact_id INTEGER NOT NULL,
+              email_type TEXT NOT NULL,
+              scheduled_send_date TEXT NOT NULL,
+              scheduled_send_time TEXT NOT NULL,
+              batch_id TEXT,
+              status TEXT NOT NULL DEFAULT 'pre-scheduled',
+              skip_reason TEXT,
+              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+              updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+          `,
+          indexSqls: [
+            `CREATE INDEX IF NOT EXISTS idx_email_schedules_org_contact ON email_schedules (org_id, contact_id)`,
+            `CREATE INDEX IF NOT EXISTS idx_email_schedules_org_send_date ON email_schedules (org_id, scheduled_send_date)`,
+            `CREATE INDEX IF NOT EXISTS idx_email_schedules_status ON email_schedules (status)`,
+            `CREATE TRIGGER IF NOT EXISTS update_email_schedules_updated_at\nAFTER UPDATE ON email_schedules\nFOR EACH ROW\nBEGIN\n    UPDATE email_schedules\n    SET updated_at = CURRENT_TIMESTAMP\n    WHERE id = OLD.id;\nEND;`
+          ]
         }
       ];
       
@@ -14314,6 +14545,7 @@ import { createOnboardingRoutes } from './routes/onboarding'
 import { createWaitlistRoutes } from './routes/waitlist'
 import { createSignupRoutes, checkEmailHandler } from './routes/signup'
 import { createStripeRoutes } from './routes/stripe'
+import { createDashboardRoutes } from './routes/dashboard'
 import { errorHandler } from './middleware/error'
 import { getUserFromSession } from './services/auth'
 import { join } from 'path'
@@ -15263,6 +15495,8 @@ const startServer = async () => {
       .use(contactsRoutes)
       // Add waitlist routes
       .use(createWaitlistRoutes())  // Waitlist routes use their own database connection
+      // Add dashboard routes
+      .use(createDashboardRoutes())
       // Serve backend static files from public directory
       .use(createStripeRoutes)
       // Add this endpoint within the app definition
@@ -27539,6 +27773,50 @@ discountDescription csvString carrier naic state =
             )
 
 ================
+File: frontend/src/Utils/Formatters.elm
+================
+module Utils.Formatters exposing (formatPhoneNumber)
+
+
+formatPhoneNumber : String -> String
+formatPhoneNumber phone =
+    if String.isEmpty phone then
+        ""
+
+    else
+        let
+            digits =
+                String.filter Char.isDigit phone
+
+            len =
+                String.length digits
+        in
+        if len == 0 then
+            ""
+
+        else if len == 11 && String.left 1 digits == "1" then
+            let
+                area =
+                    String.slice 1 4 digits
+
+                prefix =
+                    String.slice 4 7 digits
+
+                line =
+                    String.slice 7 11 digits
+            in
+            "+1 (" ++ area ++ ") " ++ prefix ++ "-" ++ line
+
+        else if len <= 3 then
+            "(" ++ String.left len digits
+
+        else if len <= 6 then
+            "(" ++ String.left 3 digits ++ ") " ++ String.dropLeft 3 digits
+
+        else
+            "(" ++ String.left 3 digits ++ ") " ++ String.slice 3 6 digits ++ "-" ++ String.dropLeft 6 digits
+
+================
 File: frontend/src/Utils/MyDate.elm
 ================
 module Utils.MyDate exposing (dateFromMonthDayYear)
@@ -30761,6 +31039,176 @@ view model =
 subscriptions : Model -> Sub Msg
 subscriptions model =
     Sub.map ChoosePlanMsg (ChoosePlan.subscriptions model.choosePlanModel)
+
+================
+File: frontend/src/chart-animations.ts
+================
+/**
+ * Adds animation to charts
+ * This module contains functions to animate different chart types
+ */
+
+/**
+ * Configure animations for line charts
+ * @param chart - The Chartist.js line chart instance
+ */
+export function setupLineChartAnimations(chart: any) {
+  if (!chart || typeof chart.on !== 'function') {
+    console.error('Invalid chart instance provided to setupLineChartAnimations');
+    return;
+  }
+
+  // Define a simpler animation approach
+  chart.on('draw', function(data: any) {
+    if (!data || !data.element) return;
+
+    try {
+      if (data.type === 'line') {
+        // Simple fade in and slide for lines
+        data.element.animate({
+          opacity: {
+            begin: 0,
+            dur: 1000,
+            from: 0,
+            to: 1,
+            easing: 'ease'
+          }
+        });
+      } else if (data.type === 'point') {
+        // Simple fade in for points with slight delay based on index
+        data.element.animate({
+          opacity: {
+            begin: data.index * 80,
+            dur: 500,
+            from: 0,
+            to: 1,
+            easing: 'ease'
+          }
+        });
+      }
+    } catch (error) {
+      console.error('Error in line chart animation:', error);
+    }
+  });
+}
+
+/**
+ * Configure animations for bar charts
+ * @param chart - The Chartist.js bar chart instance
+ */
+export function setupBarChartAnimations(chart: any) {
+  if (!chart || typeof chart.on !== 'function') {
+    console.error('Invalid chart instance provided to setupBarChartAnimations');
+    return;
+  }
+
+  // Apply animations on draw
+  chart.on('draw', function(data: any) {
+    if (!data || !data.element) return;
+    
+    try {
+      if (data.type === 'bar') {
+        // Animate the bar with a simple grow from bottom effect
+        data.element.animate({
+          opacity: {
+            begin: data.index * 80,
+            dur: 500,
+            from: 0,
+            to: 1,
+            easing: 'ease'
+          },
+          y1: {
+            begin: data.index * 80,
+            dur: 500,
+            from: data.y2,
+            to: data.y1,
+            easing: 'ease'
+          }
+        });
+      } else if (data.type === 'label') {
+        // Fade in labels
+        data.element.animate({
+          opacity: {
+            begin: 0,
+            dur: 400,
+            from: 0,
+            to: 1
+          }
+        });
+      }
+    } catch (error) {
+      console.error('Error in bar chart animation:', error);
+    }
+  });
+}
+
+/**
+ * Configure animations for funnel charts
+ * @param element - The DOM element containing the funnel chart
+ */
+export function animateFunnelChart(element: HTMLElement) {
+  // Select all bars in the funnel chart
+  const bars = element.querySelectorAll<HTMLElement>('.funnel-bar');
+  const labels = element.querySelectorAll<HTMLElement>('.funnel-bar-label');
+  const values = element.querySelectorAll<HTMLElement>('.funnel-bar-value');
+  
+  // Animate each bar with proper staggering
+  bars.forEach((bar: HTMLElement, index: number) => {
+    const targetWidth = bar.getAttribute('data-original-width') || '0%';
+    
+    setTimeout(() => {
+      bar.style.transition = 'width 0.8s cubic-bezier(0.22, 0.61, 0.36, 1), opacity 0.6s ease';
+      bar.style.width = targetWidth;
+      bar.style.opacity = '1';
+    }, 150 * index);
+  });
+  
+  // Animate labels with a slight delay after bars
+  labels.forEach((label: HTMLElement, index: number) => {
+    label.style.opacity = '0';
+    label.style.transform = 'translateY(10px)';
+    
+    setTimeout(() => {
+      label.style.transition = 'opacity 0.5s ease, transform 0.5s ease';
+      label.style.opacity = '1';
+      label.style.transform = 'translateY(0)';
+    }, 300 + 80 * index);
+  });
+  
+  // Animate values with a slightly longer delay than labels
+  values.forEach((value: HTMLElement, index: number) => {
+    value.style.opacity = '0';
+    value.style.transform = 'translateY(10px)';
+    
+    setTimeout(() => {
+      value.style.transition = 'opacity 0.5s ease, transform 0.5s ease';
+      value.style.opacity = '1';
+      value.style.transform = 'translateY(0)';
+    }, 450 + 80 * index);
+  });
+  
+  // Add a subtle pulse animation to the largest bar (last one)
+  setTimeout(() => {
+    if (bars.length > 0) {
+      const largestBar = bars[bars.length - 1];
+      largestBar.style.animation = 'pulse 2s infinite';
+      
+      // Add keyframes for pulse animation if not already present
+      if (!document.querySelector('#pulse-animation')) {
+        const style = document.createElement('style');
+        style.id = 'pulse-animation';
+        style.textContent = `
+          @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(3, 4, 94, 0.4); }
+            70% { box-shadow: 0 0 0 6px rgba(3, 4, 94, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(3, 4, 94, 0); }
+          }
+        `;
+        document.head.appendChild(style);
+      }
+    }
+  }, 1500);
+}
 
 ================
 File: frontend/src/ChoosePlan.elm
@@ -34252,6 +34700,7 @@ import Json.Encode as Encode
 import Process
 import Task
 import Time exposing (Month(..), Posix, Zone)
+import Utils.Formatters exposing (formatPhoneNumber)
 import Utils.MyDate exposing (dateFromMonthDayYear)
 
 
@@ -35147,10 +35596,10 @@ update msg model =
                         , body = Http.jsonBody encodedBody
                         , expect =
                             Http.expectJson QuoteEmailSent
-                                (Decode.map3 (\s m r -> { success = s, message = m, trackingRecord = r })
-                                    (Decode.field "success" Decode.bool)
-                                    (Decode.field "message" Decode.string)
-                                    (Decode.field "trackingRecord" (Decode.nullable emailTrackingDecoder))
+                                (Decode.succeed (\s m r -> { success = s, message = m, trackingRecord = r })
+                                    |> Pipeline.required "success" Decode.bool
+                                    |> Pipeline.required "message" Decode.string
+                                    |> Pipeline.optional "trackingRecord" (Decode.nullable emailTrackingDecoder) Nothing
                                 )
                         }
                     )
@@ -35776,33 +36225,6 @@ viewLoading =
 viewSpinner : Html msg
 viewSpinner =
     div [ class "animate-spin rounded-full h-5 w-5 border-2 border-purple-500 border-t-transparent" ] []
-
-
-formatPhoneNumber : String -> String
-formatPhoneNumber phone =
-    if String.isEmpty phone then
-        ""
-
-    else
-        let
-            digits =
-                String.filter Char.isDigit phone
-                    |> String.left 10
-
-            len =
-                String.length digits
-        in
-        if len == 0 then
-            ""
-
-        else if len <= 3 then
-            "(" ++ digits
-
-        else if len <= 6 then
-            "(" ++ String.left 3 digits ++ ") " ++ String.dropLeft 3 digits
-
-        else
-            "(" ++ String.left 3 digits ++ ") " ++ String.slice 3 6 digits ++ "-" ++ String.dropLeft 6 digits
 
 
 
@@ -36491,6 +36913,7 @@ import Task
 import Time
 import Url exposing (Url)
 import Url.Builder as Url
+import Utils.Formatters exposing (formatPhoneNumber)
 
 
 
@@ -36572,7 +36995,13 @@ type alias Model =
     , carriers : List String
     , agents : List User
     , key : Nav.Key
-    , pagination : PaginationState -- Add this field
+    , pagination : PaginationState
+    , quotesSent : Int
+    , manualQuotesSent : Int
+    , quotesViewed : Int
+    , healthQuestionsCompleted : Int
+    , isLoadingDashboardStats : Bool
+    , dashboardStatsError : Maybe String
     }
 
 
@@ -36733,60 +37162,26 @@ type alias SuggestedMappings =
     }
 
 
+emptyAvailableFilters : AvailableFilters
+emptyAvailableFilters =
+    { carriers = []
+    , states = []
+    }
+
+
 init : Nav.Key -> Maybe User -> ( Model, Cmd Msg )
 init key maybeUser =
     let
-        -- Create filtered model if the user is an agent but not an admin
-        initialFilters =
-            case maybeUser of
-                Just user ->
-                    if user.isAgent && not user.isAdmin then
-                        -- Set initial filter to only show contacts assigned to this agent
-                        { carriers = []
-                        , states = []
-                        , ageRange = Nothing
-                        , agents = [ user.id ] -- Add the current agent ID to the filters
-                        }
-
-                    else
-                        emptyFilters
-
-                Nothing ->
-                    emptyFilters
-
-        -- Set default contact owner to current user if they are an agent
-        defaultOwnerId =
-            case maybeUser of
-                Just user ->
-                    if user.isAgent then
-                        Just user.id
-
-                    else
-                        Nothing
-
-                Nothing ->
-                    Nothing
-
-        initialAddForm =
-            { emptyForm | contactOwnerId = defaultOwnerId }
-
-        initialPagination =
-            { currentPage = 1
-            , totalPages = 1
-            , totalItems = 0
-            , itemsPerPage = 100
-            }
-
-        initialModel =
+        model =
             { contacts = []
             , selectedContacts = []
             , showModal = NoModal
             , searchQuery = ""
-            , addForm = initialAddForm
+            , addForm = emptyForm
             , editForm = emptyForm
             , sortColumn = Nothing
             , sortDirection = Ascending
-            , activeFilters = initialFilters -- Use our potentially filtered initial state
+            , activeFilters = emptyFilters
             , openFilter = Nothing
             , currentTime = Time.millisToPosix 0
             , isLoadingContacts = True
@@ -36795,38 +37190,26 @@ init key maybeUser =
             , isSubmittingForm = False
             , isCheckingEmail = False
             , emailExists = False
-            , currentUser = maybeUser -- Use the passed in user immediately
+            , currentUser = maybeUser
             , showProfileMenu = False
             , error = Nothing
             , saveOnUpdate = False
             , expandedContactId = Nothing
-            , availableFilters = { carriers = [], states = [] }
+            , availableFilters = emptyAvailableFilters
             , carriers = []
             , agents = []
             , key = key
-            , pagination = initialPagination
+            , pagination = { currentPage = 1, totalPages = 1, totalItems = 0, itemsPerPage = 100 }
+            , quotesSent = 0
+            , manualQuotesSent = 0
+            , quotesViewed = 0
+            , healthQuestionsCompleted = 0
+            , isLoadingDashboardStats = True
+            , dashboardStatsError = Nothing
             }
-
-        -- Always fetch contacts and current time
-        baseCommands =
-            [ fetchContacts initialModel
-            , Task.perform GotCurrentTime Time.now
-            ]
-
-        -- Only add these commands if we need them
-        userCommands =
-            if maybeUser == Nothing then
-                [ fetchCurrentUser ]
-
-            else
-                []
-
-        -- We need these data regardless of whether we have user data
-        dataCommands =
-            [ fetchCarriers, fetchAgents ]
     in
-    ( initialModel
-    , Cmd.batch (baseCommands ++ userCommands ++ dataCommands)
+    ( model
+    , Cmd.batch [ fetchContacts model, fetchDashboardStats ]
     )
 
 
@@ -36974,6 +37357,9 @@ type Msg
     | UpdateCarrierMapping String String
     | GotCarriersForMapping (List String) (Result Http.Error (List { name : String, aliases : List String }))
     | EmailValidationCompleted (List { email : String, reason : String })
+      -- Dashboard stats messages
+    | FetchDashboardStats
+    | GotDashboardStats (Result Http.Error { success : Bool, stats : { quotesSent : Int, quotesViewed : Int, followUpsRequested : Int, healthQuestionsCompleted : Int } })
 
 
 type ContactFormField
@@ -38338,6 +38724,40 @@ update msg model =
                 _ ->
                     ( model, Cmd.none )
 
+        FetchDashboardStats ->
+            ( { model | isLoadingDashboardStats = True, dashboardStatsError = Nothing }
+            , fetchDashboardStats
+            )
+
+        GotDashboardStats result ->
+            case result of
+                Ok response ->
+                    if response.success then
+                        let
+                            totalQuotesSent =
+                                response.stats.quotesSent + response.stats.manualQuotesSent
+                        in
+                        ( { model
+                            | isLoadingDashboardStats = False
+                            , quotesSent = totalQuotesSent
+                            , manualQuotesSent = response.stats.manualQuotesSent
+                            , quotesViewed = response.stats.quotesViewed
+                            , healthQuestionsCompleted = response.stats.healthQuestionsCompleted
+                            , dashboardStatsError = Nothing
+                          }
+                        , Cmd.none
+                        )
+
+                    else
+                        ( { model | isLoadingDashboardStats = False, dashboardStatsError = Just "Failed to load dashboard data." }
+                        , Cmd.none
+                        )
+
+                Err httpError ->
+                    ( { model | isLoadingDashboardStats = False, dashboardStatsError = Just "Error loading dashboard stats." }
+                    , Cmd.none
+                    )
+
 
 
 -- TODO: Handle error
@@ -38351,10 +38771,35 @@ view model =
         [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" ]
             [ -- Stats Section - Make more compact with reduced margins
               div [ class "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-6" ]
-                [ statsCard "Total Contacts" (String.fromInt model.pagination.totalItems)
-                , statsCard "Emails Sent" "0"
-                , statsCard "Emails Clicked" "0"
-                , statsCard "Quotes Created" "0"
+                [ if model.isLoadingContacts then
+                    statsCardWithSpinner "Total Contacts"
+
+                  else
+                    statsCard "Total Contacts" (String.fromInt model.pagination.totalItems)
+                , if model.isLoadingDashboardStats then
+                    statsCardWithSpinner "Quotes Sent"
+
+                  else if model.dashboardStatsError /= Nothing then
+                    statsCard "Quotes Sent" "0"
+
+                  else
+                    statsCard "Quotes Sent" (String.fromInt model.quotesSent)
+                , if model.isLoadingDashboardStats then
+                    statsCardWithSpinner "Quotes Viewed"
+
+                  else if model.dashboardStatsError /= Nothing then
+                    statsCard "Quotes Viewed" "0"
+
+                  else
+                    statsCard "Quotes Viewed" (String.fromInt model.quotesViewed)
+                , if model.isLoadingDashboardStats then
+                    statsCardWithSpinner "Health Questions"
+
+                  else if model.dashboardStatsError /= Nothing then
+                    statsCard "Health Questions" "0"
+
+                  else
+                    statsCard "Health Questions" (String.fromInt model.healthQuestionsCompleted)
                 ]
             , -- Table Container with overflow handling - reduced vertical spacing
               div [ class "overflow-x-auto max-w-7xl mx-auto" ]
@@ -38570,6 +39015,15 @@ statsCard title value =
         ]
 
 
+statsCardWithSpinner : String -> Html Msg
+statsCardWithSpinner title =
+    div [ class "bg-white rounded-lg shadow-xl p-4 sm:p-6" ]
+        [ div [ class "text-gray-600 text-xs sm:text-sm" ] [ text title ]
+        , div [ class "text-2xl sm:text-4xl font-bold mt-1 sm:mt-2 text-[#03045E] flex items-center justify-center" ]
+            [ div [ class "animate-spin rounded-full h-8 w-8 border-t-2 border-l-2 border-purple-500" ] [] ]
+        ]
+
+
 tableHeader : String -> Html Msg
 tableHeader headerText =
     th [ class "px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-b border-gray-200 bg-gray-50" ]
@@ -38740,6 +39194,42 @@ submitAddForm form =
         , body = Http.jsonBody (encodeContactForm form)
         , expect = Http.expectJson ContactAdded contactDecoder
         }
+
+
+fetchDashboardStats : Cmd Msg
+fetchDashboardStats =
+    Http.get
+        { url = "/api/dashboard/stats"
+        , expect = Http.expectJson GotDashboardStats dashboardStatsResponseDecoder
+        }
+
+
+dashboardStatsResponseDecoder : Decode.Decoder { success : Bool, stats : { quotesSent : Int, quotesViewed : Int, followUpsRequested : Int, healthQuestionsCompleted : Int } }
+dashboardStatsResponseDecoder =
+    Decode.map2
+        (\success stats ->
+            { success = success
+            , stats = stats
+            }
+        )
+        (Decode.field "success" Decode.bool)
+        (Decode.field "stats" dashboardStatsDecoder)
+
+
+dashboardStatsDecoder : Decode.Decoder { quotesSent : Int, quotesViewed : Int, followUpsRequested : Int, healthQuestionsCompleted : Int }
+dashboardStatsDecoder =
+    Decode.map4
+        (\quotesSent quotesViewed followUpsRequested healthQuestionsCompleted ->
+            { quotesSent = quotesSent
+            , quotesViewed = quotesViewed
+            , followUpsRequested = followUpsRequested
+            , healthQuestionsCompleted = healthQuestionsCompleted
+            }
+        )
+        (Decode.field "quotesSent" Decode.int)
+        (Decode.field "quotesViewed" Decode.int)
+        (Decode.field "followUpsRequested" Decode.int)
+        (Decode.field "healthQuestionsCompleted" Decode.int)
 
 
 submitEditFormWithFlag : ContactForm -> Bool -> Cmd Msg
@@ -40455,33 +40945,6 @@ fetchCurrentUser =
         }
 
 
-formatPhoneNumber : String -> String
-formatPhoneNumber phone =
-    if String.isEmpty phone then
-        ""
-
-    else
-        let
-            digits =
-                String.filter Char.isDigit phone
-                    |> String.left 10
-
-            len =
-                String.length digits
-        in
-        if len == 0 then
-            ""
-
-        else if len <= 3 then
-            "(" ++ digits
-
-        else if len <= 6 then
-            "(" ++ String.left 3 digits ++ ") " ++ String.dropLeft 3 digits
-
-        else
-            "(" ++ String.left 3 digits ++ ") " ++ String.slice 3 6 digits ++ "-" ++ String.dropLeft 6 digits
-
-
 viewFilterDropdown : Model -> FilterType -> Html Msg
 viewFilterDropdown model filterType =
     let
@@ -41891,49 +42354,302 @@ File: frontend/src/Dashboard.elm
 module Dashboard exposing (Model, Msg, init, subscriptions, update, view)
 
 import Browser exposing (Document)
-import Chart as C
-import Chart.Attributes as CA
-import Chart.Events as CE
-import Chart.Item as CI
 import Components.LimitBanner as LimitBanner exposing (LimitWarning(..))
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (..)
+import Http
+import Json.Decode as Decode exposing (Decoder)
+import Json.Decode.Pipeline as Pipeline
+import Json.Encode as Encode
 import Time
 
 
+
+-- MODEL
+
+
 type alias Model =
-    { hovering : Maybe Point
-    , limitBanner : LimitBanner.Model
+    { limitBanner : LimitBanner.Model
     , showTutorialModal : Bool
+    , quotesSent : Int
+    , manualQuotesSent : Int
+    , quotesViewed : Int
+    , followUpsRequested : Int
+    , healthQuestionsCompleted : Int
+    , statsLoading : Bool
+    , statsError : Maybe String
+    , chartData : List ChartDataFromAPI
+    , selectedTimeFilter : TimeFilter
+    , selectedChartView : ChartView
+    , upcomingRenewals : List Renewal
     }
 
 
-type alias Point =
-    { x : Float
-    , y : Float
-    }
+
+-- This is the data structure from the API
 
 
-type alias ChartData =
-    { x : Float
+type alias ChartDataFromAPI =
+    { x : Float -- timestamp or month index
     , sends : Float
     , views : Float
     , followUps : Float
+    , healthCompleted : Float -- New field
     }
 
 
+
+-- This is the data structure for Chartist.js
+
+
+type alias ChartistJsData =
+    { labels : List String
+    , series : List (List Float)
+    }
+
+
+type TimeFilter
+    = Last7Days
+    | Last30Days
+    | Last90Days
+    | YearToDate
+    | CustomRange Time.Posix Time.Posix
+
+
+type ChartView
+    = TrendView
+    | FunnelView
+    | ComparisonView
+
+
+type alias Renewal =
+    { id : String
+    , name : String
+    , email : String
+    , phone : String
+    , date : String
+    , policyType : String
+    }
+
+
+
+-- MESSAGES
+
+
 type Msg
-    = OnHover (Maybe Point)
-    | NoOp
+    = NoOp
     | LimitBannerMsg LimitBanner.Msg
     | CloseTutorialModal
     | OpenTutorialModal
+    | FetchDashboardStats
+    | GotDashboardStats (Result Http.Error DashboardStatsResponse)
+    | SelectTimeFilter TimeFilter
+    | SelectChartView ChartView
+    | FetchRenewals
+    | GotRenewals (Result Http.Error RenewalResponse)
+    | SendReminderToContact String
+    | CallContact String
 
 
 type alias Flags =
     { isPostPayment : Maybe Bool
     }
+
+
+type alias DashboardStats =
+    { quotesSent : Int
+    , manualQuotesSent : Int
+    , quotesViewed : Int
+    , followUpsRequested : Int
+    , healthQuestionsCompleted : Int
+    , chartData : List ChartDataFromAPI
+    }
+
+
+type alias DashboardStatsResponse =
+    { success : Bool
+    , stats : DashboardStats
+    }
+
+
+type alias RenewalResponse =
+    { success : Bool
+    , renewals : List Renewal
+    }
+
+
+dashboardStatsDecoder : Decoder DashboardStats
+dashboardStatsDecoder =
+    Decode.succeed DashboardStats
+        |> Pipeline.required "quotesSent" Decode.int
+        |> Pipeline.required "manualQuotesSent" Decode.int
+        |> Pipeline.required "quotesViewed" Decode.int
+        |> Pipeline.required "followUpsRequested" Decode.int
+        |> Pipeline.required "healthQuestionsCompleted" Decode.int
+        |> Pipeline.required "chartData" (Decode.list chartDataFromAPIDecoder)
+
+
+chartDataFromAPIDecoder : Decoder ChartDataFromAPI
+chartDataFromAPIDecoder =
+    Decode.succeed ChartDataFromAPI
+        |> Pipeline.required "x" Decode.float
+        |> Pipeline.required "sends" Decode.float
+        |> Pipeline.required "views" Decode.float
+        |> Pipeline.required "followUps" Decode.float
+        |> Pipeline.optional "healthCompleted" Decode.float 0.0
+
+
+
+-- Default to 0 if not present
+
+
+dashboardStatsResponseDecoder : Decoder DashboardStatsResponse
+dashboardStatsResponseDecoder =
+    Decode.succeed DashboardStatsResponse
+        |> Pipeline.required "success" Decode.bool
+        |> Pipeline.required "stats" dashboardStatsDecoder
+
+
+renewalDecoder : Decoder Renewal
+renewalDecoder =
+    Decode.succeed Renewal
+        |> Pipeline.required "id" Decode.string
+        |> Pipeline.required "name" Decode.string
+        |> Pipeline.required "email" Decode.string
+        |> Pipeline.required "phone" Decode.string
+        |> Pipeline.required "date" Decode.string
+        |> Pipeline.required "policyType" Decode.string
+
+
+renewalResponseDecoder : Decoder RenewalResponse
+renewalResponseDecoder =
+    Decode.succeed RenewalResponse
+        |> Pipeline.required "success" Decode.bool
+        |> Pipeline.required "renewals" (Decode.list renewalDecoder)
+
+
+
+-- HELPERS
+-- Function to encode ChartistJsData to JSON
+
+
+encodeChartistJsData : ChartistJsData -> Encode.Value
+encodeChartistJsData data =
+    Encode.object
+        [ ( "labels", Encode.list Encode.string data.labels )
+        , ( "series", Encode.list (Encode.list Encode.float) data.series )
+        ]
+
+
+
+-- Helper to format month float to short string (e.g., 0.0 -> "Jan")
+
+
+formatMonthLabel : Float -> String
+formatMonthLabel x =
+    let
+        monthIndex =
+            round x
+    in
+    case monthIndex of
+        0 ->
+            "Jan"
+
+        1 ->
+            "Feb"
+
+        2 ->
+            "Mar"
+
+        3 ->
+            "Apr"
+
+        4 ->
+            "May"
+
+        5 ->
+            "Jun"
+
+        6 ->
+            "Jul"
+
+        7 ->
+            "Aug"
+
+        8 ->
+            "Sep"
+
+        9 ->
+            "Oct"
+
+        10 ->
+            "Nov"
+
+        11 ->
+            "Dec"
+
+        _ ->
+            ""
+
+
+
+-- Calculate percentages and rates
+
+
+calculateViewRate : Model -> Float
+calculateViewRate model =
+    if model.quotesSent == 0 then
+        0
+
+    else
+        toFloat model.quotesViewed / toFloat model.quotesSent * 100
+
+
+calculateFollowUpRate : Model -> Float
+calculateFollowUpRate model =
+    if model.quotesViewed == 0 then
+        0
+
+    else
+        toFloat model.followUpsRequested / toFloat model.quotesViewed * 100
+
+
+calculateCompletionRate : Model -> Float
+calculateCompletionRate model =
+    if model.quotesSent == 0 then
+        0
+
+    else
+        toFloat model.healthQuestionsCompleted / toFloat model.quotesSent * 100
+
+
+
+-- Helper to get API endpoint based on time filter
+
+
+timeFilterToApiParam : TimeFilter -> String
+timeFilterToApiParam filter =
+    case filter of
+        Last7Days ->
+            "7days"
+
+        Last30Days ->
+            "30days"
+
+        Last90Days ->
+            "90days"
+
+        YearToDate ->
+            "ytd"
+
+        CustomRange start end ->
+            "custom"
+
+
+
+-- Would need to append date parameters
+-- INIT
 
 
 init : Flags -> ( Model, Cmd Msg )
@@ -41942,22 +42658,81 @@ init flags =
         ( limitBannerModel, limitBannerCmd ) =
             LimitBanner.init
     in
-    ( { hovering = Nothing
-      , limitBanner = limitBannerModel
+    ( { limitBanner = limitBannerModel
       , showTutorialModal = Maybe.withDefault False flags.isPostPayment
+      , quotesSent = 0
+      , manualQuotesSent = 0
+      , quotesViewed = 0
+      , followUpsRequested = 0
+      , healthQuestionsCompleted = 0
+      , statsLoading = True
+      , statsError = Nothing
+      , chartData = []
+      , selectedTimeFilter = Last30Days
+      , selectedChartView = TrendView
+      , upcomingRenewals = []
       }
-    , Cmd.map LimitBannerMsg limitBannerCmd
+    , Cmd.batch
+        [ Cmd.map LimitBannerMsg limitBannerCmd
+        , fetchDashboardStats Last30Days
+        , fetchRenewals
+        ]
     )
+
+
+
+-- HTTP
+
+
+fetchDashboardStats : TimeFilter -> Cmd Msg
+fetchDashboardStats timeFilter =
+    let
+        timeParam =
+            timeFilterToApiParam timeFilter
+
+        url =
+            "/api/dashboard/stats?period=" ++ timeParam
+    in
+    Http.get
+        { url = url
+        , expect = Http.expectJson GotDashboardStats dashboardStatsResponseDecoder
+        }
+
+
+fetchRenewals : Cmd Msg
+fetchRenewals =
+    Http.get
+        { url = "/api/dashboard/renewals"
+        , expect = Http.expectJson GotRenewals renewalResponseDecoder
+        }
+
+
+httpErrorToString : Http.Error -> String
+httpErrorToString error =
+    case error of
+        Http.BadUrl url ->
+            "Bad URL: " ++ url
+
+        Http.Timeout ->
+            "Request timed out"
+
+        Http.NetworkError ->
+            "Network error"
+
+        Http.BadStatus code ->
+            "Bad status: " ++ String.fromInt code
+
+        Http.BadBody message ->
+            "Bad body: " ++ message
+
+
+
+-- UPDATE
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
-        OnHover point ->
-            ( { model | hovering = point }
-            , Cmd.none
-            )
-
         LimitBannerMsg limitBannerMsg ->
             let
                 ( limitBanner, cmd ) =
@@ -41977,8 +42752,113 @@ update msg model =
             , Cmd.none
             )
 
+        FetchDashboardStats ->
+            ( { model | statsLoading = True, statsError = Nothing }
+            , fetchDashboardStats model.selectedTimeFilter
+            )
+
+        GotDashboardStats result ->
+            case result of
+                Ok response ->
+                    if response.success then
+                        let
+                            totalQuotesSent =
+                                response.stats.quotesSent + response.stats.manualQuotesSent
+                        in
+                        ( { model
+                            | statsLoading = False
+                            , quotesSent = totalQuotesSent
+                            , manualQuotesSent = response.stats.manualQuotesSent
+                            , quotesViewed = response.stats.quotesViewed
+                            , followUpsRequested = response.stats.followUpsRequested
+                            , healthQuestionsCompleted = response.stats.healthQuestionsCompleted
+                            , chartData = response.stats.chartData
+                          }
+                        , Cmd.none
+                        )
+
+                    else
+                        ( { model | statsLoading = False, statsError = Just "Failed to load dashboard data." }
+                        , Cmd.none
+                        )
+
+                Err httpError ->
+                    ( { model | statsLoading = False, statsError = Just (httpErrorToString httpError) }
+                    , Cmd.none
+                    )
+
+        SelectTimeFilter timeFilter ->
+            ( { model | selectedTimeFilter = timeFilter, statsLoading = True }
+            , fetchDashboardStats timeFilter
+            )
+
+        SelectChartView chartView ->
+            ( { model | selectedChartView = chartView }
+            , Cmd.none
+            )
+
+        FetchRenewals ->
+            ( model
+            , fetchRenewals
+            )
+
+        GotRenewals result ->
+            case result of
+                Ok response ->
+                    if response.success then
+                        ( { model | upcomingRenewals = response.renewals }
+                        , Cmd.none
+                        )
+
+                    else
+                        ( model
+                        , Cmd.none
+                        )
+
+                Err _ ->
+                    ( model
+                    , Cmd.none
+                    )
+
+        SendReminderToContact contactId ->
+            -- This would call an API to send a reminder
+            ( model
+            , Cmd.none
+            )
+
+        CallContact contactId ->
+            -- This would integrate with a calling system or log the call
+            ( model
+            , Cmd.none
+            )
+
         NoOp ->
             ( model, Cmd.none )
+
+
+viewChartist : String -> ChartView -> Html msg
+viewChartist chartistDataJson chartView =
+    let
+        chartType =
+            case chartView of
+                TrendView ->
+                    "chartist-line"
+
+                FunnelView ->
+                    "chartist-funnel"
+
+                ComparisonView ->
+                    "chartist-bar"
+    in
+    node chartType
+        [ attribute "data" chartistDataJson
+        , attribute "style" "height: 100%; width: 100%; display: block;"
+        ]
+        []
+
+
+
+-- VIEW
 
 
 view : Model -> Document Msg
@@ -41993,48 +42873,307 @@ view model =
 
               else
                 text ""
-            , div [ class "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6" ]
-                [ -- Stats cards
-                  viewStatsCard "Quotes Sent" "0" "text-purple-600"
-                , viewStatsCard "Quotes Viewed" "0" "text-purple-600"
-                , viewStatsCard "Follow Ups Requested" "0" "text-purple-600"
-                ]
-            , div [ class "mt-6 sm:mt-8 grid grid-cols-1 lg:grid-cols-4 gap-4 sm:gap-6" ]
-                [ div [ class "lg:col-span-3" ]
-                    [ -- Chart section
-                      div [ class "bg-white rounded-lg shadow p-4 sm:p-6" ]
-                        [ h3 [ class "text-lg font-semibold mb-2 sm:mb-4" ] [ text "Quote Results" ]
-                        , div [ class "h-64 overflow-x-auto overflow-y-hidden" ]
-                            [ viewChart model ]
-                        , div [ class "flex flex-col sm:flex-row justify-center mt-8 sm:mt-16 space-y-2 sm:space-y-0 sm:space-x-8 text-sm text-gray-600 border-t border-gray-200 pt-4 sm:pt-8" ]
-                            [ div [ class "flex items-center" ]
-                                [ div [ class "w-3 h-3 rounded-full bg-[#DCE2E5] mr-1.5 sm:mr-2" ] []
-                                , text "Quotes Sent"
-                                ]
-                            , div [ class "flex items-center" ]
-                                [ div [ class "w-3 h-3 rounded-full bg-[#53389E] mr-1.5 sm:mr-2" ] []
-                                , text "Quotes Viewed"
-                                ]
-                            , div [ class "flex items-center" ]
-                                [ div [ class "w-3 h-3 rounded-full bg-[#03045E] mr-1.5 sm:mr-2" ] []
-                                , text "Follow-up Requests"
-                                ]
-                            ]
-                        ]
-                    ]
-                , div [ class "lg:col-span-1" ]
-                    [ -- Next Renewals section
-                      div [ class "bg-white rounded-lg shadow p-4 sm:p-6" ]
-                        [ h3 [ class "text-lg font-semibold mb-2 sm:mb-4" ] [ text "Next Renewals" ]
-                        , div [ class "space-y-4" ]
-                            [-- We'll add renewal items here later
-                            ]
-                        ]
-                    ]
-                ]
+            , viewDashboardHeader model
+            , viewStatsCards model
+            , viewMainContent model
             ]
         ]
     }
+
+
+viewDashboardHeader : Model -> Html Msg
+viewDashboardHeader model =
+    div [ class "flex flex-col sm:flex-row justify-between items-center mb-6" ]
+        [ h1 [ class "text-2xl font-bold text-gray-800 mb-4 sm:mb-0" ]
+            [ text "MedicareMax Dashboard" ]
+        , div [ class "flex space-x-2" ]
+            [ select
+                [ class "bg-white border border-gray-300 rounded-md px-3 py-2 text-sm"
+                , onInput
+                    (\value ->
+                        case value of
+                            "7days" ->
+                                SelectTimeFilter Last7Days
+
+                            "30days" ->
+                                SelectTimeFilter Last30Days
+
+                            "90days" ->
+                                SelectTimeFilter Last90Days
+
+                            "ytd" ->
+                                SelectTimeFilter YearToDate
+
+                            _ ->
+                                NoOp
+                    )
+                ]
+                [ option [ value "7days" ] [ text "Last 7 Days" ]
+                , option [ value "30days", selected (model.selectedTimeFilter == Last30Days) ] [ text "Last 30 Days" ]
+                , option [ value "90days" ] [ text "Last 90 Days" ]
+                , option [ value "ytd" ] [ text "Year to Date" ]
+                ]
+            , button
+                [ class "bg-[#03045e] text-white px-4 py-2 rounded-md text-sm hover:bg-opacity-90"
+                , onClick FetchDashboardStats
+                ]
+                [ text "Refresh" ]
+            ]
+        ]
+
+
+viewStatsCards : Model -> Html Msg
+viewStatsCards model =
+    let
+        viewRate =
+            calculateViewRate model |> round
+
+        followUpRate =
+            calculateFollowUpRate model |> round
+
+        completionRate =
+            calculateCompletionRate model |> round
+    in
+    div [ class "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-6" ]
+        [ -- Quotes Sent card
+          if model.statsLoading then
+            viewStatsCardWithSpinner "Quotes Sent" "text-[#03045e]"
+
+          else if model.statsError /= Nothing then
+            viewStatsCard "Quotes Sent" "0" "text-red-600" "Failed to load data"
+
+          else
+            viewStatsCard "Quotes Sent" (String.fromInt model.quotesSent) "text-[#03045e]" "Total emails sent with quotes"
+
+        -- View Rate card
+        , if model.statsLoading then
+            viewStatsCardWithSpinner "View Rate" "text-[#0077b6]"
+
+          else if model.statsError /= Nothing then
+            viewStatsCard "View Rate" "0" "text-red-600" "Failed to load data"
+
+          else
+            viewStatsCard "View Rate" (String.fromInt viewRate ++ "%") "text-[#0077b6]" (String.fromInt model.quotesViewed ++ " quotes viewed")
+
+        -- Upcoming Emails card
+        , if model.statsLoading then
+            viewStatsCardWithSpinner "Upcoming Emails" "text-[#00b4d8]"
+
+          else if model.statsError /= Nothing then
+            viewStatsCard "Upcoming Emails" "0" "text-red-600" "Failed to load data"
+
+          else
+            viewStatsCard "Upcoming Emails" (String.fromInt model.followUpsRequested) "text-[#00b4d8]" "Upcoming scheduled emails"
+
+        -- Completion Rate card
+        , if model.statsLoading then
+            viewStatsCardWithSpinner "Completion Rate" "text-[#48cae4]"
+
+          else if model.statsError /= Nothing then
+            viewStatsCard "Completion Rate" "0" "text-red-600" "Failed to load data"
+
+          else
+            viewStatsCard "Completion Rate" (String.fromInt completionRate ++ "%") "text-[#48cae4]" (String.fromInt model.healthQuestionsCompleted ++ " health questions completed")
+        ]
+
+
+viewMainContent : Model -> Html Msg
+viewMainContent model =
+    div [ class "grid grid-cols-1 lg:grid-cols-3 gap-6" ]
+        [ -- Chart section
+          div [ class "lg:col-span-2 bg-white rounded-lg shadow-xl p-4" ]
+            [ div [ class "flex justify-between items-center mb-4" ]
+                [ h2 [ class "text-lg font-semibold text-gray-800" ] [ text "Performance Metrics" ]
+                , div [ class "flex space-x-2" ]
+                    [ button
+                        [ class
+                            ("px-3 py-1 text-sm rounded-md "
+                                ++ (if model.selectedChartView == TrendView then
+                                        "bg-[#03045e] text-white"
+
+                                    else
+                                        "bg-gray-100"
+                                   )
+                            )
+                        , onClick (SelectChartView TrendView)
+                        ]
+                        [ text "Trend" ]
+                    , button
+                        [ class
+                            ("px-3 py-1 text-sm rounded-md "
+                                ++ (if model.selectedChartView == FunnelView then
+                                        "bg-[#03045e] t ext-white"
+
+                                    else
+                                        "bg-gray-100"
+                                   )
+                            )
+                        , onClick (SelectChartView FunnelView)
+                        ]
+                        [ text "Funnel" ]
+                    , button
+                        [ class
+                            ("px-3 py-1 text-sm rounded-md "
+                                ++ (if model.selectedChartView == ComparisonView then
+                                        "bg-[#03045e] text-white"
+
+                                    else
+                                        "bg-gray-100"
+                                   )
+                            )
+                        , onClick (SelectChartView ComparisonView)
+                        ]
+                        [ text "Comparison" ]
+                    ]
+                ]
+            , div [ class "h-64" ]
+                [ if model.statsLoading then
+                    -- Chart spinner
+                    div [ class "h-full w-full flex items-center justify-center" ]
+                        [ div [ class "animate-spin rounded-full h-12 w-12 border-t-2 border-l-2 border-[#03045e]" ] []
+                        , div [ class "ml-3 text-gray-500" ] [ text "Loading chart data..." ]
+                        ]
+
+                  else if model.statsError /= Nothing then
+                    -- Error message
+                    div [ class "h-full w-full flex items-center justify-center" ]
+                        [ div [ class "text-red-500" ] [ text "Error loading chart data. Please try again." ] ]
+
+                  else if List.isEmpty model.chartData then
+                    -- No data message
+                    div [ class "h-full w-full flex items-center justify-center" ]
+                        [ div [ class "text-gray-500" ] [ text "No data available to display." ] ]
+
+                  else
+                    let
+                        -- Different data formatting based on chart type
+                        chartistData =
+                            case model.selectedChartView of
+                                FunnelView ->
+                                    -- For funnel view, we need a simpler data structure
+                                    -- We'll use the most recent data points
+                                    let
+                                        latestData =
+                                            List.reverse model.chartData |> List.head
+                                    in
+                                    case latestData of
+                                        Just latest ->
+                                            -- Pass the actual values from the model here, not from chartData
+                                            { labels = [ "Quotes Sent", "Quotes Viewed", "Upcoming Emails", "Health Completed" ]
+                                            , series = [ [ toFloat model.quotesSent, toFloat model.quotesViewed, toFloat model.followUpsRequested, toFloat model.healthQuestionsCompleted ] ]
+                                            }
+
+                                        Nothing ->
+                                            -- Even if there's no chart data, we can still use the model values
+                                            { labels = [ "Quotes Sent", "Quotes Viewed", "Upcoming Emails", "Health Completed" ]
+                                            , series = [ [ toFloat model.quotesSent, toFloat model.quotesViewed, toFloat model.followUpsRequested, toFloat model.healthQuestionsCompleted ] ]
+                                            }
+
+                                _ ->
+                                    -- For trend and comparison views
+                                    let
+                                        labels =
+                                            List.map (.x >> formatMonthLabel) model.chartData
+
+                                        seriesSents =
+                                            List.map .sends model.chartData
+
+                                        seriesViews =
+                                            List.map .views model.chartData
+
+                                        seriesFollowUps =
+                                            List.map .followUps model.chartData
+
+                                        seriesHealthCompleted =
+                                            List.map .healthCompleted model.chartData
+                                    in
+                                    { labels = labels
+                                    , series = [ seriesSents, seriesViews, seriesFollowUps, seriesHealthCompleted ]
+                                    }
+
+                        chartistJson =
+                            Encode.encode 0 (encodeChartistJsData chartistData)
+                    in
+                    viewChartist chartistJson model.selectedChartView
+                ]
+            , div [ class "flex flex-col sm:flex-row justify-center mt-4 space-y-2 sm:space-y-0 sm:space-x-8 text-sm text-gray-600 border-t border-gray-200 pt-4" ]
+                [ div [ class "flex items-center" ]
+                    [ div [ class "w-3 h-3 rounded-full bg-[#03045e] mr-1.5 sm:mr-2" ] []
+                    , text "Quotes Sent"
+                    ]
+                , div [ class "flex items-center" ]
+                    [ div [ class "w-3 h-3 rounded-full bg-[#0077b6] mr-1.5 sm:mr-2" ] []
+                    , text "Quotes Viewed"
+                    ]
+                , div [ class "flex items-center" ]
+                    [ div [ class "w-3 h-3 rounded-full bg-[#00b4d8] mr-1.5 sm:mr-2" ] []
+                    , text "Upcoming Emails"
+                    ]
+                , div [ class "flex items-center" ]
+                    [ div [ class "w-3 h-3 rounded-full bg-[#48cae4] mr-1.5 sm:mr-2" ] []
+                    , text "Health Completed"
+                    ]
+                ]
+            ]
+        , -- Renewals section
+          div [ class "lg:col-span-1 bg-white rounded-lg shadow-xl p-4" ]
+            [ div [ class "flex justify-between items-center mb-4" ]
+                [ h2 [ class "text-lg font-semibold text-gray-800" ] [ text "Upcoming Renewals" ]
+                , span [ class "bg-[#03045e] text-white text-xs px-2 py-1 rounded-full" ]
+                    [ text (String.fromInt (List.length model.upcomingRenewals) ++ " Total") ]
+                ]
+            , if model.statsLoading then
+                div [ class "h-full w-full flex items-center justify-center py-8" ]
+                    [ div [ class "animate-spin rounded-full h-8 w-8 border-t-2 border-l-2 border-[#03045e]" ] [] ]
+
+              else if List.isEmpty model.upcomingRenewals then
+                div [ class "text-center py-8 text-gray-500" ]
+                    [ text "No upcoming renewals at this time." ]
+
+              else
+                div [ class "space-y-4 max-h-[400px] overflow-y-auto" ]
+                    (List.map viewRenewalItem model.upcomingRenewals)
+            , div [ class "mt-4 text-center" ]
+                [ button [ class "text-[#03045e] text-sm font-medium" ]
+                    [ text "View All Renewals" ]
+                ]
+            ]
+        ]
+
+
+viewRenewalItem : Renewal -> Html Msg
+viewRenewalItem renewal =
+    div [ class "border-b pb-3" ]
+        [ div [ class "flex justify-between items-start" ]
+            [ div []
+                [ div [ class "font-medium" ] [ text renewal.name ]
+                , div [ class "text-sm text-gray-500" ] [ text renewal.policyType ]
+                ]
+            , div [ class "text-sm font-medium text-[#03045e]" ] [ text renewal.date ]
+            ]
+        , div [ class "mt-2 flex items-center text-xs text-gray-500" ]
+            [ -- Email icon
+              span [ class "mr-1" ] [ text "📧" ]
+            , text renewal.email
+            ]
+        , div [ class "mt-1 flex items-center text-xs text-gray-500" ]
+            [ -- Phone icon
+              span [ class "mr-1" ] [ text "📞" ]
+            , text renewal.phone
+            ]
+        , div [ class "mt-2 flex space-x-2" ]
+            [ button
+                [ class "bg-[#0077b6] text-white text-xs px-3 py-1 rounded"
+                , onClick (SendReminderToContact renewal.id)
+                ]
+                [ text "Send Reminder" ]
+            , button
+                [ class "bg-gray-100 text-gray-800 text-xs px-3 py-1 rounded"
+                , onClick (CallContact renewal.id)
+                ]
+                [ text "Call" ]
+            ]
+        ]
 
 
 viewTutorialModal : Html Msg
@@ -42069,98 +43208,23 @@ viewTutorialModal =
         ]
 
 
-viewStatsCard : String -> String -> String -> Html Msg
-viewStatsCard title value colorClass =
+viewStatsCard : String -> String -> String -> String -> Html Msg
+viewStatsCard title value colorClass subtitle =
     div [ class "bg-white rounded-lg shadow-xl p-4 sm:p-6" ]
         [ div [ class "text-gray-600 text-xs sm:text-sm" ] [ text title ]
-        , div [ class "text-2xl sm:text-4xl font-bold mt-1 sm:mt-2 text-[#03045E]" ] [ text value ]
+        , div [ class ("text-2xl sm:text-4xl font-bold mt-1 sm:mt-2 " ++ colorClass) ] [ text value ]
+        , div [ class "text-gray-500 text-xs mt-1" ] [ text subtitle ]
         ]
 
 
-viewChart : Model -> Html Msg
-viewChart model =
-    C.chart
-        [ CA.height 300
-        , CA.width 800 -- Fixed width, with overflow-x-auto on container
-        , CA.margin { top = 10, bottom = 45, left = 30, right = 10 }
-
-        -- CA.responsive is not available in this version
+viewStatsCardWithSpinner : String -> String -> Html Msg
+viewStatsCardWithSpinner title colorClass =
+    div [ class "bg-white rounded-lg shadow-xl p-4 sm:p-6" ]
+        [ div [ class "text-gray-600 text-xs sm:text-sm" ] [ text title ]
+        , div [ class ("text-2xl sm:text-4xl font-bold mt-1 sm:mt-2 flex items-center justify-center " ++ colorClass) ]
+            [ div [ class "animate-spin rounded-full h-8 w-8 border-t-2 border-l-2 border-[#03045e]" ] [] ]
+        , div [ class "text-gray-500 text-xs mt-1" ] [ text "Loading..." ]
         ]
-        [ C.xLabels
-            [ CA.withGrid
-            , CA.amount 12
-            , CA.fontSize 12
-            , CA.moveDown 35
-            , CA.format
-                (\x ->
-                    case round x of
-                        0 ->
-                            "Jan"
-
-                        1 ->
-                            "Feb"
-
-                        2 ->
-                            "Mar"
-
-                        3 ->
-                            "Apr"
-
-                        4 ->
-                            "May"
-
-                        5 ->
-                            "Jun"
-
-                        6 ->
-                            "Jul"
-
-                        7 ->
-                            "Aug"
-
-                        8 ->
-                            "Sep"
-
-                        9 ->
-                            "Oct"
-
-                        10 ->
-                            "Nov"
-
-                        11 ->
-                            "Dec"
-
-                        _ ->
-                            ""
-                )
-            ]
-        , C.yLabels [ CA.withGrid ]
-        , C.bars []
-            [ C.stacked
-                [ C.bar .sends [ CA.color "#DCE2E5" ]
-                , C.bar .views [ CA.color "#53389E" ]
-                , C.bar .followUps [ CA.color "#03045E" ]
-                ]
-            ]
-            chartData
-        ]
-
-
-chartData : List ChartData
-chartData =
-    [ { x = 0, sends = 10, views = 8, followUps = 5 }
-    , { x = 1, sends = 15, views = 12, followUps = 8 }
-    , { x = 2, sends = 8, views = 6, followUps = 4 }
-    , { x = 3, sends = 12, views = 10, followUps = 7 }
-    , { x = 4, sends = 20, views = 15, followUps = 10 }
-    , { x = 5, sends = 18, views = 14, followUps = 9 }
-    , { x = 6, sends = 25, views = 20, followUps = 15 }
-    , { x = 7, sends = 22, views = 18, followUps = 12 }
-    , { x = 8, sends = 28, views = 22, followUps = 16 }
-    , { x = 9, sends = 30, views = 25, followUps = 18 }
-    , { x = 10, sends = 35, views = 28, followUps = 20 }
-    , { x = 11, sends = 40, views = 32, followUps = 25 }
-    ]
 
 
 subscriptions : Model -> Sub Msg
@@ -44790,6 +45854,7 @@ view model =
                             [ text "Your Client's Personalized Experience" ]
                         , div
                             [ class "relative h-[400px] w-[280px] rounded-[30px] overflow-hidden mb-4"
+                            , id "phone-experience-section"
                             ]
                             [ div [ class (phoneContentClass model.activeExperienceTab Email) ]
                                 [ img
@@ -49120,15 +50185,14 @@ File: frontend/src/main.ts
 ================
 import './styles.css'
 import { Elm } from './Main.elm'
+import * as Chartist from 'chartist';
+import 'chartist/dist/index.css';
+import { setupLineChartAnimations, setupBarChartAnimations, animateFunnelChart } from './chart-animations';
 
 // Declare Stripe for TypeScript
 declare const Stripe: any;
-
-const root = document.querySelector('#app')
-if (!root) {
-  console.error('Could not find root element')
-  throw new Error('Could not find root element')
-}
+// Declare Chartist for TypeScript
+// declare const Chartist: any;
 
 // Define the Stripe Checkout custom element
 customElements.define('stripe-checkout', class extends HTMLElement {
@@ -49501,6 +50565,390 @@ customElements.define('stripe-checkout', class extends HTMLElement {
   }
 });
 
+// Define the Chartist Bar chart custom element (existing implementation)
+customElements.define('chartist-bar', class extends HTMLElement {
+  static get observedAttributes() { return ['data']; }
+  connectedCallback() { this.renderChart(); }
+  attributeChangedCallback() { this.renderChart(); }
+  renderChart() {
+    const dataAttr = this.getAttribute('data');
+    if (!dataAttr) return;
+    let chartData;
+    try {
+      chartData = JSON.parse(dataAttr);
+    } catch (e) {
+      this.textContent = 'Invalid chart data';
+      return;
+    }
+    this.innerHTML = '';
+    const chartDiv = document.createElement('div');
+    chartDiv.style.height = '100%';
+    chartDiv.style.width = '100%';
+    this.appendChild(chartDiv);
+    
+    // Add custom CSS for series colors and enhanced styling
+    const style = document.createElement('style');
+    style.textContent = `
+      .ct-series-a .ct-bar, .ct-series-a .ct-line, .ct-series-a .ct-point {
+        stroke: #03045e !important;
+        stroke-width: 2px;
+      }
+      .ct-series-b .ct-bar, .ct-series-b .ct-line, .ct-series-b .ct-point {
+        stroke: #0077b6 !important;
+        stroke-width: 2px;
+      }
+      .ct-series-c .ct-bar, .ct-series-c .ct-line, .ct-series-c .ct-point {
+        stroke: #00b4d8 !important;
+        stroke-width: 2px;
+      }
+      .ct-series-d .ct-bar, .ct-series-d .ct-line, .ct-series-d .ct-point {
+        stroke: #48cae4 !important;
+        stroke-width: 2px;
+      }
+
+      /* Enhanced styling for bar chart */
+      .ct-bar {
+        stroke-linecap: round;
+      }
+
+      /* Grid styling */
+      .ct-grid {
+        stroke: rgba(0,0,0,0.1) !important;
+        stroke-dasharray: 2px;
+      }
+
+      /* Better label styling */
+      .ct-label {
+        font-size: 12px !important;
+        color: #555 !important;
+        fill: #555 !important;
+      }
+    `;
+    this.appendChild(style);
+
+    const chart = new Chartist.BarChart(chartDiv, chartData, {
+      stackBars: false,
+      axisY: { onlyInteger: true },
+      chartPadding: {
+        right: 40,
+        left: 20,
+        top: 20,
+        bottom: 20
+      },
+      seriesBarDistance: 15,
+      // Responsive options for bar chart
+      plugins: [
+        // Optional: add a tooltip plugin if desired
+        // Chartist.plugins?.tooltip && Chartist.plugins.tooltip()
+      ]
+    });
+
+    // Apply bar chart animations
+    try {
+      console.log('Setting up bar chart animations');
+      setupBarChartAnimations(chart);
+    } catch (e) {
+      console.error('Error setting up bar chart animations:', e);
+    }
+  }
+});
+
+// Define the Chartist Line chart custom element (new)
+customElements.define('chartist-line', class extends HTMLElement {
+  static get observedAttributes() { return ['data']; }
+  connectedCallback() { this.renderChart(); }
+  attributeChangedCallback() { this.renderChart(); }
+  renderChart() {
+    const dataAttr = this.getAttribute('data');
+    if (!dataAttr) return;
+    let chartData;
+    try {
+      chartData = JSON.parse(dataAttr);
+    } catch (e) {
+      this.textContent = 'Invalid chart data';
+      return;
+    }
+    this.innerHTML = '';
+    const chartDiv = document.createElement('div');
+    chartDiv.style.height = '100%';
+    chartDiv.style.width = '100%';
+    this.appendChild(chartDiv);
+    
+    // Add custom CSS for series colors and enhanced styling
+    const style = document.createElement('style');
+    style.textContent = `
+      .ct-series-a .ct-bar, .ct-series-a .ct-line, .ct-series-a .ct-point {
+        stroke: #03045e !important;
+        stroke-width: 3px;
+      }
+      .ct-series-b .ct-bar, .ct-series-b .ct-line, .ct-series-b .ct-point {
+        stroke: #0077b6 !important;
+        stroke-width: 3px;
+      }
+      .ct-series-c .ct-bar, .ct-series-c .ct-line, .ct-series-c .ct-point {
+        stroke: #00b4d8 !important;
+        stroke-width: 3px;
+      }
+      .ct-series-d .ct-bar, .ct-series-d .ct-line, .ct-series-d .ct-point {
+        stroke: #48cae4 !important;
+        stroke-width: 3px;
+      }
+
+      /* Enhanced point styling */
+      .ct-point {
+        stroke-width: 8px !important;
+        fill: white !important;
+        stroke-linecap: round;
+      }
+
+      /* Grid styling */
+      .ct-grid {
+        stroke: rgba(0,0,0,0.1) !important;
+        stroke-dasharray: 2px;
+      }
+
+      /* Better label styling */
+      .ct-label {
+        font-size: 12px !important;
+        color: #555 !important;
+        fill: #555 !important;
+      }
+
+      /* Area under the line */
+      .ct-area {
+        fill-opacity: 0.1;
+      }
+    `;
+    this.appendChild(style);
+
+    const chart = new Chartist.LineChart(chartDiv, chartData, {
+      fullWidth: true,
+      chartPadding: {
+        right: 40,
+        left: 20,
+        top: 20,
+        bottom: 20
+      },
+      lineSmooth: Chartist.Interpolation.cardinal({
+        tension: 0.2
+      }),
+      axisY: {
+        onlyInteger: true
+      },
+      showPoint: true,
+      plugins: [
+        // No plugins currently to avoid build error
+      ]
+    });
+
+    // Apply line chart animations
+    try {
+      console.log('Setting up line chart animations');
+      setupLineChartAnimations(chart);
+    } catch (e) {
+      console.error('Error setting up line chart animations:', e);
+    }
+  }
+});
+
+// Define the Chartist Funnel chart custom element
+customElements.define('chartist-funnel', class extends HTMLElement {
+  static get observedAttributes() { return ['data']; }
+  connectedCallback() { this.renderChart(); }
+  attributeChangedCallback() { this.renderChart(); }
+  renderChart() {
+    const dataAttr = this.getAttribute('data');
+    if (!dataAttr) return;
+    let chartData;
+    try {
+      chartData = JSON.parse(dataAttr);
+    } catch (e) {
+      this.textContent = 'Invalid chart data';
+      return;
+    }
+    
+    this.innerHTML = '';
+    
+    // Custom parent container for better layout control
+    const chartContainer = document.createElement('div');
+    chartContainer.className = 'funnel-chart-container';
+    chartContainer.style.height = '100%';
+    chartContainer.style.width = '100%';
+    chartContainer.style.display = 'flex';
+    chartContainer.style.flexDirection = 'column';
+    chartContainer.style.justifyContent = 'space-between';
+    this.appendChild(chartContainer);
+    
+    // Add custom CSS with improved styling and animations
+    const style = document.createElement('style');
+    style.textContent = `
+      .funnel-chart-container {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        padding: 10px 20px;
+        height: 100%;
+        box-sizing: border-box;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-around;
+      }
+      .funnel-bar {
+        height: 35px;
+        border-radius: 4px;
+        margin: 10px 0;
+        position: relative;
+        overflow: visible;
+        transition: width 0.8s cubic-bezier(0.22, 0.61, 0.36, 1), opacity 0.6s ease;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        opacity: 1;
+        transform-origin: left center;
+      }
+      .funnel-bar-label {
+        position: absolute;
+        left: -140px;
+        width: 130px;
+        text-align: right;
+        font-size: 14px;
+        font-weight: 500;
+        line-height: 35px;
+        color: #333;
+        transition: opacity 0.4s ease, transform 0.5s ease;
+      }
+      .funnel-bar-value {
+        position: absolute;
+        right: -45px;
+        font-size: 14px;
+        font-weight: 500;
+        line-height: 35px;
+        color: #666;
+        transition: opacity 0.4s ease, transform 0.5s ease;
+      }
+      .funnel-bar-quotes-sent {
+        background-color: #03045e;
+        background-image: linear-gradient(to right, #03045e, #073286);
+      }
+      .funnel-bar-quotes-viewed {
+        background-color: #0077b6;
+        background-image: linear-gradient(to right, #0077b6, #0091d9);
+      }
+      .funnel-bar-health-completed {
+        background-color: #48cae4;
+        background-image: linear-gradient(to right, #48cae4, #79ddf2);
+      }
+    `;
+    this.appendChild(style);
+    
+    // For a clean funnel visualization, create custom HTML bars
+    if (chartData && chartData.labels && chartData.series) {
+      console.log('Funnel chart data:', chartData);
+
+      // Extract values from the chartData
+      // Each series should be a single data point from the most recent data
+      let values = [];
+
+      // Try to extract values from series in the correct format
+      if (Array.isArray(chartData.series)) {
+        if (chartData.series.length === 1 && Array.isArray(chartData.series[0])) {
+          // Format: { series: [[v1, v2, v3, v4]] }
+          values = chartData.series[0].map((v: any) => parseFloat(v) || 0);
+        } else if (chartData.series.length > 0 && Array.isArray(chartData.series[0]) && chartData.series[0].length === 1) {
+          // Format: { series: [[v1], [v2], [v3], [v4]] }
+          values = chartData.series.map((s: any[]) => parseFloat(s[0]) || 0);
+        } else {
+          // Format: { series: [v1, v2, v3, v4] }
+          values = chartData.series.map((v: any) => parseFloat(v) || 0);
+        }
+      }
+
+      // Ensure we have 4 values
+      while (values.length < 4) values.push(0);
+      values = values.slice(0, 4);
+
+      console.log('Funnel values:', values);
+
+      // Find the max value for scaling
+      // Use 2x the Quotes Sent value as the maximum scale to make the drop-off less steep
+      const quotesSentValue = values[0] || 1;
+      const maxValue = Math.max(quotesSentValue * 2, 1); // 2x the Quotes Sent value, with minimum of 1
+
+      // Define custom bar data with actual values - in reverse order for proper funnel flow
+      // Health Completed (smallest) at the top, Quotes Sent (largest) at the bottom
+      const barData = [
+        { label: 'Health Completed', class: 'funnel-bar-health-completed', value: values[3] || 0, display: Math.round(values[3] || 0) },
+        { label: 'Quotes Viewed', class: 'funnel-bar-quotes-viewed', value: values[1] || 0, display: Math.round(values[1] || 0) },
+        { label: 'Quotes Sent', class: 'funnel-bar-quotes-sent', value: values[0] || 0, display: Math.round(values[0] || 0) }
+      ];
+
+      // Container for better spacing
+      const innerContainer = document.createElement('div');
+      innerContainer.style.paddingLeft = '140px'; // Space for labels
+      innerContainer.style.paddingRight = '60px'; // Space for values
+      innerContainer.style.width = '100%';
+      innerContainer.style.position = 'relative';
+      chartContainer.appendChild(innerContainer);
+
+      // Create a bar for each item
+      barData.forEach(item => {
+        const barContainer = document.createElement('div');
+        barContainer.style.display = 'flex';
+        barContainer.style.alignItems = 'center';
+        barContainer.style.position = 'relative';
+        barContainer.style.marginBottom = '25px';
+
+        const barLabel = document.createElement('div');
+        barLabel.className = 'funnel-bar-label';
+        barLabel.textContent = item.label;
+        barLabel.style.opacity = '0'; // Hide initially for animation
+        barLabel.style.transform = 'translateY(10px)'; // Position for animation
+        barContainer.appendChild(barLabel);
+
+        const bar = document.createElement('div');
+        bar.className = `funnel-bar ${item.class}`;
+
+        // Scale the width based on value (relative to max value)
+        const percentage = Math.max(5, (item.value / maxValue) * 100);
+        const percentageStr = `${percentage}%`;
+
+        // Store the original width for animation purposes, but start with 0 width for animation
+        bar.setAttribute('data-original-width', percentageStr);
+        bar.style.width = '0%';  // Start with width 0 for animation
+        bar.style.opacity = '0'; // Start hidden for smooth animation
+
+        // Add the value as text inside the bar if it's large enough
+        if (percentage > 15) {
+          bar.style.color = 'white';
+          bar.style.paddingLeft = '12px';
+          bar.style.display = 'flex';
+          bar.style.alignItems = 'center';
+          bar.textContent = item.display.toString();
+        }
+
+        // Add a separate value label outside the bar
+        const valueLabel = document.createElement('div');
+        valueLabel.className = 'funnel-bar-value';
+        valueLabel.textContent = item.display.toString();
+        valueLabel.style.opacity = '0'; // Hide initially for animation
+        valueLabel.style.transform = 'translateY(10px)'; // Position for animation
+        barContainer.appendChild(valueLabel);
+
+        barContainer.appendChild(bar);
+        innerContainer.appendChild(barContainer);
+      });
+
+      // Apply animation to the funnel chart after rendering
+      // Use a small timeout to ensure DOM is fully ready
+      setTimeout(() => {
+        animateFunnelChart(innerContainer);
+      }, 50);
+    }
+  }
+});
+
+const root = document.querySelector('#app');
+if (!root) {
+  console.error('Could not find root element');
+  throw new Error('Could not find root element');
+}
+
 // Initialize Elm app
 try {
   console.log('Initializing Elm application...');
@@ -49531,7 +50979,7 @@ try {
   // Setup IntersectionObserver for phone section
   if (app.ports && app.ports.viewingPhone) {
     setTimeout(() => {
-      const phoneSection = document.querySelector('.relative.h-\\[400px\\].w-\\[280px\\].rounded-\\[30px\\].overflow-hidden')
+      const phoneSection = document.getElementById('phone-experience-section')
       
       if (phoneSection) {
         console.log('Found phone section, setting up IntersectionObserver')
@@ -50324,6 +51772,11 @@ port checkoutError : (ErrorData -> msg) -> Sub msg
 
 
 -- MODEL
+
+
+showStripe : Bool
+showStripe =
+    False
 
 
 type alias PaymentResponse =

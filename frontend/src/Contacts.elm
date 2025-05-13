@@ -118,6 +118,7 @@ type alias Model =
     , key : Nav.Key
     , pagination : PaginationState
     , quotesSent : Int
+    , manualQuotesSent : Int
     , quotesViewed : Int
     , healthQuestionsCompleted : Int
     , isLoadingDashboardStats : Bool
@@ -282,60 +283,26 @@ type alias SuggestedMappings =
     }
 
 
+emptyAvailableFilters : AvailableFilters
+emptyAvailableFilters =
+    { carriers = []
+    , states = []
+    }
+
+
 init : Nav.Key -> Maybe User -> ( Model, Cmd Msg )
 init key maybeUser =
     let
-        -- Create filtered model if the user is an agent but not an admin
-        initialFilters =
-            case maybeUser of
-                Just user ->
-                    if user.isAgent && not user.isAdmin then
-                        -- Set initial filter to only show contacts assigned to this agent
-                        { carriers = []
-                        , states = []
-                        , ageRange = Nothing
-                        , agents = [ user.id ] -- Add the current agent ID to the filters
-                        }
-
-                    else
-                        emptyFilters
-
-                Nothing ->
-                    emptyFilters
-
-        -- Set default contact owner to current user if they are an agent
-        defaultOwnerId =
-            case maybeUser of
-                Just user ->
-                    if user.isAgent then
-                        Just user.id
-
-                    else
-                        Nothing
-
-                Nothing ->
-                    Nothing
-
-        initialAddForm =
-            { emptyForm | contactOwnerId = defaultOwnerId }
-
-        initialPagination =
-            { currentPage = 1
-            , totalPages = 1
-            , totalItems = 0
-            , itemsPerPage = 100
-            }
-
-        initialModel =
+        model =
             { contacts = []
             , selectedContacts = []
             , showModal = NoModal
             , searchQuery = ""
-            , addForm = initialAddForm
+            , addForm = emptyForm
             , editForm = emptyForm
             , sortColumn = Nothing
             , sortDirection = Ascending
-            , activeFilters = initialFilters -- Use our potentially filtered initial state
+            , activeFilters = emptyFilters
             , openFilter = Nothing
             , currentTime = Time.millisToPosix 0
             , isLoadingContacts = True
@@ -344,44 +311,26 @@ init key maybeUser =
             , isSubmittingForm = False
             , isCheckingEmail = False
             , emailExists = False
-            , currentUser = maybeUser -- Use the passed in user immediately
+            , currentUser = maybeUser
             , showProfileMenu = False
             , error = Nothing
             , saveOnUpdate = False
             , expandedContactId = Nothing
-            , availableFilters = { carriers = [], states = [] }
+            , availableFilters = emptyAvailableFilters
             , carriers = []
             , agents = []
             , key = key
-            , pagination = initialPagination
+            , pagination = { currentPage = 1, totalPages = 1, totalItems = 0, itemsPerPage = 100 }
             , quotesSent = 0
+            , manualQuotesSent = 0
             , quotesViewed = 0
             , healthQuestionsCompleted = 0
             , isLoadingDashboardStats = True
             , dashboardStatsError = Nothing
             }
-
-        -- Always fetch contacts and current time
-        baseCommands =
-            [ fetchContacts initialModel
-            , Task.perform GotCurrentTime Time.now
-            , fetchDashboardStats
-            ]
-
-        -- Only add these commands if we need them
-        userCommands =
-            if maybeUser == Nothing then
-                [ fetchCurrentUser ]
-
-            else
-                []
-
-        -- We need these data regardless of whether we have user data
-        dataCommands =
-            [ fetchCarriers, fetchAgents ]
     in
-    ( initialModel
-    , Cmd.batch (baseCommands ++ userCommands ++ dataCommands)
+    ( model
+    , Cmd.batch [ fetchContacts model, fetchDashboardStats ]
     )
 
 
@@ -531,7 +480,7 @@ type Msg
     | EmailValidationCompleted (List { email : String, reason : String })
       -- Dashboard stats messages
     | FetchDashboardStats
-    | GotDashboardStats (Result Http.Error { success : Bool, stats : { quotesSent : Int, quotesViewed : Int, followUpsRequested : Int, healthQuestionsCompleted : Int } })
+    | GotDashboardStats (Result Http.Error { success : Bool, stats : { quotesSent : Int, manualQuotesSent : Int, quotesViewed : Int, followUpsRequested : Int, healthQuestionsCompleted : Int } })
 
 
 type ContactFormField
@@ -1905,9 +1854,14 @@ update msg model =
             case result of
                 Ok response ->
                     if response.success then
+                        let
+                            totalQuotesSent =
+                                response.stats.quotesSent + response.stats.manualQuotesSent
+                        in
                         ( { model
                             | isLoadingDashboardStats = False
-                            , quotesSent = response.stats.quotesSent
+                            , quotesSent = totalQuotesSent
+                            , manualQuotesSent = response.stats.manualQuotesSent
                             , quotesViewed = response.stats.quotesViewed
                             , healthQuestionsCompleted = response.stats.healthQuestionsCompleted
                             , dashboardStatsError = Nothing
@@ -1947,7 +1901,7 @@ view model =
                     statsCardWithSpinner "Quotes Sent"
 
                   else if model.dashboardStatsError /= Nothing then
-                    statsCard "Quotes Sent" "Error"
+                    statsCard "Quotes Sent" "0"
 
                   else
                     statsCard "Quotes Sent" (String.fromInt model.quotesSent)
@@ -1955,7 +1909,7 @@ view model =
                     statsCardWithSpinner "Quotes Viewed"
 
                   else if model.dashboardStatsError /= Nothing then
-                    statsCard "Quotes Viewed" "Error"
+                    statsCard "Quotes Viewed" "0"
 
                   else
                     statsCard "Quotes Viewed" (String.fromInt model.quotesViewed)
@@ -1963,7 +1917,7 @@ view model =
                     statsCardWithSpinner "Health Questions"
 
                   else if model.dashboardStatsError /= Nothing then
-                    statsCard "Health Questions" "Error"
+                    statsCard "Health Questions" "0"
 
                   else
                     statsCard "Health Questions" (String.fromInt model.healthQuestionsCompleted)
@@ -2371,7 +2325,7 @@ fetchDashboardStats =
         }
 
 
-dashboardStatsResponseDecoder : Decode.Decoder { success : Bool, stats : { quotesSent : Int, quotesViewed : Int, followUpsRequested : Int, healthQuestionsCompleted : Int } }
+dashboardStatsResponseDecoder : Decode.Decoder { success : Bool, stats : { quotesSent : Int, manualQuotesSent : Int, quotesViewed : Int, followUpsRequested : Int, healthQuestionsCompleted : Int } }
 dashboardStatsResponseDecoder =
     Decode.map2
         (\success stats ->
@@ -2383,17 +2337,19 @@ dashboardStatsResponseDecoder =
         (Decode.field "stats" dashboardStatsDecoder)
 
 
-dashboardStatsDecoder : Decode.Decoder { quotesSent : Int, quotesViewed : Int, followUpsRequested : Int, healthQuestionsCompleted : Int }
+dashboardStatsDecoder : Decode.Decoder { quotesSent : Int, manualQuotesSent : Int, quotesViewed : Int, followUpsRequested : Int, healthQuestionsCompleted : Int }
 dashboardStatsDecoder =
-    Decode.map4
-        (\quotesSent quotesViewed followUpsRequested healthQuestionsCompleted ->
+    Decode.map5
+        (\quotesSent manualQuotesSent quotesViewed followUpsRequested healthQuestionsCompleted ->
             { quotesSent = quotesSent
+            , manualQuotesSent = manualQuotesSent
             , quotesViewed = quotesViewed
             , followUpsRequested = followUpsRequested
             , healthQuestionsCompleted = healthQuestionsCompleted
             }
         )
         (Decode.field "quotesSent" Decode.int)
+        (Decode.field "manualQuotesSent" Decode.int)
         (Decode.field "quotesViewed" Decode.int)
         (Decode.field "followUpsRequested" Decode.int)
         (Decode.field "healthQuestionsCompleted" Decode.int)

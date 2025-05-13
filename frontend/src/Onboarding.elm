@@ -38,6 +38,11 @@ port checkoutError : (ErrorData -> msg) -> Sub msg
 -- MODEL
 
 
+showStripe : Bool
+showStripe =
+    False
+
+
 type alias PaymentResponse =
     { success : Bool
     , message : String
