@@ -34,6 +34,12 @@ port checkoutCompleted : (CheckoutData -> msg) -> Sub msg
 port checkoutError : (ErrorData -> msg) -> Sub msg
 
 
+port requestStripeProduct : () -> Cmd msg
+
+
+port responseStripeProduct : (( String, String ) -> msg) -> Sub msg
+
+
 
 -- MODEL
 
@@ -89,6 +95,8 @@ type alias Model =
     , newAgentIsAdmin : Bool
     , loadingResumeData : Bool
     , paymentStatus : PaymentStatus
+    , subscriptionPriceId : Maybe String
+    , tierPriceId : Maybe String
     }
 
 
@@ -262,6 +270,8 @@ init key url =
             , newAgentIsAdmin = True
             , loadingResumeData = False
             , paymentStatus = Loading
+            , subscriptionPriceId = Nothing
+            , tierPriceId = Nothing
             }
 
         -- Check if this is a direct page load with frame > 1
@@ -269,9 +279,12 @@ init key url =
             frame > 1 && (url.path == "/onboarding")
 
         redirectCommand =
-            case maybeUser of
+            case maybeUser |> Debug.log "maybeUser" of
                 Just user ->
-                    fetchResumeData user.email
+                    Cmd.batch
+                        [ fetchResumeData user.email
+                        , requestStripeProduct () |> Debug.log "requestStripeProduct"
+                        ]
 
                 Nothing ->
                     Nav.pushUrl key "/signup"
@@ -322,6 +335,7 @@ type Msg
     | CheckoutCompletedFromPort CheckoutData
     | CheckoutErrorFromPort ErrorData
     | ProcessCheckoutData CheckoutData
+    | ResponseStripeProduct ( String, String )
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -687,6 +701,14 @@ update msg model =
 
         RefreshPage ->
             ( model, Nav.reload )
+
+        ResponseStripeProduct ( subscriptionPriceId, tierPriceId ) ->
+            ( { model
+                | subscriptionPriceId = Just subscriptionPriceId
+                , tierPriceId = Just tierPriceId
+              }
+            , Cmd.none
+            )
 
 
 
@@ -1273,16 +1295,22 @@ viewPayment model =
                             ]
 
                     else
-                        node "stripe-checkout"
-                            [ attribute "price-id" "price_1RHG4mCBUPXAZKNGem75yV4U" --"price_1RBStWCBUPXAZKNGwpimWl7v"
-                            , attribute "metered-price-id" "price_1RHG7kCBUPXAZKNGd5YvIzsw" --"price_1RBSvJCBUPXAZKNGQ1U9Hl8i"
+                        case ( model.subscriptionPriceId, model.tierPriceId ) of
+                            ( Just subscriptionPriceId, _ ) ->
+                                node "stripe-checkout"
+                                    [ attribute "price-id" subscriptionPriceId
 
-                            --, attribute "return-url" ("http://localhost:3000/walkthrough?payment_success=true&email=" ++ model.user.email)
-                            , attribute "first-name" model.user.firstName
-                            , attribute "last-name" model.user.lastName
-                            , attribute "email" model.user.email
-                            ]
-                            []
+                                    --, attribute "metered-price-id" tierPriceId
+                                    , attribute "first-name" model.user.firstName
+                                    , attribute "last-name" model.user.lastName
+                                    , attribute "email" model.user.email
+                                    ]
+                                    []
+
+                            _ ->
+                                div [ class "mt-4 p-3 bg-red-50 border border-red-200 rounded-md" ]
+                                    [ p [ class "text-red-700" ] [ text "Error loading Stripe product IDs" ]
+                                    ]
 
                 Continuing ->
                     div [ class "mt-4 p-3 bg-blue-50 border border-blue-200 rounded-md" ]
@@ -1292,16 +1320,22 @@ viewPayment model =
                         ]
 
                 ReadyToComplete ->
-                    node "stripe-checkout"
-                        [ attribute "price-id" "price_1RHG4mCBUPXAZKNGem75yV4U" --"price_1RBStWCBUPXAZKNGwpimWl7v"
-                        , attribute "metered-price-id" "price_1RHG7kCBUPXAZKNGd5YvIzsw" --"price_1RBSvJCBUPXAZKNGQ1U9Hl8i"
+                    case ( model.subscriptionPriceId, model.tierPriceId ) of
+                        ( Just subscriptionPriceId, _ ) ->
+                            node "stripe-checkout"
+                                [ attribute "price-id" subscriptionPriceId
 
-                        --, attribute "return-url" ("http://localhost:3000/walkthrough?payment_success=true&email=" ++ model.user.email)
-                        , attribute "first-name" model.user.firstName
-                        , attribute "last-name" model.user.lastName
-                        , attribute "email" model.user.email
-                        ]
-                        []
+                                --, attribute "metered-price-id" tierPriceId
+                                , attribute "first-name" model.user.firstName
+                                , attribute "last-name" model.user.lastName
+                                , attribute "email" model.user.email
+                                ]
+                                []
+
+                        _ ->
+                            div [ class "mt-4 p-3 bg-red-50 border border-red-200 rounded-md" ]
+                                [ p [ class "text-red-700" ] [ text "Error loading Stripe product IDs" ]
+                                ]
 
                 PaymentProcessing ->
                     div [ class "mt-4 p-3 bg-blue-50 border border-blue-200 rounded-md" ]
@@ -1368,6 +1402,7 @@ subscriptions _ =
         [ paymentCompleted PaymentCompletedFromPort
         , checkoutCompleted CheckoutCompletedFromPort
         , checkoutError CheckoutErrorFromPort
+        , responseStripeProduct ResponseStripeProduct
         ]
 
 

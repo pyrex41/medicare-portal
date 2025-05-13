@@ -1371,16 +1371,47 @@ viewEditModal model =
 
 viewContactForm : ContactForm -> Bool -> Model -> Html Msg
 viewContactForm form isSubmitting model =
+    let
+        carrierOptions =
+            ( "", "Select a carrier" ) :: List.map (\c -> ( c, c )) (model.orgSettings |> Maybe.map .carrierContracts |> Maybe.withDefault []) ++ [ ( "Other", "Other" ) ]
+
+        planTypeOptions =
+            [ ( "", "Select a plan type" ), ( "Plan N", "Plan N" ), ( "Plan G", "Plan G" ), ( "Other", "Other" ) ]
+
+        agentOptions =
+            case model.orgSettings of
+                Just settings ->
+                    case settings.allowAgentSettings of
+                        True ->
+                            -- If agent settings are allowed, show all agents (if available)
+                            []
+
+                        -- TODO: Populate with agents if available in model
+                        False ->
+                            []
+
+                Nothing ->
+                    []
+
+        selectedCarrier =
+            form.currentCarrier
+
+        selectedPlanType =
+            form.planType
+
+        selectedAgentId =
+            form.contactOwnerId |> Maybe.map String.fromInt |> Maybe.withDefault ""
+    in
     Html.form [ onSubmit SubmitEditForm ]
-        [ div [ class "grid grid-cols-2 gap-x-8 gap-y-6" ]
-            [ viewFormInput "First Name" "text" form.firstName FirstName True model
-            , viewFormInput "Last Name" "text" form.lastName LastName True model
-            , viewFormInput "Email" "email" form.email Email True model
-            , viewFormInput "Phone Number" "text" (formatPhoneNumber form.phoneNumber) PhoneNumber True model
-            , viewFormInput "Current Carrier" "text" form.currentCarrier CurrentCarrier True model
-            , viewFormInput "Plan Type" "text" form.planType PlanType True model
-            , viewFormInput "Effective Date" "date" form.effectiveDate EffectiveDate True model
-            , viewFormInput "Birth Date" "date" form.birthDate BirthDate True model
+        [ div [ class "grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3" ]
+            [ viewFormInput "First Name" "text" form.firstName FirstName model True
+            , viewFormInput "Last Name" "text" form.lastName LastName model True
+            , viewFormInput "Email" "email" form.email Email model True
+            , viewFormInput "Phone Number" "text" form.phoneNumber PhoneNumber model False
+            , viewFormSelect "Current Carrier" selectedCarrier CurrentCarrier model carrierOptions
+            , viewFormSelect "Plan Type" selectedPlanType PlanType model planTypeOptions
+            , viewFormInput "Effective Date" "date" form.effectiveDate EffectiveDate model False
+            , viewFormInput "Birth Date" "date" form.birthDate BirthDate model False
             , viewFormRadioGroup "Tobacco User"
                 (if form.tobaccoUser then
                     "true"
@@ -1389,106 +1420,113 @@ viewContactForm form isSubmitting model =
                     "false"
                 )
                 TobaccoUser
+                model
                 [ ( "true", "Yes" ), ( "false", "No" ) ]
-            , viewFormRadioGroup "Gender" form.gender Gender [ ( "M", "Male" ), ( "F", "Female" ) ]
-            , div [ class "col-span-2 grid grid-cols-2 gap-x-8" ]
-                [ viewFormInput "ZIP Code" "text" form.zipCode ZipCode True model
-                , viewFormInput "State" "text" form.state State True model
+            , viewFormRadioGroup "Gender" form.gender Gender model [ ( "M", "Male" ), ( "F", "Female" ) ]
+            , div [ class "col-span-1 sm:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-x-4" ]
+                [ viewZipCodeField model form
+                , viewStateField form
                 ]
             ]
-        , div [ class "mt-10 flex justify-end space-x-4" ]
+        , if model.error /= Nothing && not model.emailExists then
+            div [ class "mt-2 text-red-600 text-xs" ] [ text (Maybe.withDefault "" model.error) ]
+
+          else
+            text ""
+        , div [ class "mt-4 flex justify-end space-x-2" ]
             [ button
                 [ type_ "button"
                 , onClick CloseModal
-                , class "px-6 py-3 bg-white text-gray-700 text-sm font-medium rounded-lg border-2 border-gray-200 hover:border-gray-300 hover:bg-gray-50 transition-colors duration-200 focus:ring-4 focus:ring-purple-100"
+                , class "px-3 py-1.5 bg-white text-gray-700 text-sm font-medium rounded-md border border-gray-200 hover:border-gray-300 hover:bg-gray-50 transition-colors duration-200 focus:ring-1 focus:ring-purple-100"
                 ]
                 [ text "Cancel" ]
             , if isSubmitting then
-                div [ class "px-6 py-3 flex items-center space-x-2" ] [ viewSpinner ]
+                div [ class "px-3 py-1.5 flex items-center" ] [ viewSpinner ]
 
               else
+                let
+                    isValid =
+                        String.length form.firstName > 0 && String.length form.lastName > 0 && String.length form.email > 0 && not model.emailExists && not model.isCheckingEmail
+                in
                 button
                     [ type_ "submit"
-                    , class "px-6 py-3 bg-purple-500 text-white text-sm font-medium rounded-lg hover:bg-purple-600 transition-colors duration-200 focus:ring-4 focus:ring-purple-200"
+                    , class
+                        ("px-3 py-1.5 text-white text-sm font-medium rounded-md transition-colors duration-200 focus:ring-1 focus:ring-purple-200 "
+                            ++ (if isValid then
+                                    "bg-purple-500 hover:bg-purple-600"
+
+                                else
+                                    "bg-gray-300 cursor-not-allowed"
+                               )
+                        )
+                    , Html.Attributes.disabled (not isValid)
                     ]
                     [ text "Save Changes" ]
             ]
         ]
 
 
-viewFormInput : String -> String -> String -> ContactFormField -> Bool -> Model -> Html Msg
-viewFormInput labelText inputType inputValue field isRequired model =
-    div [ class "form-group" ]
-        [ Html.label [ class "block text-sm font-medium text-gray-700 mb-2" ]
-            [ text labelText ]
-        , if field == Email then
-            div [ class "relative" ]
-                [ Html.input
-                    [ type_ inputType
-                    , class
-                        ("w-full px-4 py-3 bg-white border-[2.5px] rounded-lg text-gray-700 placeholder-gray-400 shadow-sm transition-all duration-200 "
-                            ++ (if model.emailExists then
-                                    "border-red-300 hover:border-red-400 focus:border-red-500 focus:ring-2 focus:ring-red-200"
+viewFormInput : String -> String -> String -> ContactFormField -> Model -> Bool -> Html Msg
+viewFormInput labelText inputType inputValue field model isRequired =
+    let
+        displayValue =
+            if field == PhoneNumber then
+                Utils.Formatters.formatPhoneNumber inputValue
 
-                                else
-                                    "border-purple-300 hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200"
-                               )
-                        )
-                    , Html.Attributes.value inputValue
-                    , onInput (UpdateEditForm field)
-                    , onBlur (CheckEmail inputValue)
-                    , required isRequired
-                    ]
-                    []
-                , if model.isCheckingEmail then
-                    div [ class "absolute right-3 top-3" ]
-                        [ viewSpinner ]
+            else
+                inputValue
 
-                  else if model.emailExists then
-                    div [ class "absolute right-3 top-3 text-red-500" ]
-                        [ text "✕" ]
+        inputHandler =
+            if field == PhoneNumber then
+                \val -> UpdateEditForm field (String.filter Char.isDigit val |> String.left 10)
 
-                  else if String.length inputValue > 0 then
-                    div [ class "absolute right-3 top-3 text-green-500" ]
-                        [ text "✓" ]
+            else
+                UpdateEditForm field
 
-                  else
-                    text ""
-                ]
+        placeholderText =
+            if field == PhoneNumber then
+                "(555) 555-5555"
 
-          else if field == State then
-            Html.input
-                [ type_ inputType
-                , class "w-full px-4 py-3 bg-white border-[2.5px] border-gray-200 rounded-lg text-gray-700 placeholder-gray-400 shadow-sm focus:ring-2 focus:ring-purple-200 focus:bg-white transition-all duration-200"
-                , Html.Attributes.value inputValue
-                , Html.Attributes.disabled True
-                , required isRequired
-                ]
-                []
-
-          else
-            Html.input
-                [ type_ inputType
-                , class "w-full px-4 py-3 bg-white border-[2.5px] border-purple-300 rounded-lg text-gray-700 placeholder-gray-400 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 focus:bg-white transition-all duration-200"
-                , Html.Attributes.value inputValue
-                , onInput (UpdateEditForm field)
-                , required isRequired
-                ]
-                []
+            else
+                ""
+    in
+    div [ class "form-group mb-3" ]
+        [ Html.label [ class "block text-xs font-medium text-gray-700 mb-1" ] [ text labelText ]
+        , Html.input
+            [ type_ inputType
+            , class "w-full px-2 py-1.5 bg-white border-[1.5px] border-purple-300 rounded-md text-sm text-gray-700 placeholder-gray-400 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-1 focus:ring-purple-200 focus:bg-white transition-all duration-200"
+            , Html.Attributes.value displayValue
+            , onInput inputHandler
+            , required isRequired
+            , placeholder placeholderText
+            ]
+            []
         ]
 
 
-viewFormRadioGroup : String -> String -> ContactFormField -> List ( String, String ) -> Html Msg
-viewFormRadioGroup labelText selectedValue field options =
-    div [ class "form-group" ]
-        [ Html.label [ class "block text-sm font-medium text-gray-700 mb-2" ]
-            [ text labelText ]
-        , div [ class "flex gap-4" ]
+viewFormSelect : String -> String -> ContactFormField -> Model -> List ( String, String ) -> Html Msg
+viewFormSelect labelText selectedValue field model options =
+    div [ class "form-group mb-3" ]
+        [ Html.label [ class "block text-xs font-medium text-gray-700 mb-1" ] [ text labelText ]
+        , Html.select
+            [ class "w-full px-2 py-1.5 bg-white border-[1.5px] border-purple-300 rounded-md text-sm text-gray-700 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-1 focus:ring-purple-200 focus:bg-white transition-all duration-200"
+            , Html.Attributes.value selectedValue
+            , onInput (UpdateEditForm field)
+            ]
+            (List.map (\( val, label ) -> Html.option [ value val, selected (val == selectedValue) ] [ text label ]) options)
+        ]
+
+
+viewFormRadioGroup : String -> String -> ContactFormField -> Model -> List ( String, String ) -> Html Msg
+viewFormRadioGroup labelText selectedValue field model options =
+    div [ class "form-group mb-3" ]
+        [ Html.label [ class "block text-xs font-medium text-gray-700 mb-1" ] [ text labelText ]
+        , div [ class "flex gap-2" ]
             (List.map
                 (\( val, txt ) ->
                     label
                         [ class
-                            ("flex items-center px-4 py-2 rounded-lg border-2 cursor-pointer transition-all duration-200 "
+                            ("flex items-center px-2 py-1 rounded-md border text-sm cursor-pointer transition-all duration-200 "
                                 ++ (if selectedValue == val then
                                         "border-purple-500 bg-purple-50 text-purple-700"
 
@@ -1501,7 +1539,7 @@ viewFormRadioGroup labelText selectedValue field options =
                             [ type_ "radio"
                             , value val
                             , checked (selectedValue == val)
-                            , onInput (UpdateEditForm field)
+                            , onInput (\_ -> UpdateEditForm field val)
                             , class "sr-only"
                             ]
                             []
@@ -1513,22 +1551,31 @@ viewFormRadioGroup labelText selectedValue field options =
         ]
 
 
-encodeContactForm : ContactForm -> Encode.Value
-encodeContactForm form =
-    Encode.object
-        [ ( "first_name", Encode.string form.firstName )
-        , ( "last_name", Encode.string form.lastName )
-        , ( "email", Encode.string form.email )
-        , ( "phone_number", Encode.string (String.filter Char.isDigit form.phoneNumber |> String.left 10) )
-        , ( "state", Encode.string form.state )
-        , ( "contact_owner_id", Maybe.map Encode.int form.contactOwnerId |> Maybe.withDefault Encode.null )
-        , ( "current_carrier", Encode.string form.currentCarrier )
-        , ( "effective_date", Encode.string form.effectiveDate )
-        , ( "birth_date", Encode.string form.birthDate )
-        , ( "tobacco_user", Encode.bool form.tobaccoUser )
-        , ( "gender", Encode.string form.gender )
-        , ( "zip_code", Encode.string form.zipCode )
-        , ( "plan_type", Encode.string form.planType )
+viewZipCodeField : Model -> ContactForm -> Html Msg
+viewZipCodeField model form =
+    div [ class "form-group mb-3" ]
+        [ Html.label [ class "block text-xs font-medium text-gray-700 mb-1" ] [ text "ZIP Code" ]
+        , Html.input
+            [ type_ "text"
+            , class "w-full px-2 py-1.5 bg-white border-[1.5px] border-purple-300 rounded-md text-sm text-gray-700 placeholder-gray-400 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-1 focus:ring-purple-200 focus:bg-white transition-all duration-200"
+            , Html.Attributes.value form.zipCode
+            , onInput (UpdateEditForm ZipCode)
+            ]
+            []
+        ]
+
+
+viewStateField : ContactForm -> Html Msg
+viewStateField form =
+    div [ class "form-group mb-3" ]
+        [ Html.label [ class "block text-xs font-medium text-gray-700 mb-1" ] [ text "State" ]
+        , Html.input
+            [ type_ "text"
+            , class "w-full px-2 py-1.5 bg-white border-[1.5px] border-gray-200 rounded-md text-sm text-gray-700 placeholder-gray-400 shadow-sm focus:ring-1 focus:ring-purple-200 focus:bg-white transition-all duration-200"
+            , Html.Attributes.value form.state
+            , Html.Attributes.disabled True
+            ]
+            []
         ]
 
 
@@ -2188,4 +2235,23 @@ viewFollowUpQuestionAnswer followUp =
                     div [ class "text-gray-500 italic" ]
                         [ text "No answer" ]
             ]
+        ]
+
+
+encodeContactForm : ContactForm -> Encode.Value
+encodeContactForm form =
+    Encode.object
+        [ ( "first_name", Encode.string form.firstName )
+        , ( "last_name", Encode.string form.lastName )
+        , ( "email", Encode.string form.email )
+        , ( "phone_number", Encode.string (String.filter Char.isDigit form.phoneNumber |> String.left 10) )
+        , ( "state", Encode.string form.state )
+        , ( "contact_owner_id", Maybe.map Encode.int form.contactOwnerId |> Maybe.withDefault Encode.null )
+        , ( "current_carrier", Encode.string form.currentCarrier )
+        , ( "effective_date", Encode.string form.effectiveDate )
+        , ( "birth_date", Encode.string form.birthDate )
+        , ( "tobacco_user", Encode.bool form.tobaccoUser )
+        , ( "gender", Encode.string form.gender )
+        , ( "zip_code", Encode.string form.zipCode )
+        , ( "plan_type", Encode.string form.planType )
         ]

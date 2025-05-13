@@ -79,14 +79,14 @@ customElements.define('stripe-checkout', class extends HTMLElement {
   async mountCheckout() {
     console.log('[Stripe] Mounting checkout form');
     const priceId = this.getAttribute('price-id');
-    const meteredPriceId = this.getAttribute('metered-price-id');
+    // const meteredPriceId = this.getAttribute('metered-price-id');
     const firstName = this.getAttribute('first-name');
     const lastName = this.getAttribute('last-name');
     const email = this.getAttribute('email');
 
     console.log('[Stripe] Checkout attributes:', { 
       priceId, 
-      meteredPriceId, 
+      // meteredPriceId, 
       firstName, 
       lastName, 
       email: email ? `${email.substring(0, 3)}...${email.split('@')[1] ? '@' + email.split('@')[1] : ''}` : null 
@@ -99,7 +99,7 @@ customElements.define('stripe-checkout', class extends HTMLElement {
     }
 
     try {
-      console.log(`[Stripe] Creating checkout session with priceId: ${priceId}, meteredPriceId: ${meteredPriceId || 'none'}, email: ${email}`);
+      console.log(`[Stripe] Creating checkout session with priceId: ${priceId}, email: ${email}`);
       
       console.log('[Stripe] Sending request to /api/create-checkout-session');
       const response = await fetch('/api/create-checkout-session', {
@@ -109,7 +109,7 @@ customElements.define('stripe-checkout', class extends HTMLElement {
         },
         body: JSON.stringify({
           priceId,
-          meteredPriceId,
+          //meteredPriceId,
           customerEmail: email,
           customerName: `${firstName} ${lastName}`
         }),
@@ -822,6 +822,8 @@ try {
   (window as any).elmApp = app;
   (window as any).elmDebug = Elm;
   
+  console.log('app.ports', app.ports);
+
   // Setup IntersectionObserver for phone section
   if (app.ports && app.ports.viewingPhone) {
     setTimeout(() => {
@@ -884,6 +886,19 @@ try {
       }
     })
   }
+
+  // Serve VITE_ env variables to Elm upon request
+  app.ports.requestStripeProduct.subscribe(() => {
+    console.log('Requesting Stripe product IDs from Elm');
+    console.log('VITE_STRIPE_SUBSCRIPTION_ID', import.meta.env.VITE_STRIPE_SUBSCRIPTION_ID);
+    console.log('VITE_STRIPE_TIER_ID', import.meta.env.VITE_STRIPE_TIER_ID);
+    const subscriptionId = import.meta.env.VITE_STRIPE_SUBSCRIPTION_ID || '';
+    const tierId = import.meta.env.VITE_STRIPE_TIER_ID || '';
+    const out: [string, string] = [subscriptionId, tierId];
+    console.log("out", out);
+    app.ports.responseStripeProduct.send(out);
+  });
+  
 
   // Listen for payment completion from stripe-checkout
   document.addEventListener('payment-completed', (e: any) => {
