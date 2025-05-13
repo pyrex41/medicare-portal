@@ -1820,7 +1820,7 @@ viewNavHeader model =
                         [ div [ class "shrink-0 flex items-center" ]
                             [ a
                                 [ href "#"
-                                , onClick (InternalLinkClicked "/")
+                                , onClick (InternalLinkClicked "/dashboard")
                                 , class "cursor-pointer"
                                 ]
                                 [ img
