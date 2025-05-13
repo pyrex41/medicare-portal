@@ -121,6 +121,38 @@ export function createDashboardRoutes() {
 
         logger.info(`Dashboard stats for org ${currentUser.organization_id}: Quotes Sent: ${quotesSent}, Manual Quotes Sent: ${manualQuotesSent}, Quotes Viewed: ${quotesViewed}, Renewals: ${followUpsRequested}`)
 
+        // UPCOMING EMAILS LOGIC
+        // Only include emails scheduled in the next 30 days and status = 'pre-scheduled'
+        const now = new Date();
+        const in30Days = new Date(now);
+        in30Days.setDate(now.getDate() + 30);
+        const startDate = now.toISOString().slice(0, 10);
+        const endDate = in30Days.toISOString().slice(0, 10);
+
+        // Total count
+        const upcomingTotalResult = await orgDb.fetchOne(
+          `SELECT COUNT(*) as total FROM email_schedules
+           WHERE status = 'pre-scheduled'
+             AND scheduled_send_date >= ?
+             AND scheduled_send_date <= ?`,
+          [startDate, endDate]
+        );
+        const upcomingEmailsTotal = upcomingTotalResult && typeof upcomingTotalResult.total === 'number' ? upcomingTotalResult.total : 0;
+
+        // First page (up to 20)
+        const upcomingEmailsPage = await orgDb.fetchAll(
+          `SELECT es.id, es.contact_id, es.email_type, es.scheduled_send_date, es.status,
+                  c.first_name, c.last_name
+           FROM email_schedules es
+           LEFT JOIN contacts c ON es.contact_id = c.id
+           WHERE es.status = 'pre-scheduled'
+             AND es.scheduled_send_date >= ?
+             AND es.scheduled_send_date <= ?
+           ORDER BY es.scheduled_send_date ASC
+           LIMIT 20 OFFSET 0`,
+          [startDate, endDate]
+        );
+
         return {
           success: true,
           stats: {
@@ -129,7 +161,9 @@ export function createDashboardRoutes() {
             quotesViewed,
             followUpsRequested,
             healthQuestionsCompleted,
-            chartData
+            chartData,
+            upcomingEmailsTotal,
+            upcomingEmailsPage
           }
         }
       } catch (error) {

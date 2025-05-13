@@ -30,6 +30,10 @@ type alias Model =
     , selectedTimeFilter : TimeFilter
     , selectedChartView : ChartView
     , upcomingRenewals : List Renewal
+    , upcomingEmailsTotal : Int
+    , upcomingEmailsPage : List UpcomingEmail
+    , upcomingEmailsPageNum : Int
+    , upcomingEmailsPageSize : Int
     }
 
 
@@ -110,6 +114,8 @@ type alias DashboardStats =
     , followUpsRequested : Int
     , healthQuestionsCompleted : Int
     , chartData : List ChartDataFromAPI
+    , upcomingEmailsTotal : Int
+    , upcomingEmailsPage : List UpcomingEmail
     }
 
 
@@ -125,6 +131,17 @@ type alias RenewalResponse =
     }
 
 
+type alias UpcomingEmail =
+    { id : Int
+    , contactId : Int
+    , emailType : String
+    , scheduledSendDate : String
+    , status : String
+    , firstName : String
+    , lastName : String
+    }
+
+
 dashboardStatsDecoder : Decoder DashboardStats
 dashboardStatsDecoder =
     Decode.succeed DashboardStats
@@ -134,6 +151,8 @@ dashboardStatsDecoder =
         |> Pipeline.required "followUpsRequested" Decode.int
         |> Pipeline.required "healthQuestionsCompleted" Decode.int
         |> Pipeline.required "chartData" (Decode.list chartDataFromAPIDecoder)
+        |> Pipeline.required "upcomingEmailsTotal" Decode.int
+        |> Pipeline.required "upcomingEmailsPage" (Decode.list upcomingEmailDecoder)
 
 
 chartDataFromAPIDecoder : Decoder ChartDataFromAPI
@@ -303,6 +322,9 @@ init flags =
     let
         ( limitBannerModel, limitBannerCmd ) =
             LimitBanner.init
+
+        defaultUpcomingEmails =
+            { total = 0, emails = [], page = 1, pageSize = 20 }
     in
     ( { limitBanner = limitBannerModel
       , showTutorialModal = Maybe.withDefault False flags.isPostPayment
@@ -317,6 +339,10 @@ init flags =
       , selectedTimeFilter = Last30Days
       , selectedChartView = FunnelView
       , upcomingRenewals = []
+      , upcomingEmailsTotal = 0
+      , upcomingEmailsPage = []
+      , upcomingEmailsPageNum = 1
+      , upcomingEmailsPageSize = 20
       }
     , Cmd.batch
         [ Cmd.map LimitBannerMsg limitBannerCmd
@@ -419,6 +445,8 @@ update msg model =
                             , followUpsRequested = response.stats.followUpsRequested
                             , healthQuestionsCompleted = response.stats.healthQuestionsCompleted
                             , chartData = response.stats.chartData
+                            , upcomingEmailsTotal = response.stats.upcomingEmailsTotal
+                            , upcomingEmailsPage = response.stats.upcomingEmailsPage
                           }
                         , Cmd.none
                         )
@@ -528,7 +556,7 @@ viewDashboardHeader : Model -> Html Msg
 viewDashboardHeader model =
     div [ class "flex flex-col sm:flex-row justify-between items-center mb-6" ]
         [ h1 [ class "text-2xl font-bold text-gray-800 mb-4 sm:mb-0" ]
-            [ text "MedicareMax Dashboard" ]
+            [ text "Dashboard" ]
         , div [ class "flex space-x-2" ]
             [ select
                 [ class "bg-white border border-gray-300 rounded-md px-3 py-2 text-sm"
@@ -606,7 +634,7 @@ viewStatsCards model =
             viewStatsCard "Upcoming Emails" "0" "text-red-600" "Failed to load data"
 
           else
-            viewStatsCard "Upcoming Emails" (String.fromInt model.followUpsRequested) "text-[#00b4d8]" "Upcoming scheduled emails"
+            viewStatsCard "Upcoming Emails" (String.fromInt model.upcomingEmailsTotal) "text-[#00b4d8]" "Scheduled emails in next 30 days"
 
         -- Completion Rate card
         , if model.statsLoading then
@@ -748,6 +776,31 @@ viewMainContent model =
                     ]
                 ]
             ]
+        , -- Upcoming Emails section
+          div [ class "lg:col-span-1 bg-white rounded-lg shadow-xl p-4" ]
+            [ div [ class "flex justify-between items-center mb-4" ]
+                [ h2 [ class "text-lg font-semibold text-gray-800" ] [ text "Upcoming Emails" ]
+                , span [ class "bg-[#00b4d8] text-white text-xs px-2 py-1 rounded-full" ]
+                    [ text (String.fromInt model.upcomingEmailsTotal ++ " Total") ]
+                ]
+            , if model.statsLoading then
+                div [ class "h-full w-full flex items-center justify-center py-8" ]
+                    [ div [ class "animate-spin rounded-full h-8 w-8 border-t-2 border-l-2 border-[#00b4d8]" ] [] ]
+
+              else if model.statsError /= Nothing then
+                div [ class "text-center py-8 text-red-500" ]
+                    [ text "Error loading upcoming emails." ]
+
+              else if List.isEmpty model.upcomingEmailsPage then
+                div [ class "text-center py-8 text-gray-500" ]
+                    [ text "No upcoming emails scheduled in the next 30 days." ]
+
+              else
+                div [ class "space-y-4 max-h-[400px] overflow-y-auto" ]
+                    (List.map viewUpcomingEmailItem model.upcomingEmailsPage)
+            ]
+
+        {--
         , -- Renewals section
           div [ class "lg:col-span-1 bg-white rounded-lg shadow-xl p-4" ]
             [ div [ class "flex justify-between items-center mb-4" ]
@@ -771,6 +824,7 @@ viewMainContent model =
                     [ text "View All Renewals" ]
                 ]
             ]
+        --}
         ]
 
 
@@ -860,6 +914,64 @@ viewStatsCardWithSpinner title colorClass =
         ]
 
 
+viewUpcomingEmailItem : UpcomingEmail -> Html Msg
+viewUpcomingEmailItem email =
+    div [ class "border-b pb-3" ]
+        [ div [ class "flex justify-between items-start" ]
+            [ div []
+                [ div [ class "font-medium" ] [ text (email.firstName ++ " " ++ email.lastName) ]
+                , div [ class "text-sm text-gray-500" ] [ text (formatEmailType email.emailType) ]
+                ]
+            , div [ class "text-sm font-medium text-[#00b4d8]" ] [ text (formatDate email.scheduledSendDate) ]
+            ]
+        , div [ class "mt-2 flex items-center text-xs text-gray-500" ]
+            [ text ("Status: " ++ email.status) ]
+        ]
+
+
+formatEmailType : String -> String
+formatEmailType emailType =
+    case emailType of
+        "quote_email" ->
+            "Quote Email"
+
+        "follow_up_1" ->
+            "Follow-up #1"
+
+        "follow_up_2" ->
+            "Follow-up #2"
+
+        "follow_up_3" ->
+            "Follow-up #3"
+
+        "birthday" ->
+            "Birthday Email"
+
+        "anniversary" ->
+            "Anniversary Email"
+
+        _ ->
+            emailType
+
+
+formatDate : String -> String
+formatDate dateStr =
+    -- Simple formatting, could use a date library for better formatting
+    String.left 10 dateStr
+
+
 subscriptions : Model -> Sub Msg
 subscriptions _ =
     Sub.none
+
+
+upcomingEmailDecoder : Decode.Decoder UpcomingEmail
+upcomingEmailDecoder =
+    Decode.map7 UpcomingEmail
+        (Decode.field "id" Decode.int)
+        (Decode.field "contact_id" Decode.int)
+        (Decode.field "email_type" Decode.string)
+        (Decode.field "scheduled_send_date" Decode.string)
+        (Decode.field "status" Decode.string)
+        (Decode.field "first_name" Decode.string)
+        (Decode.field "last_name" Decode.string)
