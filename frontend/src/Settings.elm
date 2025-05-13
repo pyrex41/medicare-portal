@@ -1052,7 +1052,7 @@ viewCarriersGrid settings model =
             (List.map
                 (\carrier ->
                     checkbox carrier
-                        (List.member carrier settings.carrierContracts)
+                        (safeMember carrier carriersToUse)
                         (\checked ->
                             if checked then
                                 AddCarrierContract carrier
@@ -1064,6 +1064,21 @@ viewCarriersGrid settings model =
                 carriersToUse
             )
         ]
+
+
+safeMember : String -> List String -> Bool
+safeMember carrier carriers =
+    let
+        func : String -> String
+        func c =
+            c
+                |> String.toLower
+                |> String.trim
+                |> String.replace " " ""
+    in
+    carriers
+        |> List.map func
+        |> List.member (func carrier)
 
 
 viewStateCarrierGrid : Settings -> Model -> Html Msg
