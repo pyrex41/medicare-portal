@@ -248,13 +248,8 @@ fetchCarriers =
 
 fetchSelfOnboardingUrl : Cmd Msg
 fetchSelfOnboardingUrl =
-    let
-        slug =
-            -- This is a placeholder, we'll get the actual slug in the backend
-            "latest"
-    in
     Http.get
-        { url = "/api/self-service/" ++ slug
+        { url = "/api/self-service-info/"
         , expect = Http.expectJson GotSelfOnboardingUrl selfOnboardingUrlDecoder
         }
 

@@ -7,6 +7,7 @@ import { generateQuoteId, decodeQuoteId } from '../utils/quoteId';
 import { getUserFromSession } from '../services/auth';
 import { readFileSync } from 'fs';
 import { EmailService } from '../services/email';
+import { get } from 'http';
 
 // Import ZIP_DATA
 interface ZipInfo {
@@ -522,9 +523,35 @@ export function createSelfServiceRoutes() {
         return { error: 'Internal server error' };
       }
     })
+    .get('/api/self-service-info', async ({ params, set, request }) => {
+      const userFromSession = await getUserFromSession(request);
+    
+      // Get organization from central database
+      const db = new Database();
+      const orgResult = await db.fetchOne<{ id: number, slug: string, logo_data: string | null }>(
+        'SELECT id, slug, logo_data FROM organizations WHERE id = ?',
+        [userFromSession?.organization_id]
+      );
+
+      // logger.info(`Org result: ${JSON.stringify(orgResult)}`);
+      
+      if (!orgResult) {
+        set.status = 404;
+        return { success: false, message: 'Organization not found' };
+      }
+      
+      return {
+        success: true,
+        orgId: userFromSession?.organization_id.toString(),
+        orgSlug: orgResult.slug,
+        selfOnboardingUrl: `${config.PUBLIC_URL}/self-onboarding/${orgResult.slug}`,
+        logo: orgResult.logo_data
+      };  
+    })
     .get('/api/self-service/:orgSlug', async ({ params, query, set, request }) => {
       const { orgSlug } = params;
       const { email, id } = query as { email?: string; id?: string };
+      
       
       logger.info(`Self-service request for orgSlug=${orgSlug}, email=${email || 'none'}, quoteId=${id || 'none'}`);
       
@@ -532,7 +559,7 @@ export function createSelfServiceRoutes() {
         // For the 'latest' slug, get the current user's organization
         if (orgSlug === 'latest') {
           const userFromSession = await getUserFromSession(request);
-          
+          logger.info(`User from session: ${JSON.stringify(userFromSession)}`);
           // Add type guard to check for organization_id
           if (!userFromSession || !('organization_id' in userFromSession) || !userFromSession.organization_id) {
             set.status = 401;
@@ -545,6 +572,8 @@ export function createSelfServiceRoutes() {
             'SELECT id, slug, logo_data FROM organizations WHERE id = ?',
             [userFromSession.organization_id]
           );
+
+          logger.info(`Org result: ${JSON.stringify(orgResult)}`);
           
           if (!orgResult) {
             set.status = 404;
