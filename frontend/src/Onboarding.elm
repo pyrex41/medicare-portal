@@ -279,11 +279,11 @@ init key url =
             frame > 1 && (url.path == "/onboarding")
 
         redirectCommand =
-            case maybeUser |> Debug.log "maybeUser" of
+            case maybeUser of
                 Just user ->
                     Cmd.batch
                         [ fetchResumeData user.email
-                        , requestStripeProduct () |> Debug.log "requestStripeProduct"
+                        , requestStripeProduct ()
                         ]
 
                 Nothing ->
