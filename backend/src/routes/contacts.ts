@@ -988,7 +988,7 @@ export const contactsRoutes = new Elysia({ prefix: '/api/contacts' })
           return {
             success: successfullyMovedIds.length > 0,
             message: responseMessage,
-            successfully_moved_ids: successfullyMovedIds,
+            deleted_ids: successfullyMovedIds,
             failed_to_move_ids: failedToMoveIds
           };
         }
@@ -996,7 +996,7 @@ export const contactsRoutes = new Elysia({ prefix: '/api/contacts' })
         return {
           success: true,
           message: responseMessage,
-          successfully_moved_ids: successfullyMovedIds
+          deleted_ids: successfullyMovedIds
         };
 
       } catch (e) {

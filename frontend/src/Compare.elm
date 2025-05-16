@@ -555,11 +555,17 @@ quoteDataDecoder =
         (D.field "tobacco" D.int)
 
 
+blacklistCarriers : List Carrier
+blacklistCarriers =
+    [ Allstate ]
+
+
 isCarrierSupported : String -> List Carrier -> Bool
 isCarrierSupported naic carrierContracts =
     case naicToCarrier naic of
         Just carrierName ->
             List.member carrierName carrierContracts
+                && not (List.member carrierName blacklistCarriers)
 
         Nothing ->
             False

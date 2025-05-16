@@ -250,16 +250,26 @@ export class Database {
         [orgId]
       );
 
-      if (!org?.turso_db_url) {
-        logger.error(`No database URL found for org ${orgId}`);
+      if (!org) {
+        logger.warn(`[OrgDB] Organization record not found for orgId: ${orgId}`);
         throw new Error('Organization database not configured');
       }
+      if (!org.turso_db_url) {
+        logger.warn(`[OrgDB] No turso_db_url found in organization record for orgId: ${orgId}. Record: ${JSON.stringify(org)}`);
+        throw new Error('Organization database not configured');
+      }
+      if (!org.turso_auth_token) {
+        logger.warn(`[OrgDB] No turso_auth_token found in organization record for orgId: ${orgId}. Record: ${JSON.stringify(org)}`);
+        // Depending on policy, you might still proceed or throw an error.
+        // For now, let's assume a URL without a token is also a configuration issue.
+        throw new Error('Organization database not configured (missing token)');
+      }
 
-      logger.info(`Creating Turso client for org ${orgId} **********`);
+      logger.info(`[OrgDB] Found credentials for org ${orgId}. URL: ${org.turso_db_url.substring(0, 20)}... Token: ${org.turso_auth_token ? 'present' : 'MISSING'}`);
       const db = new Database(org.turso_db_url, org.turso_auth_token);
 
       // Validate connection by running a simple query with timeout
-      logger.info(`Validating database connection for org ${orgId}...`);
+      logger.info(`[OrgDB] Validating database connection for org ${orgId}...`);
       try {
         const timeoutPromise = new Promise((_, reject) => {
           setTimeout(() => reject(new Error('Database validation timed out after 5 seconds')), 5000);
@@ -298,25 +308,36 @@ export class Database {
     const RETRY_DELAY_MS = 500;
     let retries = 0;
 
+    logger.info(`[GetOrInitOrgDb] Entered for orgId: ${orgId}`);
+
     while (true) {
       try {
         // Try to get the org DB as usual
+        logger.info(`[GetOrInitOrgDb] Attempting to get OrgDB (attempt ${retries + 1}) for orgId: ${orgId}`);
         const db = await Database.getOrgDb(orgId)
+        logger.info(`[GetOrInitOrgDb] Successfully got OrgDB for orgId: ${orgId}. Ensuring schema.`);
         await Database.ensureOrgSchema(db)
+        logger.info(`[GetOrInitOrgDb] Schema ensured for orgId: ${orgId}. Returning DB.`);
         return db
       } catch (error) {
-        if (error instanceof Error && error.message === 'Organization database not configured') {
+        logger.warn(`[GetOrInitOrgDb] Failed to get OrgDB for orgId: ${orgId}. Error: ${error instanceof Error ? error.message : String(error)}`);
+        if (error instanceof Error && (error.message === 'Organization database not configured' || error.message === 'Organization database not configured (missing token)')) {
+          logger.info(`[GetOrInitOrgDb] Database not configured for orgId: ${orgId}. Attempting to provision.`);
           // Try to atomically claim the right to provision the DB
+          logger.info(`[GetOrInitOrgDb] Attempting to claim provisioning lock for orgId: ${orgId}`);
           const claimResult = await mainDb.execute(
             `UPDATE organizations
              SET is_db_provisioning = 1
-             WHERE id = ? AND is_db_provisioning = 0 AND (turso_db_url IS NULL OR turso_db_url = '')`,
+             WHERE id = ? AND is_db_provisioning = 0 AND (turso_db_url IS NULL OR turso_db_url = '' OR turso_auth_token IS NULL OR turso_auth_token = '')`,
             [orgId]
           );
 
+          logger.info(`[GetOrInitOrgDb] Claim lock result for orgId: ${orgId}: rowsAffected = ${claimResult.rowsAffected}`);
           if (claimResult.rowsAffected === 0) {
             // Someone else is provisioning, wait and retry
+            logger.warn(`[GetOrInitOrgDb] Failed to claim lock for orgId: ${orgId} (possibly locked or already provisioned). Retrying...`);
             if (retries++ >= MAX_RETRIES) {
+              logger.error(`[GetOrInitOrgDb] Timed out waiting for organization DB provisioning for orgId: ${orgId} after ${MAX_RETRIES} retries.`);
               throw new Error('Timed out waiting for organization DB provisioning');
             }
             await new Promise(res => setTimeout(res, RETRY_DELAY_MS));
@@ -324,36 +345,40 @@ export class Database {
           }
 
           // We have the lock, proceed to provision
+          logger.info(`[GetOrInitOrgDb] Successfully claimed provisioning lock for orgId: ${orgId}. Proceeding with provisioning.`);
           try {
             const orgExists = await mainDb.fetchOne<{ id: number }>(
               'SELECT id FROM organizations WHERE id = ?',
               [orgId]
             )
-            if (!orgExists) throw new Error('Organization not found')
+            if (!orgExists) {
+              logger.error(`[GetOrInitOrgDb] Organization ${orgId} not found during provisioning.`);
+              throw new Error('Organization not found')
+            }
 
             const turso = new TursoService()
-            logger.info(`Creating new Turso database for org ${orgId}`)
+            logger.info(`[GetOrInitOrgDb] Creating new Turso database for org ${orgId} via TursoService.`);
             const { url, token } = await turso.createOrganizationDatabase(orgId)
-            logger.info(`Got new database URL: ${url}`)
-            logger.info(`Got new database token (length: ${token.length})`)
+            logger.info(`[GetOrInitOrgDb] TursoService returned new database URL: ${url} and token (length: ${token.length}) for org ${orgId}.`);
 
             // Verify we can connect with the new credentials
             try {
-              logger.info('Verifying connection with new credentials...')
+              logger.info(`[GetOrInitOrgDb] Verifying connection with new credentials for org ${orgId}...`)
               const testDb = new Database(url, token)
               await testDb.execute('SELECT 1')
-              logger.info('Successfully verified connection with new credentials')
+              logger.info(`[GetOrInitOrgDb] Successfully verified connection with new credentials for org ${orgId}.`)
             } catch (connError) {
-              logger.error(`Failed to verify connection with new credentials: ${connError instanceof Error ? connError.message : String(connError)}`)
+              logger.error(`[GetOrInitOrgDb] Failed to verify connection with new credentials for org ${orgId}: ${connError instanceof Error ? connError.message : String(connError)}`)
               throw new Error('Failed to verify connection with new database credentials')
             }
 
             // Update organization with new credentials and clear provisioning flag
-            logger.info(`Updating organization ${orgId} with new database credentials`)
+            logger.info(`[GetOrInitOrgDb] Updating organization ${orgId} in main DB with new Turso credentials.`);
             await mainDb.execute(
               'UPDATE organizations SET turso_db_url = ?, turso_auth_token = ?, is_db_provisioning = 0 WHERE id = ?',
               [url, token, orgId]
             )
+            logger.info(`[GetOrInitOrgDb] Successfully updated organization ${orgId} with new credentials. Clearing provisioning flag.`);
 
             // Verify the update
             const updatedOrg = await mainDb.fetchOne<{ turso_db_url: string, turso_auth_token: string }>(
@@ -361,22 +386,26 @@ export class Database {
               [orgId]
             )
             if (!updatedOrg) {
-              logger.error('Failed to fetch updated organization after credential update')
+              logger.error('[GetOrInitOrgDb] Failed to fetch updated organization after credential update for org ${orgId}.')
               throw new Error('Failed to update organization credentials')
             }
             if (updatedOrg.turso_db_url !== url || updatedOrg.turso_auth_token !== token) {
-              logger.error('Organization credentials mismatch after update')
-              logger.error(`Expected URL: ${url}, got: ${updatedOrg.turso_db_url}`)
-              logger.error(`Expected token length: ${token.length}, got: ${updatedOrg.turso_auth_token.length}`)
+              logger.error(`[GetOrInitOrgDb] Organization credentials mismatch after update for org ${orgId}.`);
+              logger.error(`Expected URL: ${url}, got: ${updatedOrg.turso_db_url}`);
+              logger.error(`Expected token length: ${token.length}, got: ${updatedOrg.turso_auth_token.length}`);
               throw new Error('Organization credentials mismatch after update')
             }
 
-            logger.info(`Successfully initialized database for organization ${orgId}`)
+            logger.info(`[GetOrInitOrgDb] Successfully initialized and verified database for organization ${orgId}. URL: ${url}`);
             const newDb = new Database(url, token)
+            logger.info(`[GetOrInitOrgDb] Ensuring schema for newly provisioned DB for org ${orgId}.`);
             await Database.ensureOrgSchema(newDb)
+            logger.info(`[GetOrInitOrgDb] Schema ensured for newly provisioned DB for org ${orgId}. Returning DB.`);
             return newDb
           } catch (provisionError) {
+            logger.error(`[GetOrInitOrgDb] Error during provisioning for orgId: ${orgId}. Error: ${provisionError instanceof Error ? provisionError.message : String(provisionError)}`);
             // On error, clear the provisioning flag so future attempts can retry
+            logger.info(`[GetOrInitOrgDb] Clearing provisioning lock for orgId: ${orgId} due to provisioning error.`);
             await mainDb.execute(
               'UPDATE organizations SET is_db_provisioning = 0 WHERE id = ?',
               [orgId]
@@ -384,7 +413,7 @@ export class Database {
             throw provisionError
           }
         }
-        logger.error(`Error in getOrInitOrgDb: ${error instanceof Error ? error.message : String(error)}`)
+        logger.error(`[GetOrInitOrgDb] Unhandled error in getOrInitOrgDb for orgId ${orgId}: ${error instanceof Error ? error.message : String(error)}`)
         if (error instanceof Error && error.stack) {
           logger.error(`Stack trace: ${error.stack}`)
         }
