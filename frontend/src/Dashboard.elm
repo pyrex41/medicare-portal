@@ -9,6 +9,7 @@ import Http
 import Json.Decode as Decode exposing (Decoder)
 import Json.Decode.Pipeline as Pipeline
 import Json.Encode as Encode
+import String
 import Time
 
 
@@ -24,7 +25,7 @@ type Tab
 type alias Model =
     { limitBanner : LimitBanner.Model
     , showTutorialModal : Bool
-    , selectedTab : Tab -- New field for selected tab
+    , selectedTab : Tab
 
     -- Performance Metrics Stats
     , quotesSent : Int
@@ -39,15 +40,17 @@ type alias Model =
     -- Activity Stats
     , activityLinksClicked : Int
     , activityHealthQuestionsCompleted : Int
-    , activityChartData : List ActivityChartDataPoint -- New field for activity chart data
+    , activityChartData : List ActivityChartDataPoint
     , activityStatsLoading : Bool
     , activityStatsError : Maybe String
     , activityEmailsSent : Int
 
     -- Common
     , selectedTimeFilter : TimeFilter
-    , selectedChartView : ChartView -- This might be specific to Performance tab now
-    , upcomingRenewals : List Renewal -- This seems deprecated or less prominent based on current UI focus
+    , customStartDateInput : String
+    , customEndDateInput : String
+    , selectedChartView : ChartView
+    , upcomingRenewals : List Renewal
     , upcomingEmailsTotal : Int
     , upcomingEmailsPage : List UpcomingEmail
     , upcomingEmailsPageNum : Int
@@ -93,8 +96,9 @@ type TimeFilter
     | Last30Days
     | Last90Days
     | YearToDate
-    | CustomRange Time.Posix Time.Posix
     | Today
+    | Yesterday
+    | CustomRange
 
 
 type ChartView
@@ -121,17 +125,18 @@ type Msg
     | LimitBannerMsg LimitBanner.Msg
     | CloseTutorialModal
     | OpenTutorialModal
-    | FetchDashboardStats
     | GotDashboardStats (Result Http.Error DashboardStatsResponse)
     | SelectTimeFilter TimeFilter
+    | UpdateCustomStartDate String
+    | UpdateCustomEndDate String
     | SelectChartView ChartView
     | FetchRenewals
     | GotRenewals (Result Http.Error RenewalResponse)
     | SendReminderToContact String
     | CallContact String
-    | SelectTab Tab -- New message for tab selection
-    | FetchActivityStats -- New message to fetch activity stats
-    | GotActivityStats (Result Http.Error ActivityStatsResponse) -- New message for activity stats
+    | SelectTab Tab
+    | GotActivityStats (Result Http.Error ActivityStatsResponse)
+    | RefreshData
 
 
 type alias Flags =
@@ -340,11 +345,14 @@ timeFilterToApiParam filter =
         YearToDate ->
             "ytd"
 
-        CustomRange start end ->
-            "custom"
-
         Today ->
             "today"
+
+        Yesterday ->
+            "yesterday"
+
+        CustomRange ->
+            "custom"
 
 
 
@@ -357,9 +365,6 @@ init flags =
     let
         ( limitBannerModel, limitBannerCmd ) =
             LimitBanner.init
-
-        defaultUpcomingEmails =
-            { total = 0, emails = [], page = 1, pageSize = 20 }
     in
     ( { limitBanner = limitBannerModel
       , showTutorialModal = Maybe.withDefault False flags.isPostPayment
@@ -375,10 +380,12 @@ init flags =
       , activityLinksClicked = 0
       , activityHealthQuestionsCompleted = 0
       , activityChartData = []
-      , activityStatsLoading = False
+      , activityStatsLoading = True
       , activityStatsError = Nothing
       , activityEmailsSent = 0
       , selectedTimeFilter = Last30Days
+      , customStartDateInput = ""
+      , customEndDateInput = ""
       , selectedChartView = FunnelView
       , upcomingRenewals = []
       , upcomingEmailsTotal = 0
@@ -388,7 +395,7 @@ init flags =
       }
     , Cmd.batch
         [ Cmd.map LimitBannerMsg limitBannerCmd
-        , fetchDashboardStats Last30Days
+        , fetchDashboardAndActivityStats Last30Days "" ""
         ]
     )
 
@@ -397,14 +404,29 @@ init flags =
 -- HTTP
 
 
-fetchDashboardStats : TimeFilter -> Cmd Msg
-fetchDashboardStats timeFilter =
+fetchDashboardAndActivityStats : TimeFilter -> String -> String -> Cmd Msg
+fetchDashboardAndActivityStats timeFilter startDate endDate =
+    Cmd.batch
+        [ fetchDashboardStats timeFilter startDate endDate
+        , fetchActivityStats timeFilter startDate endDate
+        ]
+
+
+fetchDashboardStats : TimeFilter -> String -> String -> Cmd Msg
+fetchDashboardStats timeFilter startDate endDate =
     let
         timeParam =
             timeFilterToApiParam timeFilter
 
-        url =
+        baseUrl =
             "/api/dashboard/stats?period=" ++ timeParam
+
+        url =
+            if timeFilter == CustomRange && not (String.isEmpty startDate) && not (String.isEmpty endDate) then
+                baseUrl ++ "&startDate=" ++ startDate ++ "&endDate=" ++ endDate
+
+            else
+                baseUrl
     in
     Http.get
         { url = url
@@ -420,14 +442,21 @@ fetchRenewals =
         }
 
 
-fetchActivityStats : TimeFilter -> Cmd Msg
-fetchActivityStats timeFilter =
+fetchActivityStats : TimeFilter -> String -> String -> Cmd Msg
+fetchActivityStats timeFilter startDate endDate =
     let
         timeParam =
             timeFilterToApiParam timeFilter
 
-        url =
+        baseUrl =
             "/api/dashboard/activity?period=" ++ timeParam
+
+        url =
+            if timeFilter == CustomRange && not (String.isEmpty startDate) && not (String.isEmpty endDate) then
+                baseUrl ++ "&startDate=" ++ startDate ++ "&endDate=" ++ endDate
+
+            else
+                baseUrl
     in
     Http.get
         { url = url
@@ -480,11 +509,6 @@ update msg model =
             , Cmd.none
             )
 
-        FetchDashboardStats ->
-            ( { model | statsLoading = True, statsError = Nothing }
-            , fetchDashboardStats model.selectedTimeFilter
-            )
-
         GotDashboardStats result ->
             case result of
                 Ok response ->
@@ -508,28 +532,35 @@ update msg model =
                         )
 
                     else
-                        ( { model | statsLoading = False, statsError = Just "Failed to load dashboard data." }
-                        , Cmd.none
-                        )
+                        ( { model | statsLoading = False, statsError = Just "Failed to load dashboard data (API error)." }, Cmd.none )
 
                 Err httpError ->
-                    ( { model | statsLoading = False, statsError = Just (httpErrorToString httpError) }
-                    , Cmd.none
-                    )
+                    ( { model | statsLoading = False, statsError = Just (httpErrorToString httpError) }, Cmd.none )
 
         SelectTimeFilter timeFilter ->
-            let
-                cmds =
-                    case model.selectedTab of
-                        PerformanceMetrics ->
-                            [ fetchDashboardStats timeFilter ]
+            if timeFilter == CustomRange then
+                -- Just update the filter, don't fetch. User will use Refresh button.
+                ( { model | selectedTimeFilter = timeFilter, statsLoading = False, activityStatsLoading = False }, Cmd.none )
 
-                        Activity ->
-                            [ fetchActivityStats timeFilter ]
-            in
-            ( { model | selectedTimeFilter = timeFilter, statsLoading = model.selectedTab == PerformanceMetrics, activityStatsLoading = model.selectedTab == Activity }
-            , Cmd.batch cmds
-            )
+            else
+                -- For non-custom filters, clear custom dates, set loading for both, and fetch both.
+                ( { model
+                    | selectedTimeFilter = timeFilter
+                    , customStartDateInput = ""
+                    , customEndDateInput = ""
+                    , statsLoading = True
+                    , activityStatsLoading = True
+                    , statsError = Nothing
+                    , activityStatsError = Nothing
+                  }
+                , fetchDashboardAndActivityStats timeFilter "" ""
+                )
+
+        UpdateCustomStartDate dateStr ->
+            ( { model | customStartDateInput = dateStr }, Cmd.none )
+
+        UpdateCustomEndDate dateStr ->
+            ( { model | customEndDateInput = dateStr }, Cmd.none )
 
         SelectChartView chartView ->
             ( { model | selectedChartView = chartView }
@@ -537,58 +568,29 @@ update msg model =
             )
 
         FetchRenewals ->
-            ( model
-            , fetchRenewals
-            )
+            ( model, fetchRenewals )
 
         GotRenewals result ->
             case result of
                 Ok response ->
                     if response.success then
-                        ( { model | upcomingRenewals = response.renewals }
-                        , Cmd.none
-                        )
+                        ( { model | upcomingRenewals = response.renewals }, Cmd.none )
 
                     else
-                        ( model
-                        , Cmd.none
-                        )
+                        ( model, Cmd.none )
 
                 Err _ ->
-                    ( model
-                    , Cmd.none
-                    )
+                    ( model, Cmd.none )
 
         SendReminderToContact contactId ->
-            -- This would call an API to send a reminder
-            ( model
-            , Cmd.none
-            )
+            ( model, Cmd.none )
 
         CallContact contactId ->
-            -- This would integrate with a calling system or log the call
-            ( model
-            , Cmd.none
-            )
+            ( model, Cmd.none )
 
         SelectTab tab ->
-            let
-                cmds =
-                    case tab of
-                        PerformanceMetrics ->
-                            [ fetchDashboardStats model.selectedTimeFilter ]
-
-                        Activity ->
-                            [ fetchActivityStats model.selectedTimeFilter ]
-            in
-            ( { model | selectedTab = tab, statsError = Nothing, activityStatsError = Nothing, statsLoading = tab == PerformanceMetrics, activityStatsLoading = tab == Activity }
-            , Cmd.batch cmds
-            )
-
-        FetchActivityStats ->
-            ( { model | activityStatsLoading = True, activityStatsError = Nothing }
-            , fetchActivityStats model.selectedTimeFilter
-            )
+            -- Only change the tab, data should already be loaded or loading for both.
+            ( { model | selectedTab = tab }, Cmd.none )
 
         GotActivityStats result ->
             case result of
@@ -605,14 +607,62 @@ update msg model =
                         )
 
                     else
-                        ( { model | activityStatsLoading = False, activityStatsError = Just "Failed to load activity data." }
-                        , Cmd.none
-                        )
+                        ( { model | activityStatsLoading = False, activityStatsError = Just "Failed to load activity data (API error)." }, Cmd.none )
 
                 Err httpError ->
-                    ( { model | activityStatsLoading = False, activityStatsError = Just (httpErrorToString httpError) }
-                    , Cmd.none
-                    )
+                    ( { model | activityStatsLoading = False, activityStatsError = Just (httpErrorToString httpError) }, Cmd.none )
+
+        RefreshData ->
+            let
+                ( startDate, endDate ) =
+                    if model.selectedTimeFilter == CustomRange then
+                        ( model.customStartDateInput, model.customEndDateInput )
+
+                    else
+                        ( "", "" )
+
+                shouldFetch =
+                    if model.selectedTimeFilter == CustomRange then
+                        not (String.isEmpty startDate) && not (String.isEmpty endDate)
+
+                    else
+                        True
+
+                fetchCmd =
+                    if shouldFetch then
+                        fetchDashboardAndActivityStats model.selectedTimeFilter startDate endDate
+
+                    else
+                        Cmd.none
+            in
+            ( { model
+                | statsLoading =
+                    if shouldFetch then
+                        True
+
+                    else
+                        model.statsLoading
+                , activityStatsLoading =
+                    if shouldFetch then
+                        True
+
+                    else
+                        model.activityStatsLoading
+                , statsError =
+                    if shouldFetch then
+                        Nothing
+
+                    else
+                        model.statsError
+                , activityStatsError =
+                    if shouldFetch then
+                        Nothing
+
+                    else
+                        model.activityStatsError
+              }
+            , fetchCmd
+            )
 
         NoOp ->
             ( model, Cmd.none )
@@ -680,14 +730,17 @@ viewDashboardHeader model =
     div [ class "flex flex-col sm:flex-row justify-between items-center mb-6" ]
         [ h1 [ class "text-2xl font-bold text-gray-800 mb-4 sm:mb-0" ]
             [ text "Dashboard" ]
-        , div [ class "flex space-x-2" ]
+        , div [ class "flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-2 items-center" ]
             [ select
                 [ class "bg-white border border-gray-300 rounded-md px-3 py-2 text-sm"
                 , onInput
-                    (\value ->
-                        case value of
+                    (\val ->
+                        case val of
                             "today" ->
                                 SelectTimeFilter Today
+
+                            "yesterday" ->
+                                SelectTimeFilter Yesterday
 
                             "7days" ->
                                 SelectTimeFilter Last7Days
@@ -701,19 +754,45 @@ viewDashboardHeader model =
                             "ytd" ->
                                 SelectTimeFilter YearToDate
 
+                            "custom" ->
+                                SelectTimeFilter CustomRange
+
                             _ ->
                                 NoOp
                     )
+                , value (timeFilterToHtmlValue model.selectedTimeFilter) -- Make select controlled
                 ]
-                [ option [ value "today", selected (model.selectedTimeFilter == Today) ] [ text "Today" ]
-                , option [ value "7days", selected (model.selectedTimeFilter == Last7Days) ] [ text "Last 7 Days" ]
-                , option [ value "30days", selected (model.selectedTimeFilter == Last30Days) ] [ text "Last 30 Days" ]
-                , option [ value "90days", selected (model.selectedTimeFilter == Last90Days) ] [ text "Last 90 Days" ]
-                , option [ value "ytd", selected (model.selectedTimeFilter == YearToDate) ] [ text "Year to Date" ]
+                [ option [ value "today" ] [ text "Today" ] -- Removed selected attributes, rely on select value
+                , option [ value "yesterday" ] [ text "Yesterday" ]
+                , option [ value "7days" ] [ text "Last 7 Days" ]
+                , option [ value "30days" ] [ text "Last 30 Days" ]
+                , option [ value "90days" ] [ text "Last 90 Days" ]
+                , option [ value "ytd" ] [ text "Year to Date" ]
+                , option [ value "custom" ] [ text "Custom Range" ]
+                ]
+            , div [ class "flex space-x-2 items-center" ]
+                [ label [ class "text-sm" ] [ text "From:" ]
+                , input
+                    [ type_ "date"
+                    , class "bg-white border border-gray-300 rounded-md px-2 py-1.5 text-sm"
+                    , value model.customStartDateInput
+                    , onInput UpdateCustomStartDate
+                    , disabled (model.selectedTimeFilter /= CustomRange)
+                    ]
+                    []
+                , label [ class "text-sm" ] [ text "To:" ]
+                , input
+                    [ type_ "date"
+                    , class "bg-white border border-gray-300 rounded-md px-2 py-1.5 text-sm"
+                    , value model.customEndDateInput
+                    , onInput UpdateCustomEndDate
+                    , disabled (model.selectedTimeFilter /= CustomRange)
+                    ]
+                    []
                 ]
             , button
                 [ class "bg-[#03045e] text-white px-4 py-2 rounded-md text-sm hover:bg-opacity-90"
-                , onClick FetchDashboardStats
+                , onClick RefreshData -- Changed to new message
                 ]
                 [ text "Refresh" ]
             ]
@@ -1245,3 +1324,32 @@ activityStatsResponseDecoder =
     Decode.succeed ActivityStatsResponse
         |> Pipeline.required "success" Decode.bool
         |> Pipeline.required "stats" activityStatsDecoder
+
+
+
+-- Helper to convert TimeFilter to string for select value
+
+
+timeFilterToHtmlValue : TimeFilter -> String
+timeFilterToHtmlValue filter =
+    case filter of
+        Today ->
+            "today"
+
+        Yesterday ->
+            "yesterday"
+
+        Last7Days ->
+            "7days"
+
+        Last30Days ->
+            "30days"
+
+        Last90Days ->
+            "90days"
+
+        YearToDate ->
+            "ytd"
+
+        CustomRange ->
+            "custom"

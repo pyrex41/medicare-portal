@@ -13,12 +13,18 @@ function getDateRange(period?: string): { startDateStr: string, endDateStr: stri
     endDate.setHours(23, 59, 59, 999); // End of today for endDate default
 
     // Default to '30days' if period is undefined or invalid
-    const effectivePeriod = ['today', '7days', '30days', '90days', 'ytd'].includes(period || '') ? period : '30days';
+    const effectivePeriod = ['today', 'yesterday', '7days', '30days', '90days', 'ytd'].includes(period || '') ? period : '30days';
 
     switch (effectivePeriod) {
         case 'today':
             // startDate is already beginning of today
             // endDate is already end of today
+            break;
+        case 'yesterday':
+            startDate.setDate(today.getDate() - 1);
+            endDate.setDate(today.getDate() - 1);
+            // endDate still needs to be end of that day
+            endDate.setHours(23, 59, 59, 999);
             break;
         case '7days':
             startDate.setDate(today.getDate() - 6); // today is the 7th day
@@ -64,7 +70,20 @@ export function createDashboardRoutes() {
         const orgDb = await Database.getOrInitOrgDb(currentUser.organization_id.toString())
 
         const period = query?.period as string | undefined;
-        const { startDateStr, endDateStr } = getDateRange(period);
+        let startDateStr: string, endDateStr: string;
+
+        if (period === 'custom' && query?.startDate && query?.endDate) {
+            startDateStr = query.startDate as string;
+            endDateStr = query.endDate as string;
+            // Basic validation for custom dates can be added here if needed
+            // For now, assume they are valid YYYY-MM-DD strings
+            logger.info(`Using custom date range: ${startDateStr} to ${endDateStr}`);
+        } else {
+            const range = getDateRange(period);
+            startDateStr = range.startDateStr;
+            endDateStr = range.endDateStr;
+        }
+        
 
         logger.info(`Fetching dashboard stats for org ${currentUser.organization_id} for period: ${period || '30days'} (range: ${startDateStr} to ${endDateStr})`);
 
@@ -254,7 +273,18 @@ export function createDashboardActivityRoutes() {
         const orgDb = await Database.getOrInitOrgDb(currentUser.organization_id.toString())
 
         const period = query?.period as string | undefined;
-        const { startDateStr, endDateStr } = getDateRange(period);
+        let startDateStr: string, endDateStr: string;
+
+        if (period === 'custom' && query?.startDate && query?.endDate) {
+            startDateStr = query.startDate as string;
+            endDateStr = query.endDate as string;
+            // Basic validation for custom dates can be added here if needed
+             logger.info(`Using custom date range for activity: ${startDateStr} to ${endDateStr}`);
+        } else {
+            const range = getDateRange(period);
+            startDateStr = range.startDateStr;
+            endDateStr = range.endDateStr;
+        }
 
         logger.info(`Fetching dashboard activity stats for org ${currentUser.organization_id} for period: ${period || '30days'} (range: ${startDateStr} to ${endDateStr})`);
 
@@ -265,7 +295,7 @@ export function createDashboardActivityRoutes() {
           WHERE contact_id IS NOT NULL
             AND status = 'scheduled'
             AND scheduled_send_date BETWEEN ? AND ?
-        `
+        `;
         const emailsSentResult = await orgDb.fetchOne<{ count: number }>(emailsSentSql, [startDateStr, endDateStr])
         const emailsSent = emailsSentResult?.count || 0
         logger.info(`Emails Sent (Activity, unique contacts) count: ${emailsSent}`)
@@ -276,7 +306,7 @@ export function createDashboardActivityRoutes() {
           FROM tracking_clicks
           WHERE contact_id IS NOT NULL
             AND DATE(clicked_at) BETWEEN ? AND ?
-        `
+        `;
         const linksClickedResult = await orgDb.fetchOne<{ count: number }>(linksClickedSql, [startDateStr, endDateStr])
         const linksClicked = linksClickedResult?.count || 0
         logger.info(`Links Clicked (Activity, unique contacts) count: ${linksClicked}`)
@@ -287,7 +317,7 @@ export function createDashboardActivityRoutes() {
           FROM eligibility_answers
           WHERE contact_id IS NOT NULL
             AND DATE(created_at) BETWEEN ? AND ?
-        `
+        `;
         const healthQuestionsCompletedActivityResult = await orgDb.fetchOne<{ count: number }>(healthQuestionsCompletedActivitySql, [startDateStr, endDateStr])
         const healthQuestionsCompletedActivity = healthQuestionsCompletedActivityResult?.count || 0
         logger.info(`Health Questions Completed (Activity, unique contacts) count: ${healthQuestionsCompletedActivity}`)
