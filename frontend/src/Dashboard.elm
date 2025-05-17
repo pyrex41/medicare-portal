@@ -557,10 +557,10 @@ update msg model =
                 )
 
         UpdateCustomStartDate dateStr ->
-            ( { model | customStartDateInput = dateStr }, Cmd.none )
+            ( { model | customStartDateInput = dateStr, selectedTimeFilter = CustomRange }, Cmd.none )
 
         UpdateCustomEndDate dateStr ->
-            ( { model | customEndDateInput = dateStr }, Cmd.none )
+            ( { model | customEndDateInput = dateStr, selectedTimeFilter = CustomRange }, Cmd.none )
 
         SelectChartView chartView ->
             ( { model | selectedChartView = chartView }
@@ -777,7 +777,6 @@ viewDashboardHeader model =
                     , class "bg-white border border-gray-300 rounded-md px-2 py-1.5 text-sm"
                     , value model.customStartDateInput
                     , onInput UpdateCustomStartDate
-                    , disabled (model.selectedTimeFilter /= CustomRange)
                     ]
                     []
                 , label [ class "text-sm" ] [ text "To:" ]
@@ -786,7 +785,6 @@ viewDashboardHeader model =
                     , class "bg-white border border-gray-300 rounded-md px-2 py-1.5 text-sm"
                     , value model.customEndDateInput
                     , onInput UpdateCustomEndDate
-                    , disabled (model.selectedTimeFilter /= CustomRange)
                     ]
                     []
                 ]
