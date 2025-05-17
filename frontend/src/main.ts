@@ -1,6 +1,6 @@
 import './styles.css'
 import { Elm } from './Main.elm'
-import * as Chartist from 'chartist';
+import { PieChart, BarChart, LineChart, Interpolation } from 'chartist';
 import 'chartist/dist/index.css';
 import { setupLineChartAnimations, setupBarChartAnimations, animateFunnelChart } from './chart-animations';
 
@@ -441,7 +441,7 @@ customElements.define('chartist-bar', class extends HTMLElement {
     `;
     this.appendChild(style);
 
-    const chart = new Chartist.BarChart(chartDiv, chartData, {
+    const chart = new BarChart(chartDiv, chartData, {
       stackBars: false,
       axisY: { onlyInteger: true },
       chartPadding: {
@@ -536,7 +536,7 @@ customElements.define('chartist-line', class extends HTMLElement {
     `;
     this.appendChild(style);
 
-    const chart = new Chartist.LineChart(chartDiv, chartData, {
+    const chart = new LineChart(chartDiv, chartData, {
       fullWidth: true,
       chartPadding: {
         right: 40,
@@ -544,7 +544,7 @@ customElements.define('chartist-line', class extends HTMLElement {
         top: 20,
         bottom: 20
       },
-      lineSmooth: Chartist.Interpolation.cardinal({
+      lineSmooth: Interpolation.cardinal({
         tension: 0.2
       }),
       axisY: {
@@ -788,6 +788,112 @@ customElements.define('chartist-funnel', class extends HTMLElement {
     }
   }
 });
+
+// Define the Activity Gauge custom element
+customElements.define('activity-gauge', class extends HTMLElement {
+  static get observedAttributes() { return ['data']; }
+  connectedCallback() { this.renderChart(); }
+  attributeChangedCallback() { this.renderChart(); }
+
+  renderChart() {
+    const dataAttr = this.getAttribute('data');
+    if (!dataAttr) return;
+    let chartDataFromElm;
+    try {
+      chartDataFromElm = JSON.parse(dataAttr);
+    } catch (e) {
+      this.textContent = 'Invalid chart data';
+      console.error('Error parsing activity gauge data:', e);
+      return;
+    }
+
+    this.innerHTML = '';
+    const chartDiv = document.createElement('div');
+    chartDiv.style.height = '100%';
+    chartDiv.style.width = '100%';
+    this.appendChild(chartDiv);
+
+    const style = document.createElement('style');
+    style.textContent = `
+      .ct-series-a .ct-slice-donut {
+        stroke: #03045e !important; /* Emails Sent */
+      }
+      .ct-series-b .ct-slice-donut {
+        stroke: #0077b6 !important; /* Links Clicked */
+      }
+      .ct-series-c .ct-slice-donut {
+        stroke: #48cae4 !important; /* Health Completed */
+      }
+      .ct-label {
+        font-size: 14px !important;
+        fill: #333 !important;
+        text-anchor: middle;
+      }
+      .activity-gauge-center-text {
+        font-size: 20px;
+        font-weight: bold;
+        fill: #03045e;
+        text-anchor: middle;
+      }
+    `;
+    this.appendChild(style);
+
+    const emailsSent = chartDataFromElm.emailsSent || 0;
+    const linksClicked = chartDataFromElm.linksClicked || 0;
+    const healthCompleted = chartDataFromElm.healthCompleted || 0;
+
+    const series = [emailsSent, linksClicked, healthCompleted];
+    const sumOfSeries = series.reduce((a, b) => a + b, 0);
+
+    if (sumOfSeries === 0) {
+      this.textContent = 'No activity data to display.';
+      this.style.display = 'flex';
+      this.style.alignItems = 'center';
+      this.style.justifyContent = 'center';
+      this.style.height = '100%';
+      this.style.color = '#888'; // Example style for the message
+      this.style.fontSize = '16px';
+      return;
+    }
+
+    new PieChart(chartDiv, {
+      series: series,
+      labels: ['Emails Sent', 'Links Clicked', 'Health Completed'] 
+    }, {
+      donut: true,
+      donutWidth: 40,
+      startAngle: 270, // Start from the top
+      total: sumOfSeries * 2, // Ensures a 180-degree semi-circle representing the sum
+      showLabel: false,
+      chartPadding: 5, // Optional padding
+      // Removed the problematic plugins section
+    });
+  }
+});
+
+
+// add chartist donut chart here
+/*
+simple example
+import 'chartist/dist/index.css';
+import { PieChart } from 'chartist';
+
+new PieChart(
+  '#chart',
+  {
+    series: [20, 10, 30, 40]
+  },
+  {
+    donut: true,
+    donutWidth: 60,
+    startAngle: 270,
+    total: 200,
+    showLabel: false
+  }
+);
+
+*/
+
 
 const root = document.querySelector('#app');
 if (!root) {

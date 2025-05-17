@@ -16,9 +16,17 @@ import Time
 -- MODEL
 
 
+type Tab
+    = PerformanceMetrics
+    | Activity
+
+
 type alias Model =
     { limitBanner : LimitBanner.Model
     , showTutorialModal : Bool
+    , selectedTab : Tab -- New field for selected tab
+
+    -- Performance Metrics Stats
     , quotesSent : Int
     , manualQuotesSent : Int
     , quotesViewed : Int
@@ -27,9 +35,19 @@ type alias Model =
     , statsLoading : Bool
     , statsError : Maybe String
     , chartData : List ChartDataFromAPI
+
+    -- Activity Stats
+    , activityLinksClicked : Int
+    , activityHealthQuestionsCompleted : Int
+    , activityChartData : List ActivityChartDataPoint -- New field for activity chart data
+    , activityStatsLoading : Bool
+    , activityStatsError : Maybe String
+    , activityEmailsSent : Int
+
+    -- Common
     , selectedTimeFilter : TimeFilter
-    , selectedChartView : ChartView
-    , upcomingRenewals : List Renewal
+    , selectedChartView : ChartView -- This might be specific to Performance tab now
+    , upcomingRenewals : List Renewal -- This seems deprecated or less prominent based on current UI focus
     , upcomingEmailsTotal : Int
     , upcomingEmailsPage : List UpcomingEmail
     , upcomingEmailsPageNum : Int
@@ -38,7 +56,7 @@ type alias Model =
 
 
 
--- This is the data structure from the API
+-- This is the data structure from the API for Performance Metrics
 
 
 type alias ChartDataFromAPI =
@@ -47,6 +65,16 @@ type alias ChartDataFromAPI =
     , views : Float
     , followUps : Float
     , healthCompleted : Float -- New field
+    }
+
+
+
+-- New type for Activity Chart Data (simple key-value)
+
+
+type alias ActivityChartDataPoint =
+    { x : Float -- Could represent category index (0 for clicks, 1 for HQ completed)
+    , value : Float
     }
 
 
@@ -101,6 +129,9 @@ type Msg
     | GotRenewals (Result Http.Error RenewalResponse)
     | SendReminderToContact String
     | CallContact String
+    | SelectTab Tab -- New message for tab selection
+    | FetchActivityStats -- New message to fetch activity stats
+    | GotActivityStats (Result Http.Error ActivityStatsResponse) -- New message for activity stats
 
 
 type alias Flags =
@@ -332,6 +363,7 @@ init flags =
     in
     ( { limitBanner = limitBannerModel
       , showTutorialModal = Maybe.withDefault False flags.isPostPayment
+      , selectedTab = PerformanceMetrics
       , quotesSent = 0
       , manualQuotesSent = 0
       , quotesViewed = 0
@@ -340,6 +372,12 @@ init flags =
       , statsLoading = True
       , statsError = Nothing
       , chartData = []
+      , activityLinksClicked = 0
+      , activityHealthQuestionsCompleted = 0
+      , activityChartData = []
+      , activityStatsLoading = False
+      , activityStatsError = Nothing
+      , activityEmailsSent = 0
       , selectedTimeFilter = Last30Days
       , selectedChartView = FunnelView
       , upcomingRenewals = []
@@ -351,7 +389,6 @@ init flags =
     , Cmd.batch
         [ Cmd.map LimitBannerMsg limitBannerCmd
         , fetchDashboardStats Last30Days
-        , fetchRenewals
         ]
     )
 
@@ -380,6 +417,21 @@ fetchRenewals =
     Http.get
         { url = "/api/dashboard/renewals"
         , expect = Http.expectJson GotRenewals renewalResponseDecoder
+        }
+
+
+fetchActivityStats : TimeFilter -> Cmd Msg
+fetchActivityStats timeFilter =
+    let
+        timeParam =
+            timeFilterToApiParam timeFilter
+
+        url =
+            "/api/dashboard/activity?period=" ++ timeParam
+    in
+    Http.get
+        { url = url
+        , expect = Http.expectJson GotActivityStats activityStatsResponseDecoder
         }
 
 
@@ -466,8 +518,17 @@ update msg model =
                     )
 
         SelectTimeFilter timeFilter ->
-            ( { model | selectedTimeFilter = timeFilter, statsLoading = True }
-            , fetchDashboardStats timeFilter
+            let
+                cmds =
+                    case model.selectedTab of
+                        PerformanceMetrics ->
+                            [ fetchDashboardStats timeFilter ]
+
+                        Activity ->
+                            [ fetchActivityStats timeFilter ]
+            in
+            ( { model | selectedTimeFilter = timeFilter, statsLoading = model.selectedTab == PerformanceMetrics, activityStatsLoading = model.selectedTab == Activity }
+            , Cmd.batch cmds
             )
 
         SelectChartView chartView ->
@@ -510,6 +571,49 @@ update msg model =
             , Cmd.none
             )
 
+        SelectTab tab ->
+            let
+                cmds =
+                    case tab of
+                        PerformanceMetrics ->
+                            [ fetchDashboardStats model.selectedTimeFilter ]
+
+                        Activity ->
+                            [ fetchActivityStats model.selectedTimeFilter ]
+            in
+            ( { model | selectedTab = tab, statsError = Nothing, activityStatsError = Nothing, statsLoading = tab == PerformanceMetrics, activityStatsLoading = tab == Activity }
+            , Cmd.batch cmds
+            )
+
+        FetchActivityStats ->
+            ( { model | activityStatsLoading = True, activityStatsError = Nothing }
+            , fetchActivityStats model.selectedTimeFilter
+            )
+
+        GotActivityStats result ->
+            case result of
+                Ok response ->
+                    if response.success then
+                        ( { model
+                            | activityStatsLoading = False
+                            , activityEmailsSent = response.stats.emailsSent
+                            , activityLinksClicked = response.stats.linksClicked
+                            , activityHealthQuestionsCompleted = response.stats.healthQuestionsCompleted
+                            , activityChartData = response.stats.activityChartData
+                          }
+                        , Cmd.none
+                        )
+
+                    else
+                        ( { model | activityStatsLoading = False, activityStatsError = Just "Failed to load activity data." }
+                        , Cmd.none
+                        )
+
+                Err httpError ->
+                    ( { model | activityStatsLoading = False, activityStatsError = Just (httpErrorToString httpError) }
+                    , Cmd.none
+                    )
+
         NoOp ->
             ( model, Cmd.none )
 
@@ -549,8 +653,23 @@ view model =
               else
                 text ""
             , viewDashboardHeader model
-            , viewStatsCards model
-            , viewMainContent model
+            , viewTabBar model.selectedTab
+            , case model.selectedTab of
+                PerformanceMetrics ->
+                    viewStatsCards model
+
+                Activity ->
+                    div []
+                        [ viewActivityStatsCards model
+
+                        --, viewActivityChart model
+                        ]
+            , case model.selectedTab of
+                PerformanceMetrics ->
+                    viewMainContent model
+
+                Activity ->
+                    text ""
             ]
         ]
     }
@@ -598,6 +717,38 @@ viewDashboardHeader model =
                 ]
                 [ text "Refresh" ]
             ]
+        ]
+
+
+viewTabBar : Tab -> Html Msg
+viewTabBar selectedTab =
+    div [ class "flex space-x-2 mb-6" ]
+        [ button
+            [ class
+                ("px-4 py-2 rounded-md text-sm font-medium "
+                    ++ (if selectedTab == PerformanceMetrics then
+                            "bg-[#03045e] text-white"
+
+                        else
+                            "bg-gray-100 text-gray-800"
+                       )
+                )
+            , onClick (SelectTab PerformanceMetrics)
+            ]
+            [ text "Performance Metrics" ]
+        , button
+            [ class
+                ("px-4 py-2 rounded-md text-sm font-medium "
+                    ++ (if selectedTab == Activity then
+                            "bg-[#03045e] text-white"
+
+                        else
+                            "bg-gray-100 text-gray-800"
+                       )
+                )
+            , onClick (SelectTab Activity)
+            ]
+            [ text "Activity" ]
         ]
 
 
@@ -654,6 +805,76 @@ viewStatsCards model =
           else
             viewStatsCard "Completion Rate" (String.fromInt completionRate ++ "%") "text-[#48cae4]" (String.fromInt model.healthQuestionsCompleted ++ " health questions completed")
         ]
+
+
+viewActivityStatsCards : Model -> Html Msg
+viewActivityStatsCards model =
+    div [ class "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-6" ]
+        [ if model.activityStatsLoading then
+            viewStatsCardWithSpinner "Total Emails Sent" "text-[#03045e]"
+
+          else if model.activityStatsError /= Nothing then
+            viewStatsCard "Total Emails Sent" "0" "text-red-600" "Failed to load data"
+
+          else
+            viewStatsCard "Total Emails Sent" (String.fromInt model.activityEmailsSent) "text-[#03045e]" "Unique contacts who were sent an email"
+        , if model.activityStatsLoading then
+            viewStatsCardWithSpinner "Links Clicked" "text-[#0077b6]"
+
+          else if model.activityStatsError /= Nothing then
+            viewStatsCard "Links Clicked" "0" "text-red-600" "Failed to load data"
+
+          else
+            viewStatsCard "Links Clicked" (String.fromInt model.activityLinksClicked) "text-[#0077b6]" "Unique contacts who clicked a link"
+        , if model.activityStatsLoading then
+            viewStatsCardWithSpinner "Health Questions Completed" "text-[#48cae4]"
+
+          else if model.activityStatsError /= Nothing then
+            viewStatsCard "Health Questions Completed" "0" "text-red-600" "Failed to load data"
+
+          else
+            viewStatsCard "Health Questions Completed" (String.fromInt model.activityHealthQuestionsCompleted) "text-[#48cae4]" "Unique contacts who completed health questions"
+        ]
+
+
+viewActivityChart : Model -> Html Msg
+viewActivityChart model =
+    if model.activityStatsLoading then
+        div [ class "h-64 flex items-center justify-center" ]
+            [ div [ class "animate-spin rounded-full h-12 w-12 border-t-2 border-l-2 border-[#03045e]" ] []
+            , div [ class "ml-3 text-gray-500" ] [ text "Loading chart data..." ]
+            ]
+
+    else if model.activityStatsError /= Nothing then
+        div [ class "h-64 flex items-center justify-center" ]
+            [ div [ class "text-red-500" ] [ text "Error loading chart data. Please try again." ] ]
+
+    else
+        let
+            emailsSent =
+                toFloat model.activityEmailsSent
+
+            linksClicked =
+                toFloat model.activityLinksClicked
+
+            healthCompleted =
+                toFloat model.activityHealthQuestionsCompleted
+
+            gaugeJson =
+                Encode.encode 0 <|
+                    Encode.object
+                        [ ( "emailsSent", Encode.float emailsSent )
+                        , ( "linksClicked", Encode.float linksClicked )
+                        , ( "healthCompleted", Encode.float healthCompleted )
+                        ]
+        in
+        div [ class "flex flex-col md:flex-row gap-8 justify-center items-center mt-8" ]
+            [ node "activity-gauge"
+                [ attribute "data" gaugeJson
+                , attribute "style" "width: 300px; height: 300px;" -- Adjusted size for a single gauge
+                ]
+                []
+            ]
 
 
 viewMainContent : Model -> Html Msg
@@ -983,3 +1204,44 @@ upcomingEmailDecoder =
         (Decode.field "status" Decode.string)
         (Decode.field "first_name" Decode.string)
         (Decode.field "last_name" Decode.string)
+
+
+
+-- Activity stats types
+
+
+type alias ActivityStats =
+    { emailsSent : Int
+    , linksClicked : Int
+    , healthQuestionsCompleted : Int
+    , activityChartData : List ActivityChartDataPoint
+    }
+
+
+type alias ActivityStatsResponse =
+    { success : Bool
+    , stats : ActivityStats
+    }
+
+
+activityChartDataPointDecoder : Decoder ActivityChartDataPoint
+activityChartDataPointDecoder =
+    Decode.succeed ActivityChartDataPoint
+        |> Pipeline.required "x" Decode.float
+        |> Pipeline.required "value" Decode.float
+
+
+activityStatsDecoder : Decoder ActivityStats
+activityStatsDecoder =
+    Decode.succeed ActivityStats
+        |> Pipeline.required "emailsSent" Decode.int
+        |> Pipeline.required "linksClicked" Decode.int
+        |> Pipeline.required "healthQuestionsCompleted" Decode.int
+        |> Pipeline.required "activityChartData" (Decode.list activityChartDataPointDecoder)
+
+
+activityStatsResponseDecoder : Decoder ActivityStatsResponse
+activityStatsResponseDecoder =
+    Decode.succeed ActivityStatsResponse
+        |> Pipeline.required "success" Decode.bool
+        |> Pipeline.required "stats" activityStatsDecoder

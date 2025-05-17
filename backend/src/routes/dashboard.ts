@@ -104,18 +104,20 @@ export function createDashboardRoutes() {
         const manualQuotesSent = manualQuotesResult?.count || 0
         logger.info(`Manual Quotes Sent count: ${manualQuotesSent}`)
 
-        // 2. "Quotes Viewed" - count unique contacts who have viewed quotes
+        // 2. "Quotes Viewed" (Performance) - count unique contacts who received a scheduled email in the period and have any click in tracking_clicks
         const quotesViewedSql = `
-          SELECT COUNT(DISTINCT contact_id) as count 
-          FROM tracking_clicks
-          WHERE contact_id IS NOT NULL
-            AND DATE(clicked_at) BETWEEN ? AND ?
+          SELECT COUNT(DISTINCT es.contact_id) as count 
+          FROM email_schedules es
+          JOIN tracking_clicks tc ON es.contact_id = tc.contact_id
+          WHERE es.status = 'scheduled'
+            AND es.scheduled_send_date BETWEEN ? AND ?
         `
         const quotesViewedResult = await orgDb.fetchOne<{ count: number }>(quotesViewedSql, [startDateStr, endDateStr])
         const quotesViewed = quotesViewedResult?.count || 0
-        logger.info(`Quotes Viewed count: ${quotesViewed}`)
+        logger.info(`Quotes Viewed (Performance) count: ${quotesViewed}`)
 
-        // 3. Get "Upcoming Renewals" count from email_schedules
+        // 3. Get "Follow Ups Requested" count from email_schedules (Performance context)
+        // These are follow-ups scheduled to be sent in the period.
         const followUpsSql = `
           SELECT COUNT(*) as count
           FROM email_schedules
@@ -127,11 +129,13 @@ export function createDashboardRoutes() {
         const followUpsRequested = followUpsResult?.count || 0
         logger.info(`Follow Ups Requested count: ${followUpsRequested}`)
 
-        // 4. Get "Health Questions Completed" count - unique contacts who have completed health questions
+        // 4. Get "Health Questions Completed" count (Performance) - unique contacts who received a scheduled email in the period and completed eligibility_answers
         const healthQuestionsCompletedSql = `
-          SELECT COUNT(DISTINCT contact_id) as count
-          FROM eligibility_answers
-          WHERE DATE(created_at) BETWEEN ? AND ?
+          SELECT COUNT(DISTINCT es.contact_id) as count
+          FROM email_schedules es
+          JOIN eligibility_answers ea ON es.contact_id = ea.contact_id
+          WHERE es.status = 'scheduled'
+            AND es.scheduled_send_date BETWEEN ? AND ?
         `
         const healthQuestionsResult = await orgDb.fetchOne<{ count: number }>(healthQuestionsCompletedSql, [startDateStr, endDateStr])
         const healthQuestionsCompleted = healthQuestionsResult?.count || 0
@@ -230,3 +234,102 @@ export function createDashboardRoutes() {
       }
     })
 }
+
+/**
+ * Creates and configures dashboard activity-related routes
+ */
+export function createDashboardActivityRoutes() {
+  return new Elysia({ prefix: '/api/dashboard' })
+    .get('/activity', async ({ request, set, query }) => {
+      try {
+        const currentUser = await getUserFromSession(request)
+        if (!currentUser || !currentUser.organization_id) {
+          set.status = 401
+          return {
+            success: false,
+            error: 'Authentication required'
+          }
+        }
+
+        const orgDb = await Database.getOrInitOrgDb(currentUser.organization_id.toString())
+
+        const period = query?.period as string | undefined;
+        const { startDateStr, endDateStr } = getDateRange(period);
+
+        logger.info(`Fetching dashboard activity stats for org ${currentUser.organization_id} for period: ${period || '30days'} (range: ${startDateStr} to ${endDateStr})`);
+
+        // 0. "Total Emails Sent" - unique contacts who were sent an email in the period
+        const emailsSentSql = `
+          SELECT COUNT(DISTINCT contact_id) as count
+          FROM email_schedules
+          WHERE contact_id IS NOT NULL
+            AND status = 'scheduled'
+            AND scheduled_send_date BETWEEN ? AND ?
+        `
+        const emailsSentResult = await orgDb.fetchOne<{ count: number }>(emailsSentSql, [startDateStr, endDateStr])
+        const emailsSent = emailsSentResult?.count || 0
+        logger.info(`Emails Sent (Activity, unique contacts) count: ${emailsSent}`)
+
+        // 1. "Links Clicked" - count unique contacts who clicked in the period (no double counting)
+        const linksClickedSql = `
+          SELECT COUNT(DISTINCT contact_id) as count
+          FROM tracking_clicks
+          WHERE contact_id IS NOT NULL
+            AND DATE(clicked_at) BETWEEN ? AND ?
+        `
+        const linksClickedResult = await orgDb.fetchOne<{ count: number }>(linksClickedSql, [startDateStr, endDateStr])
+        const linksClicked = linksClickedResult?.count || 0
+        logger.info(`Links Clicked (Activity, unique contacts) count: ${linksClicked}`)
+
+        // 2. "Health Questions Completed" - unique contacts who completed eligibility_answers in the period
+        const healthQuestionsCompletedActivitySql = `
+          SELECT COUNT(DISTINCT contact_id) as count
+          FROM eligibility_answers
+          WHERE contact_id IS NOT NULL
+            AND DATE(created_at) BETWEEN ? AND ?
+        `
+        const healthQuestionsCompletedActivityResult = await orgDb.fetchOne<{ count: number }>(healthQuestionsCompletedActivitySql, [startDateStr, endDateStr])
+        const healthQuestionsCompletedActivity = healthQuestionsCompletedActivityResult?.count || 0
+        logger.info(`Health Questions Completed (Activity, unique contacts) count: ${healthQuestionsCompletedActivity}`)
+        
+        // For the activity tab, chartData might be simpler or not used extensively initially.
+        // We can return raw values that could be used for simple bar charts if needed.
+        const activityChartData = [
+          {
+            x: 0, // Representing Emails Sent
+            value: emailsSent
+          },
+          {
+            x: 1, // Representing Links Clicked
+            value: linksClicked 
+          },
+          {
+            x: 2, // Representing Health Questions Completed
+            value: healthQuestionsCompletedActivity
+          }
+        ];
+        set.status = 200
+        return {
+          success: true,
+          stats: {
+            emailsSent,
+            linksClicked,
+            healthQuestionsCompleted: healthQuestionsCompletedActivity,
+            activityChartData // Sending a simple chart data structure
+          }
+        }
+      } catch (error) {
+        logger.error(`Error fetching dashboard activity stats: ${error instanceof Error ? error.message : String(error)}`)
+        set.status = 500
+        return {
+          success: false,
+          error: 'Failed to load dashboard activity stats'
+        }
+      }
+    })
+}
+
+// Make sure to integrate this new route group in your main server setup, similar to createDashboardRoutes.
+// For example, in src/index.ts or where Elysia app is instantiated:
+// app.use(createDashboardRoutes())
+//    .use(createDashboardActivityRoutes()) // Add this line

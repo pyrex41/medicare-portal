@@ -17,7 +17,7 @@ import { createOnboardingRoutes } from './routes/onboarding'
 import { createWaitlistRoutes } from './routes/waitlist'
 import { createSignupRoutes, checkEmailHandler } from './routes/signup'
 import { createStripeRoutes } from './routes/stripe'
-import { createDashboardRoutes } from './routes/dashboard'
+import { createDashboardRoutes, createDashboardActivityRoutes } from './routes/dashboard'
 import { errorHandler } from './middleware/error'
 import { getUserFromSession } from './services/auth'
 import { join } from 'path'
@@ -969,6 +969,8 @@ const startServer = async () => {
       .use(createWaitlistRoutes())  // Waitlist routes use their own database connection
       // Add dashboard routes
       .use(createDashboardRoutes())
+      // Add dashboard activity routes
+      .use(createDashboardActivityRoutes())
       // Serve backend static files from public directory
       .use(createStripeRoutes)
       // Add this endpoint within the app definition
