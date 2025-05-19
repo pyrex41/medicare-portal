@@ -602,8 +602,10 @@ export function createSelfServiceRoutes() {
         }
 
         const orgId = result[0].id;
+        logger.info(`orgId: ${orgId}`);
         const orgIdStr = orgId.toString();
         const logo = result[0].logo_data;
+        logger.info(`logo data: ${logo?.slice(0, 50)}`);
         const orgName = result[0].name;
         // Create response object with organization info
         const response = {

@@ -147,6 +147,8 @@ export const scheduleRoutes = (app: Elysia) => {
                 };
             }
 
+            logger.info(`logo data: ${orgResult.logo_data?.slice(0, 50)}`);
+
             // Get org-specific database
             const orgDb = await Database.getOrInitOrgDb(orgId.toString());
 
