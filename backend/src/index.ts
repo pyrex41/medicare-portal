@@ -2,7 +2,7 @@ import { Elysia, t } from 'elysia'
 import { cors } from '@elysiajs/cors'
 import { Database } from './database'
 import { logger } from './logger'
-import type { ContactCreate, AgentCreate } from './types'
+import type { ContactCreate, ContactCreateTemp, AgentCreate } from './types'
 import { readFileSync } from 'fs'
 import { staticPlugin } from '@elysiajs/static'
 import { parse as csvParse } from 'csv-parse/sync'
@@ -165,7 +165,7 @@ async function validateCarrier(carrier: string, db: Database): Promise<{ isValid
     const centralDb = new Database();
     
     // Get all carriers with their aliases from the central database
-    const result = await centralDb.execute<CarrierRow>(
+    const result = await centralDb.execute(
       'SELECT name, aliases FROM carriers'
     );
     
@@ -608,14 +608,15 @@ const startServer = async () => {
           throw new Error(String(e))
         }
       })
-      .post('/api/contacts', async ({ body, request }: { body: ContactCreate, request: Request }) => {
+      .post('/api/contacts/create', async ({ body, request }) => {
+        console.log('body', body)
         try {
           const user = await getUserFromSession(request)
           if (!user?.organization_id) {
             throw new Error('No organization ID found in session')
           }
 
-          const contact = body
+          const contact = body as ContactCreate // With an explicit schema, 'body' will be correctly typed
           logger.info(`Attempting to create contact for org ${user.organization_id}: ${contact.first_name} ${contact.last_name}`)
           
           // Get org-specific database
@@ -649,16 +650,16 @@ const startServer = async () => {
             contact.first_name,
             contact.last_name,
             contact.email,
-            contact.current_carrier || null, // Make nullable
-            contact.plan_type || null, // Make nullable
-            contact.effective_date || null, // Make nullable
-            contact.birth_date || null, // Make nullable
-            contact.tobacco_user ?? false, // Default tobacco_user to false if null
-            contact.gender || null, // Make nullable
-            contact.state || null, // Make nullable
-            contact.zip_code || null, // Make nullable
+            contact.current_carrier || null,
+            contact.plan_type || null,
+            contact.effective_date || null,
+            contact.birth_date || null,
+            contact.tobacco_user ? 1 : 0, // Convert boolean to integer
+            contact.gender || null,
+            contact.state || null,
+            contact.zip_code || null,
             contact.agent_id || null,
-            contact.phone_number || null // Make nullable
+            contact.phone_number || null
           ]
 
           logger.info(`Executing query with params: ${JSON.stringify(params)}`)
@@ -696,8 +697,26 @@ const startServer = async () => {
           logger.error(`Error creating contact: ${e}`)
           throw new Error(String(e))
         }
-      })
-      .put('/api/contacts/:id', async ({ params: { id }, body, request }: { body: ContactCreate, request: Request }) => {
+      }, // End of handler function
+      { // Start of schema object
+        body: t.Object({
+          first_name: t.String(),
+          last_name: t.String(),
+          email: t.String({ format: 'email' }),
+          phone_number: t.String(),
+          state: t.String(),
+          contact_owner_id: t.Optional(t.Union([t.Number(), t.Null()])),
+          current_carrier: t.Optional(t.Union([t.String(), t.Null()])),
+          effective_date: t.String(),
+          birth_date: t.String(),
+          tobacco_user: t.Boolean(),
+          gender: t.String(),
+          zip_code: t.String(),
+          plan_type: t.Optional(t.Union([t.String(), t.Null()])),
+          agent_id: t.Optional(t.Union([t.Number(), t.Null()]))
+        })
+      }) // End of schema object and route definition
+      .put('/api/contacts/:id', async ({ params: { id }, body, request }: { params: { id: string }, body: ContactCreate, request: Request }) => {
         try {
           // Get user and org info
           const user = await getUserFromSession(request)
@@ -788,6 +807,24 @@ const startServer = async () => {
           logger.error(`Error updating contact: ${e}`)
           throw new Error(String(e))
         }
+      },
+      {
+        body: t.Object({
+          first_name: t.String(),
+          last_name: t.String(),
+          email: t.String({ format: 'email' }),
+          phone_number: t.String(),
+          state: t.String(),
+          contact_owner_id: t.Optional(t.Union([t.Number(), t.Null()])),
+          current_carrier: t.Optional(t.Union([t.String(), t.Null()])),
+          effective_date: t.String(),
+          birth_date: t.String(),
+          tobacco_user: t.Boolean(),
+          gender: t.String(),
+          zip_code: t.String(),
+          plan_type: t.Optional(t.Union([t.String(), t.Null()])),
+          agent_id: t.Optional(t.Union([t.Number(), t.Null()]))
+        })
       })
       // Add DELETE endpoint for contacts
       .delete('/api/contacts', async ({ request }) => {
@@ -821,7 +858,7 @@ const startServer = async () => {
           `
 
           const result = await orgDb.execute(query, contactIds)
-          const deletedIds = result.rows?.map(row => row.id) || []
+          const deletedIds = result.rows?.map((row: { id: number }) => row.id) || []
 
           logger.info(`DELETE /api/contacts - Successfully deleted ${deletedIds.length} contacts from org ${user.organization_id}`)
 
@@ -865,7 +902,7 @@ const startServer = async () => {
 
           const params = [agent_id, ...contact_ids]
           const result = await orgDb.execute(query, params)
-          const updatedIds = result.rows?.map(row => row.id) || []
+          const updatedIds = result.rows?.map((row: { id: number }) => row.id) || []
 
           logger.info(`PUT /api/contacts/reassign - Successfully reassigned ${updatedIds.length} contacts to agent ${agent_id}`)
 
@@ -1349,7 +1386,7 @@ const startServer = async () => {
           }
         }
       })
-      .post('/api/agents/set_default_agent', async ({ body, request, set }) => {
+      .post('/api/agents/set_default_agent', async ({ body, request, set }: { body: { agentId: string | number }, request: Request, set: any }) => {
         try {
           const currentUser = await getUserFromSession(request)
           if (!currentUser) {
@@ -2393,7 +2430,7 @@ const startServer = async () => {
           logger.info(`GET /api/contact-requests - Found ${result.length} follow-up requests`)
           
           // Map the database results to the expected format with camelCase field names
-          const followUps = result.map(followUp => ({
+          const followUps = result.map((followUp: { id: number, event_type: string, metadata: string, created_at: string }) => ({
             id: followUp.id,
             event_type: followUp.event_type,
             metadata: JSON.parse(followUp.metadata),

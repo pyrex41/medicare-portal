@@ -4,6 +4,7 @@ import { logger } from '../logger'
 export const errorHandler = new Elysia()
   .onError(({ code, error, set }) => {
     logger.error(`❌ Error: ${code} - ${error.message}`);
+    logger.error(`Stack trace: ${error.stack}`);
     
     switch (code) {
       case 'NOT_FOUND':

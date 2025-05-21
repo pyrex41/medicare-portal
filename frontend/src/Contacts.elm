@@ -2320,11 +2320,32 @@ updateContact updated contacts =
 
 submitAddForm : ContactForm -> Cmd Msg
 submitAddForm form =
-    Http.post
-        { url = "/api/contacts"
+    Http.request
+        { method = "POST"
+        , headers = []
+        , url = "/api/contacts/create"
         , body = Http.jsonBody (encodeContactForm form)
         , expect = Http.expectJson ContactAdded contactDecoder
+        , timeout = Nothing
+        , tracker = Nothing
         }
+
+
+encodeContactFormTemp : ContactForm -> Encode.Value
+encodeContactFormTemp form =
+    Encode.object
+        [ ( "first_name", Encode.string form.firstName )
+        , ( "last_name", Encode.string form.lastName )
+        , ( "email", Encode.string form.email )
+        , ( "phone_number", Encode.string (String.filter Char.isDigit form.phoneNumber |> String.left 10) )
+        , ( "state", Encode.string form.state )
+        , ( "effective_date", Encode.string form.effectiveDate )
+        , ( "birth_date", Encode.string form.birthDate )
+        , ( "tobacco_user", Encode.bool form.tobaccoUser )
+        , ( "gender", Encode.string form.gender )
+        , ( "zip_code", Encode.string form.zipCode )
+        , ( "contact_owner_id", Encode.null )
+        ]
 
 
 fetchDashboardStats : Cmd Msg
@@ -2447,34 +2468,43 @@ encodeContactForm form =
         planType =
             case form.planType of
                 Just value ->
-                    Encode.string value
+                    [ ( "plan_type", Encode.string value ) ]
 
                 Nothing ->
-                    Encode.null
+                    []
 
         currentCarrier =
             case form.currentCarrier of
                 Just value ->
-                    Encode.string value
+                    [ ( "current_carrier", Encode.string value ) ]
 
                 Nothing ->
-                    Encode.null
+                    []
+
+        contactOwnerId =
+            case form.contactOwnerId of
+                Just value ->
+                    [ ( "contact_owner_id", Encode.int value ) ]
+
+                Nothing ->
+                    []
     in
     Encode.object
-        [ ( "first_name", Encode.string form.firstName )
-        , ( "last_name", Encode.string form.lastName )
-        , ( "email", Encode.string form.email )
-        , ( "phone_number", Encode.string (String.filter Char.isDigit form.phoneNumber |> String.left 10) )
-        , ( "state", Encode.string form.state )
-        , ( "contact_owner_id", Maybe.map Encode.int form.contactOwnerId |> Maybe.withDefault Encode.null )
-        , ( "current_carrier", currentCarrier )
-        , ( "effective_date", Encode.string form.effectiveDate )
-        , ( "birth_date", Encode.string form.birthDate )
-        , ( "tobacco_user", Encode.bool form.tobaccoUser )
-        , ( "gender", Encode.string form.gender )
-        , ( "zip_code", Encode.string form.zipCode )
-        , ( "plan_type", planType )
-        ]
+        ([ ( "first_name", Encode.string form.firstName )
+         , ( "last_name", Encode.string form.lastName )
+         , ( "email", Encode.string form.email )
+         , ( "phone_number", Encode.string (String.filter Char.isDigit form.phoneNumber |> String.left 10) )
+         , ( "state", Encode.string form.state )
+         , ( "effective_date", Encode.string form.effectiveDate )
+         , ( "birth_date", Encode.string form.birthDate )
+         , ( "tobacco_user", Encode.bool form.tobaccoUser )
+         , ( "gender", Encode.string form.gender )
+         , ( "zip_code", Encode.string form.zipCode )
+         ]
+            ++ planType
+            ++ currentCarrier
+            ++ contactOwnerId
+        )
 
 
 viewModals : Model -> Html Msg

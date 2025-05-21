@@ -5,17 +5,31 @@ export interface ContactCreate {
   first_name: string
   last_name: string
   email: string
-  current_carrier: string
-  plan_type: string
+  phone_number: string
+  state: string
+  contact_owner_id?: number | null
+  current_carrier?: string | null
   effective_date: string
   birth_date: string
   tobacco_user: boolean
   gender: string
-  state: string
   zip_code: string
+  plan_type?: string | null
   agent_id?: number | null
-  contact_owner_id?: number | null
+}
+
+export interface ContactCreateTemp {
+  first_name: string
+  last_name: string
+  email: string
   phone_number: string
+  state: string
+  effective_date: string
+  birth_date: string
+  tobacco_user: boolean
+  gender: string
+  zip_code: string
+  contact_owner_id?: number | null
 }
 
 export interface AgentCreate {
