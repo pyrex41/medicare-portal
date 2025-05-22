@@ -8,6 +8,7 @@ import ChangePlan
 import ChoosePlan
 import Compare exposing (CompareParams)
 import Components.AccountStatusBanner as AccountStatusBanner
+import Components.DemoModeBanner as DemoModeBanner
 import Contact
 import Contacts
 import Dashboard
@@ -76,6 +77,7 @@ type alias SessionResponse =
     , lastName : String
     , isAdmin : Bool
     , id : String
+    , demoMode : Bool
     }
 
 
@@ -91,28 +93,38 @@ verificationDecoder =
 
 sessionDecoder : Decoder SessionResponse
 sessionDecoder =
-    Decode.map8 SessionResponse
-        (Decode.field "valid" Decode.bool)
-        (Decode.field "session" Decode.string)
-        (Decode.field "email" Decode.string)
-        (Decode.field "organizationSlug" Decode.string)
-        (Decode.oneOf
-            [ Decode.field "firstName" Decode.string
-            , Decode.field "first_name" Decode.string
-            ]
-        )
-        (Decode.oneOf
-            [ Decode.field "lastName" Decode.string
-            , Decode.field "last_name" Decode.string
-            ]
-        )
-        (Decode.oneOf
-            [ Decode.field "is_admin" Decode.bool
-            , Decode.field "is_admin" Decode.int
-                |> Decode.map (\i -> i == 1)
-            ]
-        )
-        (Decode.field "id" (Decode.map String.fromInt Decode.int))
+    Decode.succeed SessionResponse
+        |> Pipeline.required "valid" Decode.bool
+        |> Pipeline.required "session" Decode.string
+        |> Pipeline.required "email" Decode.string
+        |> Pipeline.required "organizationSlug" Decode.string
+        |> Pipeline.custom
+            (Decode.oneOf
+                [ Decode.field "firstName" Decode.string
+                , Decode.field "first_name" Decode.string
+                ]
+            )
+        |> Pipeline.custom
+            (Decode.oneOf
+                [ Decode.field "lastName" Decode.string
+                , Decode.field "last_name" Decode.string
+                ]
+            )
+        |> Pipeline.custom
+            (Decode.oneOf
+                [ Decode.field "is_admin" Decode.bool
+                , Decode.field "is_admin" Decode.int
+                    |> Decode.map (\i -> i == 1)
+                ]
+            )
+        |> Pipeline.required "id" (Decode.map String.fromInt Decode.int)
+        |> Pipeline.custom
+            (Decode.oneOf
+                [ Decode.field "demo_mode" Decode.bool
+                , Decode.field "demo_mode" Decode.int
+                    |> Decode.map (\i -> i == 1)
+                ]
+            )
 
 
 type alias User =
@@ -126,6 +138,7 @@ type alias User =
     , lastName : String
     , subscriptionTier : String
     , accountStatus : Maybe AccountStatusBanner.AccountStatusDetails
+    , demoMode : Bool
     }
 
 
@@ -166,6 +179,7 @@ type alias Model =
     , showDropdown : Bool
     , showStatusBanner : Bool
     , showPaymentStatus : Bool
+    , demoModeBanner : DemoModeBanner.Model
     }
 
 
@@ -254,6 +268,7 @@ type Msg
     | TogglePaymentStatus
     | SetSessionResponse (Result Http.Error SetSessionResponseAlias)
     | LogTrackingClickResult (Result Http.Error ())
+    | DemoModeBannerMsg DemoModeBanner.Msg
 
 
 type alias Flags =
@@ -328,18 +343,15 @@ init flags url key =
         initialRoute =
             Parser.parse routeParser url
 
-        --|> Debug.log "initialRoute"
         -- Determine if this is a public route that can be rendered immediately
         isPublicRoute =
             case initialRoute of
                 Just (PublicRoute _) ->
                     True
 
-                --|> Debug.log "isPublicRoute"
                 _ ->
                     False
 
-        --|> Debug.log "isPublicRoute"
         -- Set initial page appropriately
         initialPage =
             if isPublicRoute then
@@ -349,6 +361,10 @@ init flags url key =
             else
                 -- For protected routes, we need to wait for session verification
                 LoadingPage
+
+        -- Initialize demo mode banner
+        ( demoModeBannerModel, demoModeBannerCmd ) =
+            DemoModeBanner.init False
 
         model =
             { key = key
@@ -361,6 +377,7 @@ init flags url key =
             , showDropdown = False
             , showStatusBanner = True
             , showPaymentStatus = False
+            , demoModeBanner = demoModeBannerModel
             }
 
         checkSession =
@@ -832,6 +849,7 @@ update msg model =
                                             , lastName = ""
                                             , subscriptionTier = ""
                                             , accountStatus = Nothing
+                                            , demoMode = False
                                             }
                                     , isSetup = isInSetup
                                     , page = LoadingPage -- Force to loading page to prevent UI flicker during redirection
@@ -876,7 +894,12 @@ update msg model =
                                 , lastName = response.lastName
                                 , subscriptionTier = ""
                                 , accountStatus = Nothing
+                                , demoMode = response.demoMode
                                 }
+
+                            -- Initialize demo mode banner with user's demo mode state
+                            ( demoModeBannerModel, demoModeBannerCmd ) =
+                                DemoModeBanner.init response.demoMode
 
                             -- Only set isSetup to True if we're in the middle of setup
                             isInSetup =
@@ -892,10 +915,11 @@ update msg model =
                                     | session = Verified response.session
                                     , currentUser = Just user
                                     , isSetup = isInSetup
+                                    , demoModeBanner = demoModeBannerModel
                                 }
                         in
                         -- Just update the page, which will handle fetching user data if needed
-                        updatePage model.url ( newModel, Cmd.none )
+                        updatePage model.url ( newModel, Cmd.map DemoModeBannerMsg demoModeBannerCmd )
 
                     else
                         let
@@ -1076,16 +1100,25 @@ update msg model =
                                         , lastName = user.lastName
                                         , subscriptionTier = user.subscriptionTier
                                         , accountStatus = Nothing -- Will fetch this separately
+                                        , demoMode = user.demoMode
                                         }
 
+                                -- Initialize demo mode banner with the user's demo mode status
+                                ( demoModeBannerModel, demoModeBannerCmd ) =
+                                    DemoModeBanner.init user.demoMode
+
                                 newModel =
-                                    { model | currentUser = currentUser }
+                                    { model
+                                        | currentUser = currentUser
+                                        , demoModeBanner = demoModeBannerModel
+                                    }
 
                                 -- Fetch account status after user is loaded
                                 cmd =
-                                    Cmd.none
-
-                                --fetchAccountStatus user.organizationSlug
+                                    Cmd.batch
+                                        [ Cmd.none -- fetchAccountStatus user.organizationSlug
+                                        , Cmd.map DemoModeBannerMsg demoModeBannerCmd
+                                        ]
                             in
                             -- Check if we were already on the right page with the right data
                             -- Only update the page if something meaningful has changed
@@ -1309,6 +1342,27 @@ update msg model =
 
         TogglePaymentStatus ->
             ( { model | showPaymentStatus = not model.showPaymentStatus }, Cmd.none )
+
+        DemoModeBannerMsg subMsg ->
+            let
+                ( updatedBanner, bannerCmd ) =
+                    DemoModeBanner.update subMsg model.demoModeBanner
+
+                -- Update the user model if demo mode changed
+                updatedUser =
+                    if model.demoModeBanner.demoMode /= updatedBanner.demoMode then
+                        model.currentUser
+                            |> Maybe.map (\user -> { user | demoMode = updatedBanner.demoMode })
+
+                    else
+                        model.currentUser
+            in
+            ( { model
+                | demoModeBanner = updatedBanner
+                , currentUser = updatedUser
+              }
+            , Cmd.map DemoModeBannerMsg bannerCmd
+            )
 
 
 view : Model -> Browser.Document Msg
@@ -1577,6 +1631,7 @@ viewWithNav model content =
             -- Show header for regular pages
             div []
                 [ viewNavHeader model
+                , Html.map DemoModeBannerMsg (DemoModeBanner.view model.demoModeBanner)
                 , content
                 ]
         ]
@@ -2124,6 +2179,7 @@ userDecoder =
         |> Pipeline.required "lastName" Decode.string
         |> Pipeline.required "subscription_tier" Decode.string
         |> Pipeline.optional "accountStatus" (Decode.nullable accountStatusDecoder) Nothing
+        |> Pipeline.optional "demo_mode" Decode.bool False
 
 
 type SetupStep

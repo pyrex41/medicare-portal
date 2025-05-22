@@ -1060,6 +1060,56 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
         error: 'Failed to create new agent'
       };
     }
+  })
+  .post('/organizations/exit-demo-mode', async ({ request, set }) => {
+    const db = new Database();
+    
+    try {
+      // Get current user from session
+      const currentUser = await getUserFromSession(request);
+      
+      if (!currentUser) {
+        set.status = 401;
+        return { success: false, message: 'Unauthorized' };
+      }
+
+      // Only allow admins to exit demo mode
+      if (!currentUser.is_admin) {
+        set.status = 403;
+        return { success: false, message: 'Only administrators can exit demo mode' };
+      }
+
+      // Update the organization's demo_mode to false
+      const result = await db.execute(
+        `UPDATE organizations 
+         SET demo_mode = 0
+         WHERE id = ?`,
+        [currentUser.organization_id]
+      );
+
+      /* TODO: Uncomment this when we have a way to enable regular and followup scheduling
+      const result = await db.execute(
+        `UPDATE organizations 
+         SET demo_mode = 0, regular_scheduling_active = 1, followup_scheduling_active = 1
+         WHERE id = ?`,
+        [currentUser.organization_id]
+      );
+      */
+
+      const rowsAffected = result.rowsAffected || 0;
+      
+      if (rowsAffected === 0) {
+        logger.info(`No changes made when exiting demo mode for org ${currentUser.organization_id}`);
+      } else {
+        logger.info(`Successfully exited demo mode for organization ${currentUser.organization_id}`);
+      }
+      set.status = 200;
+      return { success: true };
+    } catch (error) {
+      logger.error(`Error exiting demo mode: ${error}`);
+      set.status = 500;
+      return { success: false, message: 'Internal server error' };
+    }
   });
 
 export function createOrganizationRoutes() {
