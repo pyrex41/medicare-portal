@@ -351,7 +351,7 @@ export function createAuthRoutes() {
           last_name: sessionUser.last_name,
           is_admin: sessionUser.is_admin,
           id: sessionUser.id,
-          demo_mode: sessionUser.demo_mode || true
+          demo_mode: sessionUser.demo_mode
         };
       } catch (error) {
         logger.error(`Error getting session info: ${error}`);
