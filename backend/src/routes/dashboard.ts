@@ -227,7 +227,7 @@ export function createDashboardRoutes() {
              AND es.scheduled_send_date <= ?
              AND (es.email_type IS NULL OR es.email_type NOT LIKE 'followup%')
            ORDER BY es.scheduled_send_date ASC
-           LIMIT 50 OFFSET 0`,
+           LIMIT 30 OFFSET 0`,
           [upcomingStartDate, upcomingEndDate]
         );
 
