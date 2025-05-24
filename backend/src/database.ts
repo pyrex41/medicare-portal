@@ -249,6 +249,7 @@ export class Database {
         'SELECT turso_db_url, turso_auth_token FROM organizations WHERE id = ?',
         [orgId]
       );
+      logger.info(`[OrgDB] Organization record: ${JSON.stringify(org)}`);
 
       if (!org) {
         logger.warn(`[OrgDB] Organization record not found for orgId: ${orgId}`);

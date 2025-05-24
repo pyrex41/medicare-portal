@@ -15,10 +15,10 @@ if [ ! -f "$SQL_FILE" ]; then
     exit 1
 fi
 
-echo "Applying migration from $SQL_FILE to org databases from medicare-portal..."
+echo "Applying migration from $SQL_FILE to org databases from maxretain..."
 
-# Get organization databases from medicare-portal
-ORG_DBS=$(turso db shell medicare-portal "SELECT turso_db_url FROM organizations WHERE turso_db_url IS NOT NULL;" | grep -v "TURSO DB URL" | while read url; do
+# Get organization databases from main-max / maxretain group
+ORG_DBS=$(turso db shell main-max "SELECT turso_db_url FROM organizations WHERE turso_db_url IS NOT NULL;" | grep -v "TURSO DB URL" | while read url; do
     # Strip protocol if present (https:// or libsql://)
     clean_url=$(echo "$url" | sed -E 's#^(https://|libsql://)##')
     

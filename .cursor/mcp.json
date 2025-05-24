@@ -26,7 +26,7 @@
             "env": {
                 "TURSO_API_TOKEN": "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJFZmlQZk9YV0VlLTBMVDR2OGtFcVZnIn0.w-zrnF1rC4cx-SP67c7PxwN1z6C9uVmmXcW_hf62nslf8PSoCq0N_XCd7RHN6Chqups5HciIDqsAWL076WaOCQ",
                 "TURSO_ORGANIZATION": "pyrex41",
-                "TURSO_DEFAULT_DATABASE": "medicare-portal"
+                "TURSO_DEFAULT_DATABASE": "main-max"
             }
         },
         "stripe": {

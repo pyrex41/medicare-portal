@@ -1,6 +1,6 @@
 #!/bin/bash
 
-DB="medicare-portal"
+DB="main-max"
 
 # Get all table names except sqlite_sequence (internal)
 tables=$(turso db shell $DB "SELECT name FROM sqlite_master WHERE type='table' AND name != 'sqlite_sequence';" | tail -n +2)

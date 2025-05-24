@@ -83,7 +83,7 @@ export function createDashboardRoutes() {
             startDateStr = range.startDateStr;
             endDateStr = range.endDateStr;
         }
-        
+          
 
         logger.info(`Fetching dashboard stats for org ${currentUser.organization_id} for period: ${period || '30days'} (range: ${startDateStr} to ${endDateStr})`);
 
@@ -101,12 +101,13 @@ export function createDashboardRoutes() {
         )
         logger.info(`Sample tracking_clicks: ${JSON.stringify(sampleClicks)}`)
         
-        // 1. "Quotes Sent" - count emails that have been sent (status = 'scheduled')
+        // 1. "Quotes Sent" - count emails that have been sent (status = 'scheduled') - EXCLUDE follow-ups
         const quotesSentSql = `
           SELECT COUNT(*) as count 
           FROM email_schedules 
-          WHERE status = 'scheduled' 
+          WHERE status IN ('scheduled', 'send', 'sent', 'delivered')
             AND scheduled_send_date BETWEEN ? AND ?
+            AND (email_type IS NULL OR email_type NOT LIKE 'followup%')
         `
         const quotesSentResult = await orgDb.fetchOne<{ count: number }>(quotesSentSql, [startDateStr, endDateStr])
         const quotesSent = quotesSentResult?.count || 0
@@ -116,45 +117,43 @@ export function createDashboardRoutes() {
         const manualQuotesSql = `
           SELECT COUNT(*) as count
           FROM email_send_tracking
-          WHERE email_type = 'quote_email' AND send_status = 'sent'
+          WHERE email_type = 'quote_email' AND send_status IN ('sent', 'delivered', 'scheduled')
             AND DATE(created_at) BETWEEN ? AND ?
         `
         const manualQuotesResult = await orgDb.fetchOne<{ count: number }>(manualQuotesSql, [startDateStr, endDateStr])
         const manualQuotesSent = manualQuotesResult?.count || 0
         logger.info(`Manual Quotes Sent count: ${manualQuotesSent}`)
 
-        // 2. "Quotes Viewed" (Performance) - count unique contacts who received a scheduled email in the period and have any click in tracking_clicks
+        // 2. "Quotes Viewed" - count unique contacts who clicked links during the period
         const quotesViewedSql = `
-          SELECT COUNT(DISTINCT es.contact_id) as count 
-          FROM email_schedules es
-          JOIN tracking_clicks tc ON es.contact_id = tc.contact_id
-          WHERE es.status = 'scheduled'
-            AND es.scheduled_send_date BETWEEN ? AND ?
+          SELECT COUNT(DISTINCT contact_id) as count
+          FROM tracking_clicks
+          WHERE contact_id IS NOT NULL
+            AND DATE(clicked_at) BETWEEN ? AND ?
         `
         const quotesViewedResult = await orgDb.fetchOne<{ count: number }>(quotesViewedSql, [startDateStr, endDateStr])
         const quotesViewed = quotesViewedResult?.count || 0
-        logger.info(`Quotes Viewed (Performance) count: ${quotesViewed}`)
+        logger.info(`Quotes Viewed count: ${quotesViewed}`)
 
         // 3. Get "Follow Ups Requested" count from email_schedules (Performance context)
         // These are follow-ups scheduled to be sent in the period.
         const followUpsSql = `
           SELECT COUNT(*) as count
           FROM email_schedules
-          WHERE status = 'scheduled' -- Assuming 'scheduled' means sent for past dates
-            AND email_type LIKE 'follow_up_%' 
+          WHERE status IN ('scheduled', 'send', 'delivered') -- Assuming 'scheduled' means sent for past dates
+            AND email_type LIKE 'followup%' 
             AND scheduled_send_date BETWEEN ? AND ?
         `
         const followUpsResult = await orgDb.fetchOne<{ count: number }>(followUpsSql, [startDateStr, endDateStr])
         const followUpsRequested = followUpsResult?.count || 0
         logger.info(`Follow Ups Requested count: ${followUpsRequested}`)
 
-        // 4. Get "Health Questions Completed" count (Performance) - unique contacts who received a scheduled email in the period and completed eligibility_answers
+        // 4. "Health Questions Completed" - unique contacts who completed health questions during the period
         const healthQuestionsCompletedSql = `
-          SELECT COUNT(DISTINCT es.contact_id) as count
-          FROM email_schedules es
-          JOIN eligibility_answers ea ON es.contact_id = ea.contact_id
-          WHERE es.status = 'scheduled'
-            AND es.scheduled_send_date BETWEEN ? AND ?
+          SELECT COUNT(DISTINCT contact_id) as count
+          FROM eligibility_answers
+          WHERE contact_id IS NOT NULL
+            AND DATE(created_at) BETWEEN ? AND ?
         `
         const healthQuestionsResult = await orgDb.fetchOne<{ count: number }>(healthQuestionsCompletedSql, [startDateStr, endDateStr])
         const healthQuestionsCompleted = healthQuestionsResult?.count || 0
@@ -206,17 +205,18 @@ export function createDashboardRoutes() {
         const upcomingStartDate = now.toISOString().slice(0, 10);
         const upcomingEndDate = in30Days.toISOString().slice(0, 10);
 
-        // Total count
+        // Total count - EXCLUDE follow-ups
         const upcomingTotalResult = await orgDb.fetchOne<{ total: number } | null>(
           `SELECT COUNT(*) as total FROM email_schedules
            WHERE status = 'pre-scheduled'
              AND scheduled_send_date >= ?
-             AND scheduled_send_date <= ?`,
+             AND scheduled_send_date <= ?
+             AND (email_type IS NULL OR email_type NOT LIKE 'followup%')`,
           [upcomingStartDate, upcomingEndDate]
         );
         const upcomingEmailsTotal = upcomingTotalResult?.total ?? 0;
 
-        // First page (up to 20)
+        // First page (up to 20) - EXCLUDE follow-ups
         const upcomingEmailsPage = await orgDb.fetchAll(
           `SELECT es.id, es.contact_id, es.email_type, es.scheduled_send_date, es.status,
                   c.first_name, c.last_name
@@ -225,8 +225,9 @@ export function createDashboardRoutes() {
            WHERE es.status = 'pre-scheduled'
              AND es.scheduled_send_date >= ?
              AND es.scheduled_send_date <= ?
+             AND (es.email_type IS NULL OR es.email_type NOT LIKE 'followup%')
            ORDER BY es.scheduled_send_date ASC
-           LIMIT 20 OFFSET 0`,
+           LIMIT 50 OFFSET 0`,
           [upcomingStartDate, upcomingEndDate]
         );
 
@@ -249,6 +250,122 @@ export function createDashboardRoutes() {
         return {
           success: false,
           error: 'Failed to load dashboard stats'
+        }
+      }
+    })
+    // Send ranking endpoint
+    .get('/send-ranking', async ({ request, set, query }) => {
+      try {
+        logger.info('=== SEND RANKING ENDPOINT HIT ===')
+        
+        const currentUser = await getUserFromSession(request)
+        if (!currentUser || !currentUser.organization_id) {
+          logger.error('Send ranking: No authenticated user or organization_id')
+          set.status = 401
+          return {
+            success: false,
+            error: 'Authentication required'
+          }
+        }
+
+        logger.info(`Send ranking: User ${currentUser.id} from org ${currentUser.organization_id}`)
+
+        const orgDb = await Database.getOrInitOrgDb(currentUser.organization_id.toString())
+        logger.info(`Send ranking: Got org database for ${currentUser.organization_id}`)
+
+        // Always show last 30 days for send ranking, regardless of dropdown
+        const today = new Date();
+        const thirtyDaysAgo = new Date(today);
+        thirtyDaysAgo.setDate(today.getDate() - 29); // Last 30 days including today
+        
+        const startDateStr = thirtyDaysAgo.toISOString().slice(0, 10);
+        const endDateStr = today.toISOString().slice(0, 10);
+
+        logger.info(`Send ranking: Fetching for org ${currentUser.organization_id} for last 30 days (range: ${startDateStr} to ${endDateStr})`);
+
+        // Get daily breakdown of email performance - track emails sent on each date and their outcomes - EXCLUDE follow-ups
+        const sendRankingSql = `
+          WITH emails_sent_by_date AS (
+            SELECT 
+              DATE(scheduled_send_date) as scheduled_send_date,
+              COUNT(*) as quotes_sent,
+              contact_id
+            FROM email_schedules
+            WHERE status IN ('scheduled', 'send', 'sent', 'delivered')
+              AND scheduled_send_date BETWEEN ? AND ?
+              AND (email_type IS NULL OR email_type NOT LIKE 'followup%')
+            GROUP BY DATE(scheduled_send_date), contact_id
+          ),
+          quotes_sent_summary AS (
+            SELECT 
+              scheduled_send_date,
+              COUNT(*) as quotes_sent
+            FROM emails_sent_by_date
+            GROUP BY scheduled_send_date
+          ),
+          quotes_viewed_by_send_date AS (
+            SELECT 
+              es.scheduled_send_date,
+              COUNT(DISTINCT tc.contact_id) as quotes_viewed
+            FROM emails_sent_by_date es
+            JOIN tracking_clicks tc ON es.contact_id = tc.contact_id
+            GROUP BY es.scheduled_send_date
+          ),
+          health_completed_by_send_date AS (
+            SELECT 
+              es.scheduled_send_date,
+              COUNT(DISTINCT ea.contact_id) as health_completed
+            FROM emails_sent_by_date es
+            JOIN eligibility_answers ea ON es.contact_id = ea.contact_id
+            GROUP BY es.scheduled_send_date
+          )
+          SELECT 
+            qs.scheduled_send_date,
+            qs.quotes_sent,
+            COALESCE(qv.quotes_viewed, 0) as quotes_viewed,
+            COALESCE(hc.health_completed, 0) as health_completed
+          FROM quotes_sent_summary qs
+          LEFT JOIN quotes_viewed_by_send_date qv ON qs.scheduled_send_date = qv.scheduled_send_date
+          LEFT JOIN health_completed_by_send_date hc ON qs.scheduled_send_date = hc.scheduled_send_date
+          ORDER BY qs.scheduled_send_date DESC
+        `;
+
+        logger.info(`Send ranking: Executing SQL with params: [${startDateStr}, ${endDateStr}]`)
+        logger.info(`Send ranking: SQL query: ${sendRankingSql}`)
+
+        const sendRankingResult = await orgDb.fetchAll(sendRankingSql, [
+          startDateStr, endDateStr
+        ]);
+
+        logger.info(`Send ranking: Raw SQL result count: ${sendRankingResult.length}`)
+        logger.info(`Send ranking: Raw SQL first 3 results: ${JSON.stringify(sendRankingResult.slice(0, 3))}`)
+
+        // Transform results into the expected format with ranking
+        const sendRankingData = sendRankingResult.map((row: any, index: number) => ({
+          rank: index + 1,
+          sendDate: row.scheduled_send_date || row[0],
+          quotesSent: parseInt(row.quotes_sent || row[1] || 0),
+          quotesViewed: parseInt(row.quotes_viewed || row[2] || 0),
+          healthCompleted: parseInt(row.health_completed || row[3] || 0)
+        }));
+
+        logger.info(`Send ranking: Transformed data count: ${sendRankingData.length}`)
+        logger.info(`Send ranking: Transformed data first 3: ${JSON.stringify(sendRankingData.slice(0, 3))}`)
+
+        logger.info(`Send ranking: Returning response with ${sendRankingData.length} entries`)
+
+        return {
+          success: true,
+          data: sendRankingData
+        }
+      } catch (error) {
+        logger.error(`=== SEND RANKING ERROR ===`)
+        logger.error(`Send ranking error: ${error instanceof Error ? error.message : String(error)}`)
+        logger.error(`Send ranking error stack: ${error instanceof Error ? error.stack : 'No stack trace'}`)
+        set.status = 500
+        return {
+          success: false,
+          error: 'Failed to load send ranking data'
         }
       }
     })
@@ -293,7 +410,7 @@ export function createDashboardActivityRoutes() {
           SELECT COUNT(DISTINCT contact_id) as count
           FROM email_schedules
           WHERE contact_id IS NOT NULL
-            AND status = 'scheduled'
+            AND status IN ('scheduled', 'send', 'delivered')
             AND scheduled_send_date BETWEEN ? AND ?
         `;
         const emailsSentResult = await orgDb.fetchOne<{ count: number }>(emailsSentSql, [startDateStr, endDateStr])
