@@ -961,13 +961,13 @@ viewSendRankingItem item =
                 , div [ class "text-xs text-gray-500" ] [ text "Send Date" ]
                 ]
             , div [ class "text-center" ]
-                [ div [ class "font-semibold text-gray-900" ] [ text (String.fromInt item.quotesSent) ]
+                [ div [ class "font-bold text-2xl text-[#03045e] mb-1" ] [ text (String.fromInt item.quotesSent) ]
                 , div [ class "text-xs text-gray-500" ] [ text "Quotes Sent" ]
                 ]
             , div [ class "text-center" ]
-                [ div [ class "flex items-center justify-center gap-2 mb-1" ]
-                    [ div [ class "font-bold text-2xl text-[#03045e]" ] [ text (String.fromInt item.quotesViewed) ]
-                    , div [ class "inline-block bg-[#6366f1] text-white text-[10px] px-1.5 py-0.5 rounded" ]
+                [ div [ class "flex items-center justify-center mb-1" ]
+                    [ div [ class "font-bold text-2xl text-[#03045e] w-10 text-right" ] [ text (String.fromInt item.quotesViewed) ]
+                    , div [ class "inline-block bg-[#6366f1] text-white text-[10px] px-2 py-0.5 rounded ml-2 w-10 text-center" ]
                         [ text
                             (if item.quotesSent > 0 then
                                 String.fromInt (round ((toFloat item.quotesViewed / toFloat item.quotesSent) * 100)) ++ "%"
@@ -980,9 +980,9 @@ viewSendRankingItem item =
                 , div [ class "text-xs text-gray-500" ] [ text "Quotes Viewed" ]
                 ]
             , div [ class "text-center" ]
-                [ div [ class "flex items-center justify-center gap-2 mb-1" ]
-                    [ div [ class "font-bold text-2xl text-[#48cae4]" ] [ text (String.fromInt item.healthCompleted) ]
-                    , div [ class "inline-block bg-[#06b6d4] text-white text-[10px] px-1.5 py-0.5 rounded" ]
+                [ div [ class "flex items-center justify-center mb-1" ]
+                    [ div [ class "font-bold text-2xl text-[#48cae4] w-10 text-right" ] [ text (String.fromInt item.healthCompleted) ]
+                    , div [ class "inline-block bg-[#06b6d4] text-white text-[10px] px-2 py-0.5 rounded ml-2 w-10 text-center" ]
                         [ text
                             (if item.quotesSent > 0 then
                                 String.fromInt (round ((toFloat item.healthCompleted / toFloat item.quotesSent) * 100)) ++ "%"
