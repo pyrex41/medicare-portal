@@ -133,6 +133,12 @@ type alias Settings =
     }
 
 
+type alias SaveResponse =
+    { success : Bool
+    , error : Maybe String
+    }
+
+
 type Status
     = Loading
     | Loaded
@@ -143,7 +149,7 @@ type Status
 type Msg
     = GotSettings (Result Http.Error SettingsResponse)
     | SaveSettings
-    | SettingsSaved (Result Http.Error Settings)
+    | SettingsSaved (Result Http.Error SaveResponse)
     | ToggleEmailBirthday Bool
     | ToggleEmailAnniversary Bool
     | ToggleEmailAep Bool
@@ -318,8 +324,15 @@ update msg model =
 
         SettingsSaved result ->
             case result of
-                Ok settings ->
-                    ( { model | orgSettings = Just settings, status = Loaded }
+                Ok response ->
+                    ( { model
+                        | status =
+                            if response.success then
+                                Loaded
+
+                            else
+                                Error (response.error |> Maybe.withDefault "Failed to save settings")
+                      }
                     , Cmd.none
                     )
 
@@ -676,10 +689,17 @@ saveSettings { settings, logo } =
         , headers = []
         , url = "/api/settings/org"
         , body = jsonBody (Encode.object [ ( "settings", Maybe.withDefault Encode.null (Maybe.map encodeSettings settings) ), ( "logo", Maybe.withDefault Encode.null (Maybe.map Encode.string logo) ) ])
-        , expect = expectJson SettingsSaved settingsObjectDecoder
+        , expect = expectJson SettingsSaved saveResponseDecoder
         , timeout = Nothing
         , tracker = Nothing
         }
+
+
+saveResponseDecoder : Decoder SaveResponse
+saveResponseDecoder =
+    Decode.map2 SaveResponse
+        (Decode.field "success" Decode.bool)
+        (Decode.field "error" (Decode.nullable Decode.string))
 
 
 encodeSettings : Settings -> Encode.Value
@@ -1216,11 +1236,11 @@ settingsObjectDecoder =
     Decode.succeed Settings
         |> Pipeline.required "carrierContracts" (Decode.list Decode.string)
         |> Pipeline.custom stateCarrierSettingsDecoder
-        |> Pipeline.required "allowAgentSettings" Decode.bool
-        |> Pipeline.required "emailSendBirthday" Decode.bool
-        |> Pipeline.required "emailSendPolicyAnniversary" Decode.bool
-        |> Pipeline.required "emailSendAep" Decode.bool
-        |> Pipeline.required "smartSendEnabled" Decode.bool
+        |> Pipeline.optional "allowAgentSettings" Decode.bool True
+        |> Pipeline.optional "emailSendBirthday" Decode.bool False
+        |> Pipeline.optional "emailSendPolicyAnniversary" Decode.bool False
+        |> Pipeline.optional "emailSendAep" Decode.bool False
+        |> Pipeline.optional "smartSendEnabled" Decode.bool True
         |> Pipeline.optional "brandName" Decode.string ""
         |> Pipeline.optional "primaryColor" Decode.string "#6B46C1"
         |> Pipeline.optional "secondaryColor" Decode.string "#9F7AEA"

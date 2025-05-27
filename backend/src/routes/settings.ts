@@ -212,27 +212,7 @@ export const settingsRoutes = new Elysia()
                  orgSignature ? phone : null, orgSignature ? redirectUrl : null, orgSignature ? signature : null, user.organization_id]
             );
 
-            // For basic tier, also update the admin agent's settings
-            if (isBasicTier) {
-                logger.info('Basic tier detected - syncing settings to admin agent');
-                
-                // Get the admin agent's ID
-                const adminAgentRow = await db.fetchOne<{ id: number }>(
-                    'SELECT id FROM users WHERE organization_id = ? AND is_admin = 1 AND is_agent = 1 LIMIT 1',
-                    [user.organization_id]
-                );
-
-                if (adminAgentRow) {
-                    // Update agent settings with organization settings and set inherit_org_settings to true
-                    await db.execute(
-                        `INSERT INTO agent_settings (agent_id, inherit_org_settings, settings)
-                         VALUES (?, true, ?)
-                         ON CONFLICT (agent_id) DO UPDATE
-                         SET inherit_org_settings = true, settings = ?`,
-                        [adminAgentRow.id, JSON.stringify(settingsWithoutLogo), JSON.stringify(settingsWithoutLogo)]
-                    );
-                }
-            }
+            
         } else if (scope === 'agent') {
             // For basic tier, don't allow direct agent settings updates
             if (isBasicTier) {
@@ -265,10 +245,11 @@ export const settingsRoutes = new Elysia()
                 throw dbError;
             }
         }
-
+        logger.info('Settings updated successfully');
         return {
             success: true,
-            settings: typedBody.settings || typedBody
+            settings: typedBody.settings || typedBody,
+            error: null
         };
     } catch (error) {
         logger.error(`Error updating settings: ${error}`);
