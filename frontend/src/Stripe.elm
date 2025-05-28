@@ -1,5 +1,7 @@
 module Stripe exposing (Model, Msg, init, subscriptions, update, view)
 
+-- Alias for Svg.Attributes
+
 import Browser
 import Browser.Navigation as Nav
 import Html exposing (..)
@@ -9,7 +11,7 @@ import Http
 import Json.Decode as Decode exposing (Decoder)
 import Json.Encode as Encode
 import Svg exposing (path, svg)
-import Svg.Attributes as SvgAttr
+import Svg.Attributes as SA
 import Url exposing (Url)
 
 
@@ -21,7 +23,6 @@ type alias Model =
     { planInfo : RemoteData PlanInfo
     , paymentMethod : RemoteData (Maybe PaymentMethod)
     , invoices : RemoteData (List Invoice)
-    , showEditPaymentModal : Bool
     , downloadingInvoiceId : Maybe String
     }
 
@@ -36,8 +37,11 @@ type RemoteData a
 type alias PlanInfo =
     { name : String
     , contactCount : Int
-    , pricePerMonth : Float
-    , totalClients : Int
+    , totalClients : Int -- Overall limit
+    , priceDescription : String
+    , basePrice : Maybe Float -- Made Maybe for decoder convenience
+    , contactsIncluded : Maybe Int
+    , pricePerAdditionalContact : Maybe Float
     }
 
 
@@ -75,7 +79,6 @@ init key url =
     ( { planInfo = Loading
       , paymentMethod = Loading
       , invoices = Loading
-      , showEditPaymentModal = False
       , downloadingInvoiceId = Nothing
       }
     , Cmd.batch
@@ -94,8 +97,6 @@ type Msg
     = GotPlanInfo (Result Http.Error PlanInfo)
     | GotPaymentMethod (Result Http.Error (Maybe PaymentMethod))
     | GotInvoices (Result Http.Error (List Invoice))
-    | ClickedEditPayment
-    | CloseEditPaymentModal
     | ClickedDownloadInvoice String
     | GotInvoiceDownloadUrl (Result Http.Error String)
     | ClickedAnnualPlan
@@ -112,12 +113,6 @@ update msg model =
 
         GotInvoices result ->
             ( { model | invoices = remoteDataFromResult result }, Cmd.none )
-
-        ClickedEditPayment ->
-            ( { model | showEditPaymentModal = True }, Cmd.none )
-
-        CloseEditPaymentModal ->
-            ( { model | showEditPaymentModal = False }, Cmd.none )
 
         ClickedDownloadInvoice invoiceId ->
             ( { model | downloadingInvoiceId = Just invoiceId }
@@ -165,7 +160,7 @@ fetchPaymentMethod : Cmd Msg
 fetchPaymentMethod =
     Http.get
         { url = "/api/billing/payment-method"
-        , expect = Http.expectJson GotPaymentMethod paymentMethodDecoder
+        , expect = Http.expectJson GotPaymentMethod maybePaymentMethodDecoder
         }
 
 
@@ -188,28 +183,33 @@ downloadInvoice invoiceId =
 planInfoDecoder : Decoder PlanInfo
 planInfoDecoder =
     Decode.field "data"
-        (Decode.map4 PlanInfo
+        (Decode.map7 PlanInfo
             (Decode.field "name" Decode.string)
             (Decode.field "contactCount" Decode.int)
-            (Decode.field "pricePerMonth" Decode.float)
             (Decode.field "totalClients" Decode.int)
+            (Decode.field "priceDescription" Decode.string)
+            (Decode.maybe (Decode.field "basePrice" Decode.float))
+            -- Handling potentially missing fields
+            (Decode.maybe (Decode.field "contactsIncluded" Decode.int))
+            (Decode.maybe (Decode.field "pricePerAdditionalContact" Decode.float))
         )
 
 
-paymentMethodDecoder : Decoder (Maybe PaymentMethod)
+paymentMethodDecoder : Decoder PaymentMethod
 paymentMethodDecoder =
-    Decode.field "data"
-        (Decode.nullable
-            (Decode.map7 PaymentMethod
-                (Decode.field "id" Decode.string)
-                (Decode.field "type" Decode.string)
-                (Decode.field "last4" Decode.string)
-                (Decode.field "brand" Decode.string)
-                (Decode.field "expiryMonth" Decode.int)
-                (Decode.field "expiryYear" Decode.int)
-                (Decode.field "email" Decode.string)
-            )
-        )
+    Decode.map7 PaymentMethod
+        (Decode.field "id" Decode.string)
+        (Decode.field "type" Decode.string)
+        (Decode.field "last4" Decode.string)
+        (Decode.field "brand" Decode.string)
+        (Decode.field "expiryMonth" Decode.int)
+        (Decode.field "expiryYear" Decode.int)
+        (Decode.field "email" Decode.string)
+
+
+maybePaymentMethodDecoder : Decoder (Maybe PaymentMethod)
+maybePaymentMethodDecoder =
+    Decode.field "data" (Decode.nullable paymentMethodDecoder)
 
 
 invoicesDecoder : Decoder (List Invoice)
@@ -267,72 +267,72 @@ view model =
             [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" ]
                 [ h1 [ class "text-3xl font-bold text-gray-900 mb-8" ] [ text "Billing" ]
                 , div [ class "space-y-6" ]
-                    [ viewPlanSettings model.planInfo
-                    , viewPaymentMethod model.paymentMethod
-                    , viewInvoices model.invoices model.downloadingInvoiceId
+                    -- Main container for vertical spacing
+                    [ div [ class "grid grid-cols-1 lg:grid-cols-2 gap-6" ]
+                        -- Row for Plan Settings and Payment Method
+                        [ viewPlanSettings model.planInfo
+                        , viewPaymentMethod model.paymentMethod
+                        ]
+                    , viewInvoices model.invoices model.downloadingInvoiceId -- Invoices below, takes full width due to parent flow
                     ]
                 ]
             ]
-        , if model.showEditPaymentModal then
-            viewEditPaymentModal
-
-          else
-            text ""
         ]
     }
 
 
 viewPlanSettings : RemoteData PlanInfo -> Html Msg
 viewPlanSettings planInfo =
-    div [ class "bg-white shadow rounded-lg p-6" ]
-        [ div [ class "mb-4" ]
-            [ h2 [ class "text-lg font-semibold text-gray-900" ] [ text "Plan Settings" ]
-            , p [ class "text-sm text-gray-500" ] [ text "Update payment methods and see past invoices" ]
-            ]
-        , case planInfo of
+    div [ class "bg-white shadow rounded-lg p-6 h-full flex flex-col" ]
+        [ case planInfo of
             Loading ->
-                div [ class "animate-pulse" ]
-                    [ div [ class "h-4 bg-gray-200 rounded w-1/4 mb-2" ] []
-                    , div [ class "h-8 bg-gray-200 rounded w-1/3" ] []
+                div [ class "animate-pulse flex-grow flex flex-col justify-between" ]
+                    [ div []
+                        [ div [ class "flex items-center justify-between" ]
+                            [ div [ class "h-6 bg-gray-200 rounded w-1/3" ] []
+                            , div [ class "h-10 bg-gray-200 rounded w-1/4" ] []
+                            ]
+                        , div [ class "h-4 bg-gray-200 rounded w-3/4 mt-3" ] []
+                        ]
+                    , div [ class "h-4 bg-gray-200 rounded w-1/2 mt-4" ] []
                     ]
 
             Success info ->
-                div []
-                    [ div [ class "flex items-baseline justify-between mb-4" ]
-                        [ div []
-                            [ h3 [ class "text-xl font-medium text-gray-900" ] [ text info.name ]
-                            , p [ class "text-sm text-gray-500" ] [ text "Simply charged per contact, each month" ]
-                            ]
-                        , div [ class "text-right" ]
-                            [ span [ class "text-3xl font-bold text-gray-900" ] [ text ("$" ++ String.fromFloat info.pricePerMonth) ]
-                            , span [ class "text-gray-500 ml-1" ] [ text "per month" ]
-                            ]
-                        ]
-                    , div [ class "mb-4" ]
-                        [ div [ class "flex justify-between text-sm mb-1" ]
-                            [ span [ class "text-gray-600" ] [ text (String.fromInt info.contactCount ++ " of " ++ String.fromInt info.totalClients ++ " Clients") ]
-                            ]
-                        , div [ class "w-full bg-gray-200 rounded-full h-2" ]
-                            [ div
-                                [ class "bg-blue-600 h-2 rounded-full"
-                                , style "width" (String.fromFloat (toFloat info.contactCount / toFloat info.totalClients * 100) ++ "%")
+                div [ class "flex-grow flex flex-col justify-between" ]
+                    [ div []
+                        [ div [ class "flex justify-between items-start" ]
+                            [ div [ class "flex items-center gap-x-2" ]
+                                [ h3 [ class "text-lg font-semibold text-gray-900" ] [ text info.name ]
+                                , span [ class "inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800" ]
+                                    [ text
+                                        (String.fromInt info.contactCount
+                                            ++ (if info.contactCount == 1 then
+                                                    " Contact"
+
+                                                else
+                                                    " Contacts"
+                                               )
+                                        )
+                                    ]
                                 ]
-                                []
+                            , div [ class "text-right" ]
+                                [ case info.basePrice of
+                                    Just bp ->
+                                        p [ class "text-4xl font-bold text-gray-900" ] [ text ("$" ++ String.fromFloat bp) ]
+
+                                    Nothing ->
+                                        p [ class "text-4xl font-bold text-gray-900" ] [ text "-" ]
+                                , p [ class "text-sm text-gray-500" ] [ text "per month" ]
+                                ]
                             ]
+                        , p [ class "text-sm text-gray-500 mt-1" ] [ text (formatPriceDescriptionShort info) ]
                         ]
-                    , button
-                        [ class "text-blue-600 hover:text-blue-700 text-sm font-medium flex items-center"
-                        , onClick ClickedAnnualPlan
-                        ]
-                        [ text "Want an Annual Plan?"
-                        , svg [ class "ml-1 w-4 h-4", SvgAttr.fill "none", SvgAttr.stroke "currentColor", SvgAttr.viewBox "0 0 24 24" ]
-                            [ path [ SvgAttr.strokeLinecap "round", SvgAttr.strokeLinejoin "round", SvgAttr.strokeWidth "2", SvgAttr.d "M9 5l7 7-7 7" ] []
-                            ]
-                        ]
+                    , div [ class "mt-4" ]
+                        [ text "" ]
                     ]
 
-            Failure _ ->
-                div [ class "text-red-600" ] [ text "Failed to load plan information" ]
+            Failure httpError ->
+                div [ class "text-red-600" ] [ text "Failed to load plan information. Please try again later." ]
 
             NotAsked ->
                 text ""
@@ -340,53 +340,66 @@ viewPlanSettings planInfo =
 
 
 viewPaymentMethod : RemoteData (Maybe PaymentMethod) -> Html Msg
-viewPaymentMethod paymentMethod =
-    div [ class "bg-white shadow rounded-lg p-6" ]
+viewPaymentMethod paymentMethodData =
+    div [ class "bg-white shadow rounded-lg p-6 h-full flex flex-col" ]
         [ div [ class "mb-4" ]
             [ h2 [ class "text-lg font-semibold text-gray-900" ] [ text "Payment method" ]
             , p [ class "text-sm text-gray-500" ] [ text "Change how you pay for your plan." ]
             ]
-        , case paymentMethod of
-            Loading ->
-                div [ class "animate-pulse" ]
-                    [ div [ class "h-12 bg-gray-200 rounded" ] [] ]
+        , div [ class "flex-grow flex flex-col justify-center items-center" ]
+            [ case paymentMethodData of
+                Loading ->
+                    div [ class "animate-pulse w-full" ]
+                        [ div [ class "flex items-center space-x-4 mb-4" ]
+                            [ div [ class "h-10 w-16 bg-gray-200 rounded" ] []
+                            , div [ class "flex-1 space-y-2 py-1" ]
+                                [ div [ class "h-4 bg-gray-200 rounded w-3/4" ] []
+                                , div [ class "h-4 bg-gray-200 rounded w-1/2" ] []
+                                ]
+                            ]
+                        , div [ class "h-4 bg-gray-200 rounded w-3/4 mb-6" ] []
+                        , div [ class "h-10 bg-blue-200 rounded w-1/2 mx-auto" ] []
+                        ]
 
-            Success maybePm ->
-                case maybePm of
-                    Just pm ->
-                        div [ class "flex items-center justify-between p-4 border border-gray-200 rounded-lg" ]
-                            [ div [ class "flex items-center" ]
-                                [ viewCardIcon pm.brand
-                                , div [ class "ml-3" ]
-                                    [ p [ class "text-sm font-medium text-gray-900" ]
-                                        [ text (formatCardBrand pm.brand ++ " ending in " ++ pm.last4) ]
-                                    , p [ class "text-sm text-gray-500" ]
-                                        [ text ("Expiry " ++ String.padLeft 2 '0' (String.fromInt pm.expiryMonth) ++ "/" ++ String.fromInt pm.expiryYear) ]
-                                    , p [ class "text-sm text-gray-500" ] [ text pm.email ]
+                Success maybePm ->
+                    div [ class "w-full text-center" ]
+                        [ case maybePm of
+                            Just pm ->
+                                div [ class "mb-6" ]
+                                    [ div [ class "flex items-center justify-center space-x-3" ]
+                                        [ viewCardIcon pm.brand
+                                        , div [ class "text-sm text-left" ]
+                                            [ p [ class "font-medium text-gray-700" ] [ text (formatCardBrand pm.brand ++ " ending in " ++ pm.last4) ]
+                                            , p [ class "text-gray-500" ] [ text ("Expiry " ++ String.fromInt pm.expiryMonth ++ "/" ++ String.fromInt pm.expiryYear) ]
+                                            ]
+                                        ]
+                                    , if String.isEmpty pm.email then
+                                        text ""
+
+                                      else
+                                        p [ class "text-sm text-gray-500 mt-3" ] [ text pm.email ]
                                     ]
-                                ]
-                            , button
-                                [ class "text-blue-600 hover:text-blue-700 text-sm font-medium"
-                                , onClick ClickedEditPayment
-                                ]
-                                [ text "Edit" ]
+
+                            Nothing ->
+                                text ""
+                        , a
+                            [ class "inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                            , href "https://billing.stripe.com/p/login/cNidR88q09BV2d32OA7Zu00"
+                            , target "_blank"
                             ]
-
-                    Nothing ->
-                        div [ class "text-center py-4" ]
-                            [ p [ class "text-gray-500 mb-2" ] [ text "No payment method on file" ]
-                            , button
-                                [ class "text-blue-600 hover:text-blue-700 text-sm font-medium"
-                                , onClick ClickedEditPayment
+                            [ text "Manage Payment Method"
+                            , svg [ SA.class "ml-2 -mr-0.5 h-4 w-4", SA.viewBox "0 0 20 20", SA.fill "currentColor", SA.stroke "currentColor", SA.strokeWidth "1" ]
+                                [ path [ SA.fillRule "evenodd", SA.d "M6 14l8-8m0 0H6m8 0v8", SA.clipRule "evenodd" ] []
                                 ]
-                                [ text "Add payment method" ]
                             ]
+                        ]
 
-            Failure _ ->
-                div [ class "text-red-600" ] [ text "Failed to load payment method" ]
+                Failure _ ->
+                    div [ class "text-red-600" ] [ text "Failed to load payment method information." ]
 
-            NotAsked ->
-                text ""
+                NotAsked ->
+                    text ""
+            ]
         ]
 
 
@@ -405,19 +418,19 @@ viewInvoices invoices downloadingId =
 
             Success invoiceList ->
                 if List.isEmpty invoiceList then
-                    div [ class "text-center py-8 text-gray-500" ] [ text "No invoices yet" ]
+                    p [ class "text-gray-500" ] [ text "No invoices yet." ]
 
                 else
                     div [ class "overflow-x-auto" ]
                         [ table [ class "min-w-full divide-y divide-gray-200" ]
                             [ thead [ class "bg-gray-50" ]
                                 [ tr []
-                                    [ th [ class "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider" ] [ text "Invoice" ]
-                                    , th [ class "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider" ] [ text "Billing date" ]
-                                    , th [ class "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider" ] [ text "Status" ]
-                                    , th [ class "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider" ] [ text "Amount" ]
-                                    , th [ class "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider" ] [ text "Plan" ]
-                                    , th [ class "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider" ] [ text "" ]
+                                    [ th [ scope "col", class "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider" ] [ text "Invoice" ]
+                                    , th [ scope "col", class "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider" ] [ text "Date" ]
+                                    , th [ scope "col", class "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider" ] [ text "Status" ]
+                                    , th [ scope "col", class "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider" ] [ text "Amount" ]
+                                    , th [ scope "col", class "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider" ] [ text "Plan" ]
+                                    , th [ scope "col", class "relative px-6 py-3" ] [ span [ class "sr-only" ] [ text "Download" ] ]
                                     ]
                                 ]
                             , tbody [ class "bg-white divide-y divide-gray-200" ]
@@ -438,10 +451,15 @@ viewInvoiceRow downloadingId invoice =
     tr []
         [ td [ class "px-6 py-4 whitespace-nowrap" ]
             [ div [ class "flex items-center" ]
-                [ svg [ class "w-5 h-5 text-gray-400 mr-2", SvgAttr.fill "none", SvgAttr.stroke "currentColor", SvgAttr.viewBox "0 0 24 24" ]
-                    [ path [ SvgAttr.strokeLinecap "round", SvgAttr.strokeLinejoin "round", SvgAttr.strokeWidth "2", SvgAttr.d "M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" ] []
+                [ svg [ SA.class "w-5 h-5 text-gray-400 mr-2", SA.fill "none", SA.stroke "currentColor", SA.viewBox "0 0 24 24" ]
+                    [ path [ SA.strokeLinecap "round", SA.strokeLinejoin "round", SA.strokeWidth "2", SA.d "M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" ] []
                     ]
-                , span [ class "text-sm text-gray-900" ] [ text ("Invoice " ++ invoice.number) ]
+                , button
+                    [ class "text-sm text-blue-600 hover:text-blue-900 hover:underline focus:outline-none"
+                    , onClick (ClickedDownloadInvoice invoice.id)
+                    , disabled (downloadingId == Just invoice.id) -- Disable if this invoice is downloading
+                    ]
+                    [ text ("Invoice " ++ invoice.number) ]
                 ]
             ]
         , td [ class "px-6 py-4 whitespace-nowrap text-sm text-gray-500" ]
@@ -512,35 +530,6 @@ viewCardIcon brand =
         [ text (String.toUpper (String.left 4 brand)) ]
 
 
-viewEditPaymentModal : Html Msg
-viewEditPaymentModal =
-    div [ class "fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center z-50" ]
-        [ div [ class "bg-white rounded-lg p-6 max-w-md w-full" ]
-            [ div [ class "flex justify-between items-center mb-4" ]
-                [ h3 [ class "text-lg font-medium text-gray-900" ] [ text "Update Payment Method" ]
-                , button
-                    [ class "text-gray-400 hover:text-gray-500"
-                    , onClick CloseEditPaymentModal
-                    ]
-                    [ text "✕" ]
-                ]
-            , p [ class "text-sm text-gray-500 mb-4" ]
-                [ text "This will open Stripe's secure payment form to update your payment method." ]
-            , div [ class "flex justify-end space-x-3" ]
-                [ button
-                    [ class "px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
-                    , onClick CloseEditPaymentModal
-                    ]
-                    [ text "Cancel" ]
-                , button
-                    [ class "px-4 py-2 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700"
-                    ]
-                    [ text "Continue to Stripe" ]
-                ]
-            ]
-        ]
-
-
 
 -- HELPERS
 
@@ -567,7 +556,34 @@ formatDate isoDate =
     String.left 10 isoDate
 
 
+formatPriceDescription : PlanInfo -> String
+formatPriceDescription info =
+    case ( info.basePrice, info.contactsIncluded, info.pricePerAdditionalContact ) of
+        ( Just bp, Just ci, Just ppac ) ->
+            "$" ++ String.fromFloat bp ++ "/month for first " ++ String.fromInt ci ++ " contacts, then $" ++ String.fromFloat ppac ++ "/contact."
 
+        ( Just bp, Nothing, Nothing ) ->
+            -- Only base price known
+            "$" ++ String.fromFloat bp ++ "/month"
+
+        _ ->
+            info.priceDescription
+
+
+formatPriceDescriptionShort : PlanInfo -> String
+formatPriceDescriptionShort info =
+    if String.isEmpty info.priceDescription then
+        "Simply charged per contact, each month"
+
+    else if String.contains "$" info.priceDescription && String.contains "/month" info.priceDescription && String.contains "contacts" info.priceDescription then
+        info.priceDescription
+
+    else
+        "Simply charged per contact, each month"
+
+
+
+-- Fallback to the raw description from backend
 -- SUBSCRIPTIONS
 
 
