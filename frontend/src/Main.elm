@@ -1667,17 +1667,17 @@ viewPublicNav model =
                             ]
                             [ text "Pricing" ]
                         ]
-                    , div [ class "flex items-center" ]
+                    , div [ class "flex items-center gap-x-3" ]
                         [ button
-                            [ onClick (InternalLinkClicked "/waitlist")
-                            , class "bg-[#03045E] text-white border-2 border-[#03045E] px-6 sm:px-8 py-2 rounded-lg text-sm font-medium hover:bg-[#1a1f5f] transition-colors duration-200 mr-3 w-[200px] text-center"
+                            [ onClick (InternalLinkClicked "/login")
+                            , class "bg-white text-[#03045E] border-2 border-[#03045E] px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors duration-200 w-24 text-center"
                             ]
-                            [ text "Get Early Access" ]
+                            [ text "Log in" ]
                         , button
-                            [ onClick (InternalLinkClicked "/self-onboarding/demo-org")
-                            , class "bg-white text-[#03045E] border-2 border-[#03045E] px-6 sm:px-8 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors duration-200 w-[200px] text-center"
+                            [ onClick (InternalLinkClicked "/signup")
+                            , class "bg-[#03045E] text-white border-2 border-[#03045E] px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#1a1f5f] transition-colors duration-200 w-24 text-center"
                             ]
-                            [ text "Try It Out" ]
+                            [ text "Sign up" ]
                         ]
                     ]
                 ]
