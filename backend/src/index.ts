@@ -34,6 +34,7 @@ import * as path from 'path'
 import * as os from 'os'
 import { readdirSync } from 'fs'
 import { parseTrackingId } from './utils/tracking'
+import { createBillingRoutes } from './routes/billing'
 
 
 // At the top of the file, add interface for ZIP data
@@ -1010,6 +1011,7 @@ const startServer = async () => {
       .use(createDashboardActivityRoutes())
       // Serve backend static files from public directory
       .use(createStripeRoutes)
+      .use(createBillingRoutes)
       // Add this endpoint within the app definition
       .post('/api/agents', async ({ body, request, set }) => {
         try {
@@ -1759,6 +1761,7 @@ const startServer = async () => {
                 u.organization_id,
                 o.slug as organization_slug,
                 o.subscription_tier,
+                o.created_at as orgCreateDate,
                 a.settings as agentSettings
               FROM users u
               JOIN organizations o ON u.organization_id = o.id
@@ -1792,6 +1795,7 @@ const startServer = async () => {
               organization_id: user.organization_id,
               organization_slug: user.organization_slug,
               subscription_tier: user.subscription_tier,
+              orgCreateDate: user.orgCreateDate.split(/[ T]/)[0],
               agentSettings: user.agentSettings ? JSON.parse(user.agentSettings) : null
             }
           }

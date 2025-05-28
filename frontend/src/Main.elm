@@ -12,6 +12,7 @@ import Components.DemoModeBanner as DemoModeBanner
 import Contact
 import Contacts
 import Dashboard
+import Date exposing (Date)
 import Dict exposing (Dict)
 import Eligibility
 import Home
@@ -78,6 +79,7 @@ type alias SessionResponse =
     , isAdmin : Bool
     , id : String
     , demoMode : Bool
+    , orgCreateDate : Date
     }
 
 
@@ -125,6 +127,19 @@ sessionDecoder =
                     |> Decode.map (\i -> i == 1)
                 ]
             )
+        |> Pipeline.required
+            "orgCreateDate"
+            (Decode.string
+                |> Decode.andThen
+                    (\s ->
+                        case Date.fromIsoString s of
+                            Ok date ->
+                                Decode.succeed date
+
+                            Err _ ->
+                                Decode.fail "Invalid date format"
+                    )
+            )
 
 
 type alias User =
@@ -139,6 +154,7 @@ type alias User =
     , subscriptionTier : String
     , accountStatus : Maybe AccountStatusBanner.AccountStatusDetails
     , demoMode : Bool
+    , orgCreateDate : Maybe Date
     }
 
 
@@ -364,7 +380,7 @@ init flags url key =
 
         -- Initialize demo mode banner
         ( demoModeBannerModel, demoModeBannerCmd ) =
-            DemoModeBanner.init False
+            DemoModeBanner.init False Nothing
 
         model =
             { key = key
@@ -850,6 +866,7 @@ update msg model =
                                             , subscriptionTier = ""
                                             , accountStatus = Nothing
                                             , demoMode = False
+                                            , orgCreateDate = Nothing
                                             }
                                     , isSetup = isInSetup
                                     , page = LoadingPage -- Force to loading page to prevent UI flicker during redirection
@@ -895,11 +912,12 @@ update msg model =
                                 , subscriptionTier = ""
                                 , accountStatus = Nothing
                                 , demoMode = response.demoMode
+                                , orgCreateDate = Just response.orgCreateDate
                                 }
 
                             -- Initialize demo mode banner with user's demo mode state
                             ( demoModeBannerModel, demoModeBannerCmd ) =
-                                DemoModeBanner.init response.demoMode
+                                DemoModeBanner.init response.demoMode (Just response.orgCreateDate)
 
                             -- Only set isSetup to True if we're in the middle of setup
                             isInSetup =
@@ -1101,11 +1119,12 @@ update msg model =
                                         , subscriptionTier = user.subscriptionTier
                                         , accountStatus = Nothing -- Will fetch this separately
                                         , demoMode = user.demoMode
+                                        , orgCreateDate = user.orgCreateDate
                                         }
 
                                 -- Initialize demo mode banner with the user's demo mode status
                                 ( demoModeBannerModel, demoModeBannerCmd ) =
-                                    DemoModeBanner.init user.demoMode
+                                    DemoModeBanner.init user.demoMode user.orgCreateDate
 
                                 newModel =
                                     { model
@@ -1868,7 +1887,7 @@ viewNavHeader model =
 
     else
         -- Full header with navigation for other pages
-        nav [ class "bg-white border-b border-gray-200" ]
+        nav [ class "bg-white" ]
             [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8" ]
                 [ div [ class "flex justify-between h-16" ]
                     [ div [ class "flex items-center" ]
@@ -2180,6 +2199,19 @@ userDecoder =
         |> Pipeline.required "subscription_tier" Decode.string
         |> Pipeline.optional "accountStatus" (Decode.nullable accountStatusDecoder) Nothing
         |> Pipeline.optional "demo_mode" Decode.bool False
+        |> Pipeline.required
+            "orgCreateDate"
+            (Decode.string
+                |> Decode.andThen
+                    (\s ->
+                        case Date.fromIsoString s of
+                            Ok date ->
+                                Decode.succeed (Just date)
+
+                            Err _ ->
+                                Decode.fail "Invalid date format"
+                    )
+            )
 
 
 type SetupStep
@@ -2664,8 +2696,16 @@ updatePage url ( model, cmd ) =
 
                                     ProtectedRoute (ContactRoute id) ->
                                         let
+                                            demoMode =
+                                                case modelWithUpdatedSetup.currentUser of
+                                                    Just user ->
+                                                        user.demoMode
+
+                                                    Nothing ->
+                                                        False
+
                                             ( contactModel, contactCmd ) =
-                                                Contact.init modelWithUpdatedSetup.key id
+                                                Contact.init modelWithUpdatedSetup.key id demoMode
                                         in
                                         ( { modelWithUpdatedSetup | page = ContactPage contactModel }
                                         , Cmd.batch

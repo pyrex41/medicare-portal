@@ -43,7 +43,7 @@ export async function checkPaymentStatus(db: Database, organizationId: number): 
     };
   }
 
-  // If no Stripe subscription yet, return unpaid status
+  // If no Stripe subscription yet, return unpaid status0
   if (!org.stripe_subscription_id) {
     return {
       isActive: false,

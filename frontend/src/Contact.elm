@@ -177,6 +177,7 @@ type alias Model =
     , showAllFollowUps : Bool
     , orgSettings : Maybe Settings
     , emailSendSuccess : Bool
+    , demoMode : Bool
     }
 
 
@@ -316,8 +317,8 @@ type alias ZipInfo =
     }
 
 
-init : Nav.Key -> String -> ( Model, Cmd Msg )
-init key contactId =
+init : Nav.Key -> String -> Bool -> ( Model, Cmd Msg )
+init key contactId demoMode =
     let
         initialSchedule =
             EmailScheduler.init
@@ -350,6 +351,7 @@ init key contactId =
       , showAllFollowUps = False
       , orgSettings = Nothing
       , emailSendSuccess = False
+      , demoMode = demoMode
       }
     , Cmd.batch
         [ Http.get
@@ -1052,14 +1054,24 @@ viewHeader contact model =
             ]
         , div [ class "flex gap-2" ]
             [ button
-                [ class "px-4 py-2 text-sm font-medium text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors duration-200 flex items-center gap-2"
+                [ class
+                    (String.join " "
+                        [ "px-4 py-2 text-sm font-medium rounded-lg transition-colors duration-200 flex items-center gap-2"
+                        , if model.demoMode then
+                            "text-blue-400 bg-blue-50 cursor-not-allowed"
+
+                          else
+                            "text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100"
+                        ]
+                    )
                 , onClick
-                    (if model.isGeneratingQuote || model.emailSendSuccess then
+                    (if model.isGeneratingQuote || model.emailSendSuccess || model.demoMode then
                         NoOp
 
                      else
                         SendQuoteEmail
                     )
+                , disabled model.demoMode
                 ]
                 (if model.isGeneratingQuote then
                     [ viewSpinner
@@ -1072,7 +1084,7 @@ viewHeader contact model =
                     ]
 
                  else
-                    [ text "Send Quote Email" ]
+                    [ text "Send Quote" ]
                 )
             , button
                 [ class "px-4 py-2 text-sm font-medium text-purple-600 hover:text-purple-700 bg-purple-50 hover:bg-purple-100 rounded-lg transition-colors duration-200 flex items-center gap-2"

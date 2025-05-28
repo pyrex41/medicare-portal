@@ -662,3 +662,27 @@ banknote size color =
         , Svg.circle [ cx "12", cy "12", r "2" ] []
         , Svg.path [ d "M6 12h.01M18 12h.01" ] []
         ]
+
+
+purpleIcon : Int -> String -> Svg msg
+purpleIcon size color =
+    svg
+        [ width (String.fromInt size)
+        , height (String.fromInt size)
+        , viewBox "0 0 22 22"
+        , fill "none"
+        ]
+        [ Svg.path
+            [ d "M11 21C16.5228 21 21 16.5228 21 11C21 5.47715 16.5228 1 11 1C5.47715 1 1 5.47715 1 11C1 16.5228 5.47715 21 11 21Z"
+            , fill color
+            ]
+            []
+        , Svg.path
+            [ d "M11 15V11M11 7H11.01M21 11C21 16.5228 16.5228 21 11 21C5.47715 21 1 16.5228 1 11C1 5.47715 5.47715 1 11 1C16.5228 1 21 5.47715 21 11Z"
+            , stroke "#F9F5FF"
+            , strokeWidth "2"
+            , strokeLinecap "round"
+            , strokeLinejoin "round"
+            ]
+            []
+        ]

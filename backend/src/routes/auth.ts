@@ -299,7 +299,8 @@ export function createAuthRoutes() {
           first_name: "",
           last_name: "",
           id: "",
-          demo_mode: true
+          demo_mode: true,
+          orgCreateDate: ""
         };
       }
 
@@ -314,8 +315,9 @@ export function createAuthRoutes() {
           is_admin: boolean;
           organization_slug: string;
           demo_mode: boolean;
+          orgCreateDate: string;
         }>(
-          `SELECT u.id, u.email, u.first_name, u.last_name, u.is_admin, o.slug as organization_slug, o.demo_mode
+          `SELECT u.id, u.email, u.first_name, u.last_name, u.is_admin, o.slug as organization_slug, o.demo_mode, o.created_at as orgCreateDate
            FROM sessions s
            JOIN users u ON s.user_id = u.id
            JOIN organizations o ON u.organization_id = o.id
@@ -334,7 +336,8 @@ export function createAuthRoutes() {
             last_name: "",
             is_admin: false,
             id: "",
-            demo_mode: true
+            demo_mode: true,
+            orgCreateDate: ""
           };
         }
 
@@ -351,7 +354,8 @@ export function createAuthRoutes() {
           last_name: sessionUser.last_name,
           is_admin: sessionUser.is_admin,
           id: sessionUser.id,
-          demo_mode: sessionUser.demo_mode
+          demo_mode: sessionUser.demo_mode,
+          orgCreateDate: sessionUser.orgCreateDate.split(/[ T]/)[0]
         };
       } catch (error) {
         logger.error(`Error getting session info: ${error}`);
@@ -368,7 +372,8 @@ export function createAuthRoutes() {
           last_name: "",
           is_admin: false,
           id: "",
-          demo_mode: true
+          demo_mode: true,
+          orgCreateDate: ""
         };
       }
     })

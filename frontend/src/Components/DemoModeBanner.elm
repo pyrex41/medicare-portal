@@ -1,11 +1,15 @@
 module Components.DemoModeBanner exposing (Model, Msg(..), init, update, view)
 
+import Date exposing (Date, Unit(..))
 import Html exposing (Html, button, div, h3, p, span, text)
 import Html.Attributes exposing (class)
 import Html.Events exposing (onClick)
 import Http
 import Json.Decode as Decode
 import Json.Encode as Encode
+import MyIcon
+import Task
+import Time exposing (Posix)
 
 
 
@@ -14,21 +18,30 @@ import Json.Encode as Encode
 
 type alias Model =
     { demoMode : Bool
+    , orgCreateDate : Maybe Date
+    , today : Maybe Date
     , showConfirmModal : Bool
     , isSubmitting : Bool
     , error : Maybe String
     }
 
 
-init : Bool -> ( Model, Cmd Msg )
-init demoMode =
+init : Bool -> Maybe Date -> ( Model, Cmd Msg )
+init demoMode orgCreateDate =
     ( { demoMode = demoMode
+      , orgCreateDate = orgCreateDate
+      , today = Nothing
       , showConfirmModal = False
       , isSubmitting = False
       , error = Nothing
       }
-    , Cmd.none
+    , now
     )
+
+
+now : Cmd Msg
+now =
+    Task.perform (Just >> SetTime) Time.now
 
 
 
@@ -40,6 +53,7 @@ type Msg
     | CancelExitDemo
     | ConfirmExitDemo
     | DemoModeUpdated (Result Http.Error { success : Bool })
+    | SetTime (Maybe Posix)
     | NoOp
 
 
@@ -89,6 +103,16 @@ update msg model =
             in
             ( { model | isSubmitting = False, error = Just errorMsg }, Cmd.none )
 
+        SetTime (Just posix) ->
+            let
+                today =
+                    Date.fromPosix Time.utc posix
+            in
+            ( { model | today = Just today }, Cmd.none )
+
+        SetTime Nothing ->
+            ( { model | today = Nothing }, Cmd.none )
+
         NoOp ->
             ( model, Cmd.none )
 
@@ -123,7 +147,7 @@ responseDecoder =
 view : Model -> Html Msg
 view model =
     if model.demoMode then
-        div []
+        Html.div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8" ]
             [ viewBanner model
             , if model.showConfirmModal then
                 viewConfirmModal model
@@ -138,18 +162,28 @@ view model =
 
 viewBanner : Model -> Html Msg
 viewBanner model =
-    div [ class "p-3 sm:p-4 mb-3 sm:mb-4 border rounded-lg bg-blue-50 border-blue-200 text-blue-800" ]
-        [ div [ class "max-w-7xl mx-auto flex flex-col items-center text-center" ]
-            [ div [ class "font-medium text-sm sm:text-base mb-1" ]
-                [ text "Demo Mode Active" ]
-            , p [ class "text-xs sm:text-sm mb-3" ]
-                [ text "Your organization is currently in demo mode. You can upload context contacts, add agents, and view scheduled emails on contact profiles. Go live to start sending real emails." ]
-            , button
-                [ class "px-4 py-2 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded-md text-sm font-medium transition-colors"
-                , onClick ClickExitDemo
+    let
+        daysLeft =
+            daysLeftInTrial model.orgCreateDate model.today
+    in
+    div [ class "p-3 sm:p-4 border rounded-lg bg-[#F6F1FF] border-[#E9D7FE] text-[#53389E] flex items-center justify-between" ]
+        [ div [ class "flex items-start" ]
+            [ Html.span [ class "inline-flex items-center justify-center h-6 w-6 rounded-full text-[#7F56D9] mt-0.5 mr-3" ]
+                [ MyIcon.purpleIcon 18 "#53389E" ]
+            , div []
+                [ Html.span [ class "font-semibold text-sm leading-tight" ]
+                    [ text ("Trial Period - " ++ String.fromInt daysLeft ++ " days remaining") ]
+                , Html.div [ class "mt-1 text-xs leading-tight" ]
+                    [ text "Your account is currently in a trial period. You can upload contacts, add agents, and see scheduled quote sends." ]
+                , Html.div [ class "mt-1 text-xs leading-tight font-semibold" ]
+                    [ text "Please note: emails will not be sent during your trial period. To start sending quotes click \"Go Live\"." ]
                 ]
-                [ text "Go Live" ]
             ]
+        , button
+            [ class "ml-6 px-4 py-2 bg-[#1C1361] hover:bg-[#53389E] text-white rounded-md text-xs font-medium transition-colors"
+            , onClick ClickExitDemo
+            ]
+            [ text "Go Live" ]
         ]
 
 
@@ -192,3 +226,34 @@ viewConfirmModal model =
                 ]
             ]
         ]
+
+
+
+-- HELPERS
+
+
+daysLeftInTrial : Maybe Date -> Maybe Date -> Int
+
+
+
+-- Calculates the number of days left in the 30-day trial.
+
+
+daysLeftInTrial maybeOrgCreateDate maybeToday =
+    case ( maybeOrgCreateDate, maybeToday ) of
+        ( Just orgCreate, Just today ) ->
+            let
+                daysElapsed =
+                    Date.diff Days orgCreate today
+
+                daysLeft =
+                    30 - daysElapsed
+            in
+            if daysLeft < 0 then
+                0
+
+            else
+                daysLeft
+
+        _ ->
+            30
