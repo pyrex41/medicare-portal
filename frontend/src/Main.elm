@@ -1669,15 +1669,15 @@ viewPublicNav model =
                         ]
                     , div [ class "flex items-center gap-x-3" ]
                         [ button
-                            [ onClick (InternalLinkClicked "/login")
-                            , class "bg-white text-[#03045E] border-2 border-[#03045E] px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors duration-200 w-24 text-center"
-                            ]
-                            [ text "Log in" ]
-                        , button
                             [ onClick (InternalLinkClicked "/signup")
                             , class "bg-[#03045E] text-white border-2 border-[#03045E] px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#1a1f5f] transition-colors duration-200 w-24 text-center"
                             ]
                             [ text "Sign up" ]
+                        , button
+                            [ onClick (InternalLinkClicked "/login")
+                            , class "bg-white text-[#03045E] border-2 border-[#03045E] px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors duration-200 w-24 text-center"
+                            ]
+                            [ text "Log in" ]
                         ]
                     ]
                 ]
@@ -1734,15 +1734,15 @@ viewPublicNav model =
                             ]
                             [ text "Pricing" ]
                         , button
-                            [ onClick (InternalLinkClicked "/waitlist")
+                            [ onClick (InternalLinkClicked "/signup")
                             , class "block w-full text-left px-4 py-2 text-[#03045E] font-medium hover:bg-gray-100 rounded-md"
                             ]
-                            [ text "Get Early Access" ]
+                            [ text "Signup" ]
                         , button
-                            [ onClick (InternalLinkClicked "/self-onboarding/demo-org")
+                            [ onClick (InternalLinkClicked "/login")
                             , class "block w-full text-left px-4 py-2 text-[#03045E] font-medium hover:bg-gray-100 rounded-md"
                             ]
-                            [ text "Try It Out" ]
+                            [ text "Login" ]
                         ]
                     ]
 

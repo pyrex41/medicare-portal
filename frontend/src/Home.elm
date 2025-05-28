@@ -249,12 +249,12 @@ view model =
                                 [ onClick NavigateSignup
                                 , class "w-[220px] inline-flex items-center justify-center px-6 py-3.5 rounded-lg text-base font-semibold text-white bg-[#03045E] hover:bg-[#1a1f5f] transition-colors duration-200"
                                 ]
-                                [ text "Get Early Access" ]
+                                [ text "Sign Up" ]
                             , button
                                 [ onClick NavigateTryItOut
                                 , class "w-[220px] inline-flex items-center justify-center px-6 py-3.5 rounded-lg text-base font-semibold text-[#03045E] bg-white border-2 border-[#03045E] hover:bg-gray-50 transition-colors duration-200"
                                 ]
-                                [ text "Try It Out" ]
+                                [ text "Login" ]
                             ]
                         ]
                     , div [ class "relative" ]
@@ -555,7 +555,7 @@ view model =
                                         [ onClick NavigateSignup
                                         , class "inline-flex items-center px-5 py-2 rounded-lg text-base font-medium text-white bg-[#03045E] hover:bg-[#1a1f5f] transition-colors duration-200"
                                         ]
-                                        [ text "Get Early Access" ]
+                                        [ text "Sign Up" ]
                                     ]
                                 ]
                             ]
@@ -584,7 +584,7 @@ view model =
                                                 [ onClick NavigateSignup
                                                 , class "inline-flex items-center px-8 py-4 rounded-lg text-lg font-medium text-white bg-[#03045E] hover:bg-[#1a1f5f] transition-colors duration-200"
                                                 ]
-                                                [ text "Get Early Access" ]
+                                                [ text "Sign Up" ]
                                             ]
                                         ]
                                     , div [ class "relative w-[500px]" ]
@@ -623,7 +623,7 @@ view model =
                                 [ onClick NavigateSignup
                                 , class "inline-flex items-center px-6 py-3 rounded-lg text-base font-medium text-white bg-[#03045E] hover:bg-[#1a1f5f] transition-colors duration-200"
                                 ]
-                                [ text "Get Early Access" ]
+                                [ text "Sign Up" ]
                             ]
                         ]
                     ]
@@ -638,7 +638,7 @@ view model =
                                 [ onClick NavigateSignup
                                 , class "inline-flex items-center px-6 py-3 rounded-lg text-base font-medium text-white bg-[#03045E] hover:bg-[#1a1f5f] transition-colors duration-200 w-full sm:w-auto justify-center"
                                 ]
-                                [ text "Get Early Access" ]
+                                [ text "Sign Up" ]
                             ]
                         ]
                     ]
