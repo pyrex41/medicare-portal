@@ -358,11 +358,11 @@ viewPaymentMethod paymentMethodData =
                                 ]
                             ]
                         , div [ class "h-4 bg-gray-200 rounded w-3/4 mb-6" ] []
-                        , div [ class "h-10 bg-blue-200 rounded w-1/2 mx-auto" ] []
+                        , div [ class "h-10 bg-blue-200 rounded w-1/2" ] []
                         ]
 
                 Success maybePm ->
-                    div [ class "w-full text-center" ]
+                    div [ class "w-full text-left" ]
                         [ case maybePm of
                             Just pm ->
                                 div [ class "mb-6" ]
