@@ -603,21 +603,21 @@ view model =
                         ]
                     , div [ class "max-w-3xl mx-auto divide-y divide-gray-200" ]
                         [ faqItem "How many emails can I send?"
-                            "Our system sends regular, automated emails to every client in your book of business. Each plan tier supports different numbers of contacts - so you can choose the right level for your agency size. The emails continue indefinitely to keep your book engaged and ready for renewal opportunities."
+                            "Our system sends regular, automated emails to every client in your book of business. Our pricing is based on the number of contacts you have in your book of business - you only pay for what you use. The emails continue indefinitely to keep your book engaged and ready for renewal opportunities."
                             model
                         , faqItem "How do I know my Client data is protected?"
-                            "We take data security extremely seriously. All client data is encrypted both in transit and at rest using industry-standard encryption protocols. Additionally, each agency gets their own dedicated database instance, ensuring complete data separation between different agencies' client records."
+                            "We take data security extremely seriously. All client data is encrypted both in transit and at rest using industry-standard encryption protocols. Additionally, each agency gets their own dedicated database instance and virtual machine instance for email processing, ensuring complete data separation between different agencies' client records."
                             model
                         , faqItem "Will I be notified when someone requests a quote?"
-                            "Yes, you'll receive real-time notifications whenever a client requests a quote or takes any significant action. You can customize your notification preferences in your dashboard settings."
+                            "Yes, our dashboard provieds real-time feedback on client activity and engagement, giving detailed insights and providing actionable reporting for tracking and independent marketing."
                             model
                         , faqItem "Will the emails come from me?"
-                            "Yes, all communications are white-labeled and will appear to come directly from you. You can customize the email sender name and signature to maintain your personal brand and relationship with your clients."
+                            "Yes, all communications are white-labeled and will appear to come directly from you. You can customize your logo, the email sender name and signature to maintain your personal brand and relationship with your clients."
                             model
                         ]
                     , div [ class "mt-16 text-center hidden md:block" ]
-                        [ h3 [ class "text-2xl font-semibold text-gray-900" ] [ text "Want to be notified on launch day?" ]
-                        , p [ class "mt-4 text-lg text-gray-600" ] [ text "Join agents all across the US ready to reset their books." ]
+                        [ h3 [ class "text-2xl font-semibold text-gray-900" ] [ text "Ready to reset your book?" ]
+                        , p [ class "mt-4 text-lg text-gray-600" ] [ text "Join agents all across the US ready to automate their retention." ]
                         , div [ class "mt-8" ]
                             [ button
                                 [ onClick NavigateSignup
