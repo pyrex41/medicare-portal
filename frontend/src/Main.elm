@@ -10,6 +10,7 @@ import Compare exposing (CompareParams)
 import Components.AccountStatusBanner as AccountStatusBanner
 import Components.DemoModeBanner as DemoModeBanner
 import Contact
+import ContactUs
 import Contacts
 import Dashboard
 import Date exposing (Date)
@@ -209,6 +210,7 @@ type Page
     = NotFoundPage
     | LoginPage Login.Model
     | ContactsPage Contacts.Model
+    | ContactUsPage ContactUs.Model
     | TempLandingPage TempLanding.Model
     | SettingsPage Settings.Model
     | Signup Signup.Model
@@ -242,6 +244,7 @@ type Msg
     | UrlChanged Url
     | LoginMsg Login.Msg
     | ContactsMsg Contacts.Msg
+    | ContactUsMsg ContactUs.Msg
     | TempLandingMsg TempLanding.Msg
     | SettingsMsg Settings.Msg
     | SignupMsg Signup.Msg
@@ -529,6 +532,7 @@ type PublicPage
     | LandingRoute { quoteId : Maybe String }
     | PricingRoute
     | Pricing2Route
+    | ContactUsRoute
 
 
 type ProtectedPage
@@ -606,6 +610,7 @@ routeParser =
         , map (PublicRoute PricingRoute) (s "pricing")
         , map (PublicRoute Pricing2Route) (s "pricing2")
         , map (PublicRoute ScheduleMainRoute) (s "schedule-main")
+        , map (PublicRoute ContactUsRoute) (s "contact-us")
         , map (\orgSlug token -> PublicRoute (VerifyRoute (VerifyParams orgSlug token)))
             (s "auth" </> s "verify" </> string </> string)
         , oneOf
@@ -750,6 +755,20 @@ update msg model =
                     in
                     ( { model | page = ContactsPage newPageModel }
                     , Cmd.map ContactsMsg newCmd
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        ContactUsMsg subMsg ->
+            case model.page of
+                ContactUsPage pageModel ->
+                    let
+                        ( newPageModel, newCmd ) =
+                            ContactUs.update subMsg pageModel
+                    in
+                    ( { model | page = ContactUsPage newPageModel }
+                    , Cmd.map ContactUsMsg newCmd
                     )
 
                 _ ->
@@ -1415,6 +1434,15 @@ view model =
                     , body = [ viewWithNav model (Html.map ContactsMsg (Contacts.view contactsModel)) ]
                     }
 
+                ContactUsPage contactUsModel ->
+                    let
+                        contactUsView =
+                            ContactUs.view contactUsModel
+                    in
+                    { title = contactUsView.title
+                    , body = [ viewWithNav model (Html.map ContactUsMsg (div [] contactUsView.body)) ]
+                    }
+
                 TempLandingPage landingModel ->
                     let
                         landingView =
@@ -1753,6 +1781,11 @@ viewPublicNav model =
                             ]
                             [ text "Pricing" ]
                         , button
+                            [ onClick (InternalLinkClicked "/contact-us")
+                            , class "block w-full text-left px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-md"
+                            ]
+                            [ text "Contact Us" ]
+                        , button
                             [ onClick (InternalLinkClicked "/signup")
                             , class "block w-full text-left px-4 py-2 text-[#03045E] font-medium hover:bg-gray-100 rounded-md"
                             ]
@@ -1813,6 +1846,9 @@ viewNavHeader model =
                     True
 
                 ScheduleMainPage _ ->
+                    True
+
+                ContactUsPage _ ->
                     True
 
                 _ ->
@@ -1994,6 +2030,11 @@ viewNavHeader model =
                                         [ text "Payment Settings" ]
                                     , button
                                         [ class "block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-[#DCE2E5]"
+                                        , onClick (InternalLinkClicked "/contact-us")
+                                        ]
+                                        [ text "Contact Us" ]
+                                    , button
+                                        [ class "block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-[#DCE2E5]"
                                         , onClick InitiateLogout
                                         ]
                                         [ text "Log out" ]
@@ -2079,6 +2120,9 @@ subscriptions model =
 
                 ContactsPage pageModel ->
                     Sub.map ContactsMsg (Contacts.subscriptions pageModel)
+
+                ContactUsPage pageModel ->
+                    Sub.none
 
                 TempLandingPage pageModel ->
                     Sub.map TempLandingMsg (TempLanding.subscriptions pageModel)
@@ -2981,6 +3025,18 @@ updatePage url ( model, cmd ) =
                                             ]
                                         )
 
+                                    PublicRoute ContactUsRoute ->
+                                        let
+                                            ( contactUsModel, contactUsCmd ) =
+                                                ContactUs.init ()
+                                        in
+                                        ( { modelWithUpdatedSetup | page = ContactUsPage contactUsModel }
+                                        , Cmd.batch
+                                            [ Cmd.map ContactUsMsg contactUsCmd
+                                            , authCmd
+                                            ]
+                                        )
+
                                     ProtectedRoute StripeRoute ->
                                         let
                                             ( stripeModel, stripeCmd ) =
@@ -3346,6 +3402,15 @@ updatePageForcePublic url ( model, cmd ) =
                     in
                     ( { model | page = Pricing2Page pricing2Model }
                     , Cmd.map Pricing2Msg pricing2Cmd
+                    )
+
+                PublicRoute ContactUsRoute ->
+                    let
+                        ( contactUsModel, contactUsCmd ) =
+                            ContactUs.init ()
+                    in
+                    ( { model | page = ContactUsPage contactUsModel }
+                    , Cmd.map ContactUsMsg contactUsCmd
                     )
 
         Nothing ->

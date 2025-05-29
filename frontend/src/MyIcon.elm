@@ -686,3 +686,70 @@ purpleIcon size color =
             ]
             []
         ]
+
+
+phone : Int -> String -> Svg msg
+phone size color =
+    svg
+        [ width (String.fromInt size)
+        , height (String.fromInt size)
+        , viewBox "0 0 24 24"
+        , fill "none"
+        , stroke color
+        , strokeWidth "2"
+        , strokeLinecap "round"
+        , strokeLinejoin "round"
+        ]
+        [ Svg.path [ d "M13.832 16.568a1 1 0 0 0 1.213-.303l.355-.465A2 2 0 0 1 17 15h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2A18 18 0 0 1 2 4a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v3a2 2 0 0 1-.8 1.6l-.468.351a1 1 0 0 0-.292 1.233 14 14 0 0 0 6.392 6.384" ] []
+        ]
+
+
+mapPin : Int -> String -> Svg msg
+mapPin size color =
+    svg
+        [ width (String.fromInt size)
+        , height (String.fromInt size)
+        , viewBox "0 0 24 24"
+        , fill "none"
+        , stroke color
+        , strokeWidth "2"
+        , strokeLinecap "round"
+        , strokeLinejoin "round"
+        ]
+        [ Svg.path [ d "M18 8c0 3.613-3.869 7.429-5.393 8.795a1 1 0 0 1-1.214 0C9.87 15.429 6 11.613 6 8a6 6 0 0 1 12 0" ] []
+        , Svg.circle [ cx "12", cy "8", r "2" ] []
+        , Svg.path [ d "M8.714 14h-3.71a1 1 0 0 0-.948.683l-2.004 6A1 1 0 0 0 3 22h18a1 1 0 0 0 .948-1.316l-2-6a1 1 0 0 0-.949-.684h-3.712" ] []
+        ]
+
+
+clock : Int -> String -> Svg msg
+clock size color =
+    svg
+        [ width (String.fromInt size)
+        , height (String.fromInt size)
+        , viewBox "0 0 24 24"
+        , fill "none"
+        , stroke color
+        , strokeWidth "2"
+        , strokeLinecap "round"
+        , strokeLinejoin "round"
+        ]
+        [ Svg.circle [ cx "12", cy "12", r "10" ] []
+        , Svg.polyline [ points "12 6 12 12 16 14" ] []
+        ]
+
+
+mail size color =
+    svg
+        [ width (String.fromInt size)
+        , height (String.fromInt size)
+        , viewBox "0 0 24 24"
+        , fill "none"
+        , stroke color
+        , strokeWidth "2"
+        , strokeLinecap "round"
+        , strokeLinejoin "round"
+        ]
+        [ Svg.path [ d "m22 7-8.991 5.727a2 2 0 0 1-2.009 0L2 7" ] []
+        , Svg.rect [ x "2", y "4", width "20", height "16", rx "2" ] []
+        ]

@@ -29,6 +29,7 @@ import { generateQuoteId } from './utils/quoteId'
 import { createSelfServiceRoutes } from './routes/self-service'
 import { scheduleRoutes } from './routes/schedule'
 import { contactsRoutes } from './routes/contacts'
+import { contactUsRoutes } from './routes/contact'
 import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
@@ -1005,6 +1006,8 @@ const startServer = async () => {
       .use(scheduleRoutes)
       // Add contacts routes
       .use(contactsRoutes)
+      // Add contact us form routes
+      .use(contactUsRoutes)
       // Add waitlist routes
       .use(createWaitlistRoutes())  // Waitlist routes use their own database connection
       // Add dashboard routes
