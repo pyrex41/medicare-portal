@@ -80,14 +80,9 @@ export const settingsRoutes = new Elysia()
                 ? { ...defaultSettings, ...JSON.parse(orgRow.org_settings) }
                 : { ...defaultSettings };
 
-            // Prioritize signature, then fall back to organization name
+            // Prioritize signature from database column
             if (!orgSettings.signature && orgRow?.signature) {
                 orgSettings.signature = orgRow.signature;
-            }
-            
-            // If signature is still not set, use organization name
-            if (!orgSettings.signature && orgRow?.name) {
-                orgSettings.signature = orgRow.name;
             }
 
             // If brandName is not set in settings, use the organization name
@@ -115,6 +110,14 @@ export const settingsRoutes = new Elysia()
                     orgSettings.carrierContracts
                 );
             }
+            
+            // For backwards compatibility, ensure both orgSignature and forceOrgSenderDetails are in sync
+            // If forceOrgSenderDetails doesn't exist, use orgSignature value
+            if (!('forceOrgSenderDetails' in orgSettings)) {
+                orgSettings.forceOrgSenderDetails = orgSettings.orgSignature || false;
+            }
+            // Ensure orgSignature matches forceOrgSenderDetails
+            orgSettings.orgSignature = orgSettings.forceOrgSenderDetails;
         } catch (parseError) {
             logger.error(`Error parsing org settings: ${parseError}`);
             orgSettings = { ...defaultSettings };
@@ -200,16 +203,24 @@ export const settingsRoutes = new Elysia()
             const phone = 'phone' in settingsObj ? settingsObj.phone : null;
             const redirectUrl = 'redirectUrl' in settingsObj ? settingsObj.redirectUrl : null;
             const signature = 'signature' in settingsObj ? settingsObj.signature : null;
+            
+            // For backwards compatibility, sync forceOrgSenderDetails with orgSignature
+            const forceOrgSenderDetails = 'forceOrgSenderDetails' in settingsObj ? settingsObj.forceOrgSenderDetails : orgSignature;
+            
             const settingsWithoutLogo = { ...settingsObj };
             if ('logo' in settingsWithoutLogo) {
                 delete (settingsWithoutLogo as any).logo;
             }
             
+            // Ensure both fields are in sync
+            settingsWithoutLogo.orgSignature = forceOrgSenderDetails;
+            settingsWithoutLogo.forceOrgSenderDetails = forceOrgSenderDetails;
+            
             // Update organization settings and logo separately
             await db.execute(
                 'UPDATE organizations SET org_settings = ?, logo_data = ?, name = ?, org_signature = ?, phone = ?, redirect_url = ?, signature = ? WHERE id = ?',
-                [JSON.stringify(settingsWithoutLogo), logo || null, name || null, orgSignature, 
-                 orgSignature ? phone : null, orgSignature ? redirectUrl : null, orgSignature ? signature : null, user.organization_id]
+                [JSON.stringify(settingsWithoutLogo), logo || null, name || null, forceOrgSenderDetails, 
+                 forceOrgSenderDetails ? phone : null, forceOrgSenderDetails ? redirectUrl : null, forceOrgSenderDetails ? signature : null, user.organization_id]
             );
 
             

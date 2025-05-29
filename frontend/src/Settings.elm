@@ -155,7 +155,6 @@ type Msg
     | ToggleEmailAnniversary Bool
     | ToggleEmailAep Bool
     | ToggleSmartSend Bool
-    | ToggleOrgSignature Bool
     | AddCarrierContract String
     | RemoveCarrierContract String
     | UpdateStateCarrierSetting String Bool Bool
@@ -166,8 +165,6 @@ type Msg
     | ToggleAllowAgentSettings Bool
     | FinishSetup
     | UpdateBrandName String
-    | UpdatePrimaryColor String
-    | UpdateSecondaryColor String
     | UpdatePhone String
     | UpdateRedirectUrl String
     | UpdateSignature String
@@ -185,6 +182,7 @@ type Msg
     | DragEnter
     | DragLeave
     | GotFiles File (List File)
+    | UpdateForceOrgSenderDetails Bool
 
 
 type alias SettingsResponse =
@@ -353,9 +351,6 @@ update msg model =
 
         ToggleSmartSend value ->
             updateSettings model (\s -> { s | smartSendEnabled = value })
-
-        ToggleOrgSignature value ->
-            updateSettings model (\s -> { s | orgSignature = value })
 
         AddCarrierContract carrier ->
             updateSettings model
@@ -588,12 +583,6 @@ update msg model =
         UpdateBrandName name ->
             updateSettings model (\s -> { s | brandName = name })
 
-        UpdatePrimaryColor color ->
-            updateSettings model (\s -> { s | primaryColor = color })
-
-        UpdateSecondaryColor color ->
-            updateSettings model (\s -> { s | secondaryColor = color })
-
         UpdatePhone phone ->
             updateSettings model (\s -> { s | phone = phone })
 
@@ -665,6 +654,9 @@ update msg model =
 
                 Err _ ->
                     ( model, Cmd.none )
+
+        UpdateForceOrgSenderDetails value ->
+            updateSettings model (\s -> { s | forceOrgSenderDetails = value })
 
 
 updateSettings : Model -> (Settings -> Settings) -> ( Model, Cmd Msg )
@@ -755,9 +747,9 @@ view model =
                 ]
 
           else
-            div [ class "min-h-screen bg-gray-50" ]
+            div [ class "min-h-screen bg-white" ]
                 [ viewHeader
-                , div [ class "max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-8" ]
+                , div [ class "max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-8 pb-32" ]
                     [ if model.isLoading then
                         viewLoading
 
@@ -804,91 +796,79 @@ viewBottomBar model =
 
 viewSettings : Model -> Html Msg
 viewSettings model =
-    div [ class "space-y-8" ]
+    div [ class "space-y-12" ]
         [ case model.orgSettings of
             Just settings ->
-                div [ class "space-y-6" ]
-                    [ viewBrandSettings settings model
+                div [ class "space-y-12" ]
+                    [ viewOrganizationDetails settings model
+                    , viewCarriersOffered settings model
                     , viewSelfOnboardingLink model
-                    , div [ class "bg-white shadow rounded-lg p-6" ]
-                        [ h2 [ class "text-lg font-medium mb-4" ] [ text "Carrier Contracts" ]
-                        , viewCarriersGrid settings model
-                        ]
-
-                    {--
-                    , viewEmailSettings settings
-                    , viewExpandableSection "State & Carrier Settings"
-                        (viewStateCarrierGrid settings model)
-                        model.expandedSections
-                    --}
+                    , viewDefaultSenderSettings settings
                     ]
 
             Nothing ->
                 div [ class "text-gray-500 italic" ]
                     [ text "Loading settings..." ]
-
-        --, viewBottomBar model
         ]
 
 
-viewBrandSettings : Settings -> Model -> Html Msg
-viewBrandSettings settings model =
+viewOrganizationDetails : Settings -> Model -> Html Msg
+viewOrganizationDetails settings model =
     div [ class "bg-white shadow rounded-lg p-6" ]
-        [ h2 [ class "text-lg font-medium mb-4" ] [ text "Agency Settings" ]
+        [ h2 [ class "text-lg font-medium text-gray-900 mb-6" ] [ text "Organization Details" ]
+        , p [ class "text-sm text-gray-500 mb-6" ]
+            [ text "If the Organization is at any point selected to be the sender, the following details will be used." ]
         , div [ class "space-y-6" ]
             [ div [ class "space-y-4" ]
                 [ viewFormGroup "Agency Name"
                     (input
                         [ type_ "text"
-                        , class "w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-purple-500 focus:border-purple-500"
+                        , class "mt-1 px-3 py-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-base"
                         , value settings.brandName
                         , onInput UpdateBrandName
+                        , placeholder "Example Biz"
                         ]
                         []
                     )
-                , viewFormGroup "Organization Contact Info"
-                    (div [ class "mt-2" ]
-                        [ checkbox "Use organization info instead of agent info" settings.orgSignature ToggleOrgSignature
-                        , p [ class "text-gray-500 text-sm mt-1 ml-7" ] [ text "When enabled, quote pages and schedule pages will show organization info instead of the specific agent's contact info" ]
+                , viewFormGroup "Phone number"
+                    (div [ class "flex" ]
+                        [ span [ class "inline-flex items-center px-3 py-2 rounded-l-md border border-r-0 border-gray-300 bg-gray-50 text-gray-500 shadow-sm" ]
+                            [ text "US" ]
+                        , input
+                            [ type_ "tel"
+                            , class "flex-1 px-3 py-2 rounded-r-md border border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-base focus:z-10"
+                            , value settings.phone
+                            , onInput UpdatePhone
+                            , placeholder "+1 (555) 000-0000"
+                            ]
+                            []
                         ]
                     )
-                , viewFormGroup "Phone Number"
-                    (input
-                        [ type_ "tel"
-                        , class "w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-purple-500 focus:border-purple-500"
-                        , classList [ ( "bg-gray-100", not settings.orgSignature ) ]
-                        , value settings.phone
-                        , onInput UpdatePhone
-                        , disabled (not settings.orgSignature)
-                        ]
-                        []
-                    )
-                , viewFormGroup "Email Signature"
-                    (textarea
-                        [ class "w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-purple-500 focus:border-purple-500"
-                        , classList [ ( "bg-gray-100", not settings.orgSignature ) ]
-                        , value settings.signature
-                        , onInput UpdateSignature
-                        , disabled (not settings.orgSignature)
-                        , rows 3
-                        ]
-                        []
-                    )
-                , viewFormGroup "Calendar Redirect URL"
+                , viewFormGroup "Calendar Booking Link (optional)"
                     (div []
                         [ input
                             [ type_ "text"
-                            , class "w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-purple-500 focus:border-purple-500"
-                            , classList [ ( "bg-gray-100", not settings.orgSignature ) ]
+                            , class "mt-1 px-3 py-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-base"
                             , value settings.redirectUrl
                             , onInput UpdateRedirectUrl
-                            , disabled (not settings.orgSignature)
+                            , placeholder "example.biz"
                             ]
                             []
-                        , p [ class "text-gray-500 text-xs mt-1" ] [ text "Optional URL where users will be redirected to schedule appointments (e.g., your calendly link)" ]
+                        , p [ class "text-gray-500 text-xs mt-1" ]
+                            [ text "If provided, this link will be used as one of the options a client may select to connect with your agency. Traditionally this would be a Calendly link, Acuity link, etc." ]
                         ]
                     )
-                , viewFormGroup "Logo"
+                , viewFormGroup "Email & SMS Signature or Sign Off"
+                    (textarea
+                        [ class "mt-1 px-3 py-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-base"
+                        , value settings.signature
+                        , onInput UpdateSignature
+                        , rows 3
+                        , placeholder ("Thanks,\nThe team at " ++ (if String.isEmpty settings.brandName then "Example Biz" else settings.brandName))
+                        ]
+                        []
+                    )
+                , viewFormGroup "Organization Logo"
                     (div []
                         [ if model.uploadingLogo then
                             div [ class "flex justify-center items-center h-32" ]
@@ -973,11 +953,13 @@ viewEmailSettings settings =
 viewSelfOnboardingLink : Model -> Html Msg
 viewSelfOnboardingLink model =
     div [ class "bg-white shadow rounded-lg p-6" ]
-        [ h2 [ class "text-lg font-medium mb-4" ] [ text "Self Onboarding" ]
+        [ h2 [ class "text-lg font-medium text-gray-900 mb-2" ] [ text "Organization Self-Onboarding Link" ]
+        , p [ class "text-sm text-gray-500 mb-6" ]
+            [ text "Share this link with clients or non-clients to gather missing information or capture new leads to your book of business." ]
         , div [ class "space-y-4" ]
-            [ p [ class "mb-4 text-gray-600" ]
-                [ text "Share this link with clients to allow them to self-onboard into your account on the Medicare Max platform." ]
-            , div [ class "flex items-center space-x-3" ]
+            [ p [ class "text-sm font-medium text-gray-700 mb-2" ]
+                [ text "Please note: when a user uses the link and fills out the form they will be added to your book without having a specified agent. To designate an agent for a new contact share the agent's self-onboarding link." ]
+            , div [ class "mt-4" ]
                 [ let
                     slug =
                         model.currentUser
@@ -986,27 +968,98 @@ viewSelfOnboardingLink model =
 
                     selfOnboardingUrl =
                         model.selfOnboardingUrl
-                            |> Maybe.withDefault ("/self-onboarding/" ++ slug)
+                            |> Maybe.withDefault ("medicaremax.ai/self-onboarding/" ++ slug)
                   in
-                  div [ class "flex-1 flex items-center space-x-4" ]
-                    [ input
+                  div [ class "flex items-center space-x-2" ]
+                    [ svg [ Svg.Attributes.class "h-5 w-5 text-gray-400", Svg.Attributes.viewBox "0 0 20 20", Svg.Attributes.fill "currentColor" ]
+                        [ path [ Svg.Attributes.fillRule "evenodd", Svg.Attributes.d "M12.586 4.586a2 2 0 112.828 2.828l-3 3a2 2 0 01-2.828 0 1 1 0 00-1.414 1.414 4 4 0 005.656 0l3-3a4 4 0 00-5.656-5.656l-1.5 1.5a1 1 0 101.414 1.414l1.5-1.5zm-5 5a2 2 0 012.828 0 1 1 0 101.414-1.414 4 4 0 00-5.656 0l-3 3a4 4 0 105.656 5.656l1.5-1.5a1 1 0 10-1.414-1.414l-1.5 1.5a2 2 0 11-2.828-2.828l3-3z", Svg.Attributes.clipRule "evenodd" ] []
+                        ]
+                    , input
                         [ type_ "text"
-                        , class "flex-1 px-4 py-2 border border-gray-300 rounded-md focus:ring-purple-500 focus:border-purple-500 bg-gray-50"
+                        , class "flex-1 px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 bg-gray-50 text-gray-500"
                         , value selfOnboardingUrl
                         , readonly True
                         ]
                         []
                     , button
-                        [ class "px-4 py-2 text-sm bg-purple-600 text-white rounded hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+                        [ class "px-4 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
                         , onClick CopySelfOnboardingLink
                         ]
-                        [ text
-                            (if model.linkCopied then
-                                "Copied!"
+                        [ text "Copy Link" ]
+                    ]
+                ]
+            ]
+        ]
 
-                             else
-                                "Copy Link"
-                            )
+
+viewDefaultSenderSettings : Settings -> Html Msg
+viewDefaultSenderSettings settings =
+    div [ class "bg-white shadow rounded-lg p-6" ]
+        [ h2 [ class "text-lg font-medium text-gray-900 mb-2" ] [ text "Default Sender Settings" ]
+        , p [ class "text-sm text-gray-500 mb-6" ]
+            [ text "When communication is sent to your book of business you can set the default sender settings for the organization." ]
+        , div [ class "grid grid-cols-1 md:grid-cols-2 gap-4" ]
+            [ -- Organization Only Card
+              div 
+                [ class ("relative rounded-lg border-2 p-6 cursor-pointer transition-all " ++
+                    if settings.forceOrgSenderDetails then
+                        "border-blue-500 bg-blue-50"
+                    else
+                        "border-gray-200 hover:border-gray-300 bg-white"
+                    )
+                , onClick (UpdateForceOrgSenderDetails True)
+                ]
+                [ div [ class "flex items-start" ]
+                    [ div [ class "flex items-center h-5" ]
+                        [ input
+                            [ type_ "radio"
+                            , name "senderSettings"
+                            , checked settings.forceOrgSenderDetails
+                            , class "h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
+                            ]
+                            []
+                        ]
+                    , div [ class "ml-3" ]
+                        [ label [ class "font-medium text-gray-900" ] [ text "Organization Only" ]
+                        , p [ class "text-sm text-gray-500 mt-1" ]
+                            [ text "When this option is selected the Organization Details above will be used for the signature, phone number, and scheduling link if applicable." ]
+                        , p [ class "text-sm text-gray-500 mt-3" ]
+                            [ text "The Agent will not get an option to use their information." ]
+                        , div [ class "mt-4 text-xs text-gray-400" ]
+                            [ div [ class "mb-1" ] [ text "Recommended For:" ]
+                            , div [] [ text "Agencies with a customer care or retention team." ]
+                            ]
+                        ]
+                    ]
+                ]
+            , -- Agent's Choice Card
+              div 
+                [ class ("relative rounded-lg border-2 p-6 cursor-pointer transition-all " ++
+                    if not settings.forceOrgSenderDetails then
+                        "border-blue-500 bg-blue-50"
+                    else
+                        "border-gray-200 hover:border-gray-300 bg-white"
+                    )
+                , onClick (UpdateForceOrgSenderDetails False)
+                ]
+                [ div [ class "flex items-start" ]
+                    [ div [ class "flex items-center h-5" ]
+                        [ input
+                            [ type_ "radio"
+                            , name "senderSettings"
+                            , checked (not settings.forceOrgSenderDetails)
+                            , class "h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
+                            ]
+                            []
+                        ]
+                    , div [ class "ml-3" ]
+                        [ label [ class "font-medium text-gray-900" ] [ text "Agent Details" ]
+                        , p [ class "text-sm text-gray-500 mt-1" ]
+                            [ text "When this option is selected the Agent's personal information from their agent settings will be used for the signature, phone number, and scheduling link if applicable." ]
+                        , div [ class "mt-4 text-xs text-gray-400" ]
+                            [ div [ class "mb-1" ] [ text "Recommended For:" ]
+                            , div [] [ text "Agencies with agents who provide ongoing support for servicing existing clients." ]
+                            ]
                         ]
                     ]
                 ]
@@ -1054,8 +1107,8 @@ viewExpandableSection title content expandedSections =
         ]
 
 
-viewCarriersGrid : Settings -> Model -> Html Msg
-viewCarriersGrid settings model =
+viewCarriersOffered : Settings -> Model -> Html Msg
+viewCarriersOffered settings model =
     let
         carriersToUse =
             if List.isEmpty model.loadedCarriers then
@@ -1064,28 +1117,38 @@ viewCarriersGrid settings model =
             else
                 model.loadedCarriers
     in
-    div []
-        [ div [ class "mb-4 flex items-center" ]
-            [ checkbox "Select All Carriers"
-                (List.length settings.carrierContracts == List.length carriersToUse)
-                ToggleAllCarriers
-            ]
-        , div [ class "grid grid-cols-2 sm:grid-cols-3 gap-4" ]
-            (List.map
-                (\carrier ->
-                    checkbox carrier
-                        (safeMember carrier carriersToUse)
-                        (\checked ->
-                            if checked then
-                                AddCarrierContract carrier
+    div [ class "bg-white shadow rounded-lg p-6" ]
+        [ h2 [ class "text-lg font-medium text-gray-900 mb-6" ] [ text "Carriers Offered" ]
+        , p [ class "text-sm text-gray-500 mb-6" ]
+            [ text "Select the carriers you would like offered to your clients. This will be set for all agents within the organization." ]
+        , div []
+            [ div [ class "mb-4" ]
+                [ checkbox "Select to Offer All Carriers"
+                    (List.length settings.carrierContracts == List.length carriersToUse)
+                    ToggleAllCarriers
+                ]
+            , div [ class "grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4" ]
+                (List.map
+                    (\carrier ->
+                        checkbox carrier
+                            (safeMember carrier settings.carrierContracts)
+                            (\checked ->
+                                if checked then
+                                    AddCarrierContract carrier
 
-                            else
-                                RemoveCarrierContract carrier
-                        )
+                                else
+                                    RemoveCarrierContract carrier
+                            )
+                    )
+                    carriersToUse
                 )
-                carriersToUse
-            )
+            ]
         ]
+
+
+viewCarriersGrid : Settings -> Model -> Html Msg
+viewCarriersGrid settings model =
+    viewCarriersOffered settings model
 
 
 safeMember : String -> List String -> Bool
@@ -1328,7 +1391,7 @@ viewLoading =
 
 viewHeader : Html msg
 viewHeader =
-    nav [ class "bg-white border-b border-gray-200" ]
+    nav [ class "bg-white" ]
         [ div [ class "max-w-4xl mx-auto px-4 sm:px-6 lg:px-8" ]
             [ div [ class "flex justify-between h-16" ]
                 [ div [ class "flex" ]

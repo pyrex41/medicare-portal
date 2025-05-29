@@ -1,4 +1,4 @@
-This file is a merged representation of a subset of the codebase, containing specifically included files and files not matching ignore patterns, combined into a single document by Repomix.
+This file is a merged representation of a subset of the codebase, containing files not matching ignore patterns, combined into a single document by Repomix.
 
 ================================================================
 File Summary
@@ -36,8 +36,7 @@ Notes:
 ------
 - Some files may have been excluded based on .gitignore rules and Repomix's configuration
 - Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
-- Only files matching these patterns are included: **/*.ts, **/*.elm
-- Files matching these patterns are excluded: **/*/node_modules/*
+- Files matching these patterns are excluded: node_modules/, **/zipData.json
 - Files matching patterns in .gitignore are excluded
 - Files matching default ignore patterns are excluded
 
@@ -47,6 +46,38 @@ Additional Info:
 ================================================================
 Directory Structure
 ================================================================
+data/
+  migrations/
+    003_add_tracking_clicks.sql
+    004_fix_tracking_clicks.sql
+  public/
+    hhd.csv
+migrations/
+  007-pending-signups-table.sql
+  20240324_create_contacts_table.sql
+  20240324_optimize_contacts.sql
+  20240325_fix_missing_updated_at.sql
+  20240326_create_waitlist_table.sql
+  20240326_deduplicate_contacts.sql
+  20240326_fix_contact_email_unique.sql
+  20240326_fix_duplicate_contacts.sql
+  20240402_allow_null_current_carrier.sql
+  20240406_add_contact_history_tracking.sql
+  20250425_create_schema_no_contacts.sql
+  20250425_fix_schema_with_contacts.sql
+  20250425_make_optional_fields_nullable.sql
+  add_aep_request_columns.sql
+  add_deleted_contacts_table.sql
+  add_email_tracking.sql
+  add_onboarding_columns.sql
+  add_send_time_col.sql
+  add_updated_at_col.sql
+  create_subscription_tables.sql
+  fix_email_tracking.sql
+  remove_eligibility_answers_fk.sql
+public/
+  hhd.csv
+  test-bulk-import.html
 scripts/
   add-agent.ts
   apply-contact-migration.ts
@@ -55,7 +86,15 @@ scripts/
   generateQuoteUrl.ts
   manage-recommendations.ts
   manage-turso.ts
+  migrate-tracking-clicks.js
+  sample-contacts.csv
+  setup-contact-tracking.sh
   test-bulk-import.ts
+sql/
+  add_demo_mode_column.sql
+  create_tables.sql
+  update_org_limits.sql
+  update_org_schema.sql
 src/
   config/
     index.ts
@@ -69,6 +108,7 @@ src/
     admin-portal.ts
     admin.ts
     auth.ts
+    billing.ts
     brand.ts
     contacts.ts
     contactTracking.ts
@@ -105,10 +145,1494 @@ src/
   index.ts
   logger.ts
   types.ts
+.env.example
+.gitignore
+BULK-IMPORT-IMPLEMENTATION.md
+out.txt
+package.json
+README-bulk-import.md
+README.md
+tsconfig.json
 
 ================================================================
 Files
 ================================================================
+
+================
+File: data/migrations/003_add_tracking_clicks.sql
+================
+-- Migration: 003_add_tracking_clicks.sql
+-- Description: Adds tracking_clicks table for link click tracking
+-- Date: 2023-08-30
+
+-- Create the tracking_clicks table if it doesn't exist
+CREATE TABLE IF NOT EXISTS tracking_clicks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  tracking_id TEXT NOT NULL,
+  path TEXT NOT NULL,
+  query TEXT,
+  contact_id INTEGER,
+  ip_address TEXT,
+  user_agent TEXT, 
+  referrer TEXT,
+  clicked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
+);
+
+-- Create indexes for efficient querying
+CREATE INDEX IF NOT EXISTS idx_tracking_clicks_tracking_id ON tracking_clicks(tracking_id);
+CREATE INDEX IF NOT EXISTS idx_tracking_clicks_contact_id ON tracking_clicks(contact_id);
+CREATE INDEX IF NOT EXISTS idx_tracking_clicks_clicked_at ON tracking_clicks(clicked_at);
+
+-- Add versioning information to track that this migration has been applied
+
+================
+File: data/migrations/004_fix_tracking_clicks.sql
+================
+-- Add quote_id column if it doesn't exist
+ALTER TABLE tracking_clicks ADD COLUMN quote_id TEXT;
+
+-- Create a new table with the desired structure
+CREATE TABLE tracking_clicks_new (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  tracking_id TEXT NOT NULL,
+  contact_id INTEGER,
+  quote_id TEXT,
+  clicked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
+);
+
+-- Copy data from the old table to the new table
+INSERT INTO tracking_clicks_new (id, tracking_id, contact_id, quote_id, clicked_at)
+SELECT id, tracking_id, contact_id, quote_id, clicked_at FROM tracking_clicks;
+
+-- Drop the old table
+DROP TABLE tracking_clicks;
+
+-- Rename the new table to the original name
+ALTER TABLE tracking_clicks_new RENAME TO tracking_clicks;
+
+-- Recreate the indexes
+CREATE INDEX idx_tracking_clicks_tracking_id ON tracking_clicks(tracking_id);
+CREATE INDEX idx_tracking_clicks_contact_id ON tracking_clicks(contact_id);
+CREATE INDEX idx_tracking_clicks_clicked_at ON tracking_clicks(clicked_at);
+
+================
+File: data/public/hhd.csv
+================
+,ACE/Chubb,AETNA,AFLAC,Allstate,Anthem,CIGNA,Mutual of Omaha,Humana (MIPPA),Humana (Achieve),UHIC
+AL,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,"Price includes 7% off for living with someone 50+. Save extra: 3% for spouse enrolling into the same plan, 10% for annual payment, 5% for wearable fitness device use.",NA,Price includes 6% off for living with someone 18+. Additional discount of 14% is available if you and your spouse/partner enroll into the same plan. ,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+AK,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,NA,"Price includes 7% off for living with someone 50+. Save extra: 3% for spouse enrolling into the same plan, 10% for annual payment.",NA,Both you and your spouse/partner must have a supplemental plan with CIGNA.,NA,Both you and your spouse/partner must have a supplemental plan with Humana.,NA,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+AZ,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,"Price includes 7% off for living with someone 50+. Save extra: 3% for spouse enrolling into the same plan, 10% for annual payment, 5% for wearable fitness device use.",Both you and your spouse/partner must have a supplemental plan with Anthem.,Price includes 6% off for living with someone 18+. Additional discount of 14% is available if you and your spouse/partner enroll into the same plan. ,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+AR,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Price includes 7% off for living with someone 50+. Save extra: 3% for spouse enrolling into the same plan.,NA,You need to live with a spouse or someone who is at least 50 years old.,You need to live with a spouse or someone who is at least 60 years old.,You need to live with a spouse or someone who is at least 18 years old.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+CA,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,"Price includes 7% off for living with someone 50+. Save extra: 3% for spouse enrolling into the same plan, 10% for annual payment, 5% for wearable fitness device use.",Both you and your spouse/partner must have a supplemental plan with Anthem.,Price includes 6% off for living with someone 50+. Additional discount of 5% is available if you and your spouse/partner enroll into the same plan. ,You need to live with a spouse or someone who is at least 60 years old.,NA,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #. Additional $25 discount for first 12 months for new to Medicare on Plan G.
+CO,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,"Price includes 7% off for living with someone 50+. Save extra: 3% for spouse enrolling into the same plan, 10% for annual payment, 5% for wearable fitness device use.",Both you and your spouse/partner must have a supplemental plan with Anthem.,Price includes 6% off for living with someone 50+. Additional discount of 14% is available if you and your spouse/partner enroll into the same plan. ,You need to live with a spouse or someone who is at least 60 years old.,You need to live with a spouse or someone who is at least 18 years old.,NA,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+CT,NA,NA,NA,NA,Both you and your spouse/partner must have a supplemental plan with Anthem.,Both you and your spouse/partner must have a supplemental plan with CIGNA.,NA,You need to live with a spouse or someone who is at least 18 years old.,NA,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+DE,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,"Price includes 7% off for living with someone 50+. Save extra: 3% for spouse enrolling into the same plan, 10% for annual payment, 5% for wearable fitness device use.",NA,Price includes 6% off for living with someone 18+. Additional discount of 14% is available if you and your spouse/partner enroll into the same plan. ,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+DC,NA,Both you and your spouse/partner must have a supplemental plan with AETNA.,NA,"Price includes 7% off for living with someone 50+. Save extra: 3% for spouse enrolling into the same plan, 10% for annual payment, 5% for wearable fitness device use.",NA,Both you and your spouse/partner must have a supplemental plan with CIGNA.,NA,Both you and your spouse/partner must have a supplemental plan with Humana.,NA,NA
+FL,Both you and your spouse/partner must have a supplemental plan with Ace/Chubb.,NA,Both you and your spouse/partner must have a supplemental plan with AFLAC.,Live with someone 50+,NA,Both you and your spouse/partner must have a supplemental plan with CIGNA.,NA,NA,Both you and your spouse/partner must have a supplemental plan with Humana.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+GA,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,"Price includes 7% off for living with someone 50+. Save extra: 3% for spouse enrolling into the same plan, 10% for annual payment, 5% for wearable fitness device use.",You need to live with a spouse or someone who is at least 60 years old.,Price includes 6% off for living with someone 18+. Additional discount of 14% is available if you and your spouse/partner enroll into the same plan. ,You need to live with a spouse or someone who is at least 60 years old.,You need to live with a spouse or someone who is at least 18 years old.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+HI,NA,NA,NA,NA,NA,NA,NA,Both you and your spouse/partner must have a supplemental plan with Humana.,NA,NA
+ID,NA,NA,NA,NA,NA,NA,NA,*Value Plan - NA,NA,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+IL,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+,NA,Price includes 6% off for living with someone 18+. Additional discount of 14% is available if you and your spouse/partner enroll into the same plan. ,You need to live with a spouse or someone who is at least 60 years old.,You need to live with a spouse or someone who is at least 18 years old.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+IN,Both you and your spouse/partner must have a supplemental plan with Ace/Chubb.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,"Price includes 7% off for living with someone 50+. Save extra: 10% for annual payment, 5% for wearable fitness device use.",Both you and your spouse/partner must have a supplemental plan with Anthem.,Price includes 6% off for living with someone 50+. Additional discount of 14% is available if you and your spouse/partner enroll into the same plan. ,You need to live with a spouse or someone who is at least 60 years old.,NA,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+IA,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,"Price includes 7% off for living with someone 50+. Save extra: 3% for spouse enrolling into the same plan, 10% for annual payment, 5% for wearable fitness device use.",NA,Price includes 6% off for living with someone 50+. Additional discount of 14% is available if you and your spouse/partner enroll into the same plan. ,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+KS,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,"Price includes 7% off for living with someone 50+. Save extra: 3% for spouse enrolling into the same plan, 10% for annual payment, 5% for wearable fitness device use.",NA,Price includes 6% off for living with someone 50+. Additional discount of 14% is available if you and your spouse/partner enroll into the same plan. ,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+KY,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,Both you and your spouse/partner/family member must have a supplemental plan with AFLAC.,"Price includes 7% off for living with someone 50+. Save extra: 3% for spouse enrolling into the same plan, 10% for annual payment, 5% for wearable fitness device use.",Both you and your spouse/partner must have a supplemental plan with Anthem.,Price includes 6% off for living with someone 18+. Additional discount of 14% is available if you and your spouse/partner enroll into the same plan. ,You need to live with a spouse or someone who is at least 60 years old.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+LA,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,"Price includes 7% off for living with someone 50+. Save extra: 3% for spouse enrolling into the same plan, 10% for annual payment, 5% for wearable fitness device use.",NA,Price includes 6% off for living with someone 50+. Additional discount of 14% is available if you and your spouse/partner enroll into the same plan. ,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+ME,You need to live with a spouse or someone who is at least 50 years old.,NA,NA,NA,Both you and your spouse/partner must have a supplemental plan with Anthem.,Both you and your spouse/partner must have a supplemental plan with CIGNA.,Both you and your spouse/partner must have a supplemental plan with Mutual of Omaha.,Both you and your spouse/partner must have a supplemental plan with Humana.,NA,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+MD,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,"Price includes 7% off for living with someone 50+. Save extra: 3% for spouse enrolling into the same plan, 10% for annual payment, 5% for wearable fitness device use.",NA,Price includes 6% off for living with someone 18+. Additional discount of 14% is available if you and your spouse/partner enroll into the same plan. ,You need to live with a spouse or someone who is at least 60 years old.,You need to live with a spouse or someone who is at least 18 years old.,NA,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+MA,NA,NA,NA,NA,NA,NA,NA,You need to live with a spouse or someone who is at least 18 years old.,NA,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+MI,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,"Price includes 7% off for living with someone 50+. Save extra: 3% for spouse enrolling into the same plan, 10% for annual payment, 5% for wearable fitness device use.",NA,Price includes 6% off for living with someone 18+. Additional discount of 14% is available if you and your spouse/partner enroll into the same plan. ,You need to live with a spouse or someone who is at least 60 years old.,You need to live with a spouse or someone who is at least 18 years old.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+MN,NA,NA,NA,Price includes 7% off for living with someone 50+. Save extra: 10% for annual payment.,NA,NA,NA,NA,NA,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+MS,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,"Price includes 7% off for living with someone 50+. Save extra: 3% for spouse enrolling into the same plan, 10% for annual payment, 5% for wearable fitness device use.",NA,Price includes 6% off for living with someone 18+. Additional discount of 14% is available if you and your spouse/partner enroll into the same plan. ,You need to live with a spouse or someone who is at least 60 years old.,You need to live with a spouse or someone who is at least 18 years old.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+MO,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,"Price includes 7% off for living with someone 50+. Save extra: 3% for spouse enrolling into the same plan, 10% for annual payment, 5% for wearable fitness device use.",Both you and your spouse/partner must have a supplemental plan with Anthem.,You need to live with someone who is at least 50 years old.,You need to live with a spouse or domestic partner.,Both you and your spouse/partner must have a supplemental plan with Humana.,NA,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+MT,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 18 years old.,"Price includes 7% off for living with someone 50+. Save extra: 3% for spouse enrolling into the same plan, 10% for annual payment, 5% for wearable fitness device use.",NA,Price includes 6% off for living with someone 18+. Additional discount of 14% is available if you and your spouse/partner enroll into the same plan. ,You need to live with someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+NE,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,"Price includes 7% off for living with someone 50+. Save extra: 3% for spouse enrolling into the same plan, 10% for annual payment, 5% for wearable fitness device use.",NA,Price includes 6% off for living with someone 18+. Additional discount of 14% is available if you and your spouse/partner enroll into the same plan. ,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+NV,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Price includes 7% off for living with someone 50+. Save extra: 3% for spouse enrolling into the same plan.,Both you and your spouse/partner must have a supplemental plan with Anthem.,Price includes 6% off for living with someone 50+. Additional discount of 14% is available if you and your spouse/partner enroll into the same plan. ,You need to live with a spouse or someone who is at least 60 years old.,You need to live with a spouse or someone who is at least 18 years old.,NA,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+NH,NA,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,NA,NA,Price includes 6% off for living with someone 50+. Additional discount of 14% is available if you and your spouse/partner enroll into the same plan. ,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,NA
+NJ,Both you and your spouse/partner must have a supplemental plan with Ace/Chubb.,Both you and your spouse/partner must have a supplemental plan with AETNA.,Both you and your spouse/partner/family member must have a supplemental plan with AFLAC.,Live with someone 50+,NA,Both you and your spouse/partner must have a supplemental plan with CIGNA.,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,Both you and your spouse/partner must have a supplemental plan with Humana.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+NM,NA,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,"Price includes 7% off for living with someone 50+. Save extra: 3% for spouse enrolling into the same plan, 10% for annual payment, 5% for wearable fitness device use.",NA,Price includes 6% off for living with someone 50+. Additional discount of 14% is available if you and your spouse/partner enroll into the same plan. ,You need to live with a spouse or someone who is at least 60 years old.,You need to live with a spouse or someone who is at least 18 years old.,NA,NA
+NY,NA,NA,NA,NA,Not accepting new Supps,NA,NA,NA,NA,NA
+NC,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,"Price includes 7% off for living with someone 50+. Save extra: 3% for spouse enrolling into the same plan, 10% for annual payment, 5% for wearable fitness device use.",NA,Price includes 6% off for living with someone 18+. Additional discount of 14% is available if you and your spouse/partner enroll into the same plan. ,You need to live with a spouse or someone who is at least 60 years old.,You need to live with a spouse or someone who is at least 18 years old.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+ND,NA,NA,Both you and your spouse/partner/family member must have a supplemental plan with AFLAC.,"Price includes 7% off for living with someone 50+. Save extra: 3% for spouse enrolling into the same plan, 10% for annual payment, 5% for wearable fitness device use.",NA,Price includes 6% off for living with someone 50+. Additional discount of 14% is available if you and your spouse/partner enroll into the same plan. ,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,NA
+OH,Both you and your spouse/partner must have a supplemental plan with Ace/Chubb.,Both you and your spouse/partner must have a supplemental plan with AETNA.,Both you and your spouse/partner/family member must have a supplemental plan with AFLAC.,Live with someone 50+,Both you and your spouse/partner must have a supplemental plan with Anthem.,Both you and your spouse/partner must have a supplemental plan with CIGNA.,"You need to live with your spouse, partner, or a roomate for the last 12 months.",Both you and your spouse/partner must have a supplemental plan with Humana.,Both you and your spouse/partner must have a supplemental plan with Humana.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+OK,Both you and your spouse/partner must have a supplemental plan with Ace/Chubb.,Both you and your spouse/partner must have a supplemental plan with AETNA.,Both you and your spouse/partner/family member must have a supplemental plan with AFLAC.,"Price includes 7% off for living with someone 50+. Save extra: 3% for spouse enrolling into the same plan, 10% for annual payment, 5% for wearable fitness device use.",NA,Both you and your spouse/partner must have a supplemental plan with CIGNA.,"You need to live with your spouse, partner, or a roomate for the last 12 months.",Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+OR,NA,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+,NA,Both you and your spouse/partner must have a supplemental plan with CIGNA.,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,NA,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+PA,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+,NA,You need to live with a spouse or partner. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or domestic partner.,"You need to live with spouse, civil or domestic partner.",You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+RI,NA,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,NA,NA,Price includes 6% off for living with someone 18+. Additional discount of 14% is available if you and your spouse/partner enroll into the same plan. ,You need to live with a spouse or someone who is at least 60 years old.,NA,NA,NA
+SC,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,"Price includes 7% off for living with someone 50+. Save extra: 3% for spouse enrolling into the same plan, 10% for annual payment, 5% for wearable fitness device use.",NA,Price includes 6% off for living with someone 18+. Additional discount of 14% is available if you and your spouse/partner enroll into the same plan. ,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+SD,You need to live with a spouse or someone who is at least 50 years old.,NA,You need to live with a spouse or someone who is at least 50 years old.,"Price includes 7% off for living with someone 50+. Save extra: 3% for spouse enrolling into the same plan, 10% for annual payment, 5% for wearable fitness device use.",NA,Price includes 6% off for living with someone 18+. Additional discount of 14% is available if you and your spouse/partner enroll into the same plan. ,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+TN,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,"Price includes 7% off for living with someone 50+. Save extra: 3% for spouse enrolling into the same plan, 10% for annual payment, 5% for wearable fitness device use.",NA,Price includes 6% off for living with someone 50+. Additional discount of 14% is available if you and your spouse/partner enroll into the same plan. ,You need to live with a spouse or someone who is at least 60 years old.,You need to live with a spouse or someone who is at least 18 years old.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+TX,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,"Price includes 7% off for living with someone 50+. Save extra: 3% for spouse enrolling into the same plan, 10% for annual payment, 5% for wearable fitness device use.",Both you and your spouse/partner must have a supplemental plan with Anthem.,Price includes 6% off for living with someone 50+. Additional discount of 14% is available if you and your spouse/partner enroll into the same plan. ,You need to live with someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+UT,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,"Price includes 7% off for living with someone 50+. Save extra: 3% for spouse enrolling into the same plan, 10% for annual payment, 5% for wearable fitness device use.",NA,Price includes 6% off for living with someone 18+. Additional discount of 14% is available if you and your spouse/partner enroll into the same plan. ,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,NA,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+VT,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA
+VA,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,Both you and your spouse/partner must have a supplemental plan with AFLAC.,Price includes 7% off for living with someone 50+. Save extra: 3% for spouse enrolling into the same plan.,Both you and your spouse/partner must have a supplemental plan with Anthem.,Price includes 6% off for living with someone 50+. Additional discount of 14% is available if you and your spouse/partner enroll into the same plan. ,You need to live with a spouse or someone who is at least 60 years old.,You need to live with a spouse or someone who is at least 18 years old.,NA,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+WA,Both you and your spouse/partner must have a supplemental plan with Ace/Chubb.,NA,NA,NA,NA,Both you and your spouse/partner must have a supplemental plan with CIGNA.,Both you and your spouse/partner must have a supplemental plan with Mutual of Omaha.,Both you and your spouse/partner must have a supplemental plan with Humana.,NA,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+WV,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,"Price includes 7% off for living with someone 50+. Save extra: 3% for spouse enrolling into the same plan, 10% for annual payment, 5% for wearable fitness device use.",NA,Price includes 6% off for living with someone 50+. Additional discount of 14% is available if you and your spouse/partner enroll into the same plan. ,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+WI,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,"Price includes 7% off for living with someone 50+. Save extra: 3% for spouse enrolling into the same plan, 10% for annual payment, 5% for wearable fitness device use.",Both you and your spouse/partner must have a supplemental plan with Anthem.,Price includes 6% off for living with someone 18+. Additional discount of 14% is available if you and your spouse/partner enroll into the same plan. ,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+WY,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,"Price includes 7% off for living with someone 50+. Save extra: 3% for spouse enrolling into the same plan, 10% for annual payment, 5% for wearable fitness device use.",NA,Price includes 6% off for living with someone 50+. Additional discount of 14% is available if you and your spouse/partner enroll into the same plan. ,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+
+================
+File: migrations/007-pending-signups-table.sql
+================
+-- Create pending_signups table to store user information temporarily during signup
+CREATE TABLE IF NOT EXISTS pending_signups (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  organization_id INTEGER NOT NULL,
+  first_name TEXT NOT NULL,
+  last_name TEXT,
+  email TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+);
+
+-- Add index for faster lookups
+CREATE INDEX IF NOT EXISTS idx_pending_signups_org_id ON pending_signups(organization_id);
+CREATE INDEX IF NOT EXISTS idx_pending_signups_email ON pending_signups(email);
+
+================
+File: migrations/20240324_create_contacts_table.sql
+================
+-- Create contacts table if it doesn't exist
+CREATE TABLE IF NOT EXISTS contacts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  first_name TEXT NOT NULL,
+  last_name TEXT NOT NULL,
+  email TEXT NOT NULL,
+  current_carrier TEXT NOT NULL,
+  plan_type TEXT NOT NULL,
+  effective_date TEXT NOT NULL,
+  birth_date TEXT NOT NULL,
+  tobacco_user INTEGER NOT NULL,
+  gender TEXT NOT NULL,
+  state TEXT NOT NULL,
+  zip_code TEXT NOT NULL,
+  agent_id INTEGER,
+  last_emailed DATETIME,
+  phone_number TEXT NOT NULL DEFAULT '',
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Add indexes for common queries
+CREATE INDEX IF NOT EXISTS idx_contacts_email ON contacts(email);
+CREATE INDEX IF NOT EXISTS idx_contacts_agent_id ON contacts(agent_id);
+CREATE INDEX IF NOT EXISTS idx_contacts_state ON contacts(state);
+CREATE INDEX IF NOT EXISTS idx_contacts_current_carrier ON contacts(current_carrier);
+CREATE INDEX IF NOT EXISTS idx_contacts_effective_date ON contacts(effective_date);
+
+-- Add unique constraint on email
+CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_email_unique ON contacts(LOWER(TRIM(email)));
+
+================
+File: migrations/20240324_optimize_contacts.sql
+================
+-- Optimize contacts table performance
+
+-- Add missing columns if they don't exist
+SELECT CASE 
+    WHEN NOT EXISTS(SELECT 1 FROM pragma_table_info('contacts') WHERE name = 'created_at') 
+    THEN 'ALTER TABLE contacts ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP;'
+    ELSE 'SELECT 1;'
+END AS sql_to_run;
+
+SELECT CASE 
+    WHEN NOT EXISTS(SELECT 1 FROM pragma_table_info('contacts') WHERE name = 'updated_at') 
+    THEN 'ALTER TABLE contacts ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP;'
+    ELSE 'SELECT 1;'
+END AS sql_to_run;
+
+SELECT CASE 
+    WHEN NOT EXISTS(SELECT 1 FROM pragma_table_info('contacts') WHERE name = 'last_emailed') 
+    THEN 'ALTER TABLE contacts ADD COLUMN last_emailed DATETIME;'
+    ELSE 'SELECT 1;'
+END AS sql_to_run;
+
+-- Add core indexes that should work on all databases
+-- Email is guaranteed to exist as it's a core field
+CREATE INDEX IF NOT EXISTS idx_contacts_email ON contacts (email COLLATE NOCASE);
+
+-- Agent ID is guaranteed to exist as it's a core field
+CREATE INDEX IF NOT EXISTS idx_contacts_agent_id ON contacts (agent_id);
+
+-- Add carrier index which should exist as it's a core field
+CREATE INDEX IF NOT EXISTS idx_contacts_agent_carrier ON contacts (agent_id, current_carrier COLLATE NOCASE);
+
+-- Add state index which should exist as it's a core field
+CREATE INDEX IF NOT EXISTS idx_contacts_state ON contacts (state COLLATE NOCASE);
+
+-- Add plan type index which should exist as it's a core field
+CREATE INDEX IF NOT EXISTS idx_contacts_plan_type ON contacts (plan_type COLLATE NOCASE);
+
+-- Add tobacco user index which should exist as it's a core field
+CREATE INDEX IF NOT EXISTS idx_contacts_tobacco_user ON contacts (tobacco_user);
+
+-- Add timestamp indexes only if columns exist
+SELECT CASE 
+    WHEN EXISTS(SELECT 1 FROM pragma_table_info('contacts') WHERE name = 'created_at') 
+    THEN 'CREATE INDEX IF NOT EXISTS idx_contacts_created_at ON contacts (created_at);'
+    ELSE 'SELECT 1;'
+END AS sql_to_run;
+
+SELECT CASE 
+    WHEN EXISTS(SELECT 1 FROM pragma_table_info('contacts') WHERE name = 'updated_at') 
+    THEN 'CREATE INDEX IF NOT EXISTS idx_contacts_updated_at ON contacts (updated_at);'
+    ELSE 'SELECT 1;'
+END AS sql_to_run;
+
+SELECT CASE 
+    WHEN EXISTS(SELECT 1 FROM pragma_table_info('contacts') WHERE name = 'last_emailed') 
+    THEN 'CREATE INDEX IF NOT EXISTS idx_contacts_last_emailed ON contacts (last_emailed);'
+    ELSE 'SELECT 1;'
+END AS sql_to_run;
+
+-- Add date field indexes which should exist as they're core fields
+CREATE INDEX IF NOT EXISTS idx_contacts_birth_date ON contacts (birth_date);
+CREATE INDEX IF NOT EXISTS idx_contacts_effective_date ON contacts (effective_date);
+
+-- Create a view for contact statistics that works with core fields only
+CREATE VIEW IF NOT EXISTS v_contact_stats AS
+WITH contact_metrics AS (
+    SELECT 
+        agent_id,
+        current_carrier,
+        state,
+        COUNT(*) as total_contacts,
+        SUM(CASE WHEN tobacco_user = 1 THEN 1 ELSE 0 END) as tobacco_users,
+        SUM(CASE WHEN plan_type IS NOT NULL THEN 1 ELSE 0 END) as with_plan_type
+    FROM contacts
+    GROUP BY agent_id, current_carrier, state
+)
+SELECT 
+    cm.*,
+    (SELECT COUNT(DISTINCT current_carrier) FROM contacts WHERE agent_id = cm.agent_id) as unique_carriers,
+    (SELECT COUNT(DISTINCT state) FROM contacts WHERE agent_id = cm.agent_id) as unique_states
+FROM contact_metrics cm;
+
+================
+File: migrations/20240325_fix_missing_updated_at.sql
+================
+-- Check if updated_at column exists, if not add it
+PRAGMA foreign_keys=off;
+
+BEGIN TRANSACTION;
+
+-- Create a temporary table with the same structure plus the updated_at column
+CREATE TABLE IF NOT EXISTS contacts_new (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  first_name TEXT NOT NULL,
+  last_name TEXT NOT NULL,
+  email TEXT NOT NULL,
+  current_carrier TEXT NOT NULL,
+  plan_type TEXT NOT NULL,
+  effective_date TEXT NOT NULL,
+  birth_date TEXT NOT NULL,
+  tobacco_user INTEGER NOT NULL,
+  gender TEXT NOT NULL,
+  state TEXT NOT NULL,
+  zip_code TEXT NOT NULL,
+  agent_id INTEGER,
+  last_emailed DATETIME,
+  phone_number TEXT NOT NULL DEFAULT '',
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Copy data from the old table to the new table
+INSERT INTO contacts_new 
+SELECT 
+  id, 
+  first_name, 
+  last_name, 
+  email, 
+  current_carrier, 
+  plan_type, 
+  effective_date, 
+  birth_date, 
+  tobacco_user, 
+  gender, 
+  state, 
+  zip_code, 
+  agent_id, 
+  last_emailed, 
+  phone_number, 
+  COALESCE(created_at, CURRENT_TIMESTAMP),
+  CURRENT_TIMESTAMP
+FROM contacts;
+
+-- Drop the old table
+DROP TABLE contacts;
+
+-- Rename the new table to the original name
+ALTER TABLE contacts_new RENAME TO contacts;
+
+-- Recreate indexes
+CREATE INDEX IF NOT EXISTS idx_contacts_email ON contacts(email);
+CREATE INDEX IF NOT EXISTS idx_contacts_agent_id ON contacts(agent_id);
+CREATE INDEX IF NOT EXISTS idx_contacts_state ON contacts(state);
+CREATE INDEX IF NOT EXISTS idx_contacts_current_carrier ON contacts(current_carrier);
+CREATE INDEX IF NOT EXISTS idx_contacts_effective_date ON contacts(effective_date);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_email_unique ON contacts(LOWER(TRIM(email)));
+
+COMMIT;
+
+PRAGMA foreign_keys=on;
+
+================
+File: migrations/20240326_create_waitlist_table.sql
+================
+-- Create waitlist table
+CREATE TABLE IF NOT EXISTS waitlist (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    email TEXT NOT NULL UNIQUE,
+    phone TEXT NOT NULL,
+    num_agents INTEGER NOT NULL,
+    book_size INTEGER NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Create index on email for faster lookups
+CREATE INDEX IF NOT EXISTS idx_waitlist_email ON waitlist(email);
+
+-- Create trigger to update updated_at timestamp
+CREATE TRIGGER IF NOT EXISTS tg_waitlist_updated_at 
+    AFTER UPDATE ON waitlist
+    FOR EACH ROW
+BEGIN
+    UPDATE waitlist 
+    SET updated_at = CURRENT_TIMESTAMP
+    WHERE id = NEW.id;
+END;
+
+================
+File: migrations/20240326_deduplicate_contacts.sql
+================
+-- Migration to deduplicate contacts and ensure unique email constraint works properly
+-- This script will:
+-- 1. Check for duplicate emails
+-- 2. Back up the existing contacts table
+-- 3. Deduplicate contacts by keeping the most recently updated record for each email
+-- 4. Create the unique index to prevent future duplicates
+
+-- Print counts before
+SELECT COUNT(*) as total_contacts_before FROM contacts;
+SELECT COUNT(*) - COUNT(DISTINCT LOWER(TRIM(email))) as duplicate_emails FROM contacts;
+
+-- Check if we already have a unique index on email
+SELECT COUNT(*) as has_unique_index FROM sqlite_master 
+WHERE type='index' AND name='idx_contacts_email_unique';
+
+-- Create a backup of the original table for safety
+DROP TABLE IF EXISTS contacts_backup;
+CREATE TABLE contacts_backup AS SELECT * FROM contacts;
+
+-- Only proceed with deduplication if there are duplicates
+CREATE TABLE contacts_temp AS
+SELECT * FROM (
+  SELECT id, first_name, last_name, email, current_carrier, plan_type, effective_date,
+         birth_date, tobacco_user, gender, state, zip_code, agent_id, last_emailed,
+         phone_number, created_at, updated_at,
+         ROW_NUMBER() OVER (PARTITION BY LOWER(TRIM(email)) ORDER BY updated_at DESC) as rn
+  FROM contacts
+) WHERE rn = 1;
+
+-- Drop any existing unique index on email before we drop the table
+DROP INDEX IF EXISTS idx_contacts_email_unique;
+DROP INDEX IF EXISTS idx_contacts_email;
+
+-- Drop original table
+DROP TABLE contacts;
+
+-- Rename the deduped table to contacts
+ALTER TABLE contacts_temp RENAME TO contacts;
+
+-- Recreate the primary key
+CREATE UNIQUE INDEX sqlite_autoindex_contacts_1 ON contacts(id);
+
+-- Add unique index on email with case and whitespace insensitivity
+CREATE UNIQUE INDEX idx_contacts_email_unique ON contacts(LOWER(TRIM(email)));
+
+-- Add other helpful indexes
+CREATE INDEX idx_contacts_email ON contacts(email);
+CREATE INDEX IF NOT EXISTS idx_contacts_state ON contacts(state);
+CREATE INDEX IF NOT EXISTS idx_contacts_agent_id ON contacts(agent_id);
+
+-- Print counts after
+SELECT COUNT(*) as total_contacts_after FROM contacts;
+
+-- Verify indexes
+SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='contacts';
+
+================
+File: migrations/20240326_fix_contact_email_unique.sql
+================
+-- Migration to deduplicate contacts and ensure unique email constraint works properly
+
+-- Print counts before
+SELECT COUNT(*) as total_contacts_before FROM contacts;
+SELECT COUNT(*) - COUNT(DISTINCT LOWER(TRIM(email))) as duplicate_emails FROM contacts;
+
+-- Check if we already have a unique index on email
+SELECT COUNT(*) as has_unique_index FROM sqlite_master 
+WHERE type='index' AND name='idx_contacts_email_unique';
+
+-- Only proceed with deduplication if there are duplicates
+CREATE TABLE IF NOT EXISTS contacts_temp AS
+SELECT * FROM (
+  SELECT *, ROW_NUMBER() OVER (PARTITION BY LOWER(TRIM(email)) ORDER BY updated_at DESC) as rn
+  FROM contacts
+) WHERE rn = 1;
+
+-- Drop any existing unique index on email before we drop the table
+DROP INDEX IF EXISTS idx_contacts_email_unique;
+
+-- Create a backup of the original table for safety
+CREATE TABLE contacts_backup AS SELECT * FROM contacts;
+
+-- Drop original table
+DROP TABLE contacts;
+
+-- Rename the deduped table to contacts
+ALTER TABLE contacts_temp RENAME TO contacts;
+
+-- Recreate the primary key
+CREATE UNIQUE INDEX sqlite_autoindex_contacts_1 ON contacts(id);
+
+-- Add unique index on email with case and whitespace insensitivity
+CREATE UNIQUE INDEX idx_contacts_email_unique ON contacts(LOWER(TRIM(email)));
+
+-- Add other helpful indexes
+CREATE INDEX IF NOT EXISTS idx_contacts_email ON contacts(email);
+CREATE INDEX IF NOT EXISTS idx_contacts_state ON contacts(state);
+CREATE INDEX IF NOT EXISTS idx_contacts_agent_id ON contacts(agent_id);
+
+-- Print counts after
+SELECT COUNT(*) as total_contacts_after FROM contacts;
+
+================
+File: migrations/20240326_fix_duplicate_contacts.sql
+================
+-- Migration to ensure unique index on email in contacts table
+-- Run this script on all organization databases to prevent duplicate contacts
+
+-- First check if we have duplicates
+SELECT COUNT(*) as total_contacts FROM contacts;
+SELECT COUNT(*) - COUNT(DISTINCT LOWER(TRIM(email))) as duplicate_emails FROM contacts;
+
+-- Check if we already have the unique index on email
+SELECT COUNT(*) as has_unique_index FROM sqlite_master 
+WHERE type='index' AND name='idx_contacts_email_unique';
+
+-- Create unique index if it doesn't exist 
+-- (This will fail if there are duplicate emails, so run the deduplication process first)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_email_unique ON contacts(LOWER(TRIM(email)));
+
+-- Create or update the standard index
+CREATE INDEX IF NOT EXISTS idx_contacts_email ON contacts(email);
+
+-- Force indexes to be used by SQLite
+ANALYZE;
+
+-- Verify index creation
+SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='contacts';
+
+================
+File: migrations/20240402_allow_null_current_carrier.sql
+================
+-- Migration to allow NULL values in current_carrier, plan_type and add current_premium column
+-- This migration needs to be applied to all organization databases
+
+-- Create a temporary table with the desired schema
+CREATE TABLE contacts_new (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    first_name TEXT NOT NULL,
+    last_name TEXT NOT NULL,
+    email TEXT NOT NULL UNIQUE,
+    current_carrier TEXT, -- Changed to allow NULL
+    current_premium TEXT, -- New column, allows NULL
+    plan_type TEXT, -- Changed to allow NULL
+    effective_date TEXT NOT NULL,
+    birth_date TEXT NOT NULL,
+    tobacco_user INTEGER NOT NULL,
+    gender TEXT NOT NULL,
+    state TEXT NOT NULL,
+    zip_code TEXT NOT NULL,
+    agent_id INTEGER,
+    last_emailed DATETIME,
+    phone_number TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT '',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Copy data from the old table to the new table
+INSERT INTO contacts_new 
+SELECT 
+    id,
+    first_name,
+    last_name,
+    email,
+    current_carrier,
+    NULL as current_premium, -- Set existing rows to NULL for new column
+    plan_type,
+    effective_date,
+    birth_date,
+    tobacco_user,
+    gender,
+    state,
+    zip_code,
+    agent_id,
+    last_emailed,
+    phone_number,
+    status,
+    created_at,
+    updated_at
+FROM contacts;
+
+-- Drop the old table
+DROP TABLE contacts;
+
+-- Rename the new table to contacts
+ALTER TABLE contacts_new RENAME TO contacts;
+
+-- Recreate any indexes that existed on the original table
+CREATE UNIQUE INDEX idx_contacts_email ON contacts(email);
+CREATE INDEX idx_contacts_zip_code ON contacts(zip_code);
+CREATE INDEX idx_contacts_state ON contacts(state);
+CREATE INDEX idx_contacts_created_at ON contacts(created_at);
+CREATE INDEX idx_contacts_updated_at ON contacts(updated_at);
+
+================
+File: migrations/20240406_add_contact_history_tracking.sql
+================
+-- Migration: 20240406_add_contact_history_tracking.sql
+-- Description: Adds contact history tracking table for usage-based billing
+
+-- Create table to track unique contacts by email for billing purposes
+CREATE TABLE IF NOT EXISTS contact_history (
+  id TEXT PRIMARY KEY,
+  organization_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  email TEXT NOT NULL,
+  first_name TEXT,
+  last_name TEXT,
+  first_uploaded TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  last_uploaded TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  status TEXT DEFAULT 'active', -- active, deleted, blocked
+  billing_cycle_key TEXT, -- To identify which billing cycle this contact belongs to
+  UNIQUE(organization_id, email)
+);
+
+-- Add indexes for efficient querying
+CREATE INDEX IF NOT EXISTS idx_contact_history_org_email ON contact_history(organization_id, email);
+CREATE INDEX IF NOT EXISTS idx_contact_history_org_user ON contact_history(organization_id, user_id);
+CREATE INDEX IF NOT EXISTS idx_contact_history_first_uploaded ON contact_history(first_uploaded);
+CREATE INDEX IF NOT EXISTS idx_contact_history_billing_cycle ON contact_history(organization_id, billing_cycle_key);
+
+-- Add tracking fields to organizations table if they don't exist
+ALTER TABLE organizations ADD COLUMN IF NOT EXISTS contact_count_billing_date TEXT; -- Date when billing cycle starts (e.g., '01' for 1st of month)
+ALTER TABLE organizations ADD COLUMN IF NOT EXISTS current_billing_cycle_key TEXT; -- Current billing cycle identifier
+ALTER TABLE organizations ADD COLUMN IF NOT EXISTS current_unique_contacts INTEGER DEFAULT 0; -- Count of unique contacts in current cycle
+
+-- Create table to track billing cycle history
+CREATE TABLE IF NOT EXISTS billing_cycle_history (
+  id TEXT PRIMARY KEY,
+  organization_id TEXT NOT NULL,
+  cycle_key TEXT NOT NULL, -- Format: YYYY-MM for monthly cycles
+  start_date TIMESTAMP NOT NULL,
+  end_date TIMESTAMP NOT NULL,
+  contact_count INTEGER DEFAULT 0,
+  usage_reported BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(organization_id, cycle_key)
+);
+
+-- Create a trigger to update last_uploaded timestamp when existing contacts are re-uploaded
+CREATE TRIGGER IF NOT EXISTS update_contact_last_uploaded
+AFTER UPDATE ON contact_history
+BEGIN
+  UPDATE contact_history
+  SET last_uploaded = CURRENT_TIMESTAMP
+  WHERE id = NEW.id AND OLD.email = NEW.email;
+END;
+
+-- Create a function to generate a new billing cycle key
+CREATE FUNCTION IF NOT EXISTS generate_billing_cycle_key(date_string TEXT)
+RETURNS TEXT AS $$
+BEGIN
+  RETURN to_char(date_string::date, 'YYYY-MM');
+END;
+$$ LANGUAGE plpgsql;
+
+================
+File: migrations/20250425_create_schema_no_contacts.sql
+================
+-- Migration for databases WITHOUT an existing contacts table
+-- This script creates the contacts table with nullable fields
+
+-- Drop any temporary tables that might exist
+DROP TABLE IF EXISTS contacts_new;
+
+-- Create contacts table with the correct schema
+CREATE TABLE IF NOT EXISTS contacts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    first_name TEXT NOT NULL,
+    last_name TEXT NOT NULL,
+    email TEXT NOT NULL UNIQUE,
+    current_carrier TEXT, 
+    current_premium TEXT, 
+    plan_type TEXT, 
+    effective_date TEXT, 
+    birth_date TEXT, 
+    tobacco_user INTEGER NOT NULL DEFAULT 0,
+    gender TEXT, 
+    state TEXT, 
+    zip_code TEXT, 
+    agent_id INTEGER,
+    last_emailed DATETIME,
+    phone_number TEXT, 
+    status TEXT NOT NULL DEFAULT '',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Check if contacts_backup exists before trying to access it
+CREATE TEMP TABLE IF NOT EXISTS table_check AS
+SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='contacts_backup') as has_contacts_backup;
+
+-- If contacts_backup exists, check its columns
+CREATE TEMP TABLE IF NOT EXISTS column_check AS
+SELECT 
+    CASE WHEN (SELECT has_contacts_backup FROM table_check) = 1 THEN
+        EXISTS(SELECT 1 FROM pragma_table_info('contacts_backup') WHERE name='current_premium')
+    ELSE 0 END as has_current_premium,
+    CASE WHEN (SELECT has_contacts_backup FROM table_check) = 1 THEN
+        EXISTS(SELECT 1 FROM pragma_table_info('contacts_backup') WHERE name='plan_type')
+    ELSE 0 END as has_plan_type;
+
+-- Copy data from contacts_backup if it exists
+INSERT OR IGNORE INTO contacts(
+    id, first_name, last_name, email, current_carrier,
+    plan_type, effective_date, birth_date, tobacco_user, gender, 
+    state, zip_code, agent_id, last_emailed, phone_number, 
+    status, created_at, updated_at
+)
+SELECT 
+    id, first_name, last_name, email, current_carrier,
+    plan_type, effective_date, birth_date, COALESCE(tobacco_user, 0), gender, 
+    state, zip_code, agent_id, last_emailed, phone_number, 
+    COALESCE(status, ''), COALESCE(created_at, CURRENT_TIMESTAMP), 
+    COALESCE(updated_at, CURRENT_TIMESTAMP)
+FROM contacts_backup WHERE EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='contacts_backup');
+
+-- Clean up temp tables
+DROP TABLE IF EXISTS table_check;
+DROP TABLE IF EXISTS column_check;
+
+-- Create indexes
+CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_email ON contacts(email);
+CREATE INDEX IF NOT EXISTS idx_contacts_zip_code ON contacts(zip_code);
+CREATE INDEX IF NOT EXISTS idx_contacts_state ON contacts(state);
+CREATE INDEX IF NOT EXISTS idx_contacts_created_at ON contacts(created_at);
+CREATE INDEX IF NOT EXISTS idx_contacts_updated_at ON contacts(updated_at);
+CREATE TRIGGER IF NOT EXISTS update_contacts_timestamp AFTER UPDATE ON contacts 
+BEGIN 
+  UPDATE contacts SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id; 
+END;
+
+================
+File: migrations/20250425_fix_schema_with_contacts.sql
+================
+-- Migration for databases WITH existing contacts table
+-- This script makes optional fields nullable
+
+-- Clean up any temporary tables from previous failed migrations
+DROP TABLE IF EXISTS contacts_new;
+
+-- Create new contacts table with the desired schema
+CREATE TABLE contacts_new (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    first_name TEXT NOT NULL,
+    last_name TEXT NOT NULL,
+    email TEXT NOT NULL UNIQUE,
+    current_carrier TEXT, 
+    current_premium TEXT, 
+    plan_type TEXT, 
+    effective_date TEXT, 
+    birth_date TEXT, 
+    tobacco_user INTEGER NOT NULL DEFAULT 0,
+    gender TEXT, 
+    state TEXT, 
+    zip_code TEXT, 
+    agent_id INTEGER,
+    last_emailed DATETIME,
+    phone_number TEXT, 
+    status TEXT NOT NULL DEFAULT '',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Get schema information to determine available columns
+CREATE TEMP TABLE IF NOT EXISTS pragma_table_info AS 
+SELECT * FROM pragma_table_info('contacts');
+
+-- Set variables for optional column existence
+CREATE TEMP TABLE IF NOT EXISTS column_check AS
+SELECT 
+    EXISTS(SELECT 1 FROM pragma_table_info WHERE name='current_premium') as has_current_premium,
+    EXISTS(SELECT 1 FROM pragma_table_info WHERE name='plan_type') as has_plan_type;
+
+-- Copy data from the existing contacts table with safe column access
+INSERT INTO contacts_new(
+    id, first_name, last_name, email, current_carrier,
+    plan_type, effective_date, birth_date, tobacco_user, gender, 
+    state, zip_code, agent_id, last_emailed, phone_number, 
+    status, created_at, updated_at
+)
+SELECT 
+    id, first_name, last_name, email, current_carrier,
+    plan_type, effective_date, birth_date, COALESCE(tobacco_user, 0), gender, 
+    state, zip_code, agent_id, last_emailed, phone_number, 
+    COALESCE(status, ''), COALESCE(created_at, CURRENT_TIMESTAMP), 
+    COALESCE(updated_at, CURRENT_TIMESTAMP)
+FROM contacts;
+
+-- Handle current_premium separately based on column check
+UPDATE contacts_new 
+SET current_premium = (
+    SELECT NULL
+    FROM contacts 
+    WHERE contacts.id = contacts_new.id
+);
+
+-- Rename tables
+ALTER TABLE contacts RENAME TO contacts_backup;
+ALTER TABLE contacts_new RENAME TO contacts;
+
+-- Clean up temp tables
+DROP TABLE IF EXISTS pragma_table_info;
+DROP TABLE IF EXISTS column_check;
+
+-- Recreate indexes
+CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_email ON contacts(email);
+CREATE INDEX IF NOT EXISTS idx_contacts_zip_code ON contacts(zip_code);
+CREATE INDEX IF NOT EXISTS idx_contacts_state ON contacts(state);
+CREATE INDEX IF NOT EXISTS idx_contacts_created_at ON contacts(created_at);
+CREATE INDEX IF NOT EXISTS idx_contacts_updated_at ON contacts(updated_at);
+CREATE TRIGGER IF NOT EXISTS update_contacts_timestamp AFTER UPDATE ON contacts 
+BEGIN 
+  UPDATE contacts SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id; 
+END;
+
+================
+File: migrations/20250425_make_optional_fields_nullable.sql
+================
+-- Migration to make optional fields nullable
+-- This migration allows all non-critical fields to be NULL based on frontend changes
+-- This migration needs to be applied to all organization databases
+-- This version includes recovery from partial migration failures
+
+-- Method: Split the migration into small, independent steps that can be run
+-- even if a previous migration attempt was interrupted
+
+-- STEP 1: Clean up any temporary tables from previous failed migrations
+DROP TABLE IF EXISTS contacts_new;
+
+-- STEP 2: Create new contacts table with the desired schema
+CREATE TABLE IF NOT EXISTS contacts_new (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    first_name TEXT NOT NULL,
+    last_name TEXT NOT NULL,
+    email TEXT NOT NULL UNIQUE,
+    current_carrier TEXT, 
+    current_premium TEXT, 
+    plan_type TEXT, 
+    effective_date TEXT, 
+    birth_date TEXT, 
+    tobacco_user INTEGER NOT NULL DEFAULT 0,
+    gender TEXT, 
+    state TEXT, 
+    zip_code TEXT, 
+    agent_id INTEGER,
+    last_emailed DATETIME,
+    phone_number TEXT, 
+    status TEXT NOT NULL DEFAULT '',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- STEP 3: Import data from contacts table if it exists
+-- This will fail gracefully if the table doesn't exist
+INSERT OR IGNORE INTO contacts_new(
+    id, first_name, last_name, email, current_carrier, current_premium, 
+    plan_type, effective_date, birth_date, tobacco_user, gender, 
+    state, zip_code, agent_id, last_emailed, phone_number, 
+    status, created_at, updated_at
+)
+SELECT 
+    id, first_name, last_name, email, current_carrier, current_premium, 
+    plan_type, effective_date, birth_date, COALESCE(tobacco_user, 0), gender, 
+    state, zip_code, agent_id, last_emailed, phone_number, 
+    COALESCE(status, ''), COALESCE(created_at, CURRENT_TIMESTAMP), 
+    COALESCE(updated_at, CURRENT_TIMESTAMP)
+FROM contacts WHERE 1=1;
+
+-- STEP 4: Import data from contacts_backup table if it exists and contacts doesn't
+-- This handles cases where migration was interrupted
+INSERT OR IGNORE INTO contacts_new(
+    id, first_name, last_name, email, current_carrier, current_premium, 
+    plan_type, effective_date, birth_date, tobacco_user, gender, 
+    state, zip_code, agent_id, last_emailed, phone_number, 
+    status, created_at, updated_at
+)
+SELECT 
+    id, first_name, last_name, email, current_carrier, current_premium, 
+    plan_type, effective_date, birth_date, COALESCE(tobacco_user, 0), gender, 
+    state, zip_code, agent_id, last_emailed, phone_number, 
+    COALESCE(status, ''), COALESCE(created_at, CURRENT_TIMESTAMP), 
+    COALESCE(updated_at, CURRENT_TIMESTAMP)
+FROM contacts_backup WHERE 1=1;
+
+-- STEP 5: Drop old tables and rename new table
+DROP TABLE IF EXISTS contacts;
+
+-- Rename the new table to contacts
+ALTER TABLE contacts_new RENAME TO contacts;
+
+-- STEP 6: Recreate indexes
+CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_email ON contacts(email);
+CREATE INDEX IF NOT EXISTS idx_contacts_zip_code ON contacts(zip_code);
+CREATE INDEX IF NOT EXISTS idx_contacts_state ON contacts(state);
+CREATE INDEX IF NOT EXISTS idx_contacts_created_at ON contacts(created_at);
+CREATE INDEX IF NOT EXISTS idx_contacts_updated_at ON contacts(updated_at);
+CREATE TRIGGER IF NOT EXISTS update_contacts_timestamp AFTER UPDATE ON contacts 
+BEGIN 
+  UPDATE contacts SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id; 
+END;
+
+================
+File: migrations/add_aep_request_columns.sql
+================
+-- Migration script to add AEP request columns to contacts table
+
+-- Add aep_request column (boolean field defaulting to false)
+ALTER TABLE contacts ADD COLUMN aep_request BOOLEAN DEFAULT FALSE;
+
+-- Add aep_request_date column (timestamp for when the request was made)
+ALTER TABLE contacts ADD COLUMN aep_request_date DATETIME;
+
+-- Create index for faster queries on aep_request status
+CREATE INDEX IF NOT EXISTS idx_contacts_aep_request ON contacts(aep_request);
+
+-- Sample query to check if migration worked:
+-- SELECT name FROM pragma_table_info('contacts') WHERE name IN ('aep_request', 'aep_request_date');
+
+================
+File: migrations/add_deleted_contacts_table.sql
+================
+CREATE TABLE IF NOT EXISTS deleted_contacts (
+    original_contact_id INTEGER NOT NULL, -- The ID from the original 'contacts' table
+    first_name TEXT, -- Made nullable as they might be empty in original
+    last_name TEXT,  -- Made nullable
+    email TEXT NOT NULL, -- Crucial for billable count
+    current_carrier TEXT,
+    plan_type TEXT,
+    effective_date TEXT,
+    birth_date TEXT,
+    tobacco_user INTEGER,
+    gender TEXT,
+    state TEXT,
+    zip_code TEXT,
+    agent_id INTEGER,
+    phone_number TEXT,
+    -- Include any other fields from 'contacts' you want to preserve historically
+    deleted_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL
+    -- No primary key on original_contact_id + email to allow multiple deletions if a user is re-added and deleted again
+    -- though the billing logic will only count the most recent deletion within 12 months.
+    -- A new unique ID for this table might be useful if needed:
+    -- id TEXT PRIMARY KEY DEFAULT (hex(randomblob(16)))
+);
+
+CREATE INDEX IF NOT EXISTS idx_deleted_contacts_email ON deleted_contacts (LOWER(TRIM(email)));
+CREATE INDEX IF NOT EXISTS idx_deleted_contacts_deleted_at ON deleted_contacts (deleted_at);
+CREATE INDEX IF NOT EXISTS idx_deleted_contacts_original_id ON deleted_contacts (original_contact_id);
+
+================
+File: migrations/add_email_tracking.sql
+================
+-- Migration script to add email_send_tracking table and indexes to organization databases
+-- This script can be applied to any organization database
+
+-- Create the email_send_tracking table if it doesn't exist
+CREATE TABLE IF NOT EXISTS email_send_tracking (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    org_id INTEGER NOT NULL,
+    contact_id TEXT NOT NULL,
+    email_type TEXT NOT NULL,
+    scheduled_date TEXT NOT NULL,
+    send_status TEXT NOT NULL CHECK(send_status IN ('pending', 'processing', 'accepted', 'delivered', 'sent', 'deferred', 'bounced', 'dropped', 'failed', 'skipped')) DEFAULT 'pending',
+    send_mode TEXT NOT NULL CHECK(send_mode IN ('test', 'production')) DEFAULT 'test',
+    test_email TEXT,
+    send_attempt_count INTEGER NOT NULL DEFAULT 0,
+    last_attempt_date TEXT,
+    last_error TEXT,
+    batch_id TEXT NOT NULL,
+    message_id TEXT,
+    delivery_status TEXT,
+    status_checked_at TEXT,
+    status_details TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Create indexes for the email_send_tracking table if they don't exist
+-- We need to check if indexes exist before creating them to avoid errors
+
+-- Index on batch_id for batch operations and lookups
+CREATE INDEX IF NOT EXISTS idx_email_tracking_batch_id ON email_send_tracking(batch_id);
+
+-- Index on send_status for filtering emails by status (pending/sent/failed/skipped)
+CREATE INDEX IF NOT EXISTS idx_email_tracking_send_status ON email_send_tracking(send_status);
+
+-- Index on send_mode for filtering by mode (test/production)
+CREATE INDEX IF NOT EXISTS idx_email_tracking_send_mode ON email_send_tracking(send_mode);
+
+-- Index on contact_id for looking up emails by contact
+CREATE INDEX IF NOT EXISTS idx_email_tracking_contact_id ON email_send_tracking(contact_id);
+
+-- Composite index on contact_id and email_type for retrieving specific email types for a contact
+CREATE INDEX IF NOT EXISTS idx_email_tracking_contact_type ON email_send_tracking(contact_id, email_type);
+
+-- Composite index on send_status and scheduled_date for retrieving emails by status within a date range
+CREATE INDEX IF NOT EXISTS idx_email_tracking_status_date ON email_send_tracking(send_status, scheduled_date);
+
+-- Index on message_id for looking up emails by SendGrid message ID
+CREATE INDEX IF NOT EXISTS idx_email_tracking_message_id ON email_send_tracking(message_id);
+
+-- Index on delivery_status for filtering by delivery status
+CREATE INDEX IF NOT EXISTS idx_email_tracking_delivery_status ON email_send_tracking(delivery_status);
+
+-- Create a trigger to update the updated_at timestamp when a record is modified
+CREATE TRIGGER IF NOT EXISTS update_email_tracking_timestamp 
+AFTER UPDATE ON email_send_tracking 
+BEGIN
+    UPDATE email_send_tracking SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id; 
+END;
+
+================
+File: migrations/add_onboarding_columns.sql
+================
+-- Add columns for storing onboarding state
+
+-- Add onboarding_step column (INT with default 0)
+ALTER TABLE organizations ADD COLUMN onboarding_step INTEGER DEFAULT 0;
+
+-- Add temp_session_id column (TEXT, nullable)
+ALTER TABLE organizations ADD COLUMN temp_session_id TEXT;
+
+================
+File: migrations/add_send_time_col.sql
+================
+-- Migration to add scheduled_send_time column to email_schedules table
+-- This allows for separating the scheduling time from the actual send time
+
+-- Check if email_schedules table exists
+CREATE TABLE IF NOT EXISTS email_schedules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    contact_id INTEGER NOT NULL,
+    email_type TEXT NOT NULL,
+    scheduled_send_date TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pre-scheduled',
+    skip_reason TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    tracking_id TEXT,
+    FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
+);
+
+-- Add scheduled_send_time column if it doesn't exist
+PRAGMA foreign_keys=off;
+BEGIN TRANSACTION;
+
+-- Create a temporary table with the new schema
+CREATE TABLE email_schedules_new (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    contact_id INTEGER NOT NULL,
+    email_type TEXT NOT NULL,
+    scheduled_send_date TEXT NOT NULL,
+    scheduled_send_time TEXT NOT NULL DEFAULT '08:30:00',
+    status TEXT NOT NULL DEFAULT 'scheduled',
+    skip_reason TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    batch_id TEXT,
+    FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
+);
+
+-- Copy data from the old table to the new table
+INSERT INTO email_schedules_new 
+    (id, contact_id, email_type, scheduled_send_date, status, skip_reason, created_at, updated_at, batch_id)
+SELECT 
+    id, contact_id, email_type, scheduled_send_date, status, skip_reason, created_at, updated_at, batch_id 
+FROM email_schedules;
+
+-- Drop the old table
+DROP TABLE email_schedules;
+
+-- Rename the new table to the original name
+ALTER TABLE email_schedules_new RENAME TO email_schedules;
+
+-- Add an index to improve query performance for scheduled email lookups
+CREATE INDEX IF NOT EXISTS idx_email_schedules_date_time_status ON email_schedules 
+    (scheduled_send_date, scheduled_send_time, status);
+
+-- Create a unique index on contact_id, email_type, and scheduled_send_date
+-- This prevents duplicate scheduling for the same contact, email type, and date
+CREATE UNIQUE INDEX IF NOT EXISTS idx_email_schedules_unique ON email_schedules 
+    (contact_id, email_type, scheduled_send_date);
+
+COMMIT;
+PRAGMA foreign_keys=on;
+
+================
+File: migrations/add_updated_at_col.sql
+================
+ALTER TABLE contacts
+ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP;
+
+CREATE TRIGGER update_contacts_updated_at
+AFTER UPDATE ON contacts
+FOR EACH ROW
+BEGIN
+  UPDATE contacts SET updated_at = CURRENT_TIMESTAMP WHERE id = OLD.id;
+END;
+
+================
+File: migrations/create_subscription_tables.sql
+================
+-- Create subscriptions table for tracking Stripe subscriptions
+CREATE TABLE IF NOT EXISTS subscriptions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  stripe_subscription_id TEXT NOT NULL,
+  stripe_customer_id TEXT NOT NULL,
+  stripe_usage_item_id TEXT,  -- For usage-based billing
+  status TEXT NOT NULL,
+  current_contact_count INTEGER DEFAULT 0,  -- Current number of contacts for this user
+  current_period_start TIMESTAMP,
+  current_period_end TIMESTAMP,
+  cancel_at_period_end BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(user_id) REFERENCES users(id)
+);
+
+-- Track contact count changes for billing and auditing
+CREATE TABLE IF NOT EXISTS contact_count_history (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  count INTEGER NOT NULL,
+  previous_count INTEGER,
+  change_type TEXT NOT NULL, -- 'add', 'remove', 'initial', etc.
+  logged_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(user_id) REFERENCES users(id)
+);
+
+-- Track contact counts for each user
+CREATE TABLE IF NOT EXISTS contact_counts (
+  user_id TEXT PRIMARY KEY,
+  count INTEGER NOT NULL DEFAULT 0,
+  last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(user_id) REFERENCES users(id)
+);
+
+-- Add auto_upgrade_limit column to users table
+ALTER TABLE users ADD COLUMN IF NOT EXISTS auto_upgrade_limit INTEGER DEFAULT 0;
+
+-- Create index on user_id for subscriptions
+CREATE INDEX IF NOT EXISTS idx_subscriptions_user_id ON subscriptions(user_id);
+
+-- Create index on status for quick filtering of active subscriptions
+CREATE INDEX IF NOT EXISTS idx_subscriptions_status ON subscriptions(status);
+
+================
+File: migrations/fix_email_tracking.sql
+================
+PRAGMA foreign_keys=off;
+
+-- Rename the old table
+ALTER TABLE email_send_tracking RENAME TO email_send_tracking_old;
+
+-- Recreate the table with the correct foreign key
+CREATE TABLE email_send_tracking (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  org_id INTEGER NOT NULL,
+  contact_id INTEGER NOT NULL,
+  email_type TEXT NOT NULL,
+  scheduled_date TEXT NOT NULL,
+  send_status TEXT NOT NULL CHECK(send_status IN ('pending', 'processing', 'accepted', 'delivered', 'sent', 'deferred', 'bounced', 'dropped', 'failed', 'skipped')) DEFAULT 'pending',
+  send_mode TEXT NOT NULL CHECK(send_mode IN ('test', 'production')) DEFAULT 'test',
+  test_email TEXT,
+  send_attempt_count INTEGER NOT NULL DEFAULT 0,
+  last_attempt_date TEXT,
+  last_error TEXT,
+  batch_id TEXT NOT NULL,
+  message_id TEXT,
+  delivery_status TEXT,
+  status_checked_at TEXT,
+  status_details TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
+);
+
+-- Copy data from old table (if needed)
+INSERT INTO email_send_tracking (
+  id, org_id, contact_id, email_type, scheduled_date, send_status, send_mode, test_email, send_attempt_count, last_attempt_date, last_error, batch_id, message_id, delivery_status, status_checked_at, status_details, created_at, updated_at
+)
+SELECT
+  id, org_id, contact_id, email_type, scheduled_date, send_status, send_mode, test_email, send_attempt_count, last_attempt_date, last_error, batch_id, message_id, delivery_status, status_checked_at, status_details, created_at, updated_at
+FROM email_send_tracking_old;
+
+DROP TABLE email_send_tracking_old;
+
+PRAGMA foreign_keys=on;
+
+================
+File: migrations/remove_eligibility_answers_fk.sql
+================
+-- Migration script to update foreign key constraints to reference contacts instead of contacts_backup
+
+-- Part 1: Fix eligibility_answers table
+-- Step 1: Create a new table with the correct foreign key constraint
+CREATE TABLE eligibility_answers_new (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    contact_id INTEGER NOT NULL,
+    quote_id TEXT NOT NULL,
+    answers TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
+);
+
+-- Step 2: Copy data from the old table to the new table
+INSERT INTO eligibility_answers_new (id, contact_id, quote_id, answers, created_at)
+SELECT id, contact_id, quote_id, answers, created_at
+FROM eligibility_answers;
+
+-- Step 3: Drop the old table
+DROP TABLE eligibility_answers;
+
+-- Step 4: Rename the new table to the original name
+ALTER TABLE eligibility_answers_new RENAME TO eligibility_answers;
+
+-- Part 2: Fix contact_events table
+-- Step 1: Create a new table with the correct foreign key constraints
+CREATE TABLE contact_events_new (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    contact_id INTEGER,
+    lead_id INTEGER,
+    event_type TEXT NOT NULL,
+    metadata TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE,
+    FOREIGN KEY (lead_id) REFERENCES leads(id) ON DELETE CASCADE
+);
+
+-- Step 2: Copy data from the old table to the new table
+INSERT INTO contact_events_new (id, contact_id, lead_id, event_type, metadata, created_at)
+SELECT id, contact_id, lead_id, event_type, metadata, created_at
+FROM contact_events;
+
+-- Step 3: Drop the old table
+DROP TABLE contact_events;
+
+-- Step 4: Rename the new table to the original name
+ALTER TABLE contact_events_new RENAME TO contact_events;
+
+-- Create required indexes
+CREATE INDEX IF NOT EXISTS idx_contact_events_contact_id ON contact_events(contact_id);
+CREATE INDEX IF NOT EXISTS idx_contact_events_lead_id ON contact_events(lead_id);
+CREATE INDEX IF NOT EXISTS idx_contact_events_type ON contact_events(event_type);
+
+-- Optional: Add a comment or log to confirm the migration
+-- Note: Foreign key constraints on contact_id now reference contacts(id) instead of contacts_backup
+
+================
+File: public/hhd.csv
+================
+,ACE/Chubb,AETNA,AFLAC,Allstate,Anthem,CIGNA,Mutual of Omaha,Humana (MIPPA),Humana (Achieve),UHIC
+AL,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,NA,You need to live with a spouse or someone who is at least 18 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+AK,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,NA,Live with someone 50+. Additional discounts available,NA,Both you and your spouse/partner must have a supplemental plan with CIGNA.,NA,Both you and your spouse/partner must have a supplemental plan with Humana.,NA,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+AZ,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,Both you and your spouse/partner must have a supplemental plan with Anthem.,You need to live with a spouse or someone who is at least 18 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+AR,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,NA,You need to live with a spouse or someone who is at least 50 years old.,You need to live with a spouse or someone who is at least 60 years old.,You need to live with a spouse or someone who is at least 18 years old.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+CA,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,Both you and your spouse/partner must have a supplemental plan with Anthem.,You need to live with a spouse or someone who is at least 50 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,NA,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #. Additional $25 discount for first 12 months for new to Medicare on Plan G.
+CO,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,Both you and your spouse/partner must have a supplemental plan with Anthem.,You need to live with a spouse or someone who is at least 50 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,You need to live with a spouse or someone who is at least 18 years old.,NA,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+CT,NA,NA,NA,NA,Both you and your spouse/partner must have a supplemental plan with Anthem.,Both you and your spouse/partner must have a supplemental plan with CIGNA.,NA,You need to live with a spouse or someone who is at least 18 years old.,NA,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+DE,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,NA,You need to live with a spouse or someone who is at least 18 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+DC,NA,Both you and your spouse/partner must have a supplemental plan with AETNA.,NA,Live with someone 50+. Additional discounts available,NA,Both you and your spouse/partner must have a supplemental plan with CIGNA.,NA,Both you and your spouse/partner must have a supplemental plan with Humana.,NA,NA
+FL,Both you and your spouse/partner must have a supplemental plan with Ace/Chubb.,NA,Both you and your spouse/partner must have a supplemental plan with AFLAC.,Live with someone 50+,NA,Both you and your spouse/partner must have a supplemental plan with CIGNA.,NA,NA,Both you and your spouse/partner must have a supplemental plan with Humana.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+GA,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,You need to live with a spouse or someone who is at least 60 years old.,You need to live with a spouse or someone who is at least 18 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,You need to live with a spouse or someone who is at least 18 years old.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+HI,NA,NA,NA,NA,NA,NA,NA,Both you and your spouse/partner must have a supplemental plan with Humana.,NA,NA
+ID,NA,NA,NA,NA,NA,NA,NA,*Value Plan - NA,NA,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+IL,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+,NA,You need to live with a spouse or someone who is at least 18 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,You need to live with a spouse or someone who is at least 18 years old.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+IN,Both you and your spouse/partner must have a supplemental plan with Ace/Chubb.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,Both you and your spouse/partner must have a supplemental plan with Anthem.,You need to live with a spouse or someone who is at least 50 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,NA,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+IA,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,NA,You need to live with a spouse or someone who is at least 50 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+KS,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,NA,You need to live with a spouse or someone who is at least 50 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+KY,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,Both you and your spouse/partner/family member must have a supplemental plan with AFLAC.,Live with someone 50+. Additional discounts available,Both you and your spouse/partner must have a supplemental plan with Anthem.,You need to live with a spouse or someone who is at least 18 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+LA,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,NA,You need to live with a spouse or someone who is at least 50 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+ME,You need to live with a spouse or someone who is at least 50 years old.,NA,NA,NA,Both you and your spouse/partner must have a supplemental plan with Anthem.,Both you and your spouse/partner must have a supplemental plan with CIGNA.,Both you and your spouse/partner must have a supplemental plan with Mutual of Omaha.,Both you and your spouse/partner must have a supplemental plan with Humana.,NA,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+MD,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,NA,You need to live with a spouse or someone who is at least 18 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,You need to live with a spouse or someone who is at least 18 years old.,NA,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+MA,NA,NA,NA,NA,NA,NA,NA,You need to live with a spouse or someone who is at least 18 years old.,NA,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+MI,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,NA,You need to live with a spouse or someone who is at least 18 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,You need to live with a spouse or someone who is at least 18 years old.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+MN,NA,NA,NA,Live with someone 50+. Additional discounts available,NA,NA,NA,NA,NA,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+MS,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,NA,You need to live with a spouse or someone who is at least 18 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,You need to live with a spouse or someone who is at least 18 years old.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+MO,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,Both you and your spouse/partner must have a supplemental plan with Anthem.,You need to live with someone who is at least 50 years old.,You need to live with a spouse or domestic partner.,Both you and your spouse/partner must have a supplemental plan with Humana.,NA,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+MT,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 18 years old.,Live with someone 50+. Additional discounts available,NA,You need to live with a spouse or someone who is at least 18 years old. Additional dual-enrollment CIGNA discount available.,You need to live with someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+NE,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,NA,You need to live with a spouse or someone who is at least 18 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+NV,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,Both you and your spouse/partner must have a supplemental plan with Anthem.,You need to live with a spouse or someone who is at least 50 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,You need to live with a spouse or someone who is at least 18 years old.,NA,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+NH,NA,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,NA,NA,You need to live with a spouse or someone who is at least 50 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,NA
+NJ,Both you and your spouse/partner must have a supplemental plan with Ace/Chubb.,Both you and your spouse/partner must have a supplemental plan with AETNA.,Both you and your spouse/partner/family member must have a supplemental plan with AFLAC.,Live with someone 50+,NA,Both you and your spouse/partner must have a supplemental plan with CIGNA.,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,Both you and your spouse/partner must have a supplemental plan with Humana.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+NM,NA,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,NA,You need to live with a spouse or someone who is at least 50 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,You need to live with a spouse or someone who is at least 18 years old.,NA,NA
+NY,NA,NA,NA,NA,Not accepting new Supps,NA,NA,NA,NA,NA
+NC,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,NA,You need to live with a spouse or someone who is at least 18 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,You need to live with a spouse or someone who is at least 18 years old.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+ND,NA,NA,Both you and your spouse/partner/family member must have a supplemental plan with AFLAC.,Live with someone 50+. Additional discounts available,NA,You need to live with a spouse or someone who is at least 50 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,NA
+OH,Both you and your spouse/partner must have a supplemental plan with Ace/Chubb.,Both you and your spouse/partner must have a supplemental plan with AETNA.,Both you and your spouse/partner/family member must have a supplemental plan with AFLAC.,Live with someone 50+,Both you and your spouse/partner must have a supplemental plan with Anthem.,Both you and your spouse/partner must have a supplemental plan with CIGNA.,"You need to live with your spouse, partner, or a roomate for the last 12 months.",Both you and your spouse/partner must have a supplemental plan with Humana.,Both you and your spouse/partner must have a supplemental plan with Humana.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+OK,Both you and your spouse/partner must have a supplemental plan with Ace/Chubb.,Both you and your spouse/partner must have a supplemental plan with AETNA.,Both you and your spouse/partner/family member must have a supplemental plan with AFLAC.,Live with someone 50+. Additional discounts available,NA,Both you and your spouse/partner must have a supplemental plan with CIGNA.,"You need to live with your spouse, partner, or a roomate for the last 12 months.",Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+OR,NA,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+,NA,Both you and your spouse/partner must have a supplemental plan with CIGNA.,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,NA,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+PA,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+,NA,You need to live with a spouse or partner. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or domestic partner.,"You need to live with spouse, civil or domestic partner.",You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+RI,NA,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,NA,NA,You need to live with a spouse or someone who is at least 18 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,NA,NA,NA
+SC,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,NA,You need to live with a spouse or someone who is at least 18 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+SD,You need to live with a spouse or someone who is at least 50 years old.,NA,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,NA,You need to live with a spouse or someone who is at least 18 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+TN,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,NA,You need to live with a spouse or someone who is at least 50 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,You need to live with a spouse or someone who is at least 18 years old.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+TX,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,Both you and your spouse/partner must have a supplemental plan with Anthem.,You need to live with a spouse or someone who is at least 50 years old. Additional dual-enrollment CIGNA discount available.,You need to live with someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+UT,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,NA,You need to live with a spouse or someone who is at least 18 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,NA,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+VT,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA
+VA,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,Both you and your spouse/partner must have a supplemental plan with AFLAC.,Live with someone 50+. Additional discounts available,Both you and your spouse/partner must have a supplemental plan with Anthem.,You need to live with a spouse or someone who is at least 50 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,You need to live with a spouse or someone who is at least 18 years old.,NA,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+WA,Both you and your spouse/partner must have a supplemental plan with Ace/Chubb.,NA,NA,NA,NA,Both you and your spouse/partner must have a supplemental plan with CIGNA.,Both you and your spouse/partner must have a supplemental plan with Mutual of Omaha.,Both you and your spouse/partner must have a supplemental plan with Humana.,NA,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+WV,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,NA,You need to live with a spouse or someone who is at least 50 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+WI,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,Both you and your spouse/partner must have a supplemental plan with Anthem.,You need to live with a spouse or someone who is at least 18 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+WY,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,NA,You need to live with a spouse or someone who is at least 50 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
+
+================
+File: public/test-bulk-import.html
+================
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bulk Contact Import Test</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+      line-height: 1.6;
+    }
+    h1 {
+      color: #2c3e50;
+      margin-bottom: 20px;
+    }
+    form {
+      background-color: #f9f9f9;
+      padding: 20px;
+      border-radius: 8px;
+      border: 1px solid #ddd;
+      margin-bottom: 20px;
+    }
+    label {
+      display: block;
+      margin-bottom: 8px;
+      font-weight: bold;
+    }
+    input[type="file"] {
+      display: block;
+      margin-bottom: 15px;
+    }
+    .checkbox-group {
+      margin-bottom: 15px;
+    }
+    button {
+      background-color: #3498db;
+      color: white;
+      border: none;
+      padding: 10px 15px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 16px;
+    }
+    button:hover {
+      background-color: #2980b9;
+    }
+    .result {
+      background-color: #f0f7ff;
+      padding: 15px;
+      border-radius: 8px;
+      border: 1px solid #d0e3ff;
+      margin-top: 20px;
+      white-space: pre-wrap;
+      overflow-x: auto;
+    }
+    .info {
+      background-color: #e8f4f8;
+      padding: 15px;
+      border-radius: 8px;
+      border-left: 4px solid #3498db;
+      margin-bottom: 20px;
+    }
+    .info h2 {
+      margin-top: 0;
+      margin-bottom: 10px;
+      color: #2c3e50;
+    }
+  </style>
+</head>
+<body>
+  <h1>Bulk Contact Import Test</h1>
+  
+  <div class="info">
+    <h2>About This Tool</h2>
+    <p>This is a test page for the bulk contact import feature. Use this to test importing CSV files with contact data.</p>
+    <p>Make sure you're logged in as an admin user before testing, as the endpoint requires admin privileges.</p>
+  </div>
+
+  <form id="uploadForm">
+    <label for="csvFile">Select CSV File:</label>
+    <input type="file" id="csvFile" name="file" accept=".csv" required>
+    
+    <div class="checkbox-group">
+      <label>
+        <input type="checkbox" id="overwriteExisting"> Overwrite existing contacts
+      </label>
+    </div>
+    
+    <div class="form-row">
+      <button type="submit">Import Contacts</button>
+    </div>
+  </form>
+  
+  <div id="result" class="result" style="display: none;"></div>
+  
+  <div style="margin-top: 30px;">
+    <h2>Check Import Status</h2>
+    <form id="statusForm">
+      <div class="form-row">
+        <label for="orgId">Organization ID:</label>
+        <input type="text" id="orgId" name="orgId" required>
+      </div>
+      <button type="submit">Check Status</button>
+    </form>
+    
+    <div id="statusResult" class="result" style="display: none;"></div>
+  </div>
+
+  <script>
+    document.getElementById('uploadForm').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      
+      const resultDiv = document.getElementById('result');
+      resultDiv.textContent = 'Processing...';
+      resultDiv.style.display = 'block';
+      
+      try {
+        const formData = new FormData();
+        const csvFile = document.getElementById('csvFile').files[0];
+        const overwriteExisting = document.getElementById('overwriteExisting').checked;
+        
+        formData.append('file', csvFile);
+        formData.append('overwriteExisting', overwriteExisting);
+        
+        // Send request to the API
+        const response = await fetch('/api/contacts/bulk-import', {
+          method: 'POST',
+          body: formData,
+          credentials: 'include' // Important for the session cookie
+        });
+        
+        const data = await response.json();
+        
+        // Display the result
+        resultDiv.textContent = JSON.stringify(data, null, 2);
+        
+        // Update the org ID field with the organization ID from the response
+        if (data.success && data.organizationId) {
+          document.getElementById('orgId').value = data.organizationId;
+        }
+      } catch (error) {
+        resultDiv.textContent = `Error: ${error.message}`;
+      }
+    });
+    
+    document.getElementById('statusForm').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      
+      const statusResultDiv = document.getElementById('statusResult');
+      statusResultDiv.textContent = 'Checking status...';
+      statusResultDiv.style.display = 'block';
+      
+      try {
+        const orgId = document.getElementById('orgId').value.trim();
+        
+        if (!orgId) {
+          statusResultDiv.textContent = 'Please enter an organization ID';
+          return;
+        }
+        
+        // Send request to check the import status
+        const response = await fetch(`/api/contacts/import-status/${orgId}`, {
+          method: 'GET',
+          credentials: 'include' // Important for the session cookie
+        });
+        
+        const data = await response.json();
+        
+        // Display the status result
+        statusResultDiv.textContent = JSON.stringify(data, null, 2);
+        
+        // If the import is still in progress, poll the status every 10 seconds
+        if (data.status === 'in progress') {
+          let pollCount = 0;
+          const maxPolls = 30; // Maximum 5 minutes of polling
+          
+          const pollInterval = setInterval(async () => {
+            pollCount++;
+            
+            if (pollCount > maxPolls) {
+              clearInterval(pollInterval);
+              statusResultDiv.textContent += '\n\nPolling stopped after 5 minutes.';
+              return;
+            }
+            
+            try {
+              const pollResponse = await fetch(`/api/contacts/import-status/${orgId}`, {
+                method: 'GET',
+                credentials: 'include'
+              });
+              
+              const pollData = await pollResponse.json();
+              statusResultDiv.textContent = JSON.stringify(pollData, null, 2);
+              
+              if (pollData.status !== 'in progress') {
+                clearInterval(pollInterval);
+                statusResultDiv.textContent += '\n\nImport completed!';
+              }
+            } catch (pollError) {
+              statusResultDiv.textContent += `\n\nError polling status: ${pollError.message}`;
+              clearInterval(pollInterval);
+            }
+          }, 10000); // Poll every 10 seconds
+        }
+      } catch (error) {
+        statusResultDiv.textContent = `Error: ${error.message}`;
+      }
+    });
+  </script>
+</body>
+</html>
 
 ================
 File: scripts/add-agent.ts
@@ -1115,6 +2639,150 @@ main().catch((error) => {
 });
 
 ================
+File: scripts/migrate-tracking-clicks.js
+================
+#!/usr/bin/env node
+
+/**
+ * Migration script to add tracking_clicks table to all organization databases
+ * Usage: node migrate-tracking-clicks.js
+ */
+
+const fs = require('fs');
+const path = require('path');
+const { Database } = require('../dist/database');
+const { logger } = require('../dist/logger');
+
+// Path to the SQL migration
+const MIGRATION_FILE = path.join(__dirname, '../data/migrations/003_add_tracking_clicks.sql');
+
+async function main() {
+  try {
+    // Read the migration SQL
+    const migrationSql = fs.readFileSync(MIGRATION_FILE, 'utf-8');
+    logger.info(`Loaded migration SQL from ${MIGRATION_FILE}`);
+    
+    // Initialize the main database
+    const db = new Database();
+    logger.info('Connected to main database');
+
+    // Get all organization IDs and their database URLs
+    const orgs = await db.fetchAll(
+      'SELECT id, name, slug, turso_db_url, turso_auth_token FROM organizations WHERE turso_db_url IS NOT NULL AND turso_auth_token IS NOT NULL'
+    );
+    
+    logger.info(`Found ${orgs.length} organizations with database configurations`);
+
+    // Process each organization
+    for (const org of orgs) {
+      const { id, name, slug, turso_db_url, turso_auth_token } = org;
+      
+      try {
+        logger.info(`Migrating organization: ${name} (${id})`);
+        
+        // Connect to the organization's database
+        const orgDb = new Database(turso_db_url, turso_auth_token);
+        
+        // Execute the migration SQL
+        await orgDb.execute(migrationSql);
+        
+        // Verify the table was created
+        const tableExists = await orgDb.fetchOne(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name='tracking_clicks'"
+        );
+        
+        if (tableExists) {
+          logger.info(`Successfully migrated organization ${name} (${id})`);
+        } else {
+          logger.error(`Migration failed for organization ${name} (${id}): table not created`);
+        }
+      } catch (error) {
+        logger.error(`Error migrating organization ${name} (${id}): ${error.message}`);
+      }
+    }
+    
+    logger.info('Migration complete!');
+    process.exit(0);
+  } catch (error) {
+    logger.error(`Migration failed: ${error.message}`);
+    logger.error(error.stack);
+    process.exit(1);
+  }
+}
+
+// Start the migration
+main();
+
+================
+File: scripts/sample-contacts.csv
+================
+first_name,last_name,email,current_carrier,plan_type,effective_date,birth_date,tobacco_user,gender,state,zip_code,phone_number
+John,Doe,john.doe@example.com,Aetna,F,2023-01-01,1955-08-21,0,Male,FL,33101,123-456-7890
+Jane,Smith,jane.smith@example.com,Humana,G,2023-02-15,1953-04-12,0,Female,TX,75001,214-555-1234
+Robert,Johnson,robert.j@example.com,UnitedHealthcare,N,2022-12-01,1949-11-30,1,Male,CA,90210,310-555-9876
+Susan,Williams,susan.w@example.com,Cigna,G,2023-03-20,1960-02-28,0,Female,NY,10001,212-555-4321
+Michael,Brown,michael.b@example.com,Aetna,F,2023-01-15,1952-07-14,0,Male,IL,60601,312-555-7890
+Patricia,Davis,patricia.d@example.com,Humana,G,2022-11-10,1958-09-17,0,Female,GA,30301,404-555-3456
+James,Miller,james.m@example.com,UnitedHealthcare,N,2023-02-01,1950-12-05,1,Male,AZ,85001,480-555-6789
+Linda,Wilson,linda.w@example.com,Cigna,F,2023-03-01,1956-05-22,0,Female,PA,19101,215-555-2345
+William,Moore,william.m@example.com,Aetna,G,2022-10-15,1947-03-08,1,Male,OH,44101,216-555-7890
+Jennifer,Taylor,jennifer.t@example.com,Humana,F,2023-01-20,1962-08-11,0,Female,MI,48201,313-555-4567
+
+================
+File: scripts/setup-contact-tracking.sh
+================
+#!/bin/bash
+
+# Setup script for contact tracking system
+# This script installs dependencies and sets up the database tables
+
+# Exit on any error
+set -e
+
+echo "Setting up contact tracking system..."
+
+# Install UUID package
+echo "Installing dependencies..."
+npm install uuid
+npm install --save-dev @types/uuid
+
+# Create necessary database tables
+echo "Setting up database tables..."
+DB_PATH="./database.db"
+
+# Run the SQL migration
+echo "Applying database migration..."
+MIGRATION_PATH="./migrations/20240406_add_contact_history_tracking.sql"
+
+# Use the migrate script if available
+if [ -f "./scripts/migrate.sh" ]; then
+  ./scripts/migrate.sh $MIGRATION_PATH
+else
+  # Fallback if migrate script doesn't exist
+  echo "Migration script not found, attempting direct application..."
+  
+  # For SQLite
+  if [ -f "$DB_PATH" ]; then
+    sqlite3 $DB_PATH < $MIGRATION_PATH
+  else
+    echo "Database file not found at $DB_PATH"
+    echo "Please run this script from the backend directory or update the DB_PATH variable."
+    exit 1
+  fi
+fi
+
+# Set file as executable
+chmod +x ./scripts/setup-contact-tracking.sh
+
+echo "Contact tracking system setup complete!"
+echo ""
+echo "Usage:"
+echo "  - New contacts are automatically tracked when added to the system"
+echo "  - Billing is based on unique contacts per billing cycle"
+echo "  - Contact statistics are available at /api/contact-tracking/usage-stats"
+echo ""
+
+================
 File: scripts/test-bulk-import.ts
 ================
 import { Database } from '../src/database';
@@ -1220,6 +2888,80 @@ async function main() {
 main();
 
 ================
+File: sql/add_demo_mode_column.sql
+================
+
+
+================
+File: sql/create_tables.sql
+================
+-- Create organizations table
+CREATE TABLE IF NOT EXISTS organizations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  slug TEXT NOT NULL UNIQUE,
+  subscription_tier TEXT DEFAULT 'basic',
+  agent_limit INTEGER DEFAULT 1,
+  contact_limit INTEGER DEFAULT 1000,
+  stripe_customer_id TEXT,
+  stripe_subscription_id TEXT,
+  stripe_checkout_session TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Create subscription_tiers table
+CREATE TABLE IF NOT EXISTS subscription_tiers (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  agent_limit INTEGER NOT NULL,
+  contact_limit INTEGER NOT NULL,
+  price_monthly INTEGER NOT NULL,
+  price_yearly INTEGER NOT NULL,
+  features TEXT NOT NULL
+);
+
+-- Insert default subscription tiers
+INSERT INTO subscription_tiers 
+(id, name, agent_limit, contact_limit, price_monthly, price_yearly, features)
+VALUES 
+('basic', 'Basic', 1, 1000, 2900, 29900, '["Email Support", "Basic Analytics", "1 Agent"]'),
+('pro', 'Professional', 5, 10000, 9900, 99900, '["Email & Phone Support", "Advanced Analytics", "Team Collaboration", "API Access", "5 Agents"]'),
+('enterprise', 'Enterprise', 10, 20000, 19900, 199900, '["24/7 Priority Support", "Custom Reporting", "Dedicated Account Manager", "White-labeling", "SSO Integration", "10 Agents"]');
+
+================
+File: sql/update_org_limits.sql
+================
+-- Update organization tier limits
+-- Basic tier: 1 agent, 1,000 contacts
+UPDATE organizations 
+SET agent_limit = 1, contact_limit = 1000 
+WHERE subscription_tier = 'basic';
+
+-- Pro tier: 5 agents, 10,000 contacts
+UPDATE organizations 
+SET agent_limit = 5, contact_limit = 10000 
+WHERE subscription_tier = 'pro';
+
+-- Enterprise tier: 10 agents, 20,000 contacts  
+UPDATE organizations 
+SET agent_limit = 10, contact_limit = 20000 
+WHERE subscription_tier = 'enterprise';
+
+-- Make sure subscription_tiers table is updated with correct limits
+INSERT OR REPLACE INTO subscription_tiers 
+(id, name, agent_limit, contact_limit, price_monthly, price_yearly, features)
+VALUES 
+('basic', 'Basic', 1, 1000, 2900, 29900, '["Email Support", "Basic Analytics", "1 Agent"]'),
+('pro', 'Professional', 5, 10000, 9900, 99900, '["Email & Phone Support", "Advanced Analytics", "Team Collaboration", "API Access", "5 Agents"]'),
+('enterprise', 'Enterprise', 10, 20000, 19900, 199900, '["24/7 Priority Support", "Custom Reporting", "Dedicated Account Manager", "White-labeling", "SSO Integration", "10 Agents"]');
+
+================
+File: sql/update_org_schema.sql
+================
+-- Add stripe_checkout_session column to organizations table
+ALTER TABLE organizations ADD COLUMN stripe_checkout_session TEXT;
+
+================
 File: src/config/index.ts
 ================
 interface Config {
@@ -1268,7 +3010,7 @@ export const TURSO_CONFIG = {
   API_URL: 'https://api.turso.tech/v1',
   API_TOKEN: process.env.TURSO_API_TOKEN, // Add this to your .env
   ORG_SLUG: 'pyrex41',
-  GROUP_NAME: 'medicare-portal',
+  GROUP_NAME: 'maxretain',
   LOCATION: 'aws-us-east-1' // We can update this to your preferred location
 }
 
@@ -1998,7 +3740,9 @@ export function createAuthRoutes() {
           organizationSlug: "",
           first_name: "",
           last_name: "",
-          id: ""
+          id: "",
+          demo_mode: true,
+          orgCreateDate: ""
         };
       }
 
@@ -2012,8 +3756,10 @@ export function createAuthRoutes() {
           last_name: string;
           is_admin: boolean;
           organization_slug: string;
+          demo_mode: boolean;
+          orgCreateDate: string;
         }>(
-          `SELECT u.id, u.email, u.first_name, u.last_name, u.is_admin, o.slug as organization_slug
+          `SELECT u.id, u.email, u.first_name, u.last_name, u.is_admin, o.slug as organization_slug, o.demo_mode, o.created_at as orgCreateDate
            FROM sessions s
            JOIN users u ON s.user_id = u.id
            JOIN organizations o ON u.organization_id = o.id
@@ -2031,7 +3777,9 @@ export function createAuthRoutes() {
             first_name: "",
             last_name: "",
             is_admin: false,
-            id: ""
+            id: "",
+            demo_mode: true,
+            orgCreateDate: ""
           };
         }
 
@@ -2047,7 +3795,9 @@ export function createAuthRoutes() {
           first_name: sessionUser.first_name,
           last_name: sessionUser.last_name,
           is_admin: sessionUser.is_admin,
-          id: sessionUser.id
+          id: sessionUser.id,
+          demo_mode: sessionUser.demo_mode,
+          orgCreateDate: sessionUser.orgCreateDate.split(/[ T]/)[0]
         };
       } catch (error) {
         logger.error(`Error getting session info: ${error}`);
@@ -2063,7 +3813,9 @@ export function createAuthRoutes() {
           first_name: "",
           last_name: "",
           is_admin: false,
-          id: ""
+          id: "",
+          demo_mode: true,
+          orgCreateDate: ""
         };
       }
     })
@@ -2073,6 +3825,534 @@ export function createAuthRoutes() {
       return { success: true };
     });
 }
+
+================
+File: src/routes/billing.ts
+================
+import { Elysia } from 'elysia';
+import { Database } from '../database';
+import { logger } from '../logger';
+import { config } from '../config';
+import { requireAuth } from '../middleware/auth';
+import Stripe from 'stripe';
+
+const stripe = new Stripe(config.stripeSecretKey || '', {
+  apiVersion: '2025-02-24.acacia'
+});
+
+interface PlanInfo {
+  name: string;
+  contactCount: number;
+  totalClients: number;
+  priceDescription?: string;
+  basePrice?: number;
+  contactsIncluded?: number;
+  pricePerAdditionalContact?: number;
+}
+
+interface PaymentMethod {
+  id: string;
+  type: string;
+  last4: string;
+  brand: string;
+  expiryMonth: number;
+  expiryYear: number;
+  email: string;
+}
+
+interface Invoice {
+  id: string;
+  number: string;
+  date: string;
+  status: 'pending' | 'paid' | 'failed';
+  amount: number;
+  currency: string;
+  plan: string;
+  pdfUrl?: string;
+}
+
+export const createBillingRoutes = (app: Elysia) => {
+  app.use(requireAuth)
+    
+    // Get current plan information
+    .get('/api/billing/plan', async ({ user, set }) => {
+      try {
+        if (!user?.organization_id) {
+          set.status = 400;
+          return { 
+            success: false,
+            error: 'No organization ID found' 
+          };
+        }
+        logger.info(`Fetching plan for organization_id: ${user.organization_id}`);
+        
+        const mainDb = new Database(); // For main 'organizations' table
+        
+        // Get organization details (excluding contact_count) from main DB
+        const orgDetailsFromMain = await mainDb.fetchOne<{
+          id: number; 
+          name: string;
+          stripe_customer_id: string | null;
+          stripe_subscription_id: string | null;
+          subscription_tier: string | null;
+        }>(
+          `SELECT 
+              id,
+              name,
+              stripe_customer_id,
+              stripe_subscription_id,
+              subscription_tier 
+            FROM organizations
+            WHERE id = ?`,
+          [user.organization_id]
+        );
+        
+        logger.info(`Organization details from DB for org ${user.organization_id}: ${JSON.stringify(orgDetailsFromMain)}`);
+
+        if (!orgDetailsFromMain) {
+          set.status = 404;
+          logger.error(`Organization not found in main DB for id: ${user.organization_id}`);
+          return { success: false, error: 'Organization not found' };
+        }
+
+        let contactCount = 0;
+        try {
+          // Get contact_count from org-specific DB
+          // Ensure user.organization_id is passed as a string to getOrgDb
+          const orgDb = await Database.getOrgDb(user.organization_id.toString());
+          const contactCountResult = await orgDb.fetchOne<{ count: number }>(
+            // Count all contacts in the table, as all are considered active
+            "SELECT COUNT(id) as count FROM contacts"
+          );
+          if (contactCountResult) {
+            contactCount = contactCountResult.count;
+          }
+          logger.info(`Fetched contact_count: ${contactCount} for org ${user.organization_id} from orgDB.`);
+        } catch (orgDbError) {
+          logger.error(`Error fetching contact count from orgDB for org ${user.organization_id}: ${orgDbError}`);
+          // Continue with contactCount = 0 and rely on defaults.
+        }
+        
+        // Combine org details with contact count
+        const org = {
+          ...orgDetailsFromMain,
+          contact_count: contactCount // Add the count here
+        };
+        
+        // Default plan info
+        let planInfo: PlanInfo = {
+          name: 'Monthly Plan',
+          contactCount: Number(org.contact_count) || 0,
+          totalClients: 500, // Default limit
+          priceDescription: 'Plan details not available', // Default description
+        };
+        
+        // If they have a Stripe subscription, get details from Stripe
+        if (org.stripe_subscription_id) {
+          try {
+            let subscriptionIdToUse = org.stripe_subscription_id as string;
+            logger.info(`Initial stripe_subscription_id from DB for org ${user.organization_id}: ${org.stripe_subscription_id}`);
+            try {
+              // Attempt to parse as JSON and get the id field
+              const parsedSubscription = JSON.parse(org.stripe_subscription_id as string);
+              if (parsedSubscription && typeof parsedSubscription.id === 'string') {
+                subscriptionIdToUse = parsedSubscription.id;
+              } else {
+                // Log a warning if parsing succeeded but 'id' field is missing or not a string
+                logger.warn(`Parsed stripe_subscription_id but 'id' field is missing or not a string for org ${user.organization_id}`);
+              }
+            } catch (parseError) {
+              // If parsing fails, assume it's already a plain string ID. Log this for awareness.
+              logger.info(`stripe_subscription_id for org ${user.organization_id} is not valid JSON, using as plain string: ${parseError}`);
+            }
+
+            logger.info(`Using subscriptionIdToUse: ${subscriptionIdToUse} for org ${user.organization_id}`);
+
+            const subscription = await stripe.subscriptions.retrieve(
+              subscriptionIdToUse
+            );
+            logger.info(`Full retrieved subscription object for org ${user.organization_id}: ${JSON.stringify(subscription, null, 2)}`);
+
+            if (subscription.items.data.length > 0 && subscription.items.data[0].price) {
+              // The full price object is part of the full subscription object logged above, so this specific log can be removed if desired.
+            }
+            
+            // Get the price details
+            if (subscription.items.data.length > 0) {
+              const item = subscription.items.data[0];
+              const price = item.price; // This is a Stripe.Price object
+              
+              // Update plan name from Stripe product
+              if (price.product) {
+                try {
+                  const productObjectOrId = price.product;
+                  const productId = typeof productObjectOrId === 'string' ? productObjectOrId : productObjectOrId.id;
+                  
+                  const stripeProduct = await stripe.products.retrieve(productId);
+                  
+                  logger.info(`Full retrieved product object for org ${user.organization_id} (product ID ${productId}): ${JSON.stringify(stripeProduct, null, 2)}`);
+
+                  if (stripeProduct && stripeProduct.name) {
+                    planInfo.name = stripeProduct.name;
+                  }
+
+                  // Initialize price fields before attempting to parse or use defaults
+                  planInfo.basePrice = undefined;
+                  planInfo.contactsIncluded = undefined;
+                  planInfo.pricePerAdditionalContact = undefined;
+
+                  if (price.unit_amount) {
+                    planInfo.basePrice = price.unit_amount / 100;
+                  } else if (price.billing_scheme === 'tiered' || price.billing_scheme === 'per_unit') {
+                    planInfo.basePrice = 0; // Indicates usage-based or tiers, to be refined by description
+                    logger.warn(`Price object for org ${user.organization_id} has null unit_amount (billing_scheme: ${price.billing_scheme}). Base price set to 0 initially.`);
+                  }
+
+                  // Try to parse detailed pricing from the product description.
+                  if (stripeProduct && stripeProduct.description) {
+                    planInfo.priceDescription = stripeProduct.description; // Store the raw description first
+                    
+                    const priceRegex = /\$(\d+(?:\.\d{1,2})?)[^\d]*?(\d+)\s+contacts\D*\$(\d+(?:\.\d{1,2})?)\s*\/\s*contact/i;
+                    const matches = stripeProduct.description.match(priceRegex);
+
+                    if (matches && matches.length >= 4) {
+                      planInfo.basePrice = parseFloat(matches[1]); // Override if parsed
+                      planInfo.contactsIncluded = parseInt(matches[2], 10);
+                      planInfo.pricePerAdditionalContact = parseFloat(matches[3]);
+                      planInfo.priceDescription = `\$${planInfo.basePrice}/month for first ${planInfo.contactsIncluded} contacts, then \$${planInfo.pricePerAdditionalContact}/contact.`;
+                      logger.info(`Parsed detailed pricing for org ${user.organization_id}: Base: ${planInfo.basePrice}, Included: ${planInfo.contactsIncluded}, Additional: ${planInfo.pricePerAdditionalContact}`);
+                    } else {
+                      logger.warn(`Could not parse detailed pricing structure from product description for org ${user.organization_id}: ${stripeProduct.description}. Using full description.`);
+                      // Fallback for basePrice if not parsed from complex structure but a simple price exists in description
+                      if (planInfo.basePrice === 0 || planInfo.basePrice === undefined) { // Only if not set by unit_amount or complex parse
+                        const singlePriceMatch = stripeProduct.description.match(/\$(\d+(?:\.\d{1,2})?)/);
+                        if (singlePriceMatch && singlePriceMatch[1]) {
+                          planInfo.basePrice = parseFloat(singlePriceMatch[1]);
+                          logger.info(`Fallback: Parsed base price $${planInfo.basePrice} from product description for org ${user.organization_id}`);
+                        }
+                      }
+                    }
+                  } else {
+                    planInfo.priceDescription = 'Pricing details not available in product description.';
+                  }
+
+                } catch (productError) {
+                  logger.error(`Error fetching product details from Stripe: ${productError} for product ID: ${price.product}`);
+                  // Continue with default plan name or previously set name
+                }
+              }
+
+              if (price.unit_amount) {
+                // planInfo.pricePerMonth = price.unit_amount / 100; // Convert from cents
+              } else if (price.billing_scheme === 'tiered' || price.billing_scheme === 'per_unit') {
+                // For tiered or metered plans without a simple unit_amount, actual price is usage-dependent.
+                // Set to 0 or a specific indicator. For now, 0 and log.
+                // planInfo.pricePerMonth = 0;
+                logger.warn(`Price object for org ${user.organization_id} has null unit_amount (billing_scheme: ${price.billing_scheme}). Display price set to 0. Full pricing is usage-dependent or tiered.`);
+              }
+              // If unit_amount is null and it's not explicitly tiered/per_unit, it will keep the default 60, 
+              // which might indicate an issue or a different pricing model not yet handled.
+            }
+            
+            // You can customize the total clients based on the plan
+            if (org.subscription_tier === 'premium') {
+              planInfo.totalClients = 1000;
+            } else if (org.subscription_tier === 'enterprise') {
+              planInfo.totalClients = 5000;
+            }
+          } catch (stripeError) {
+            logger.error(`Error fetching subscription from Stripe: ${stripeError}`);
+            // Continue with default values
+          }
+        }
+        
+        logger.info(`Final planInfo for org ${user.organization_id}: ${JSON.stringify(planInfo)}`);
+        return {
+          success: true,
+          data: planInfo
+        };
+      } catch (error) {
+        logger.error(`Error in plan info route: ${error}`);
+        set.status = 500;
+        return { 
+          success: false,
+          error: 'Failed to fetch plan information'
+        };
+      }
+    })
+    
+    // Get payment method information
+    .get('/api/billing/payment-method', async ({ user, set }) => {
+      try {
+        if (!user?.organization_id) {
+          set.status = 400;
+          return { 
+            success: false,
+            error: 'No organization ID found' 
+          };
+        }
+        
+        const db = new Database();
+        const client = db.getClient();
+        
+        const orgResult = await client.execute({
+          sql: 'SELECT stripe_customer_id FROM organizations WHERE id = ?',
+          args: [user.organization_id]
+        });
+        
+        if (orgResult.rows.length === 0 || !orgResult.rows[0].stripe_customer_id) {
+          return {
+            success: true,
+            data: null // No Stripe customer ID, so no payment method
+          };
+        }
+        
+        const stripeCustomerId = orgResult.rows[0].stripe_customer_id as string;
+
+        // Retrieve the customer, expanding the default payment method
+        const customer = await stripe.customers.retrieve(stripeCustomerId, {
+          expand: ['invoice_settings.default_payment_method']
+        });
+
+        if (!customer || customer.deleted) {
+          logger.warn(`Stripe customer not found or deleted for customer ID: ${stripeCustomerId}`);
+          return {
+            success: true,
+            data: null
+          };
+        }
+        
+        const defaultPaymentMethod = customer.invoice_settings?.default_payment_method;
+
+        if (defaultPaymentMethod && typeof defaultPaymentMethod !== 'string' && defaultPaymentMethod.type === 'card' && defaultPaymentMethod.card) {
+          const paymentMethodDetails: PaymentMethod = {
+            id: defaultPaymentMethod.id,
+            type: defaultPaymentMethod.type,
+            last4: defaultPaymentMethod.card.last4 || '',
+            brand: defaultPaymentMethod.card.brand || '',
+            expiryMonth: defaultPaymentMethod.card.exp_month || 0,
+            expiryYear: defaultPaymentMethod.card.exp_year || 0,
+            email: (customer as Stripe.Customer).email || ''
+          };
+          return {
+            success: true,
+            data: paymentMethodDetails
+          };
+        } else {
+          // No default payment method, or it's not a card, or card details are missing
+          logger.info(`No default card payment method found or details incomplete for customer ${stripeCustomerId}`);
+          return {
+            success: true,
+            data: null // No suitable payment method found
+          };
+        }
+      } catch (error) {
+        logger.error(`Error in payment method route: ${error}`);
+        set.status = 500;
+        return { 
+          success: false,
+          error: 'Failed to fetch payment method information' 
+        };
+      }
+    })
+    
+    // Get invoices list
+    .get('/api/billing/invoices', async ({ user, set, query }) => {
+      try {
+        if (!user?.organization_id) {
+          set.status = 400;
+          return { 
+            success: false,
+            error: 'No organization ID found' 
+          };
+        }
+        
+        const db = new Database();
+        const client = db.getClient();
+        
+        // Get organization's Stripe customer ID
+        const orgResult = await client.execute({
+          sql: 'SELECT stripe_customer_id FROM organizations WHERE id = ?',
+          args: [user.organization_id]
+        });
+        
+        if (orgResult.rows.length === 0 || !orgResult.rows[0].stripe_customer_id) {
+          return {
+            success: true,
+            data: [] // No invoices
+          };
+        }
+        
+        const stripeCustomerId = orgResult.rows[0].stripe_customer_id as string;
+        
+        // Get invoices from Stripe
+        const limit = query?.limit ? parseInt(query.limit as string) : 10;
+        const stripeInvoices = await stripe.invoices.list({
+          customer: stripeCustomerId,
+          limit: limit
+        });
+        
+        const invoices: Invoice[] = stripeInvoices.data.map(inv => ({
+          id: inv.id,
+          number: inv.number || `#${inv.id.slice(-4).toUpperCase()}`,
+          date: new Date(inv.created * 1000).toISOString(),
+          status: inv.status === 'paid' ? 'paid' : 
+                  inv.status === 'open' ? 'pending' : 'failed',
+          amount: (inv.amount_paid || inv.amount_due) / 100, // Convert from cents
+          currency: inv.currency.toUpperCase(),
+          plan: 'Monthly', // You can customize this based on subscription
+          pdfUrl: inv.invoice_pdf || undefined
+        }));
+        
+        return {
+          success: true,
+          data: invoices
+        };
+      } catch (error) {
+        logger.error(`Error in invoices route: ${error}`);
+        set.status = 500;
+        return { 
+          success: false,
+          error: 'Failed to fetch invoices'
+        };
+      }
+    })
+    
+    // Update payment method
+    .post('/api/billing/update-payment-method', async ({ user, body, set }) => {
+      try {
+        if (!user?.organization_id) {
+          set.status = 400;
+          return { 
+            success: false,
+            error: 'No organization ID found' 
+          };
+        }
+        
+        const { paymentMethodId } = body as { paymentMethodId: string };
+        
+        if (!paymentMethodId) {
+          set.status = 400;
+          return {
+            success: false,
+            error: 'Payment method ID is required'
+          };
+        }
+        
+        const db = new Database();
+        const client = db.getClient();
+        
+        // Get organization's Stripe customer ID
+        const orgResult = await client.execute({
+          sql: 'SELECT stripe_customer_id, stripe_subscription_id FROM organizations WHERE id = ?',
+          args: [user.organization_id]
+        });
+        
+        if (orgResult.rows.length === 0 || !orgResult.rows[0].stripe_customer_id) {
+          set.status = 400;
+          return {
+            success: false,
+            error: 'No Stripe customer found for organization'
+          };
+        }
+        
+        const stripeCustomerId = orgResult.rows[0].stripe_customer_id as string;
+        const stripeSubscriptionId = orgResult.rows[0].stripe_subscription_id as string;
+        
+        // Attach the payment method to the customer
+        await stripe.paymentMethods.attach(paymentMethodId, {
+          customer: stripeCustomerId
+        });
+        
+        // Set as default payment method for the customer
+        await stripe.customers.update(stripeCustomerId, {
+          invoice_settings: {
+            default_payment_method: paymentMethodId
+          }
+        });
+        
+        // If there's a subscription, update its default payment method too
+        if (stripeSubscriptionId) {
+          await stripe.subscriptions.update(stripeSubscriptionId, {
+            default_payment_method: paymentMethodId
+          });
+        }
+        
+        return {
+          success: true,
+          message: 'Payment method updated successfully'
+        };
+      } catch (error) {
+        logger.error(`Error updating payment method: ${error}`);
+        set.status = 500;
+        return { 
+          success: false,
+          error: 'Failed to update payment method'
+        };
+      }
+    })
+    
+    // Download invoice
+    .get('/api/billing/invoices/:invoiceId/download', async ({ user, params, set }) => {
+      try {
+        if (!user?.organization_id) {
+          set.status = 400;
+          return { 
+            success: false,
+            error: 'No organization ID found' 
+          };
+        }
+        
+        const { invoiceId } = params;
+        
+        // Retrieve the invoice from Stripe
+        const invoice = await stripe.invoices.retrieve(invoiceId);
+        
+        // Verify the invoice belongs to the user's organization
+        const db = new Database();
+        const client = db.getClient();
+        
+        const orgResult = await client.execute({
+          sql: 'SELECT stripe_customer_id FROM organizations WHERE id = ?',
+          args: [user.organization_id]
+        });
+        
+        if (orgResult.rows.length === 0 || 
+            orgResult.rows[0].stripe_customer_id !== invoice.customer) {
+          set.status = 403;
+          return {
+            success: false,
+            error: 'Unauthorized to access this invoice'
+          };
+        }
+        
+        if (!invoice.invoice_pdf) {
+          set.status = 404;
+          return {
+            success: false,
+            error: 'Invoice PDF not available'
+          };
+        }
+        
+        // Return the PDF URL for the client to download
+        return {
+          success: true,
+          data: {
+            url: invoice.invoice_pdf
+          }
+        };
+      } catch (error) {
+        logger.error(`Error downloading invoice: ${error}`);
+        set.status = 500;
+        return { 
+          success: false,
+          error: 'Failed to download invoice'
+        };
+      }
+    });
+
+  return app;
+};
 
 ================
 File: src/routes/brand.ts
@@ -3534,7 +5814,7 @@ export function createDashboardRoutes() {
             startDateStr = range.startDateStr;
             endDateStr = range.endDateStr;
         }
-        
+          
 
         logger.info(`Fetching dashboard stats for org ${currentUser.organization_id} for period: ${period || '30days'} (range: ${startDateStr} to ${endDateStr})`);
 
@@ -3552,12 +5832,13 @@ export function createDashboardRoutes() {
         )
         logger.info(`Sample tracking_clicks: ${JSON.stringify(sampleClicks)}`)
         
-        // 1. "Quotes Sent" - count emails that have been sent (status = 'scheduled')
+        // 1. "Quotes Sent" - count emails that have been sent (status = 'scheduled') - EXCLUDE follow-ups
         const quotesSentSql = `
           SELECT COUNT(*) as count 
           FROM email_schedules 
-          WHERE status = 'scheduled' 
+          WHERE status IN ('scheduled', 'send', 'sent', 'delivered')
             AND scheduled_send_date BETWEEN ? AND ?
+            AND (email_type IS NULL OR email_type NOT LIKE 'followup%')
         `
         const quotesSentResult = await orgDb.fetchOne<{ count: number }>(quotesSentSql, [startDateStr, endDateStr])
         const quotesSent = quotesSentResult?.count || 0
@@ -3567,45 +5848,43 @@ export function createDashboardRoutes() {
         const manualQuotesSql = `
           SELECT COUNT(*) as count
           FROM email_send_tracking
-          WHERE email_type = 'quote_email' AND send_status = 'sent'
+          WHERE email_type = 'quote_email' AND send_status IN ('sent', 'delivered', 'scheduled')
             AND DATE(created_at) BETWEEN ? AND ?
         `
         const manualQuotesResult = await orgDb.fetchOne<{ count: number }>(manualQuotesSql, [startDateStr, endDateStr])
         const manualQuotesSent = manualQuotesResult?.count || 0
         logger.info(`Manual Quotes Sent count: ${manualQuotesSent}`)
 
-        // 2. "Quotes Viewed" (Performance) - count unique contacts who received a scheduled email in the period and have any click in tracking_clicks
+        // 2. "Quotes Viewed" - count unique contacts who clicked links during the period
         const quotesViewedSql = `
-          SELECT COUNT(DISTINCT es.contact_id) as count 
-          FROM email_schedules es
-          JOIN tracking_clicks tc ON es.contact_id = tc.contact_id
-          WHERE es.status = 'scheduled'
-            AND es.scheduled_send_date BETWEEN ? AND ?
+          SELECT COUNT(DISTINCT contact_id) as count
+          FROM tracking_clicks
+          WHERE contact_id IS NOT NULL
+            AND DATE(clicked_at) BETWEEN ? AND ?
         `
         const quotesViewedResult = await orgDb.fetchOne<{ count: number }>(quotesViewedSql, [startDateStr, endDateStr])
         const quotesViewed = quotesViewedResult?.count || 0
-        logger.info(`Quotes Viewed (Performance) count: ${quotesViewed}`)
+        logger.info(`Quotes Viewed count: ${quotesViewed}`)
 
         // 3. Get "Follow Ups Requested" count from email_schedules (Performance context)
         // These are follow-ups scheduled to be sent in the period.
         const followUpsSql = `
           SELECT COUNT(*) as count
           FROM email_schedules
-          WHERE status = 'scheduled' -- Assuming 'scheduled' means sent for past dates
-            AND email_type LIKE 'follow_up_%' 
+          WHERE status IN ('scheduled', 'send', 'delivered') -- Assuming 'scheduled' means sent for past dates
+            AND email_type LIKE 'followup%' 
             AND scheduled_send_date BETWEEN ? AND ?
         `
         const followUpsResult = await orgDb.fetchOne<{ count: number }>(followUpsSql, [startDateStr, endDateStr])
         const followUpsRequested = followUpsResult?.count || 0
         logger.info(`Follow Ups Requested count: ${followUpsRequested}`)
 
-        // 4. Get "Health Questions Completed" count (Performance) - unique contacts who received a scheduled email in the period and completed eligibility_answers
+        // 4. "Health Questions Completed" - unique contacts who completed health questions during the period
         const healthQuestionsCompletedSql = `
-          SELECT COUNT(DISTINCT es.contact_id) as count
-          FROM email_schedules es
-          JOIN eligibility_answers ea ON es.contact_id = ea.contact_id
-          WHERE es.status = 'scheduled'
-            AND es.scheduled_send_date BETWEEN ? AND ?
+          SELECT COUNT(DISTINCT contact_id) as count
+          FROM eligibility_answers
+          WHERE contact_id IS NOT NULL
+            AND DATE(created_at) BETWEEN ? AND ?
         `
         const healthQuestionsResult = await orgDb.fetchOne<{ count: number }>(healthQuestionsCompletedSql, [startDateStr, endDateStr])
         const healthQuestionsCompleted = healthQuestionsResult?.count || 0
@@ -3657,17 +5936,18 @@ export function createDashboardRoutes() {
         const upcomingStartDate = now.toISOString().slice(0, 10);
         const upcomingEndDate = in30Days.toISOString().slice(0, 10);
 
-        // Total count
+        // Total count - EXCLUDE follow-ups
         const upcomingTotalResult = await orgDb.fetchOne<{ total: number } | null>(
           `SELECT COUNT(*) as total FROM email_schedules
            WHERE status = 'pre-scheduled'
              AND scheduled_send_date >= ?
-             AND scheduled_send_date <= ?`,
+             AND scheduled_send_date <= ?
+             AND (email_type IS NULL OR email_type NOT LIKE 'followup%')`,
           [upcomingStartDate, upcomingEndDate]
         );
         const upcomingEmailsTotal = upcomingTotalResult?.total ?? 0;
 
-        // First page (up to 20)
+        // First page (up to 20) - EXCLUDE follow-ups
         const upcomingEmailsPage = await orgDb.fetchAll(
           `SELECT es.id, es.contact_id, es.email_type, es.scheduled_send_date, es.status,
                   c.first_name, c.last_name
@@ -3676,8 +5956,9 @@ export function createDashboardRoutes() {
            WHERE es.status = 'pre-scheduled'
              AND es.scheduled_send_date >= ?
              AND es.scheduled_send_date <= ?
+             AND (es.email_type IS NULL OR es.email_type NOT LIKE 'followup%')
            ORDER BY es.scheduled_send_date ASC
-           LIMIT 20 OFFSET 0`,
+           LIMIT 30 OFFSET 0`,
           [upcomingStartDate, upcomingEndDate]
         );
 
@@ -3700,6 +5981,122 @@ export function createDashboardRoutes() {
         return {
           success: false,
           error: 'Failed to load dashboard stats'
+        }
+      }
+    })
+    // Send ranking endpoint
+    .get('/send-ranking', async ({ request, set, query }) => {
+      try {
+        logger.info('=== SEND RANKING ENDPOINT HIT ===')
+        
+        const currentUser = await getUserFromSession(request)
+        if (!currentUser || !currentUser.organization_id) {
+          logger.error('Send ranking: No authenticated user or organization_id')
+          set.status = 401
+          return {
+            success: false,
+            error: 'Authentication required'
+          }
+        }
+
+        logger.info(`Send ranking: User ${currentUser.id} from org ${currentUser.organization_id}`)
+
+        const orgDb = await Database.getOrInitOrgDb(currentUser.organization_id.toString())
+        logger.info(`Send ranking: Got org database for ${currentUser.organization_id}`)
+
+        // Always show last 30 days for send ranking, regardless of dropdown
+        const today = new Date();
+        const thirtyDaysAgo = new Date(today);
+        thirtyDaysAgo.setDate(today.getDate() - 29); // Last 30 days including today
+        
+        const startDateStr = thirtyDaysAgo.toISOString().slice(0, 10);
+        const endDateStr = today.toISOString().slice(0, 10);
+
+        logger.info(`Send ranking: Fetching for org ${currentUser.organization_id} for last 30 days (range: ${startDateStr} to ${endDateStr})`);
+
+        // Get daily breakdown of email performance - track emails sent on each date and their outcomes - EXCLUDE follow-ups
+        const sendRankingSql = `
+          WITH emails_sent_by_date AS (
+            SELECT 
+              DATE(scheduled_send_date) as scheduled_send_date,
+              COUNT(*) as quotes_sent,
+              contact_id
+            FROM email_schedules
+            WHERE status IN ('scheduled', 'send', 'sent', 'delivered')
+              AND scheduled_send_date BETWEEN ? AND ?
+              AND (email_type IS NULL OR email_type NOT LIKE 'followup%')
+            GROUP BY DATE(scheduled_send_date), contact_id
+          ),
+          quotes_sent_summary AS (
+            SELECT 
+              scheduled_send_date,
+              COUNT(*) as quotes_sent
+            FROM emails_sent_by_date
+            GROUP BY scheduled_send_date
+          ),
+          quotes_viewed_by_send_date AS (
+            SELECT 
+              es.scheduled_send_date,
+              COUNT(DISTINCT tc.contact_id) as quotes_viewed
+            FROM emails_sent_by_date es
+            JOIN tracking_clicks tc ON es.contact_id = tc.contact_id
+            GROUP BY es.scheduled_send_date
+          ),
+          health_completed_by_send_date AS (
+            SELECT 
+              es.scheduled_send_date,
+              COUNT(DISTINCT ea.contact_id) as health_completed
+            FROM emails_sent_by_date es
+            JOIN eligibility_answers ea ON es.contact_id = ea.contact_id
+            GROUP BY es.scheduled_send_date
+          )
+          SELECT 
+            qs.scheduled_send_date,
+            qs.quotes_sent,
+            COALESCE(qv.quotes_viewed, 0) as quotes_viewed,
+            COALESCE(hc.health_completed, 0) as health_completed
+          FROM quotes_sent_summary qs
+          LEFT JOIN quotes_viewed_by_send_date qv ON qs.scheduled_send_date = qv.scheduled_send_date
+          LEFT JOIN health_completed_by_send_date hc ON qs.scheduled_send_date = hc.scheduled_send_date
+          ORDER BY qs.scheduled_send_date DESC
+        `;
+
+        logger.info(`Send ranking: Executing SQL with params: [${startDateStr}, ${endDateStr}]`)
+        logger.info(`Send ranking: SQL query: ${sendRankingSql}`)
+
+        const sendRankingResult = await orgDb.fetchAll(sendRankingSql, [
+          startDateStr, endDateStr
+        ]);
+
+        logger.info(`Send ranking: Raw SQL result count: ${sendRankingResult.length}`)
+        logger.info(`Send ranking: Raw SQL first 3 results: ${JSON.stringify(sendRankingResult.slice(0, 3))}`)
+
+        // Transform results into the expected format with ranking
+        const sendRankingData = sendRankingResult.map((row: any, index: number) => ({
+          rank: index + 1,
+          sendDate: row.scheduled_send_date || row[0],
+          quotesSent: parseInt(row.quotes_sent || row[1] || 0),
+          quotesViewed: parseInt(row.quotes_viewed || row[2] || 0),
+          healthCompleted: parseInt(row.health_completed || row[3] || 0)
+        }));
+
+        logger.info(`Send ranking: Transformed data count: ${sendRankingData.length}`)
+        logger.info(`Send ranking: Transformed data first 3: ${JSON.stringify(sendRankingData.slice(0, 3))}`)
+
+        logger.info(`Send ranking: Returning response with ${sendRankingData.length} entries`)
+
+        return {
+          success: true,
+          data: sendRankingData
+        }
+      } catch (error) {
+        logger.error(`=== SEND RANKING ERROR ===`)
+        logger.error(`Send ranking error: ${error instanceof Error ? error.message : String(error)}`)
+        logger.error(`Send ranking error stack: ${error instanceof Error ? error.stack : 'No stack trace'}`)
+        set.status = 500
+        return {
+          success: false,
+          error: 'Failed to load send ranking data'
         }
       }
     })
@@ -3744,7 +6141,7 @@ export function createDashboardActivityRoutes() {
           SELECT COUNT(DISTINCT contact_id) as count
           FROM email_schedules
           WHERE contact_id IS NOT NULL
-            AND status = 'scheduled'
+            AND status IN ('scheduled', 'send', 'delivered')
             AND scheduled_send_date BETWEEN ? AND ?
         `;
         const emailsSentResult = await orgDb.fetchOne<{ count: number }>(emailsSentSql, [startDateStr, endDateStr])
@@ -6664,6 +9061,56 @@ export const organizationRoutes = new Elysia({ prefix: '/api' })
         error: 'Failed to create new agent'
       };
     }
+  })
+  .post('/organizations/exit-demo-mode', async ({ request, set }) => {
+    const db = new Database();
+    
+    try {
+      // Get current user from session
+      const currentUser = await getUserFromSession(request);
+      
+      if (!currentUser) {
+        set.status = 401;
+        return { success: false, message: 'Unauthorized' };
+      }
+
+      // Only allow admins to exit demo mode
+      if (!currentUser.is_admin) {
+        set.status = 403;
+        return { success: false, message: 'Only administrators can exit demo mode' };
+      }
+
+      // Update the organization's demo_mode to false
+      const result = await db.execute(
+        `UPDATE organizations 
+         SET demo_mode = 0
+         WHERE id = ?`,
+        [currentUser.organization_id]
+      );
+
+      /* TODO: Uncomment this when we have a way to enable regular and followup scheduling
+      const result = await db.execute(
+        `UPDATE organizations 
+         SET demo_mode = 0, regular_scheduling_active = 1, followup_scheduling_active = 1
+         WHERE id = ?`,
+        [currentUser.organization_id]
+      );
+      */
+
+      const rowsAffected = result.rowsAffected || 0;
+      
+      if (rowsAffected === 0) {
+        logger.info(`No changes made when exiting demo mode for org ${currentUser.organization_id}`);
+      } else {
+        logger.info(`Successfully exited demo mode for organization ${currentUser.organization_id}`);
+      }
+      set.status = 200;
+      return { success: true };
+    } catch (error) {
+      logger.error(`Error exiting demo mode: ${error}`);
+      set.status = 500;
+      return { success: false, message: 'Internal server error' };
+    }
   });
 
 export function createOrganizationRoutes() {
@@ -8716,27 +11163,7 @@ export const settingsRoutes = new Elysia()
                  orgSignature ? phone : null, orgSignature ? redirectUrl : null, orgSignature ? signature : null, user.organization_id]
             );
 
-            // For basic tier, also update the admin agent's settings
-            if (isBasicTier) {
-                logger.info('Basic tier detected - syncing settings to admin agent');
-                
-                // Get the admin agent's ID
-                const adminAgentRow = await db.fetchOne<{ id: number }>(
-                    'SELECT id FROM users WHERE organization_id = ? AND is_admin = 1 AND is_agent = 1 LIMIT 1',
-                    [user.organization_id]
-                );
-
-                if (adminAgentRow) {
-                    // Update agent settings with organization settings and set inherit_org_settings to true
-                    await db.execute(
-                        `INSERT INTO agent_settings (agent_id, inherit_org_settings, settings)
-                         VALUES (?, true, ?)
-                         ON CONFLICT (agent_id) DO UPDATE
-                         SET inherit_org_settings = true, settings = ?`,
-                        [adminAgentRow.id, JSON.stringify(settingsWithoutLogo), JSON.stringify(settingsWithoutLogo)]
-                    );
-                }
-            }
+            
         } else if (scope === 'agent') {
             // For basic tier, don't allow direct agent settings updates
             if (isBasicTier) {
@@ -8769,10 +11196,11 @@ export const settingsRoutes = new Elysia()
                 throw dbError;
             }
         }
-
+        logger.info('Settings updated successfully');
         return {
             success: true,
-            settings: typedBody.settings || typedBody
+            settings: typedBody.settings || typedBody,
+            error: null
         };
     } catch (error) {
         logger.error(`Error updating settings: ${error}`);
@@ -12113,7 +14541,7 @@ export async function checkPaymentStatus(db: Database, organizationId: number): 
     };
   }
 
-  // If no Stripe subscription yet, return unpaid status
+  // If no Stripe subscription yet, return unpaid status0
   if (!org.stripe_subscription_id) {
     return {
       isActive: false,
@@ -13238,7 +15666,7 @@ export const config = {
   TURSO_AUTH_TOKEN: process.env.TURSO_AUTH_TOKEN,
   TURSO_DATABASE_PATH: process.env.TURSO_DATABASE_PATH,
   TURSO_API_TOKEN: process.env.TURSO_API_TOKEN,
-  TURSO_ORG_GROUP: process.env.TURSO_ORG_GROUP || 'medicare-portal',
+  TURSO_ORG_GROUP: process.env.TURSO_ORG_GROUP || 'maxretain',
   TURSO_ORG_SLUG: process.env.TURSO_ORG_SLUG || 'pyrex41',
   USE_LOCAL_SQLITE: process.env.USE_LOCAL_SQLITE === 'true',
   LOCAL_DB_PATH: process.env.LOCAL_DB_PATH || './.data',
@@ -13532,6 +15960,7 @@ export class Database {
         'SELECT turso_db_url, turso_auth_token FROM organizations WHERE id = ?',
         [orgId]
       );
+      logger.info(`[OrgDB] Organization record: ${JSON.stringify(org)}`);
 
       if (!org) {
         logger.warn(`[OrgDB] Organization record not found for orgId: ${orgId}`);
@@ -15048,6 +17477,7 @@ import * as path from 'path'
 import * as os from 'os'
 import { readdirSync } from 'fs'
 import { parseTrackingId } from './utils/tracking'
+import { createBillingRoutes } from './routes/billing'
 
 
 // At the top of the file, add interface for ZIP data
@@ -16024,6 +18454,7 @@ const startServer = async () => {
       .use(createDashboardActivityRoutes())
       // Serve backend static files from public directory
       .use(createStripeRoutes)
+      .use(createBillingRoutes)
       // Add this endpoint within the app definition
       .post('/api/agents', async ({ body, request, set }) => {
         try {
@@ -16773,6 +19204,7 @@ const startServer = async () => {
                 u.organization_id,
                 o.slug as organization_slug,
                 o.subscription_tier,
+                o.created_at as orgCreateDate,
                 a.settings as agentSettings
               FROM users u
               JOIN organizations o ON u.organization_id = o.id
@@ -16806,6 +19238,7 @@ const startServer = async () => {
               organization_id: user.organization_id,
               organization_slug: user.organization_slug,
               subscription_tier: user.subscription_tier,
+              orgCreateDate: user.orgCreateDate.split(/[ T]/)[0],
               agentSettings: user.agentSettings ? JSON.parse(user.agentSettings) : null
             }
           }
@@ -17691,6 +20124,603 @@ export interface UserContext {
   cookie: ReturnType<typeof cookie>;
   query: Record<string, string | undefined>;
   body: unknown;
+}
+
+================
+File: .env.example
+================
+# Database connection
+TURSO_URL=
+TURSO_AUTH_TOKEN=
+
+# Authentication
+JWT_SECRET=your-very-long-jwt-secret-at-least-32-characters
+COOKIE_SECRET=your-cookie-secret
+
+# Server
+PORT=3001
+HOST=0.0.0.0
+PUBLIC_URL=http://localhost:5173
+
+# Email
+EMAIL_FROM=support@yourcompany.com
+SENDGRID_API_KEY=
+
+# Stripe Integration
+STRIPE_SECRET_KEY=sk_test_51XXXXXXXXXXXXXXXXXXXXXXXX
+STRIPE_PUBLISHABLE_KEY=pk_test_51XXXXXXXXXXXXXXXXXXXXXXXX
+STRIPE_WEBHOOK_SECRET=whsec_XXXXXXXXXXXXXXXXXXXXXXXX
+
+# Stripe Products and Prices
+STRIPE_PRICE_BASIC=price_XXXXXXXXXXXXX
+STRIPE_PRICE_PRO=price_XXXXXXXXXXXXX
+STRIPE_PRICE_ENTERPRISE=price_XXXXXXXXXXXXX
+
+# Contact-based Pricing
+STRIPE_PRICE_CONTACT_BASE_TIER=price_XXXXXXXXXXXXX
+STRIPE_PRICE_ADDITIONAL_CONTACTS=price_XXXXXXXXXXXXX
+
+# For example mode in local development (uncomment to enable)
+# USE_MOCK_STRIPE=true
+
+================
+File: .gitignore
+================
+# Based on https://raw.githubusercontent.com/github/gitignore/main/Node.gitignore
+
+# Logs
+
+logs
+_.log
+npm-debug.log_
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
+
+# Caches
+
+.cache
+
+# Diagnostic reports (https://nodejs.org/api/report.html)
+
+report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
+
+# Runtime data
+
+pids
+_.pid
+_.seed
+*.pid.lock
+
+# Directory for instrumented libs generated by jscoverage/JSCover
+
+lib-cov
+
+# Coverage directory used by tools like istanbul
+
+coverage
+*.lcov
+
+# nyc test coverage
+
+.nyc_output
+
+# Grunt intermediate storage (https://gruntjs.com/creating-plugins#storing-task-files)
+
+.grunt
+
+# Bower dependency directory (https://bower.io/)
+
+bower_components
+
+# node-waf configuration
+
+.lock-wscript
+
+# Compiled binary addons (https://nodejs.org/api/addons.html)
+
+build/Release
+
+# Dependency directories
+
+node_modules/
+jspm_packages/
+
+# Snowpack dependency directory (https://snowpack.dev/)
+
+web_modules/
+
+# TypeScript cache
+
+*.tsbuildinfo
+
+# Optional npm cache directory
+
+.npm
+
+# Optional eslint cache
+
+.eslintcache
+
+# Optional stylelint cache
+
+.stylelintcache
+
+# Microbundle cache
+
+.rpt2_cache/
+.rts2_cache_cjs/
+.rts2_cache_es/
+.rts2_cache_umd/
+
+# Optional REPL history
+
+.node_repl_history
+
+# Output of 'npm pack'
+
+*.tgz
+
+# Yarn Integrity file
+
+.yarn-integrity
+
+# dotenv environment variable files
+
+.env
+.env.development.local
+.env.test.local
+.env.production.local
+.env.local
+
+# parcel-bundler cache (https://parceljs.org/)
+
+.parcel-cache
+
+# Next.js build output
+
+.next
+out
+
+# Nuxt.js build / generate output
+
+.nuxt
+dist
+
+# Gatsby files
+
+# Comment in the public line in if your project uses Gatsby and not Next.js
+
+# https://nextjs.org/blog/next-9-1#public-directory-support
+
+# public
+
+# vuepress build output
+
+.vuepress/dist
+
+# vuepress v2.x temp and cache directory
+
+.temp
+
+# Docusaurus cache and generated files
+
+.docusaurus
+
+# Serverless directories
+
+.serverless/
+
+# FuseBox cache
+
+.fusebox/
+
+# DynamoDB Local files
+
+.dynamodb/
+
+# TernJS port file
+
+.tern-port
+
+# Stores VSCode versions used for testing VSCode extensions
+
+.vscode-test
+
+# yarn v2
+
+.yarn/cache
+.yarn/unplugged
+.yarn/build-state.yml
+.yarn/install-state.gz
+.pnp.*
+
+# IntelliJ based IDEs
+.idea
+
+# Finder (MacOS) folder config
+.DS_Store
+
+================
+File: BULK-IMPORT-IMPLEMENTATION.md
+================
+# Bulk Contact Import Implementation Summary
+
+## Overview
+
+This document provides a summary of the bulk contact import implementation.
+
+## Core Components
+
+1. **Database Class Enhancement**:
+   - Added a streamlined `bulkImportContacts` method
+   - Handles contact validation, deduplication, and SQL generation
+   - Creates timestamped database names to avoid conflicts
+
+2. **TursoService Enhancement**:
+   - Improved `createDatabaseFromDump` method
+   - Added phased SQL execution (schema → data → indexes)
+   - Enhanced error handling and cleanup operations
+
+3. **API Integration**:
+   - Created a new `POST /api/contacts/bulk-import` endpoint
+   - Handles CSV file upload with form data multipart processing
+   - Launches the import process asynchronously
+
+4. **Command Line Tools**:
+   - Created `test-bulk-import.ts` for command line importing
+   - Added `generate-test-data.ts` for sample data generation
+   - Both accessible through npm scripts
+
+5. **Web Interface**:
+   - Created a simple test form at `/test-bulk-import.html`
+   - Provides visual feedback on import process
+
+## Technical Implementation
+
+### Efficient Data Processing
+
+The implementation features several optimizations:
+
+1. **Multi-row INSERT statements**:
+   ```sql
+   INSERT INTO contacts (...) VALUES (...), (...), (...) ...
+   ```
+
+2. **Transaction management**:
+   - Batches operations into groups of 500 records
+   - Uses proper transaction boundaries
+
+3. **Index optimization**:
+   - Schema created first
+   - Data loaded next
+   - Indexes created last for best performance
+
+4. **Asynchronous processing**:
+   - API returns immediately while import runs in background
+   - Client doesn't need to maintain an open connection
+
+### Error Handling
+
+The implementation includes comprehensive error handling:
+
+1. **Input validation**:
+   - Validates CSV fields
+   - Normalizes property names (camelCase and snake_case)
+   - Reports validation errors
+
+2. **Database operations**:
+   - Handles database creation failures
+   - Manages SQL execution errors
+   - Cleans up resources on failure
+
+3. **Logging**:
+   - Detailed logging throughout the process
+   - Verification steps to confirm successful operations
+
+## Testing
+
+The implementation includes tools for testing:
+
+1. **Small-scale testing**:
+   - Sample CSV with 10 contacts for basic testing
+   - Command-line testing script
+
+2. **Large-scale testing**:
+   - Data generator for performance testing
+   - Support for testing 35,000+ contacts
+
+## Usage
+
+See [README-bulk-import.md](./README-bulk-import.md) for detailed usage instructions.
+
+================
+File: out.txt
+================
+migrations/show_org.sql db shell medicare-portal
+
+================
+File: package.json
+================
+{
+  "name": "backend",
+  "module": "index.ts",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --watch --env-file .env src/index.ts",
+    "add-agent": "bun run scripts/add-agent.ts",
+    "manage-recommendations": "bun run scripts/manage-recommendations.ts",
+    "manage-turso": "bun run scripts/manage-turso.ts",
+    "test-import": "bun run scripts/test-bulk-import.ts",
+    "generate-data": "bun run scripts/generate-test-data.ts",
+    "fix-contacts": "bun run scripts/apply-contact-migration.ts",
+    "start": "NODE_ENV=production bun run --no-env-file src/index.ts"
+  },
+  "dependencies": {
+    "@clack/prompts": "^0.7.0",
+    "@elysiajs/cookie": "^0.8.0",
+    "@elysiajs/cors": "^0.8.0",
+    "@elysiajs/static": "^1.2.0",
+    "@libsql/client": "^0.15.0-pre.1",
+    "@sendgrid/mail": "^8.1.4",
+    "@types/bun": "latest",
+    "@types/jsonwebtoken": "^9.0.9",
+    "@types/multer": "^1.4.12",
+    "chalk": "^5.4.1",
+    "csv-parse": "^5.6.0",
+    "csv-stringify": "^6.5.2",
+    "dotenv": "^16.3.1",
+    "elysia": "^0.8.9",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^1.4.5-lts.2",
+    "node-cron": "^3.0.3",
+    "openai": "^4.90.0",
+    "prompts": "^2.4.2",
+    "sqlite3": "^5.1.7",
+    "stripe": "^17.7.0",
+    "twilio": "^5.6.1",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node-cron": "^3.0.11",
+    "bun-types": "latest"
+  }
+}
+
+================
+File: README-bulk-import.md
+================
+# Bulk Contact Import Functionality
+
+This document describes the bulk contact import feature that allows importing large numbers of contacts (35,000+) into organizational databases efficiently.
+
+## Overview
+
+The bulk import process works by:
+1. Processing and validating input contacts
+2. Getting the schema from the existing organization database 
+3. Creating a new database with a timestamp-based name
+4. Generating optimized SQL with multi-row INSERT statements
+5. Uploading the SQL to the new database
+6. Updating the organization to point to the new database
+7. Cleaning up the old database
+
+## Duplicate Email Handling
+
+The system now handles duplicate emails in three ways:
+
+1. **During Import**: The email field has a unique index that enforces case-insensitive uniqueness.
+   - With `overwriteExisting = false`, duplicates are skipped (using `INSERT OR IGNORE`)
+   - With `overwriteExisting = true`, existing records are updated (using `INSERT OR REPLACE`) 
+
+2. **Deduplicate Existing Data**: A migration script (`bun run fix-contacts`) can be run to:
+   - Find all organization databases with duplicate email entries
+   - Keep only the most recently updated record for each email
+   - Create the necessary unique index to prevent future duplicates
+
+3. **Schema Protection**: The database schema setup now always creates the unique index on email, regardless of whether the table is being created or already exists.
+
+## Usage
+
+Three options are provided for using the bulk import functionality:
+
+### 1. Web Interface
+
+A simple HTML form is provided for testing the bulk import API:
+
+```bash
+# Start the backend server
+cd backend && bun run dev
+
+# Access the test page in your browser
+open http://localhost:8000/test-bulk-import.html
+
+# Log in as an admin user first (required for the import API)
+# You can use the development login helper:
+open http://localhost:8000/api/dev/session/login
+```
+
+### 2. Generate Test Data
+
+Generate test data for performance testing with:
+
+```bash
+# Generate 1,000 test contacts
+bun run generate-data 1000
+
+# Generate 50,000 test contacts in a specific file
+bun run generate-data 50000 path/to/output.csv
+```
+
+### 3. Command Line Import
+
+Import contacts directly from the command line with:
+
+```bash
+# Import contacts for organization ID 1
+bun run test-import 1 ./scripts/sample-contacts.csv
+
+# Import and overwrite existing contacts with the same email
+bun run test-import 1 ./scripts/sample-contacts.csv --overwrite
+```
+
+### 4. API Endpoint
+
+The API endpoint for bulk imports can be accessed programmatically:
+
+```javascript
+// Example fetch request
+const formData = new FormData();
+formData.append('file', csvFile); // File object
+formData.append('overwriteExisting', true); // Optional, defaults to false
+
+const response = await fetch('/api/contacts/bulk-import', {
+  method: 'POST',
+  body: formData,
+  credentials: 'include'
+});
+
+const result = await response.json();
+
+// To check import status:
+const statusResponse = await fetch(`/api/contacts/import-status/${organizationId}`, {
+  method: 'GET',
+  credentials: 'include'
+});
+
+const statusResult = await statusResponse.json();
+```
+
+## CSV Format
+
+The CSV file should have headers that match the contact fields. Both camelCase and snake_case property names are supported:
+
+```csv
+first_name,last_name,email,current_carrier,plan_type,effective_date,birth_date,tobacco_user,gender,state,zip_code,phone_number
+John,Doe,john.doe@example.com,Aetna,F,2023-01-01,1955-08-21,0,Male,FL,33101,123-456-7890
+```
+
+## Monitoring Import Progress
+
+You can monitor the progress of an import using the import status endpoint:
+
+```bash
+# Get import status for organization 123
+curl http://localhost:8000/api/contacts/import-status/123
+```
+
+The status endpoint returns:
+
+```json
+{
+  "status": "in progress" | "completed" | "error" | "none",
+  "message": "Description of the current status",
+  "timestamp": "ISO date when the import was started",
+  "age": 5 // Age in minutes
+}
+```
+
+This endpoint is also available through the web interface at `/test-bulk-import.html` for easy testing.
+
+## Performance Considerations
+
+- The implementation is optimized for large datasets with:
+  - Transaction batching (500 contacts per INSERT statement)
+  - Index manipulation (drop before bulk insert, recreate after)
+  - Property name normalization for CSV flexibility
+  - In-memory validation and deduplication
+  - Asynchronous processing with status monitoring
+
+## Implementation Details
+
+The core implementation is in two main files:
+
+1. `/backend/src/database.ts` - Contains the `bulkImportContacts` method and email uniqueness enforcement
+2. `/backend/src/services/turso.ts` - Contains the `createDatabaseFromDump` method
+
+The process works by:
+- Using timestamped database names to avoid conflicts
+- Maintaining schema consistency by copying existing table structure
+- Processing SQL in phases (schema, data, indexes) for reliability
+- Using detailed logging for troubleshooting
+
+## Error Handling
+
+The implementation includes robust error handling:
+- Database connection failures
+- SQL execution errors
+- Validation errors for malformed contacts
+- Cleanup operations for partial failures
+
+## Fixing Duplicate Contacts
+
+If you're experiencing duplicate contacts in your database, run the contact fix script:
+
+```bash
+# In the backend directory
+bun run fix-contacts
+```
+
+This script will:
+1. Check all organization databases for duplicate email addresses
+2. For each database with duplicates:
+   - Create a backup of the contacts table
+   - Deduplicate contacts by keeping the most recently updated record for each email
+   - Create the necessary unique index to prevent future duplicates
+3. For databases without duplicates:
+   - Only create the unique index if it doesn't exist
+
+The script is safe to run multiple times and will only make changes where needed.
+
+================
+File: README.md
+================
+# backend
+
+To install dependencies:
+
+```bash
+bun install
+```
+
+To run:
+
+```bash
+bun run index.ts
+```
+
+This project was created using `bun init` in bun v1.1.45. [Bun](https://bun.sh) is a fast all-in-one JavaScript runtime.
+
+================
+File: tsconfig.json
+================
+{
+  "compilerOptions": {
+    // Enable latest features
+    "lib": ["ESNext", "DOM"],
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleDetection": "force",
+    "jsx": "react-jsx",
+    "allowJs": true,
+
+    // Bundler mode
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+
+    // Best practices
+    "strict": true,
+    "skipLibCheck": true,
+    "noFallthroughCasesInSwitch": true,
+
+    // Some stricter flags (disabled by default)
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noPropertyAccessFromIndexSignature": false
+  }
 }
 
 
