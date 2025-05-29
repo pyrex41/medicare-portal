@@ -749,7 +749,7 @@ view model =
           else
             div [ class "min-h-screen bg-white" ]
                 [ viewHeader
-                , div [ class "max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-8 pb-32" ]
+                , div [ class "max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 pt-2 sm:pt-4 pb-16" ]
                     [ if model.isLoading then
                         viewLoading
 
@@ -864,7 +864,15 @@ viewOrganizationDetails settings model =
                         , value settings.signature
                         , onInput UpdateSignature
                         , rows 3
-                        , placeholder ("Thanks,\nThe team at " ++ (if String.isEmpty settings.brandName then "Example Biz" else settings.brandName))
+                        , placeholder
+                            ("Thanks,\nThe team at "
+                                ++ (if String.isEmpty settings.brandName then
+                                        "Example Biz"
+
+                                    else
+                                        settings.brandName
+                                   )
+                            )
                         ]
                         []
                     )
@@ -1000,12 +1008,15 @@ viewDefaultSenderSettings settings =
             [ text "When communication is sent to your book of business you can set the default sender settings for the organization." ]
         , div [ class "grid grid-cols-1 md:grid-cols-2 gap-4" ]
             [ -- Organization Only Card
-              div 
-                [ class ("relative rounded-lg border-2 p-6 cursor-pointer transition-all " ++
-                    if settings.forceOrgSenderDetails then
-                        "border-blue-500 bg-blue-50"
-                    else
-                        "border-gray-200 hover:border-gray-300 bg-white"
+              div
+                [ class
+                    ("relative rounded-lg border-2 p-6 cursor-pointer transition-all "
+                        ++ (if settings.forceOrgSenderDetails then
+                                "border-blue-500 bg-blue-50"
+
+                            else
+                                "border-gray-200 hover:border-gray-300 bg-white"
+                           )
                     )
                 , onClick (UpdateForceOrgSenderDetails True)
                 ]
@@ -1033,12 +1044,15 @@ viewDefaultSenderSettings settings =
                     ]
                 ]
             , -- Agent's Choice Card
-              div 
-                [ class ("relative rounded-lg border-2 p-6 cursor-pointer transition-all " ++
-                    if not settings.forceOrgSenderDetails then
-                        "border-blue-500 bg-blue-50"
-                    else
-                        "border-gray-200 hover:border-gray-300 bg-white"
+              div
+                [ class
+                    ("relative rounded-lg border-2 p-6 cursor-pointer transition-all "
+                        ++ (if not settings.forceOrgSenderDetails then
+                                "border-blue-500 bg-blue-50"
+
+                            else
+                                "border-gray-200 hover:border-gray-300 bg-white"
+                           )
                     )
                 , onClick (UpdateForceOrgSenderDetails False)
                 ]
