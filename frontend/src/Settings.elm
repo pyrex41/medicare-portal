@@ -130,6 +130,7 @@ type alias Settings =
     , phone : String
     , redirectUrl : String
     , signature : String
+    , forceOrgSenderDetails : Bool
     }
 
 
@@ -720,6 +721,7 @@ encodeSettings settings =
         , ( "phone", Encode.string settings.phone )
         , ( "redirectUrl", Encode.string settings.redirectUrl )
         , ( "signature", Encode.string settings.signature )
+        , ( "forceOrgSenderDetails", Encode.bool settings.forceOrgSenderDetails )
         ]
 
 
@@ -1249,6 +1251,7 @@ settingsObjectDecoder =
         |> Pipeline.optional "phone" Decode.string ""
         |> Pipeline.optional "redirectUrl" Decode.string ""
         |> Pipeline.optional "signature" Decode.string ""
+        |> Pipeline.optional "forceOrgSenderDetails" Decode.bool False
 
 
 stateCarrierSettingDecoder : Decoder StateCarrierSetting

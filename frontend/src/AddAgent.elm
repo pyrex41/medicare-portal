@@ -95,14 +95,20 @@ allCarriers =
 type alias Settings =
     { carrierContracts : List String
     , stateLicenses : List String
+    , forceOrgSenderDetails : Bool
     }
 
 
 settingsObjectDecoder : Decoder Settings
 settingsObjectDecoder =
-    Decode.map2 Settings
+    Decode.map3 Settings
         (Decode.field "carrierContracts" (Decode.list Decode.string))
         (Decode.field "stateLicenses" (Decode.list Decode.string))
+        (Decode.oneOf 
+            [ Decode.field "forceOrgSenderDetails" Decode.bool
+            , Decode.succeed False
+            ]
+        )
 
 
 type alias Model =
@@ -129,6 +135,7 @@ type alias Model =
     , contacts : List ContactSummary
     , emailStatus : EmailStatus
     , defaultAgentId : Maybe String
+    , forceOrgSenderDetails : Bool
     }
 
 
@@ -150,6 +157,8 @@ type alias Agent =
     , carriers : List String
     , stateLicenses : List String
     , expanded : Bool
+    , calendarLink : String
+    , signature : String
     }
 
 
@@ -259,6 +268,8 @@ init isSetup key currentUser planType =
                             , carriers = []
                             , stateLicenses = []
                             , expanded = False
+                            , calendarLink = ""
+                            , signature = ""
                             }
 
                         -- Convert old user type to new CurrentUser type
@@ -315,6 +326,7 @@ init isSetup key currentUser planType =
       , contacts = []
       , emailStatus = NotChecked
       , defaultAgentId = Nothing
+      , forceOrgSenderDetails = False
       }
     , fetchAgents
     )
@@ -995,6 +1007,7 @@ update msg model =
                 , stateLicenses = settings.stateLicenses
                 , isLoading = False
                 , orgSettings = Just settings
+                , forceOrgSenderDetails = settings.forceOrgSenderDetails
               }
             , Cmd.none
             )
@@ -1057,6 +1070,8 @@ update msg model =
                                             , carriers = []
                                             , stateLicenses = []
                                             , expanded = False
+                                            , calendarLink = ""
+                                            , signature = ""
                                             }
                                                 :: agents
 
@@ -1119,6 +1134,8 @@ update msg model =
                                     , carriers = []
                                     , stateLicenses = []
                                     , expanded = False
+                                    , calendarLink = ""
+                                    , signature = ""
                                     }
 
                                 -- Include the current user in agents list for setup mode
@@ -1468,6 +1485,8 @@ update msg model =
                                 , carriers = []
                                 , stateLicenses = []
                                 , expanded = False
+                                , calendarLink = ""
+                                , signature = ""
                                 }
                         in
                         ( { model | pendingSave = Nothing }
@@ -1693,6 +1712,8 @@ agentDecoder =
         |> Pipeline.required "carriers" (Decode.list Decode.string)
         |> Pipeline.required "stateLicenses" (Decode.list Decode.string)
         |> Pipeline.hardcoded False
+        |> Pipeline.optional "bookingLink" Decode.string ""
+        |> Pipeline.optional "signature" Decode.string ""
 
 
 encodeAgent : Agent -> Encode.Value
@@ -1704,6 +1725,8 @@ encodeAgent agent =
         , ( "phone", Encode.string agent.phone )
         , ( "carriers", Encode.list Encode.string agent.carriers )
         , ( "stateLicenses", Encode.list Encode.string agent.stateLicenses )
+        , ( "bookingLink", Encode.string agent.calendarLink )
+        , ( "signature", Encode.string agent.signature )
         ]
 
 
