@@ -87,6 +87,7 @@ src/
   Compare.elm
   Contact.elm
   Contacts.elm
+  ContactUs.elm
   CsvProcessor.elm
   Dashboard.elm
   Decline.elm
@@ -1917,6 +1918,7 @@ import Json.Decode as Decode exposing (Decoder)
 import Json.Decode.Pipeline as Pipeline
 import Json.Encode as Encode
 import Parser exposing ((|.), (|=), Parser, chompIf, chompWhile, end, succeed, symbol)
+import Ports
 import StateRegions exposing (Region(..), getRegionStates, regionToString)
 import Svg exposing (path, svg)
 import Svg.Attributes exposing (d, fill, stroke, strokeLinecap, strokeLinejoin, strokeWidth, viewBox)
@@ -2000,14 +2002,20 @@ allCarriers =
 type alias Settings =
     { carrierContracts : List String
     , stateLicenses : List String
+    , forceOrgSenderDetails : Bool
     }
 
 
 settingsObjectDecoder : Decoder Settings
 settingsObjectDecoder =
-    Decode.map2 Settings
+    Decode.map3 Settings
         (Decode.field "carrierContracts" (Decode.list Decode.string))
         (Decode.field "stateLicenses" (Decode.list Decode.string))
+        (Decode.oneOf
+            [ Decode.field "forceOrgSenderDetails" Decode.bool
+            , Decode.succeed False
+            ]
+        )
 
 
 type alias Model =
@@ -2034,6 +2042,10 @@ type alias Model =
     , contacts : List ContactSummary
     , emailStatus : EmailStatus
     , defaultAgentId : Maybe String
+    , forceOrgSenderDetails : Bool
+    , copiedAgentLinks : List String -- Track which agent IDs have had their links copied
+    , currentlyCopyingAgent : Maybe String -- Track which agent's link is currently being copied
+    , orgSlug : String -- ADDED
     }
 
 
@@ -2043,6 +2055,7 @@ type alias User =
     , firstName : String
     , lastName : String
     , phone : String
+    , orgSlug : String -- ADDED
     }
 
 
@@ -2055,6 +2068,8 @@ type alias Agent =
     , carriers : List String
     , stateLicenses : List String
     , expanded : Bool
+    , calendarLink : String
+    , signature : String
     }
 
 
@@ -2064,6 +2079,7 @@ type alias CurrentUser =
     , firstName : String
     , lastName : String
     , phone : String
+    , orgSlug : String -- ADDED
     }
 
 
@@ -2127,6 +2143,8 @@ type Msg
     | GotEmailResponse (Result Http.Error EmailResponse)
     | SetDefaultAgent String
     | SetDefaultAgentResult (Result Http.Error ())
+    | CopyAgentSelfOnboardingLink String
+    | LinkCopied Bool
 
 
 type alias CurrentUserResponse =
@@ -2147,7 +2165,7 @@ type alias AgentsResponse =
     }
 
 
-init : Bool -> Nav.Key -> Maybe { id : String, email : String, firstName : String, lastName : String, phone : String, isAdmin : Bool, isAgent : Bool } -> String -> ( Model, Cmd Msg )
+init : Bool -> Nav.Key -> Maybe { id : String, email : String, firstName : String, lastName : String, phone : String, isAdmin : Bool, isAgent : Bool, orgSlug : String } -> String -> ( Model, Cmd Msg )
 init isSetup key currentUser planType =
     let
         initialAgents =
@@ -2164,6 +2182,8 @@ init isSetup key currentUser planType =
                             , carriers = []
                             , stateLicenses = []
                             , expanded = False
+                            , calendarLink = ""
+                            , signature = ""
                             }
 
                         -- Convert old user type to new CurrentUser type
@@ -2173,6 +2193,7 @@ init isSetup key currentUser planType =
                             , firstName = user.firstName
                             , lastName = user.lastName
                             , phone = user.phone
+                            , orgSlug = user.orgSlug
                             }
                     in
                     if isSetup then
@@ -2194,6 +2215,7 @@ init isSetup key currentUser planType =
                         , firstName = user.firstName
                         , lastName = user.lastName
                         , phone = user.phone
+                        , orgSlug = user.orgSlug
                         }
                     )
     in
@@ -2220,6 +2242,10 @@ init isSetup key currentUser planType =
       , contacts = []
       , emailStatus = NotChecked
       , defaultAgentId = Nothing
+      , forceOrgSenderDetails = False
+      , copiedAgentLinks = []
+      , currentlyCopyingAgent = Nothing
+      , orgSlug = Maybe.map .orgSlug convertedCurrentUser |> Maybe.withDefault ""
       }
     , fetchAgents
     )
@@ -2443,9 +2469,34 @@ viewAgentsList model =
                                     "bg-white"
                         in
                         div [ class (cardBackgroundClass ++ " shadow rounded-lg p-6") ]
-                            [ div [ class "flex items-center justify-between" ]
+                            [ div
+                                [ class "flex items-center justify-between cursor-pointer hover:bg-gray-50 -m-2 p-2 rounded-md"
+                                , onClick (ToggleAgentExpanded agent.id)
+                                ]
                                 [ div [ class "flex items-center" ]
-                                    [ div [ class "ml-4" ]
+                                    [ -- Expand/Collapse Icon
+                                      div [ class "mr-2" ]
+                                        [ svg
+                                            [ Svg.Attributes.class "h-5 w-5 text-gray-400 transform transition-transform duration-200"
+                                            , Svg.Attributes.class
+                                                (if agent.expanded then
+                                                    "rotate-90"
+
+                                                 else
+                                                    ""
+                                                )
+                                            , Svg.Attributes.viewBox "0 0 20 20"
+                                            , Svg.Attributes.fill "currentColor"
+                                            ]
+                                            [ path
+                                                [ Svg.Attributes.fillRule "evenodd"
+                                                , Svg.Attributes.d "M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z"
+                                                , Svg.Attributes.clipRule "evenodd"
+                                                ]
+                                                []
+                                            ]
+                                        ]
+                                    , div [ class "ml-2" ]
                                         [ div [ class "text-lg font-medium text-gray-900" ]
                                             [ text (agent.firstName ++ " " ++ agent.lastName) ]
                                         , div [ class "text-sm text-gray-500" ]
@@ -2456,7 +2507,7 @@ viewAgentsList model =
                                     [ if not isDefault then
                                         button
                                             [ class "px-3 py-1 text-sm text-blue-600 hover:text-blue-800 font-medium border border-blue-600 rounded-md hover:bg-blue-50"
-                                            , onClick (SetDefaultAgent agent.id)
+                                            , stopPropagationOn "click" (Decode.succeed ( SetDefaultAgent agent.id, True ))
                                             ]
                                             [ text "Set as Default" ]
 
@@ -2465,7 +2516,7 @@ viewAgentsList model =
                                             [ text "Default Agent" ]
                                     , button
                                         [ class "text-blue-600 hover:text-blue-800 font-medium"
-                                        , onClick (ToggleAgentExpanded agent.id)
+                                        , stopPropagationOn "click" (Decode.succeed ( ToggleAgentExpanded agent.id, True ))
                                         ]
                                         [ text "Edit" ]
                                     , button
@@ -2478,7 +2529,7 @@ viewAgentsList model =
                                                         "hover:text-red-500"
                                                    )
                                             )
-                                        , onClick (DeleteAgent agent.id)
+                                        , stopPropagationOn "click" (Decode.succeed ( DeleteAgent agent.id, True ))
                                         , disabled (isSelfUser || isDefault)
                                         , title
                                             (if isSelfUser then
@@ -2552,16 +2603,6 @@ viewAgentsList model =
 viewAgentDetails : Model -> Agent -> Html Msg
 viewAgentDetails model agent =
     let
-        orgCarriers =
-            model.orgSettings
-                |> Maybe.map .carrierContracts
-                |> Maybe.withDefault []
-
-        orgStates =
-            model.orgSettings
-                |> Maybe.map .stateLicenses
-                |> Maybe.withDefault []
-
         fieldError field =
             case field of
                 "phone" ->
@@ -2617,12 +2658,16 @@ viewAgentDetails model agent =
         onFieldInput field value =
             UpdateAgentField agent.id field value
 
-        onSelectAllCarriers : Bool -> Msg
-        onSelectAllCarriers isSelected =
-            SelectAllCarriersForAgent agent.id isSelected
+        -- Check if organization forces org sender details
+        fieldsDisabled =
+            model.forceOrgSenderDetails
+
+        agentSelfOnboardingUrl =
+            "https://" ++ "medicaremax.ai/self-onboarding/" ++ model.orgSlug ++ "?agentId=" ++ agent.id
     in
     div [ class "space-y-6" ]
-        [ div [ class "space-y-4" ]
+        [ -- Basic Information Section
+          div [ class "space-y-4" ]
             [ div [ class "grid grid-cols-2 gap-4" ]
                 [ div []
                     [ label [ class "block text-sm font-medium text-gray-700" ]
@@ -2656,7 +2701,7 @@ viewAgentDetails model agent =
             , div [ class "grid grid-cols-2 gap-4" ]
                 [ div []
                     [ label [ class "block text-sm font-medium text-gray-700" ]
-                        [ text "Email"
+                        [ text "Email Address"
                         , errorIndicator "email"
                         ]
                     , input
@@ -2670,25 +2715,184 @@ viewAgentDetails model agent =
                     ]
                 , div []
                     [ label [ class "block text-sm font-medium text-gray-700" ]
-                        [ text "Phone"
+                        [ text "Phone number"
                         , errorIndicator "phone"
                         ]
-                    , input
-                        [ type_ "tel"
-                        , class "mt-1 px-3 py-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-base"
-                        , value formattedPhone
-                        , onInput (onFieldInput "phone")
-                        , placeholder "(555) 555-5555"
-                        , disabled (not canEditField)
+                    , div [ class "flex" ]
+                        [ span [ class "inline-flex items-center px-3 py-2 rounded-l-md border border-r-0 border-gray-300 bg-gray-50 text-gray-500 shadow-sm" ]
+                            [ text "US" ]
+                        , input
+                            [ type_ "tel"
+                            , class "flex-1 px-3 py-2 rounded-r-md border border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-base focus:z-10"
+                            , value formattedPhone
+                            , onInput (onFieldInput "phone")
+                            , placeholder "+1 (555) 000-0000"
+                            , disabled (not canEditField)
+                            ]
+                            []
                         ]
-                        []
+                    ]
+                ]
+            , div []
+                [ label [ class "block text-sm font-medium text-gray-700" ]
+                    [ text "Calendar Booking Link (optional)" ]
+                , input
+                    [ type_ "text"
+                    , class
+                        ("mt-1 px-3 py-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-base "
+                            ++ (if fieldsDisabled then
+                                    "disabled:bg-gray-100 disabled:text-gray-500"
+
+                                else
+                                    ""
+                               )
+                        )
+                    , value agent.calendarLink
+                    , onInput (onFieldInput "calendarLink")
+                    , placeholder "example.biz"
+                    , disabled (fieldsDisabled || not canEditField)
+                    ]
+                    []
+                , p [ class "text-gray-500 text-xs mt-1" ]
+                    [ text "If provided, this link will be used as one of the options a client may select to connect with your agency. Traditionally this would be a Calendly link, Acuity link, etc." ]
+                ]
+            ]
+        , -- Agent Self-Onboarding Link Section
+          div []
+            [ label [ class "block text-sm font-medium text-gray-700 mb-2" ]
+                [ text "Agent Self-Onboarding Link" ]
+            , div [ class "flex items-center space-x-2" ]
+                [ svg [ Svg.Attributes.class "h-5 w-5 text-gray-400", Svg.Attributes.viewBox "0 0 20 20", Svg.Attributes.fill "currentColor" ]
+                    [ path [ Svg.Attributes.fillRule "evenodd", Svg.Attributes.d "M12.586 4.586a2 2 0 112.828 2.828l-3 3a2 2 0 01-2.828 0 1 1 0 00-1.414 1.414 4 4 0 005.656 0l3-3a4 4 0 00-5.656-5.656l-1.5 1.5a1 1 0 101.414 1.414l1.5-1.5zm-5 5a2 2 0 012.828 0 1 1 0 101.414-1.414 4 4 0 00-5.656 0l-3 3a4 4 0 105.656 5.656l1.5-1.5a1 1 0 10-1.414-1.414l-1.5 1.5a2 2 0 11-2.828-2.828l3-3z", Svg.Attributes.clipRule "evenodd" ] []
+                    ]
+                , input
+                    [ type_ "text"
+                    , class "flex-1 px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 bg-gray-50 text-gray-500"
+                    , value agentSelfOnboardingUrl
+                    , readonly True
+                    ]
+                    []
+                , button
+                    [ class "px-4 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                    , onClick (CopyAgentSelfOnboardingLink agent.id)
+                    ]
+                    [ text
+                        (if List.member agent.id model.copiedAgentLinks then
+                            "Copied!"
+
+                         else
+                            "Copy Link"
+                        )
+                    ]
+                ]
+            , p [ class "text-gray-500 text-xs mt-1" ]
+                [ text "Share this link with clients or non-clients to gather missing information or capture new leads to your book of business. New leads created in this way will be assigned to the agent associated with this link." ]
+            ]
+        , -- Sender Settings Section
+          div []
+            [ h3 [ class "text-sm font-medium text-gray-700 mb-4" ]
+                [ text "Sender Settings" ]
+            , p [ class "text-sm text-gray-500 mb-4" ]
+                [ text "The sender settings below are controlled by your organization's configuration. "
+                , a [ class "text-blue-600 hover:text-blue-800 underline", href "/settings" ]
+                    [ text "Visit Organization Settings" ]
+                , text " to change how agent details are used across your organization. When Organization Details is selected, agents will use the organization's contact information. When Agent Details is selected, agents can use their own contact information set above."
+                ]
+            , div [ class "grid grid-cols-1 md:grid-cols-2 gap-4" ]
+                [ -- Organization Details Card
+                  div
+                    [ class
+                        ("relative rounded-lg border-2 p-6 transition-all "
+                            ++ (if model.forceOrgSenderDetails then
+                                    "border-blue-500 bg-blue-50"
+
+                                else
+                                    "border-gray-200 bg-white"
+                               )
+                        )
+                    ]
+                    [ div [ class "flex items-start" ]
+                        [ div [ class "flex items-center h-5" ]
+                            [ input
+                                [ type_ "radio"
+                                , name ("senderSettings-" ++ agent.id)
+                                , checked model.forceOrgSenderDetails
+                                , class "h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
+                                , disabled True
+                                ]
+                                []
+                            ]
+                        , div [ class "ml-3" ]
+                            [ label [ class "font-medium text-gray-900" ] [ text "Organization Details" ]
+                            , p [ class "text-sm text-gray-500 mt-1" ]
+                                [ if model.forceOrgSenderDetails then
+                                    span []
+                                        [ text "These details are set in the organization settings. "
+                                        , a [ class "text-blue-600 hover:text-blue-800", href "/settings" ] [ text "Change organization defaults" ]
+                                        , text "."
+                                        ]
+
+                                  else
+                                    text "When this option is selected the Organization Details will be used for the signature, phone number, and scheduling link if applicable."
+                                ]
+                            ]
+                        ]
+                    ]
+                , -- Agent Details Card
+                  div
+                    [ class
+                        ("relative rounded-lg border-2 p-6 transition-all "
+                            ++ (if not model.forceOrgSenderDetails then
+                                    "border-blue-500 bg-blue-50"
+
+                                else
+                                    "border-gray-200 bg-white"
+                               )
+                        )
+                    ]
+                    [ div [ class "flex items-start" ]
+                        [ div [ class "flex items-center h-5" ]
+                            [ input
+                                [ type_ "radio"
+                                , name ("senderSettings-" ++ agent.id)
+                                , checked (not model.forceOrgSenderDetails)
+                                , class "h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
+                                , disabled True
+                                ]
+                                []
+                            ]
+                        , div [ class "ml-3" ]
+                            [ label [ class "font-medium text-gray-900" ] [ text "Agent Details" ]
+                            , p [ class "text-sm text-gray-500 mt-1" ]
+                                [ if not model.forceOrgSenderDetails then
+                                    text "These details are set above in this agent's settings."
+
+                                  else
+                                    text "When this option is selected the Agent's personal information from their agent settings will be used for the signature, phone number, and scheduling link if applicable."
+                                ]
+                            ]
+                        ]
                     ]
                 ]
             ]
-        , div [ class "mt-6" ]
-            [ p [ class "text-sm text-gray-500" ]
-                [ text "This agent will automatically use the carriers and state licenses from your organization settings." ]
-            ]
+        , -- Signature Section (only if agent details are enabled)
+          if not model.forceOrgSenderDetails then
+            div []
+                [ label [ class "block text-sm font-medium text-gray-700" ]
+                    [ text "Email & SMS Signature or Sign Off" ]
+                , textarea
+                    [ class "mt-1 px-3 py-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-base"
+                    , value agent.signature
+                    , onInput (onFieldInput "signature")
+                    , rows 3
+                    , placeholder ("Thanks,\n" ++ agent.firstName ++ " " ++ agent.lastName)
+                    , disabled (not canEditField)
+                    ]
+                    []
+                ]
+
+          else
+            text ""
         , if hasChanges then
             div [ class "mt-4 flex justify-end" ]
                 [ button
@@ -2900,6 +3104,7 @@ update msg model =
                 , stateLicenses = settings.stateLicenses
                 , isLoading = False
                 , orgSettings = Just settings
+                , forceOrgSenderDetails = settings.forceOrgSenderDetails
               }
             , Cmd.none
             )
@@ -2962,6 +3167,8 @@ update msg model =
                                             , carriers = []
                                             , stateLicenses = []
                                             , expanded = False
+                                            , calendarLink = ""
+                                            , signature = ""
                                             }
                                                 :: agents
 
@@ -3024,6 +3231,8 @@ update msg model =
                                     , carriers = []
                                     , stateLicenses = []
                                     , expanded = False
+                                    , calendarLink = ""
+                                    , signature = ""
                                     }
 
                                 -- Include the current user in agents list for setup mode
@@ -3373,6 +3582,8 @@ update msg model =
                                 , carriers = []
                                 , stateLicenses = []
                                 , expanded = False
+                                , calendarLink = ""
+                                , signature = ""
                                 }
                         in
                         ( { model | pendingSave = Nothing }
@@ -3444,6 +3655,12 @@ update msg model =
                             "phone" ->
                                 { agent | phone = formatPhoneNumber (String.filter Char.isDigit value) }
 
+                            "calendarLink" ->
+                                { agent | calendarLink = value }
+
+                            "signature" ->
+                                { agent | signature = value }
+
                             _ ->
                                 agent
 
@@ -3481,6 +3698,40 @@ update msg model =
                 Err _ ->
                     ( { model | isLoading = False, error = Just "Failed to set default agent" }, Cmd.none )
 
+        CopyAgentSelfOnboardingLink agentId ->
+            let
+                agentSelfOnboardingUrl =
+                    "https://" ++ "medicaremax.ai/self-onboarding/" ++ model.orgSlug ++ "?agentId=" ++ agentId
+            in
+            ( { model
+                | copiedAgentLinks = List.filter ((/=) agentId) model.copiedAgentLinks
+                , currentlyCopyingAgent = Just agentId
+              }
+            , Ports.copyToClipboard agentSelfOnboardingUrl
+            )
+
+        LinkCopied success ->
+            case model.currentlyCopyingAgent of
+                Just agentId ->
+                    if success then
+                        ( { model
+                            | copiedAgentLinks = agentId :: model.copiedAgentLinks
+                            , currentlyCopyingAgent = Nothing
+                          }
+                        , Cmd.none
+                        )
+
+                    else
+                        ( { model
+                            | error = Just "Failed to copy link to clipboard"
+                            , currentlyCopyingAgent = Nothing
+                          }
+                        , Cmd.none
+                        )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
 
 
 -- Helper functions
@@ -3516,12 +3767,19 @@ formatPhoneNumber rawPhone =
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
-    case model.pendingSave of
-        Just agentId ->
-            Time.every 2000 (\_ -> DebounceSaveAgent agentId)
+    let
+        timeSub =
+            case model.pendingSave of
+                Just agentId ->
+                    Time.every 2000 (\_ -> DebounceSaveAgent agentId)
 
-        Nothing ->
-            Sub.none
+                Nothing ->
+                    Sub.none
+
+        copyResultSub =
+            Ports.onCopyResult LinkCopied
+    in
+    Sub.batch [ timeSub, copyResultSub ]
 
 
 isValidEmail : String -> Bool
@@ -3598,6 +3856,8 @@ agentDecoder =
         |> Pipeline.required "carriers" (Decode.list Decode.string)
         |> Pipeline.required "stateLicenses" (Decode.list Decode.string)
         |> Pipeline.hardcoded False
+        |> Pipeline.optional "bookingLink" Decode.string ""
+        |> Pipeline.optional "signature" Decode.string ""
 
 
 encodeAgent : Agent -> Encode.Value
@@ -3609,6 +3869,8 @@ encodeAgent agent =
         , ( "phone", Encode.string agent.phone )
         , ( "carriers", Encode.list Encode.string agent.carriers )
         , ( "stateLicenses", Encode.list Encode.string agent.stateLicenses )
+        , ( "bookingLink", Encode.string agent.calendarLink )
+        , ( "signature", Encode.string agent.signature )
         ]
 
 
@@ -3645,7 +3907,7 @@ userDecoder =
                 , Decode.field "id" (Decode.map String.fromInt Decode.int)
                 ]
     in
-    Decode.map5 User
+    Decode.map6 User
         idDecoder
         (Decode.field "email" Decode.string)
         (Decode.field "firstName" Decode.string)
@@ -3655,6 +3917,7 @@ userDecoder =
             , Decode.succeed ""
             ]
         )
+        (Decode.field "org_slug" Decode.string)
 
 
 saveAgentDetails : Agent -> Cmd Msg
@@ -15492,6 +15755,315 @@ getUserName maybeUser =
             "Default"
 
 ================
+File: src/ContactUs.elm
+================
+module ContactUs exposing (Model, Msg(..), init, update, view)
+
+import Browser exposing (Document)
+import Html exposing (Html, a, button, div, form, h1, h2, h3, input, label, p, section, span, text, textarea)
+import Html.Attributes exposing (class, for, href, id, name, placeholder, rows, type_, value)
+import Html.Events exposing (onClick, onInput, onSubmit)
+import Http
+import Json.Encode as E
+import MyIcon
+
+
+
+-- MODEL
+
+
+type alias Model =
+    { name : String
+    , email : String
+    , phone : String
+    , message : String
+    , loading : Bool
+    , submitStatus : SubmitStatus
+    }
+
+
+type SubmitStatus
+    = NotSubmitted
+    | Submitting
+    | Success
+    | Error String
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { name = ""
+      , email = ""
+      , phone = ""
+      , message = ""
+      , loading = False
+      , submitStatus = NotSubmitted
+      }
+    , Cmd.none
+    )
+
+
+
+-- UPDATE
+
+
+type Msg
+    = UpdateName String
+    | UpdateEmail String
+    | UpdatePhone String
+    | UpdateMessage String
+    | SubmitForm
+    | FormSubmitted (Result Http.Error ())
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        UpdateName name ->
+            ( { model | name = name }, Cmd.none )
+
+        UpdateEmail email ->
+            ( { model | email = email }, Cmd.none )
+
+        UpdatePhone phone ->
+            ( { model | phone = phone }, Cmd.none )
+
+        UpdateMessage message ->
+            ( { model | message = message }, Cmd.none )
+
+        SubmitForm ->
+            if String.isEmpty model.name || String.isEmpty model.email || String.isEmpty model.message then
+                ( { model | submitStatus = Error "Please fill in all required fields" }, Cmd.none )
+
+            else
+                ( { model | submitStatus = Submitting }
+                , submitContactForm model
+                )
+
+        FormSubmitted result ->
+            case result of
+                Ok _ ->
+                    ( { model
+                        | submitStatus = Success
+                        , name = ""
+                        , email = ""
+                        , phone = ""
+                        , message = ""
+                      }
+                    , Cmd.none
+                    )
+
+                Err _ ->
+                    ( { model | submitStatus = Error "Failed to submit form. Please try again." }
+                    , Cmd.none
+                    )
+
+
+submitContactForm : Model -> Cmd Msg
+submitContactForm model =
+    Http.post
+        { url = "/api/contact-us"
+        , body =
+            Http.jsonBody
+                (E.object
+                    [ ( "name", E.string model.name )
+                    , ( "email", E.string model.email )
+                    , ( "phone", E.string model.phone )
+                    , ( "message", E.string model.message )
+                    ]
+                )
+        , expect = Http.expectWhatever FormSubmitted
+        }
+
+
+
+-- VIEW
+
+
+view : Model -> Document Msg
+view model =
+    { title = "Contact Us - Medicare Max"
+    , body = [ viewContent model ]
+    }
+
+
+viewContent : Model -> Html Msg
+viewContent model =
+    div [ class "min-h-screen bg-white" ]
+        [ div [ class "max-w-7xl mx-auto py-12 px-4 sm:px-6 lg:px-8" ]
+            [ div [ class "text-center mb-12" ]
+                [ h1 [ class "text-4xl font-bold text-gray-900 mb-4" ]
+                    [ text "Contact Us" ]
+                , p [ class "text-lg text-gray-600" ]
+                    [ text "We're here to help with all your Medicare needs" ]
+                ]
+            , div [ class "grid grid-cols-1 lg:grid-cols-2 gap-12" ]
+                [ viewContactInfo
+                , viewContactForm model
+                ]
+            ]
+        ]
+
+
+viewContactInfo : Html Msg
+viewContactInfo =
+    div [ class "space-y-8" ]
+        [ div [ class "bg-white rounded-lg shadow-md p-8" ]
+            [ h2 [ class "text-2xl font-semibold text-gray-900 mb-6" ]
+                [ text "Get in Touch" ]
+            , div [ class "space-y-6" ]
+                [ viewContactItem (MyIcon.phone 20 "#6B7280") "Phone" "1-800-MEDICARE"
+                , viewContactItem (MyIcon.mail 20 "#6B7280") "Email" "information@medicaremax.ai"
+                , viewContactItem (MyIcon.mapPin 20 "#6B7280") "Address" "123 Medicare Lane, Suite 100\nHealthcare City, HC 12345"
+                , viewContactItem (MyIcon.clock 20 "#6B7280") "Business Hours" "Monday - Friday: 8AM - 8PM\nSaturday: 9AM - 5PM\nSunday: Closed"
+                ]
+            ]
+        , div [ class "bg-blue-50 rounded-lg p-6" ]
+            [ h3 [ class "text-lg font-semibold text-blue-900 mb-3" ]
+                [ text "Quick Help" ]
+            , div [ class "space-y-2" ]
+                [ a
+                    [ href "/schedule-main"
+                    , class "block text-blue-600 hover:text-blue-800 underline"
+                    ]
+                    [ text "Schedule a Demo" ]
+                , a
+                    [ href "/pricing"
+                    , class "block text-blue-600 hover:text-blue-800 underline"
+                    ]
+                    [ text "View Pricing Plans" ]
+                , a
+                    [ href "/signup"
+                    , class "block text-blue-600 hover:text-blue-800 underline"
+                    ]
+                    [ text "Start Free Trial" ]
+                ]
+            ]
+        ]
+
+
+viewContactItem : Html msg -> String -> String -> Html msg
+viewContactItem icon title content =
+    div [ class "flex items-start space-x-3" ]
+        [ div [ class "flex-shrink-0 mt-1" ]
+            [ icon
+            ]
+        , div []
+            [ p [ class "font-medium text-gray-900" ]
+                [ text title ]
+            , p [ class "text-gray-600 whitespace-pre-line" ]
+                [ text content ]
+            ]
+        ]
+
+
+viewContactForm : Model -> Html Msg
+viewContactForm model =
+    div [ class "bg-white rounded-lg shadow-md p-8" ]
+        [ h2 [ class "text-2xl font-semibold text-gray-900 mb-6" ]
+            [ text "Send us a Message" ]
+        , case model.submitStatus of
+            Success ->
+                div [ class "bg-green-50 border border-green-200 rounded-md p-4 mb-6" ]
+                    [ p [ class "text-green-800" ]
+                        [ text "Thank you for contacting us! We'll get back to you soon." ]
+                    ]
+
+            Error errorMsg ->
+                div [ class "bg-red-50 border border-red-200 rounded-md p-4 mb-6" ]
+                    [ p [ class "text-red-800" ]
+                        [ text errorMsg ]
+                    ]
+
+            _ ->
+                text ""
+        , form [ onSubmit SubmitForm ]
+            [ div [ class "space-y-6" ]
+                [ div []
+                    [ label
+                        [ for "name"
+                        , class "block text-sm font-medium text-gray-700 mb-1"
+                        ]
+                        [ text "Name *" ]
+                    , input
+                        [ type_ "text"
+                        , id "name"
+                        , name "name"
+                        , value model.name
+                        , onInput UpdateName
+                        , placeholder "Your name"
+                        , class "w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        ]
+                        []
+                    ]
+                , div []
+                    [ label
+                        [ for "email"
+                        , class "block text-sm font-medium text-gray-700 mb-1"
+                        ]
+                        [ text "Email *" ]
+                    , input
+                        [ type_ "email"
+                        , id "email"
+                        , name "email"
+                        , value model.email
+                        , onInput UpdateEmail
+                        , placeholder "your@email.com"
+                        , class "w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        ]
+                        []
+                    ]
+                , div []
+                    [ label
+                        [ for "phone"
+                        , class "block text-sm font-medium text-gray-700 mb-1"
+                        ]
+                        [ text "Phone (optional)" ]
+                    , input
+                        [ type_ "tel"
+                        , id "phone"
+                        , name "phone"
+                        , value model.phone
+                        , onInput UpdatePhone
+                        , placeholder "(123) 456-7890"
+                        , class "w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        ]
+                        []
+                    ]
+                , div []
+                    [ label
+                        [ for "message"
+                        , class "block text-sm font-medium text-gray-700 mb-1"
+                        ]
+                        [ text "Message *" ]
+                    , textarea
+                        [ id "message"
+                        , name "message"
+                        , rows 5
+                        , value model.message
+                        , onInput UpdateMessage
+                        , placeholder "How can we help you?"
+                        , class "w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        ]
+                        []
+                    ]
+                , button
+                    [ type_ "submit"
+                    , class "w-full bg-blue-600 text-white py-3 px-6 rounded-md font-medium hover:bg-blue-700 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                    , Html.Attributes.disabled (model.submitStatus == Submitting)
+                    ]
+                    [ text
+                        (if model.submitStatus == Submitting then
+                            "Sending..."
+
+                         else
+                            "Send Message"
+                        )
+                    ]
+                ]
+            ]
+        ]
+
+================
 File: src/CsvProcessor.elm
 ================
 module CsvProcessor exposing
@@ -21288,6 +21860,7 @@ import Compare exposing (CompareParams)
 import Components.AccountStatusBanner as AccountStatusBanner
 import Components.DemoModeBanner as DemoModeBanner
 import Contact
+import ContactUs
 import Contacts
 import Dashboard
 import Date exposing (Date)
@@ -21487,6 +22060,7 @@ type Page
     = NotFoundPage
     | LoginPage Login.Model
     | ContactsPage Contacts.Model
+    | ContactUsPage ContactUs.Model
     | TempLandingPage TempLanding.Model
     | SettingsPage Settings.Model
     | Signup Signup.Model
@@ -21520,6 +22094,7 @@ type Msg
     | UrlChanged Url
     | LoginMsg Login.Msg
     | ContactsMsg Contacts.Msg
+    | ContactUsMsg ContactUs.Msg
     | TempLandingMsg TempLanding.Msg
     | SettingsMsg Settings.Msg
     | SignupMsg Signup.Msg
@@ -21807,6 +22382,7 @@ type PublicPage
     | LandingRoute { quoteId : Maybe String }
     | PricingRoute
     | Pricing2Route
+    | ContactUsRoute
 
 
 type ProtectedPage
@@ -21884,6 +22460,7 @@ routeParser =
         , map (PublicRoute PricingRoute) (s "pricing")
         , map (PublicRoute Pricing2Route) (s "pricing2")
         , map (PublicRoute ScheduleMainRoute) (s "schedule-main")
+        , map (PublicRoute ContactUsRoute) (s "contact-us")
         , map (\orgSlug token -> PublicRoute (VerifyRoute (VerifyParams orgSlug token)))
             (s "auth" </> s "verify" </> string </> string)
         , oneOf
@@ -22028,6 +22605,20 @@ update msg model =
                     in
                     ( { model | page = ContactsPage newPageModel }
                     , Cmd.map ContactsMsg newCmd
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        ContactUsMsg subMsg ->
+            case model.page of
+                ContactUsPage pageModel ->
+                    let
+                        ( newPageModel, newCmd ) =
+                            ContactUs.update subMsg pageModel
+                    in
+                    ( { model | page = ContactUsPage newPageModel }
+                    , Cmd.map ContactUsMsg newCmd
                     )
 
                 _ ->
@@ -22693,6 +23284,15 @@ view model =
                     , body = [ viewWithNav model (Html.map ContactsMsg (Contacts.view contactsModel)) ]
                     }
 
+                ContactUsPage contactUsModel ->
+                    let
+                        contactUsView =
+                            ContactUs.view contactUsModel
+                    in
+                    { title = contactUsView.title
+                    , body = [ viewWithNav model (Html.map ContactUsMsg (div [] contactUsView.body)) ]
+                    }
+
                 TempLandingPage landingModel ->
                     let
                         landingView =
@@ -23031,6 +23631,11 @@ viewPublicNav model =
                             ]
                             [ text "Pricing" ]
                         , button
+                            [ onClick (InternalLinkClicked "/contact-us")
+                            , class "block w-full text-left px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-md"
+                            ]
+                            [ text "Contact Us" ]
+                        , button
                             [ onClick (InternalLinkClicked "/signup")
                             , class "block w-full text-left px-4 py-2 text-[#03045E] font-medium hover:bg-gray-100 rounded-md"
                             ]
@@ -23091,6 +23696,9 @@ viewNavHeader model =
                     True
 
                 ScheduleMainPage _ ->
+                    True
+
+                ContactUsPage _ ->
                     True
 
                 _ ->
@@ -23272,6 +23880,11 @@ viewNavHeader model =
                                         [ text "Payment Settings" ]
                                     , button
                                         [ class "block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-[#DCE2E5]"
+                                        , onClick (InternalLinkClicked "/contact-us")
+                                        ]
+                                        [ text "Contact Us" ]
+                                    , button
+                                        [ class "block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-[#DCE2E5]"
                                         , onClick InitiateLogout
                                         ]
                                         [ text "Log out" ]
@@ -23357,6 +23970,9 @@ subscriptions model =
 
                 ContactsPage pageModel ->
                     Sub.map ContactsMsg (Contacts.subscriptions pageModel)
+
+                ContactUsPage pageModel ->
+                    Sub.none
 
                 TempLandingPage pageModel ->
                     Sub.map TempLandingMsg (TempLanding.subscriptions pageModel)
@@ -24094,6 +24710,7 @@ updatePage url ( model, cmd ) =
                                                             , isAdmin = user.isAdmin
                                                             , isAgent = user.isAgent
                                                             , phone = ""
+                                                            , orgSlug = user.organizationSlug -- ADDED
                                                             }
                                                         )
 
@@ -24199,6 +24816,7 @@ updatePage url ( model, cmd ) =
                                                             , isAdmin = user.isAdmin
                                                             , isAgent = user.isAgent
                                                             , phone = ""
+                                                            , orgSlug = user.organizationSlug -- ADDED
                                                             }
                                                         )
 
@@ -24253,6 +24871,18 @@ updatePage url ( model, cmd ) =
                                         ( { modelWithUpdatedSetup | page = Pricing2Page pricing2Model }
                                         , Cmd.batch
                                             [ Cmd.map Pricing2Msg pricing2Cmd
+                                            , authCmd
+                                            ]
+                                        )
+
+                                    PublicRoute ContactUsRoute ->
+                                        let
+                                            ( contactUsModel, contactUsCmd ) =
+                                                ContactUs.init ()
+                                        in
+                                        ( { modelWithUpdatedSetup | page = ContactUsPage contactUsModel }
+                                        , Cmd.batch
+                                            [ Cmd.map ContactUsMsg contactUsCmd
                                             , authCmd
                                             ]
                                         )
@@ -24622,6 +25252,15 @@ updatePageForcePublic url ( model, cmd ) =
                     in
                     ( { model | page = Pricing2Page pricing2Model }
                     , Cmd.map Pricing2Msg pricing2Cmd
+                    )
+
+                PublicRoute ContactUsRoute ->
+                    let
+                        ( contactUsModel, contactUsCmd ) =
+                            ContactUs.init ()
+                    in
+                    ( { model | page = ContactUsPage contactUsModel }
+                    , Cmd.map ContactUsMsg contactUsCmd
                     )
 
         Nothing ->
@@ -26383,6 +27022,73 @@ purpleIcon size color =
             , strokeLinejoin "round"
             ]
             []
+        ]
+
+
+phone : Int -> String -> Svg msg
+phone size color =
+    svg
+        [ width (String.fromInt size)
+        , height (String.fromInt size)
+        , viewBox "0 0 24 24"
+        , fill "none"
+        , stroke color
+        , strokeWidth "2"
+        , strokeLinecap "round"
+        , strokeLinejoin "round"
+        ]
+        [ Svg.path [ d "M13.832 16.568a1 1 0 0 0 1.213-.303l.355-.465A2 2 0 0 1 17 15h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2A18 18 0 0 1 2 4a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v3a2 2 0 0 1-.8 1.6l-.468.351a1 1 0 0 0-.292 1.233 14 14 0 0 0 6.392 6.384" ] []
+        ]
+
+
+mapPin : Int -> String -> Svg msg
+mapPin size color =
+    svg
+        [ width (String.fromInt size)
+        , height (String.fromInt size)
+        , viewBox "0 0 24 24"
+        , fill "none"
+        , stroke color
+        , strokeWidth "2"
+        , strokeLinecap "round"
+        , strokeLinejoin "round"
+        ]
+        [ Svg.path [ d "M18 8c0 3.613-3.869 7.429-5.393 8.795a1 1 0 0 1-1.214 0C9.87 15.429 6 11.613 6 8a6 6 0 0 1 12 0" ] []
+        , Svg.circle [ cx "12", cy "8", r "2" ] []
+        , Svg.path [ d "M8.714 14h-3.71a1 1 0 0 0-.948.683l-2.004 6A1 1 0 0 0 3 22h18a1 1 0 0 0 .948-1.316l-2-6a1 1 0 0 0-.949-.684h-3.712" ] []
+        ]
+
+
+clock : Int -> String -> Svg msg
+clock size color =
+    svg
+        [ width (String.fromInt size)
+        , height (String.fromInt size)
+        , viewBox "0 0 24 24"
+        , fill "none"
+        , stroke color
+        , strokeWidth "2"
+        , strokeLinecap "round"
+        , strokeLinejoin "round"
+        ]
+        [ Svg.circle [ cx "12", cy "12", r "10" ] []
+        , Svg.polyline [ points "12 6 12 12 16 14" ] []
+        ]
+
+
+mail size color =
+    svg
+        [ width (String.fromInt size)
+        , height (String.fromInt size)
+        , viewBox "0 0 24 24"
+        , fill "none"
+        , stroke color
+        , strokeWidth "2"
+        , strokeLinecap "round"
+        , strokeLinejoin "round"
+        ]
+        [ Svg.path [ d "m22 7-8.991 5.727a2 2 0 0 1-2.009 0L2 7" ] []
+        , Svg.rect [ x "2", y "4", width "20", height "16", rx "2" ] []
         ]
 
 ================
@@ -30150,8 +30856,11 @@ import Http
 import Json.Decode as Decode exposing (Decoder)
 import Json.Decode.Pipeline as Pipeline
 import Json.Encode as Encode
+import Ports
+import Process
 import Svg exposing (path, svg)
 import Svg.Attributes as SvgAttr
+import Task
 import Time
 
 
@@ -30165,6 +30874,7 @@ type alias Model =
     , isLoading : Bool
     , error : Maybe String
     , pendingSave : Bool
+    , agentProfileLinkCopied : Bool -- ADDED
     }
 
 
@@ -30176,7 +30886,7 @@ type alias User =
     , phone : String
     , isAdmin : Bool
     , isAgent : Bool
-    , calendarUrl : String
+    , orgSlug : String -- ADDED
     }
 
 
@@ -30187,6 +30897,7 @@ init _ =
       , isLoading = True
       , error = Nothing
       , pendingSave = False
+      , agentProfileLinkCopied = False -- ADDED
       }
     , fetchCurrentUser
     )
@@ -30203,6 +30914,9 @@ type Msg
     | ProfileSaved (Result Http.Error ())
     | NavigateTo String
     | WatchTutorial
+    | CopyAgentProfileLink -- ADDED
+    | AgentProfileLinkCopied Bool -- ADDED
+    | ResetAgentProfileLinkCopiedStatus -- ADDED
 
 
 type alias CurrentUserResponse =
@@ -30246,9 +30960,6 @@ update msg model =
                                 "phone" ->
                                     { user | phone = String.filter Char.isDigit value }
 
-                                "calendarUrl" ->
-                                    { user | calendarUrl = value }
-
                                 _ ->
                                     user
                     in
@@ -30290,6 +31001,32 @@ update msg model =
 
         WatchTutorial ->
             ( model, Cmd.none )
+
+        CopyAgentProfileLink ->
+            case model.currentUser of
+                Just user ->
+                    let
+                        agentLink =
+                            "https://" ++ "medicaremax.ai/self-onboarding/" ++ user.orgSlug ++ "?agentId=" ++ String.fromInt user.id
+                    in
+                    ( model, Ports.copyToClipboard agentLink )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        AgentProfileLinkCopied success ->
+            if success then
+                ( { model | agentProfileLinkCopied = True }
+                , Task.perform (\_ -> ResetAgentProfileLinkCopiedStatus) (Process.sleep 2000)
+                )
+
+            else
+                ( { model | error = Just "Failed to copy link to clipboard." }
+                , Cmd.none
+                )
+
+        ResetAgentProfileLinkCopiedStatus ->
+            ( { model | agentProfileLinkCopied = False }, Cmd.none )
 
 
 
@@ -30349,7 +31086,7 @@ viewContent model =
                         , if user.isAdmin then
                             button
                                 [ class "flex items-center text-sm text-purple-600 hover:text-purple-800"
-                                , onClick (NavigateTo "/change-plan")
+                                , onClick (NavigateTo "/stripe")
                                 ]
                                 [ div [ class "mr-2" ]
                                     [ svg
@@ -30368,13 +31105,14 @@ viewContent model =
                                             []
                                         ]
                                     ]
-                                , text "Subscription & Payments"
+                                , text "Billing & Payments"
                                 ]
 
                           else
                             text ""
                         ]
-                    , viewBasicInfo user
+                    , viewBasicInfo model user
+                    , viewAgentProfileLinkSection model user -- ADDED
                     , viewSaveButton model
                     ]
 
@@ -30383,8 +31121,8 @@ viewContent model =
                     [ text "Failed to load profile" ]
 
 
-viewBasicInfo : User -> Html Msg
-viewBasicInfo user =
+viewBasicInfo : Model -> User -> Html Msg
+viewBasicInfo model user =
     div [ class "space-y-6" ]
         [ div [ class "border-b border-gray-200 pb-4" ]
             [ h2 [ class "text-lg font-medium text-gray-900" ]
@@ -30395,9 +31133,7 @@ viewBasicInfo user =
             , viewField "Last Name" "text" user.lastName "lastName"
             , viewField "Email" "email" user.email "email"
             , viewField "Phone" "tel" user.phone "phone"
-            , viewField "Calendar URL" "url" user.calendarUrl "calendarUrl"
             ]
-        , viewRoleInfo user
         ]
 
 
@@ -30423,20 +31159,6 @@ viewField label inputType value field =
         ]
 
 
-viewRoleInfo : User -> Html Msg
-viewRoleInfo user =
-    if user.isAdmin then
-        div [ class "mb-6" ]
-            [ label [ class "block text-sm font-medium text-gray-700 mb-2" ]
-                [ text "Role" ]
-            , div [ class "mt-2 text-sm text-gray-500" ]
-                [ text "You have administrator privileges" ]
-            ]
-
-    else
-        text ""
-
-
 viewSaveButton : Model -> Html Msg
 viewSaveButton model =
     div [ class "mt-8 flex justify-center" ]
@@ -30457,6 +31179,45 @@ viewSaveButton model =
 viewSpinner : Html Msg
 viewSpinner =
     div [ class "animate-spin rounded-full h-5 w-5 border-2 border-blue-500 border-t-transparent" ] []
+
+
+viewAgentProfileLinkSection : Model -> User -> Html Msg
+viewAgentProfileLinkSection model user =
+    let
+        agentProfileLink =
+            "https://medicaremax.ai/self-onboarding/" ++ user.orgSlug ++ "?agentId=" ++ String.fromInt user.id
+    in
+    div [ class "mt-6" ]
+        [ label [ class "block text-sm font-medium text-gray-700 mb-2" ]
+            [ text "Agent Self-Onboarding Link" ]
+        , div [ class "flex items-center space-x-2" ]
+            [ Svg.svg [ SvgAttr.class "h-5 w-5 text-gray-400", SvgAttr.viewBox "0 0 20 20", SvgAttr.fill "currentColor" ]
+                [ Svg.path [ SvgAttr.fillRule "evenodd", SvgAttr.d "M12.586 4.586a2 2 0 112.828 2.828l-3 3a2 2 0 01-2.828 0 1 1 0 00-1.414 1.414 4 4 0 005.656 0l3-3a4 4 0 00-5.656-5.656l-1.5 1.5a1 1 0 101.414 1.414l1.5-1.5zm-5 5a2 2 0 012.828 0 1 1 0 101.414-1.414 4 4 0 00-5.656 0l-3 3a4 4 0 105.656 5.656l1.5-1.5a1 1 0 10-1.414-1.414l-1.5 1.5a2 2 0 11-2.828-2.828l3-3z", SvgAttr.clipRule "evenodd" ] []
+                ]
+            , input
+                [ type_ "text"
+                , class "flex-1 px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 bg-gray-50 text-gray-500"
+                , Html.Attributes.value agentProfileLink
+                , readonly True
+                ]
+                []
+            , button
+                [ class "px-4 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                , onClick CopyAgentProfileLink
+                ]
+                [ text
+                    (if model.agentProfileLinkCopied then
+                        "Copied!"
+
+                     else
+                        "Copy Link"
+                    )
+                ]
+            ]
+        , p [ class "text-gray-500 text-xs mt-1" ]
+            [ text "Share this link with clients or non-clients to gather missing information or capture new leads to your book of business. New leads created in this way will be assigned to you."
+            ]
+        ]
 
 
 
@@ -30505,10 +31266,11 @@ userDecoder =
         |> Pipeline.required "phone" Decode.string
         |> Pipeline.required "is_admin" Decode.bool
         |> Pipeline.required "is_agent" Decode.bool
-        |> Pipeline.optional "calendar_url" Decode.string ""
+        |> Pipeline.required "organization_slug" Decode.string
 
 
 
+-- ADDED
 -- ENCODERS
 
 
@@ -30519,7 +31281,6 @@ encodeUser user =
         , ( "lastName", Encode.string user.lastName )
         , ( "email", Encode.string user.email )
         , ( "phone", Encode.string user.phone )
-        , ( "calendar_url", Encode.string user.calendarUrl )
         ]
 
 
@@ -30555,26 +31316,6 @@ formatPhoneNumber phone =
             ++ String.dropLeft 6 digits
 
 
-formatRole : User -> String
-formatRole user =
-    if user.isAdmin && user.isAgent then
-        "Admin"
-
-    else if user.isAdmin then
-        "Admin"
-
-    else if user.isAgent then
-        "Agent"
-
-    else
-        "User"
-
-
-isAgent : User -> Bool
-isAgent user =
-    user.isAgent
-
-
 
 -- Add this helper function to check for changes
 
@@ -30600,7 +31341,7 @@ hasChanges model =
 
 subscriptions : Model -> Sub Msg
 subscriptions _ =
-    Sub.none
+    Ports.onCopyResult AgentProfileLinkCopied
 
 ================
 File: src/Quote.elm
@@ -34225,6 +34966,7 @@ type alias Settings =
     , phone : String
     , redirectUrl : String
     , signature : String
+    , forceOrgSenderDetails : Bool
     }
 
 
@@ -34249,7 +34991,6 @@ type Msg
     | ToggleEmailAnniversary Bool
     | ToggleEmailAep Bool
     | ToggleSmartSend Bool
-    | ToggleOrgSignature Bool
     | AddCarrierContract String
     | RemoveCarrierContract String
     | UpdateStateCarrierSetting String Bool Bool
@@ -34260,8 +35001,6 @@ type Msg
     | ToggleAllowAgentSettings Bool
     | FinishSetup
     | UpdateBrandName String
-    | UpdatePrimaryColor String
-    | UpdateSecondaryColor String
     | UpdatePhone String
     | UpdateRedirectUrl String
     | UpdateSignature String
@@ -34279,6 +35018,7 @@ type Msg
     | DragEnter
     | DragLeave
     | GotFiles File (List File)
+    | UpdateForceOrgSenderDetails Bool
 
 
 type alias SettingsResponse =
@@ -34447,9 +35187,6 @@ update msg model =
 
         ToggleSmartSend value ->
             updateSettings model (\s -> { s | smartSendEnabled = value })
-
-        ToggleOrgSignature value ->
-            updateSettings model (\s -> { s | orgSignature = value })
 
         AddCarrierContract carrier ->
             updateSettings model
@@ -34682,12 +35419,6 @@ update msg model =
         UpdateBrandName name ->
             updateSettings model (\s -> { s | brandName = name })
 
-        UpdatePrimaryColor color ->
-            updateSettings model (\s -> { s | primaryColor = color })
-
-        UpdateSecondaryColor color ->
-            updateSettings model (\s -> { s | secondaryColor = color })
-
         UpdatePhone phone ->
             updateSettings model (\s -> { s | phone = phone })
 
@@ -34760,6 +35491,9 @@ update msg model =
                 Err _ ->
                     ( model, Cmd.none )
 
+        UpdateForceOrgSenderDetails value ->
+            updateSettings model (\s -> { s | forceOrgSenderDetails = value })
+
 
 updateSettings : Model -> (Settings -> Settings) -> ( Model, Cmd Msg )
 updateSettings model updateFn =
@@ -34815,6 +35549,7 @@ encodeSettings settings =
         , ( "phone", Encode.string settings.phone )
         , ( "redirectUrl", Encode.string settings.redirectUrl )
         , ( "signature", Encode.string settings.signature )
+        , ( "forceOrgSenderDetails", Encode.bool settings.forceOrgSenderDetails )
         ]
 
 
@@ -34848,9 +35583,9 @@ view model =
                 ]
 
           else
-            div [ class "min-h-screen bg-gray-50" ]
+            div [ class "min-h-screen bg-white" ]
                 [ viewHeader
-                , div [ class "max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-8" ]
+                , div [ class "max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 pt-2 sm:pt-4 pb-16" ]
                     [ if model.isLoading then
                         viewLoading
 
@@ -34897,91 +35632,87 @@ viewBottomBar model =
 
 viewSettings : Model -> Html Msg
 viewSettings model =
-    div [ class "space-y-8" ]
+    div [ class "space-y-12" ]
         [ case model.orgSettings of
             Just settings ->
-                div [ class "space-y-6" ]
-                    [ viewBrandSettings settings model
+                div [ class "space-y-12" ]
+                    [ viewOrganizationDetails settings model
+                    , viewCarriersOffered settings model
                     , viewSelfOnboardingLink model
-                    , div [ class "bg-white shadow rounded-lg p-6" ]
-                        [ h2 [ class "text-lg font-medium mb-4" ] [ text "Carrier Contracts" ]
-                        , viewCarriersGrid settings model
-                        ]
-
-                    {--
-                    , viewEmailSettings settings
-                    , viewExpandableSection "State & Carrier Settings"
-                        (viewStateCarrierGrid settings model)
-                        model.expandedSections
-                    --}
+                    , viewDefaultSenderSettings settings
                     ]
 
             Nothing ->
                 div [ class "text-gray-500 italic" ]
                     [ text "Loading settings..." ]
-
-        --, viewBottomBar model
         ]
 
 
-viewBrandSettings : Settings -> Model -> Html Msg
-viewBrandSettings settings model =
+viewOrganizationDetails : Settings -> Model -> Html Msg
+viewOrganizationDetails settings model =
     div [ class "bg-white shadow rounded-lg p-6" ]
-        [ h2 [ class "text-lg font-medium mb-4" ] [ text "Agency Settings" ]
+        [ h2 [ class "text-lg font-medium text-gray-900 mb-6" ] [ text "Organization Details" ]
+        , p [ class "text-sm text-gray-500 mb-6" ]
+            [ text "If the Organization is at any point selected to be the sender, the following details will be used." ]
         , div [ class "space-y-6" ]
             [ div [ class "space-y-4" ]
                 [ viewFormGroup "Agency Name"
                     (input
                         [ type_ "text"
-                        , class "w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-purple-500 focus:border-purple-500"
+                        , class "mt-1 px-3 py-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-base"
                         , value settings.brandName
                         , onInput UpdateBrandName
+                        , placeholder "Example Biz"
                         ]
                         []
                     )
-                , viewFormGroup "Organization Contact Info"
-                    (div [ class "mt-2" ]
-                        [ checkbox "Use organization info instead of agent info" settings.orgSignature ToggleOrgSignature
-                        , p [ class "text-gray-500 text-sm mt-1 ml-7" ] [ text "When enabled, quote pages and schedule pages will show organization info instead of the specific agent's contact info" ]
+                , viewFormGroup "Phone number"
+                    (div [ class "flex" ]
+                        [ span [ class "inline-flex items-center px-3 py-2 rounded-l-md border border-r-0 border-gray-300 bg-gray-50 text-gray-500 shadow-sm" ]
+                            [ text "US" ]
+                        , input
+                            [ type_ "tel"
+                            , class "flex-1 px-3 py-2 rounded-r-md border border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-base focus:z-10"
+                            , value settings.phone
+                            , onInput UpdatePhone
+                            , placeholder "+1 (555) 000-0000"
+                            ]
+                            []
                         ]
                     )
-                , viewFormGroup "Phone Number"
-                    (input
-                        [ type_ "tel"
-                        , class "w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-purple-500 focus:border-purple-500"
-                        , classList [ ( "bg-gray-100", not settings.orgSignature ) ]
-                        , value settings.phone
-                        , onInput UpdatePhone
-                        , disabled (not settings.orgSignature)
-                        ]
-                        []
-                    )
-                , viewFormGroup "Email Signature"
-                    (textarea
-                        [ class "w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-purple-500 focus:border-purple-500"
-                        , classList [ ( "bg-gray-100", not settings.orgSignature ) ]
-                        , value settings.signature
-                        , onInput UpdateSignature
-                        , disabled (not settings.orgSignature)
-                        , rows 3
-                        ]
-                        []
-                    )
-                , viewFormGroup "Calendar Redirect URL"
+                , viewFormGroup "Calendar Booking Link (optional)"
                     (div []
                         [ input
                             [ type_ "text"
-                            , class "w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-purple-500 focus:border-purple-500"
-                            , classList [ ( "bg-gray-100", not settings.orgSignature ) ]
+                            , class "mt-1 px-3 py-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-base"
                             , value settings.redirectUrl
                             , onInput UpdateRedirectUrl
-                            , disabled (not settings.orgSignature)
+                            , placeholder "example.biz"
                             ]
                             []
-                        , p [ class "text-gray-500 text-xs mt-1" ] [ text "Optional URL where users will be redirected to schedule appointments (e.g., your calendly link)" ]
+                        , p [ class "text-gray-500 text-xs mt-1" ]
+                            [ text "If provided, this link will be used as one of the options a client may select to connect with your agency. Traditionally this would be a Calendly link, Acuity link, etc." ]
                         ]
                     )
-                , viewFormGroup "Logo"
+                , viewFormGroup "Email & SMS Signature or Sign Off"
+                    (textarea
+                        [ class "mt-1 px-3 py-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-base"
+                        , value settings.signature
+                        , onInput UpdateSignature
+                        , rows 3
+                        , placeholder
+                            ("Thanks,\nThe team at "
+                                ++ (if String.isEmpty settings.brandName then
+                                        "Example Biz"
+
+                                    else
+                                        settings.brandName
+                                   )
+                            )
+                        ]
+                        []
+                    )
+                , viewFormGroup "Organization Logo"
                     (div []
                         [ if model.uploadingLogo then
                             div [ class "flex justify-center items-center h-32" ]
@@ -35066,11 +35797,13 @@ viewEmailSettings settings =
 viewSelfOnboardingLink : Model -> Html Msg
 viewSelfOnboardingLink model =
     div [ class "bg-white shadow rounded-lg p-6" ]
-        [ h2 [ class "text-lg font-medium mb-4" ] [ text "Self Onboarding" ]
+        [ h2 [ class "text-lg font-medium text-gray-900 mb-2" ] [ text "Organization Self-Onboarding Link" ]
+        , p [ class "text-sm text-gray-500 mb-6" ]
+            [ text "Share this link with clients or non-clients to gather missing information or capture new leads to your book of business." ]
         , div [ class "space-y-4" ]
-            [ p [ class "mb-4 text-gray-600" ]
-                [ text "Share this link with clients to allow them to self-onboard into your account on the Medicare Max platform." ]
-            , div [ class "flex items-center space-x-3" ]
+            [ p [ class "text-sm font-medium text-gray-700 mb-2" ]
+                [ text "Please note: when a user uses the link and fills out the form they will be added to your book without having a specified agent. To designate an agent for a new contact share the agent's self-onboarding link." ]
+            , div [ class "mt-4" ]
                 [ let
                     slug =
                         model.currentUser
@@ -35079,27 +35812,104 @@ viewSelfOnboardingLink model =
 
                     selfOnboardingUrl =
                         model.selfOnboardingUrl
-                            |> Maybe.withDefault ("/self-onboarding/" ++ slug)
+                            |> Maybe.withDefault ("medicaremax.ai/self-onboarding/" ++ slug)
                   in
-                  div [ class "flex-1 flex items-center space-x-4" ]
-                    [ input
+                  div [ class "flex items-center space-x-2" ]
+                    [ svg [ Svg.Attributes.class "h-5 w-5 text-gray-400", Svg.Attributes.viewBox "0 0 20 20", Svg.Attributes.fill "currentColor" ]
+                        [ path [ Svg.Attributes.fillRule "evenodd", Svg.Attributes.d "M12.586 4.586a2 2 0 112.828 2.828l-3 3a2 2 0 01-2.828 0 1 1 0 00-1.414 1.414 4 4 0 005.656 0l3-3a4 4 0 00-5.656-5.656l-1.5 1.5a1 1 0 101.414 1.414l1.5-1.5zm-5 5a2 2 0 012.828 0 1 1 0 101.414-1.414 4 4 0 00-5.656 0l-3 3a4 4 0 105.656 5.656l1.5-1.5a1 1 0 10-1.414-1.414l-1.5 1.5a2 2 0 11-2.828-2.828l3-3z", Svg.Attributes.clipRule "evenodd" ] []
+                        ]
+                    , input
                         [ type_ "text"
-                        , class "flex-1 px-4 py-2 border border-gray-300 rounded-md focus:ring-purple-500 focus:border-purple-500 bg-gray-50"
+                        , class "flex-1 px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 bg-gray-50 text-gray-500"
                         , value selfOnboardingUrl
                         , readonly True
                         ]
                         []
                     , button
-                        [ class "px-4 py-2 text-sm bg-purple-600 text-white rounded hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+                        [ class "px-4 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
                         , onClick CopySelfOnboardingLink
                         ]
-                        [ text
-                            (if model.linkCopied then
-                                "Copied!"
+                        [ text "Copy Link" ]
+                    ]
+                ]
+            ]
+        ]
 
-                             else
-                                "Copy Link"
-                            )
+
+viewDefaultSenderSettings : Settings -> Html Msg
+viewDefaultSenderSettings settings =
+    div [ class "bg-white shadow rounded-lg p-6" ]
+        [ h2 [ class "text-lg font-medium text-gray-900 mb-2" ] [ text "Default Sender Settings" ]
+        , p [ class "text-sm text-gray-500 mb-6" ]
+            [ text "When communication is sent to your book of business you can set the default sender settings for the organization." ]
+        , div [ class "grid grid-cols-1 md:grid-cols-2 gap-4" ]
+            [ -- Organization Only Card
+              div
+                [ class
+                    ("relative rounded-lg border-2 p-6 cursor-pointer transition-all "
+                        ++ (if settings.forceOrgSenderDetails then
+                                "border-blue-500 bg-blue-50"
+
+                            else
+                                "border-gray-200 hover:border-gray-300 bg-white"
+                           )
+                    )
+                , onClick (UpdateForceOrgSenderDetails True)
+                ]
+                [ div [ class "flex items-start" ]
+                    [ div [ class "flex items-center h-5" ]
+                        [ input
+                            [ type_ "radio"
+                            , name "senderSettings"
+                            , checked settings.forceOrgSenderDetails
+                            , class "h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
+                            ]
+                            []
+                        ]
+                    , div [ class "ml-3" ]
+                        [ label [ class "font-medium text-gray-900" ] [ text "Organization Only" ]
+                        , p [ class "text-sm text-gray-500 mt-1" ]
+                            [ text "When this option is selected the Organization Details above will be used for the signature, phone number, and scheduling link if applicable." ]
+                        , p [ class "text-sm text-gray-500 mt-3" ]
+                            [ text "The Agent will not get an option to use their information." ]
+                        , div [ class "mt-4 text-xs text-gray-400" ]
+                            [ div [ class "mb-1" ] [ text "Recommended For:" ]
+                            , div [] [ text "Agencies with a customer care or retention team." ]
+                            ]
+                        ]
+                    ]
+                ]
+            , -- Agent's Choice Card
+              div
+                [ class
+                    ("relative rounded-lg border-2 p-6 cursor-pointer transition-all "
+                        ++ (if not settings.forceOrgSenderDetails then
+                                "border-blue-500 bg-blue-50"
+
+                            else
+                                "border-gray-200 hover:border-gray-300 bg-white"
+                           )
+                    )
+                , onClick (UpdateForceOrgSenderDetails False)
+                ]
+                [ div [ class "flex items-start" ]
+                    [ div [ class "flex items-center h-5" ]
+                        [ input
+                            [ type_ "radio"
+                            , name "senderSettings"
+                            , checked (not settings.forceOrgSenderDetails)
+                            , class "h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
+                            ]
+                            []
+                        ]
+                    , div [ class "ml-3" ]
+                        [ label [ class "font-medium text-gray-900" ] [ text "Agent Details" ]
+                        , p [ class "text-sm text-gray-500 mt-1" ]
+                            [ text "When this option is selected the Agent's personal information from their agent settings will be used for the signature, phone number, and scheduling link if applicable." ]
+                        , div [ class "mt-4 text-xs text-gray-400" ]
+                            [ div [ class "mb-1" ] [ text "Recommended For:" ]
+                            , div [] [ text "Agencies with agents who provide ongoing support for servicing existing clients." ]
+                            ]
                         ]
                     ]
                 ]
@@ -35147,8 +35957,8 @@ viewExpandableSection title content expandedSections =
         ]
 
 
-viewCarriersGrid : Settings -> Model -> Html Msg
-viewCarriersGrid settings model =
+viewCarriersOffered : Settings -> Model -> Html Msg
+viewCarriersOffered settings model =
     let
         carriersToUse =
             if List.isEmpty model.loadedCarriers then
@@ -35157,28 +35967,38 @@ viewCarriersGrid settings model =
             else
                 model.loadedCarriers
     in
-    div []
-        [ div [ class "mb-4 flex items-center" ]
-            [ checkbox "Select All Carriers"
-                (List.length settings.carrierContracts == List.length carriersToUse)
-                ToggleAllCarriers
-            ]
-        , div [ class "grid grid-cols-2 sm:grid-cols-3 gap-4" ]
-            (List.map
-                (\carrier ->
-                    checkbox carrier
-                        (safeMember carrier carriersToUse)
-                        (\checked ->
-                            if checked then
-                                AddCarrierContract carrier
+    div [ class "bg-white shadow rounded-lg p-6" ]
+        [ h2 [ class "text-lg font-medium text-gray-900 mb-6" ] [ text "Carriers Offered" ]
+        , p [ class "text-sm text-gray-500 mb-6" ]
+            [ text "Select the carriers you would like offered to your clients. This will be set for all agents within the organization." ]
+        , div []
+            [ div [ class "mb-4" ]
+                [ checkbox "Select to Offer All Carriers"
+                    (List.length settings.carrierContracts == List.length carriersToUse)
+                    ToggleAllCarriers
+                ]
+            , div [ class "grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4" ]
+                (List.map
+                    (\carrier ->
+                        checkbox carrier
+                            (safeMember carrier settings.carrierContracts)
+                            (\checked ->
+                                if checked then
+                                    AddCarrierContract carrier
 
-                            else
-                                RemoveCarrierContract carrier
-                        )
+                                else
+                                    RemoveCarrierContract carrier
+                            )
+                    )
+                    carriersToUse
                 )
-                carriersToUse
-            )
+            ]
         ]
+
+
+viewCarriersGrid : Settings -> Model -> Html Msg
+viewCarriersGrid settings model =
+    viewCarriersOffered settings model
 
 
 safeMember : String -> List String -> Bool
@@ -35344,6 +36164,7 @@ settingsObjectDecoder =
         |> Pipeline.optional "phone" Decode.string ""
         |> Pipeline.optional "redirectUrl" Decode.string ""
         |> Pipeline.optional "signature" Decode.string ""
+        |> Pipeline.optional "forceOrgSenderDetails" Decode.bool False
 
 
 stateCarrierSettingDecoder : Decoder StateCarrierSetting
@@ -35420,7 +36241,7 @@ viewLoading =
 
 viewHeader : Html msg
 viewHeader =
-    nav [ class "bg-white border-b border-gray-200" ]
+    nav [ class "bg-white" ]
         [ div [ class "max-w-4xl mx-auto px-4 sm:px-6 lg:px-8" ]
             [ div [ class "flex justify-between h-16" ]
                 [ div [ class "flex" ]

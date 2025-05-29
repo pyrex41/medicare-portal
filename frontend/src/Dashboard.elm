@@ -1,4 +1,4 @@
-module Dashboard exposing (Model, Msg, init, subscriptions, update, view)
+module Dashboard exposing (Model, Msg(..), init, subscriptions, update, view)
 
 import Browser exposing (Document)
 import Components.LimitBanner as LimitBanner exposing (LimitWarning(..))
@@ -11,6 +11,7 @@ import Json.Decode.Pipeline as Pipeline
 import Json.Encode as Encode
 import String
 import Time
+import Walkthrough
 
 
 
@@ -20,6 +21,8 @@ import Time
 type alias Model =
     { limitBanner : LimitBanner.Model
     , showTutorialModal : Bool
+    , walkthroughModal : Walkthrough.Model
+    , showWalkthroughModal : Bool
 
     -- Stats (consolidated from both Performance and Activity)
     , quotesSent : Int
@@ -137,6 +140,8 @@ type Msg
     | LimitBannerMsg LimitBanner.Msg
     | CloseTutorialModal
     | OpenTutorialModal
+    | WalkthroughMsg Walkthrough.Msg
+    | UserDataReceived Bool -- hasCompletedWalkthrough flag
     | GotDashboardStats (Result Http.Error DashboardStatsResponse)
     | SelectTimeFilter TimeFilter
     | UpdateCustomStartDate String
@@ -394,9 +399,14 @@ init flags =
     let
         ( limitBannerModel, limitBannerCmd ) =
             LimitBanner.init
+
+        ( walkthroughModel, walkthroughCmd ) =
+            Walkthrough.init False
     in
     ( { limitBanner = limitBannerModel
       , showTutorialModal = Maybe.withDefault False flags.isPostPayment
+      , walkthroughModal = walkthroughModel
+      , showWalkthroughModal = False
       , quotesSent = 0
       , manualQuotesSent = 0
       , quotesViewed = 0
@@ -527,6 +537,40 @@ update msg model =
             ( { model | showTutorialModal = True }
             , Cmd.none
             )
+
+        WalkthroughMsg walkthroughMsg ->
+            let
+                ( walkthroughModel, walkthroughCmd ) =
+                    Walkthrough.update walkthroughMsg model.walkthroughModal
+            in
+            case walkthroughMsg of
+                Walkthrough.CloseModalClicked ->
+                    ( { model | walkthroughModal = walkthroughModel, showWalkthroughModal = False }
+                    , Cmd.map WalkthroughMsg walkthroughCmd
+                    )
+
+                Walkthrough.CompleteWalkthroughResponse (Ok _) ->
+                    ( { model | walkthroughModal = walkthroughModel, showWalkthroughModal = False }
+                    , Cmd.map WalkthroughMsg walkthroughCmd
+                    )
+
+                _ ->
+                    ( { model | walkthroughModal = walkthroughModel }
+                    , Cmd.map WalkthroughMsg walkthroughCmd
+                    )
+
+        UserDataReceived hasCompletedWalkthrough ->
+            if not hasCompletedWalkthrough then
+                let
+                    ( walkthroughModel, _ ) =
+                        Walkthrough.init True
+                in
+                ( { model | showWalkthroughModal = True, walkthroughModal = walkthroughModel }
+                , Cmd.none
+                )
+
+            else
+                ( model, Cmd.none )
 
         GotDashboardStats result ->
             case result of
@@ -767,6 +811,12 @@ view model =
                     [ viewUpcomingEmails model ]
                 ]
             ]
+        , -- Walkthrough modal
+          if model.showWalkthroughModal then
+            Html.map WalkthroughMsg (Walkthrough.view model.walkthroughModal)
+
+          else
+            text ""
         ]
     }
 

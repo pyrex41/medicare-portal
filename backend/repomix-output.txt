@@ -110,6 +110,7 @@ src/
     auth.ts
     billing.ts
     brand.ts
+    contact.ts
     contacts.ts
     contactTracking.ts
     dashboard.ts
@@ -4465,6 +4466,84 @@ export function createBrandRoutes() {
       }
     });
 }
+
+================
+File: src/routes/contact.ts
+================
+import { Elysia } from "elysia";
+import sgMail from '@sendgrid/mail';
+import { logger } from '../logger';
+
+// Initialize SendGrid
+if (process.env.SENDGRID_API_KEY) {
+  sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+}
+
+export const contactUsRoutes = new Elysia({ prefix: "/api/contact-us" })
+  .post("/", async ({ body, set }) => {
+    try {
+      const { name, email, phone, message } = body as {
+        name: string;
+        email: string;
+        phone?: string;
+        message: string;
+      };
+
+      // Validate required fields
+      if (!name || !email || !message) {
+        set.status = 400;
+        return { error: "Missing required fields" };
+      }
+
+      // Send email notification to support
+      const fromEmail = process.env.SENDGRID_FROM_EMAIL || 'noreply@medicaremax.ai';
+      
+      await sgMail.send({
+        to: "information@medicaremax.ai",
+        from: {
+          email: fromEmail,
+          name: 'Medicare Max Contact Form'
+        },
+        subject: `Contact Form Submission from ${name}`,
+        html: `
+          <h2>New Contact Form Submission</h2>
+          <p><strong>Name:</strong> ${name}</p>
+          <p><strong>Email:</strong> ${email}</p>
+          ${phone ? `<p><strong>Phone:</strong> ${phone}</p>` : ""}
+          <p><strong>Message:</strong></p>
+          <p>${message.replace(/\n/g, "<br>")}</p>
+        `,
+      });
+
+      // Send confirmation email to the user
+      await sgMail.send({
+        to: email,
+        from: {
+          email: fromEmail,
+          name: 'Medicare Max'
+        },
+        subject: "Thank you for contacting Medicare Max",
+        html: `
+          <h2>Thank you for contacting us!</h2>
+          <p>Dear ${name},</p>
+          <p>We have received your message and will get back to you as soon as possible.</p>
+          <p>Here's a copy of your message:</p>
+          <blockquote style="background: #f0f0f0; padding: 10px; margin: 10px 0;">
+            ${message.replace(/\n/g, "<br>")}
+          </blockquote>
+          <p>Best regards,<br>Medicare Max Team</p>
+        `,
+      });
+      
+      logger.info(`Contact form submitted by ${name} (${email})`);
+
+      return { success: true };
+    } catch (error) {
+      console.error("Error processing contact form:", error);
+      set.status = 500;
+      return { error: "Failed to process contact form" };
+    }
+  });
 
 ================
 File: src/routes/contacts.ts
@@ -11031,14 +11110,9 @@ export const settingsRoutes = new Elysia()
                 ? { ...defaultSettings, ...JSON.parse(orgRow.org_settings) }
                 : { ...defaultSettings };
 
-            // Prioritize signature, then fall back to organization name
+            // Prioritize signature from database column
             if (!orgSettings.signature && orgRow?.signature) {
                 orgSettings.signature = orgRow.signature;
-            }
-            
-            // If signature is still not set, use organization name
-            if (!orgSettings.signature && orgRow?.name) {
-                orgSettings.signature = orgRow.name;
             }
 
             // If brandName is not set in settings, use the organization name
@@ -11066,6 +11140,14 @@ export const settingsRoutes = new Elysia()
                     orgSettings.carrierContracts
                 );
             }
+            
+            // For backwards compatibility, ensure both orgSignature and forceOrgSenderDetails are in sync
+            // If forceOrgSenderDetails doesn't exist, use orgSignature value
+            if (!('forceOrgSenderDetails' in orgSettings)) {
+                orgSettings.forceOrgSenderDetails = orgSettings.orgSignature || false;
+            }
+            // Ensure orgSignature matches forceOrgSenderDetails
+            orgSettings.orgSignature = orgSettings.forceOrgSenderDetails;
         } catch (parseError) {
             logger.error(`Error parsing org settings: ${parseError}`);
             orgSettings = { ...defaultSettings };
@@ -11151,16 +11233,24 @@ export const settingsRoutes = new Elysia()
             const phone = 'phone' in settingsObj ? settingsObj.phone : null;
             const redirectUrl = 'redirectUrl' in settingsObj ? settingsObj.redirectUrl : null;
             const signature = 'signature' in settingsObj ? settingsObj.signature : null;
+            
+            // For backwards compatibility, sync forceOrgSenderDetails with orgSignature
+            const forceOrgSenderDetails = 'forceOrgSenderDetails' in settingsObj ? settingsObj.forceOrgSenderDetails : orgSignature;
+            
             const settingsWithoutLogo = { ...settingsObj };
             if ('logo' in settingsWithoutLogo) {
                 delete (settingsWithoutLogo as any).logo;
             }
             
+            // Ensure both fields are in sync
+            settingsWithoutLogo.orgSignature = forceOrgSenderDetails;
+            settingsWithoutLogo.forceOrgSenderDetails = forceOrgSenderDetails;
+            
             // Update organization settings and logo separately
             await db.execute(
                 'UPDATE organizations SET org_settings = ?, logo_data = ?, name = ?, org_signature = ?, phone = ?, redirect_url = ?, signature = ? WHERE id = ?',
-                [JSON.stringify(settingsWithoutLogo), logo || null, name || null, orgSignature, 
-                 orgSignature ? phone : null, orgSignature ? redirectUrl : null, orgSignature ? signature : null, user.organization_id]
+                [JSON.stringify(settingsWithoutLogo), logo || null, name || null, forceOrgSenderDetails, 
+                 forceOrgSenderDetails ? phone : null, forceOrgSenderDetails ? redirectUrl : null, forceOrgSenderDetails ? signature : null, user.organization_id]
             );
 
             
@@ -17472,6 +17562,7 @@ import { generateQuoteId } from './utils/quoteId'
 import { createSelfServiceRoutes } from './routes/self-service'
 import { scheduleRoutes } from './routes/schedule'
 import { contactsRoutes } from './routes/contacts'
+import { contactUsRoutes } from './routes/contact'
 import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
@@ -17518,6 +17609,8 @@ type AgentUpdate = {
   is_agent: boolean
   carriers: string[]
   stateLicenses: string[]
+  bookingLink?: string
+  signature?: string
 }
 
 interface DbRow {
@@ -18446,6 +18539,8 @@ const startServer = async () => {
       .use(scheduleRoutes)
       // Add contacts routes
       .use(contactsRoutes)
+      // Add contact us form routes
+      .use(contactUsRoutes)
       // Add waitlist routes
       .use(createWaitlistRoutes())  // Waitlist routes use their own database connection
       // Add dashboard routes
@@ -18776,6 +18871,7 @@ const startServer = async () => {
                 u.last_name,
                 u.email,
                 u.phone,
+                u.booking_link,
                 u.is_admin,
                 u.is_agent,
                 a.settings
@@ -18795,7 +18891,8 @@ const startServer = async () => {
             const settings = row.settings ? JSON.parse(row.settings) : {
               stateLicenses: [],
               carrierContracts: [],
-              stateCarrierSettings: []
+              stateCarrierSettings: [],
+              signature: ''
             }
             
             // Check if this agent is the default agent
@@ -18807,6 +18904,8 @@ const startServer = async () => {
               lastName: row.last_name,
               email: row.email,
               phone: row.phone || '',
+              bookingLink: row.booking_link || '',
+              signature: settings.signature || '',
               isAdmin: Boolean(row.is_admin),
               isAgent: Boolean(row.is_agent),
               isDefault: isDefault,
@@ -18935,6 +19034,7 @@ const startServer = async () => {
                       last_name = ?, 
                       email = ?, 
                       phone = ?,
+                      booking_link = ?,
                       is_agent = ?
                   WHERE id = ? AND organization_id = ?
                   RETURNING *`
@@ -18943,6 +19043,7 @@ const startServer = async () => {
               agent.lastName,
               agent.email,
               agent.phone,
+              agent.bookingLink || '',
               agent.is_agent ? 1 : 0,
               params.id,
               currentUser.organization_id
@@ -18955,6 +19056,7 @@ const startServer = async () => {
                       last_name = ?, 
                       email = ?, 
                       phone = ?,
+                      booking_link = ?,
                       is_admin = ?,
                       is_agent = ?
                   WHERE id = ? AND organization_id = ?
@@ -18964,6 +19066,7 @@ const startServer = async () => {
               agent.lastName,
               agent.email,
               agent.phone,
+              agent.bookingLink || '',
               agent.is_admin ? 1 : 0,
               agent.is_agent ? 1 : 0,
               params.id,
@@ -18994,7 +19097,8 @@ const startServer = async () => {
             emailSendBirthday: false,
             emailSendPolicyAnniversary: false,
             emailSendAep: false,
-            smartSendEnabled: false
+            smartSendEnabled: false,
+            signature: agent.signature || ''
           }
 
           logger.info(`Agent settings to update: ${JSON.stringify(settings, null, 2)}`)
@@ -19034,6 +19138,8 @@ const startServer = async () => {
               lastName: updatedUser.last_name,
               email: updatedUser.email,
               phone: updatedUser.phone || '',
+              bookingLink: updatedUser.booking_link || '',
+              signature: updatedSettings.signature || '',
               is_admin: Boolean(updatedUser.is_admin),
               is_agent: Boolean(updatedUser.is_agent),
               carriers: updatedSettings.carrierContracts,
@@ -19201,6 +19307,7 @@ const startServer = async () => {
                 u.is_admin,
                 u.is_agent,
                 u.phone,
+                u.booking_link,
                 u.organization_id,
                 o.slug as organization_slug,
                 o.subscription_tier,
@@ -19235,6 +19342,7 @@ const startServer = async () => {
               is_admin: Boolean(user.is_admin),
               is_agent: Boolean(user.is_agent),
               phone: user.phone || '',
+              booking_link: user.booking_link || '',
               organization_id: user.organization_id,
               organization_slug: user.organization_slug,
               subscription_tier: user.subscription_tier,

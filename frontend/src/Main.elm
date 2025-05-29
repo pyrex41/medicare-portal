@@ -156,6 +156,7 @@ type alias User =
     , accountStatus : Maybe AccountStatusBanner.AccountStatusDetails
     , demoMode : Bool
     , orgCreateDate : Maybe Date
+    , hasCompletedWalkthrough : Bool
     }
 
 
@@ -532,11 +533,11 @@ type PublicPage
     | LandingRoute { quoteId : Maybe String }
     | PricingRoute
     | Pricing2Route
-    | ContactUsRoute
 
 
 type ProtectedPage
     = ContactsRoute
+    | ContactUsRoute
     | ProfileRoute
     | TempLandingRoute
     | ContactRoute String
@@ -610,7 +611,7 @@ routeParser =
         , map (PublicRoute PricingRoute) (s "pricing")
         , map (PublicRoute Pricing2Route) (s "pricing2")
         , map (PublicRoute ScheduleMainRoute) (s "schedule-main")
-        , map (PublicRoute ContactUsRoute) (s "contact-us")
+        , map (ProtectedRoute ContactUsRoute) (s "contact-us")
         , map (\orgSlug token -> PublicRoute (VerifyRoute (VerifyParams orgSlug token)))
             (s "auth" </> s "verify" </> string </> string)
         , oneOf
@@ -886,6 +887,7 @@ update msg model =
                                             , accountStatus = Nothing
                                             , demoMode = False
                                             , orgCreateDate = Nothing
+                                            , hasCompletedWalkthrough = False
                                             }
                                     , isSetup = isInSetup
                                     , page = LoadingPage -- Force to loading page to prevent UI flicker during redirection
@@ -932,6 +934,7 @@ update msg model =
                                 , accountStatus = Nothing
                                 , demoMode = response.demoMode
                                 , orgCreateDate = Just response.orgCreateDate
+                                , hasCompletedWalkthrough = False
                                 }
 
                             -- Initialize demo mode banner with user's demo mode state
@@ -1139,6 +1142,7 @@ update msg model =
                                         , accountStatus = Nothing -- Will fetch this separately
                                         , demoMode = user.demoMode
                                         , orgCreateDate = user.orgCreateDate
+                                        , hasCompletedWalkthrough = user.hasCompletedWalkthrough
                                         }
 
                                 -- Initialize demo mode banner with the user's demo mode status
@@ -1611,12 +1615,8 @@ view model =
                     }
 
                 WalkthroughPage pageModel ->
-                    let
-                        walkthroughView =
-                            Walkthrough.view pageModel
-                    in
-                    { title = walkthroughView.title
-                    , body = [ viewWithNav model (Html.map WalkthroughMsg (div [] walkthroughView.body)) ]
+                    { title = "Walkthrough"
+                    , body = [ viewWithNav model (Html.map WalkthroughMsg (Walkthrough.view pageModel)) ]
                     }
 
                 SelfOnboardingPage pageModel ->
@@ -1846,9 +1846,6 @@ viewNavHeader model =
                     True
 
                 ScheduleMainPage _ ->
-                    True
-
-                ContactUsPage _ ->
                     True
 
                 _ ->
@@ -2256,6 +2253,7 @@ userDecoder =
                                 Decode.fail "Invalid date format"
                     )
             )
+        |> Pipeline.optional "hasCompletedWalkthrough" Decode.bool False
 
 
 type SetupStep
@@ -2797,13 +2795,19 @@ updatePage url ( model, cmd ) =
                                         , Cmd.batch
                                             [ Cmd.map DashboardMsg dashboardCmd
                                             , authCmd
+                                            , case modelWithUpdatedSetup.currentUser of
+                                                Just user ->
+                                                    Cmd.map DashboardMsg (Task.perform (\hasCompleted -> Dashboard.UserDataReceived hasCompleted) (Task.succeed user.hasCompletedWalkthrough))
+
+                                                Nothing ->
+                                                    Cmd.none
                                             ]
                                         )
 
                                     ProtectedRoute WalkthroughRoute ->
                                         let
                                             ( walkthroughModel, walkthroughCmd ) =
-                                                Walkthrough.init modelWithUpdatedSetup.key
+                                                Walkthrough.init False
                                         in
                                         ( { modelWithUpdatedSetup | page = WalkthroughPage walkthroughModel }
                                         , Cmd.batch
@@ -3025,7 +3029,7 @@ updatePage url ( model, cmd ) =
                                             ]
                                         )
 
-                                    PublicRoute ContactUsRoute ->
+                                    ProtectedRoute ContactUsRoute ->
                                         let
                                             ( contactUsModel, contactUsCmd ) =
                                                 ContactUs.init ()
@@ -3404,14 +3408,6 @@ updatePageForcePublic url ( model, cmd ) =
                     , Cmd.map Pricing2Msg pricing2Cmd
                     )
 
-                PublicRoute ContactUsRoute ->
-                    let
-                        ( contactUsModel, contactUsCmd ) =
-                            ContactUs.init ()
-                    in
-                    ( { model | page = ContactUsPage contactUsModel }
-                    , Cmd.map ContactUsMsg contactUsCmd
-                    )
 
         Nothing ->
             ( { model | page = NotFoundPage }

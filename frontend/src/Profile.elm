@@ -14,6 +14,7 @@ import Svg exposing (path, svg)
 import Svg.Attributes as SvgAttr
 import Task
 import Time
+import Walkthrough
 
 
 
@@ -27,6 +28,8 @@ type alias Model =
     , error : Maybe String
     , pendingSave : Bool
     , agentProfileLinkCopied : Bool -- ADDED
+    , walkthroughModal : Walkthrough.Model
+    , showWalkthroughModal : Bool
     }
 
 
@@ -44,12 +47,18 @@ type alias User =
 
 init : () -> ( Model, Cmd Msg )
 init _ =
+    let
+        ( walkthroughModel, _ ) =
+            Walkthrough.init False
+    in
     ( { currentUser = Nothing
       , originalUser = Nothing
       , isLoading = True
       , error = Nothing
       , pendingSave = False
       , agentProfileLinkCopied = False -- ADDED
+      , walkthroughModal = walkthroughModel
+      , showWalkthroughModal = False
       }
     , fetchCurrentUser
     )
@@ -69,6 +78,8 @@ type Msg
     | CopyAgentProfileLink -- ADDED
     | AgentProfileLinkCopied Bool -- ADDED
     | ResetAgentProfileLinkCopiedStatus -- ADDED
+    | WalkthroughMsg Walkthrough.Msg
+    | OpenWalkthroughModal
 
 
 type alias CurrentUserResponse =
@@ -154,6 +165,36 @@ update msg model =
         WatchTutorial ->
             ( model, Cmd.none )
 
+        OpenWalkthroughModal ->
+            let
+                ( walkthroughModel, _ ) =
+                    Walkthrough.init True
+            in
+            ( { model | showWalkthroughModal = True, walkthroughModal = walkthroughModel }
+            , Cmd.none
+            )
+
+        WalkthroughMsg walkthroughMsg ->
+            let
+                ( walkthroughModel, walkthroughCmd ) =
+                    Walkthrough.update walkthroughMsg model.walkthroughModal
+            in
+            case walkthroughMsg of
+                Walkthrough.CloseModalClicked ->
+                    ( { model | walkthroughModal = walkthroughModel, showWalkthroughModal = False }
+                    , Cmd.map WalkthroughMsg walkthroughCmd
+                    )
+
+                Walkthrough.CompleteWalkthroughResponse (Ok _) ->
+                    ( { model | walkthroughModal = walkthroughModel, showWalkthroughModal = False }
+                    , Cmd.map WalkthroughMsg walkthroughCmd
+                    )
+
+                _ ->
+                    ( { model | walkthroughModal = walkthroughModel }
+                    , Cmd.map WalkthroughMsg walkthroughCmd
+                    )
+
         CopyAgentProfileLink ->
             case model.currentUser of
                 Just user ->
@@ -197,6 +238,12 @@ view model =
                 , viewContent model
                 ]
             ]
+        , -- Walkthrough modal
+          if model.showWalkthroughModal then
+            Html.map WalkthroughMsg (Walkthrough.view model.walkthroughModal)
+
+          else
+            text ""
         ]
     }
 
@@ -214,7 +261,7 @@ viewContent model =
                     [ div [ class "mb-4 flex justify-end space-x-4" ]
                         [ button
                             [ class "flex items-center text-sm text-blue-600 hover:text-blue-800"
-                            , onClick (NavigateTo "/dashboard?payment_success=true")
+                            , onClick OpenWalkthroughModal
                             ]
                             [ div [ class "mr-2" ]
                                 [ svg

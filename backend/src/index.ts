@@ -1776,6 +1776,7 @@ const startServer = async () => {
                 u.phone,
                 u.booking_link,
                 u.organization_id,
+                u.has_completed_walkthrough,
                 o.slug as organization_slug,
                 o.subscription_tier,
                 o.created_at as orgCreateDate,
@@ -1814,7 +1815,8 @@ const startServer = async () => {
               organization_slug: user.organization_slug,
               subscription_tier: user.subscription_tier,
               orgCreateDate: user.orgCreateDate.split(/[ T]/)[0],
-              agentSettings: user.agentSettings ? JSON.parse(user.agentSettings) : null
+              agentSettings: user.agentSettings ? JSON.parse(user.agentSettings) : null,
+              hasCompletedWalkthrough: Boolean(user.has_completed_walkthrough)
             }
           }
           logger.info(`GET /api/me - Sending response ${JSON.stringify(response)}`)
@@ -2363,6 +2365,45 @@ const startServer = async () => {
 
         } catch (error) {
           logger.error(`Error updating profile: ${error}`)
+          set.status = 500
+          return {
+            success: false,
+            error: String(error)
+          }
+        }
+      })
+      // Add endpoint to mark walkthrough as completed
+      .post('/api/profile/complete-walkthrough', async ({ request, set }) => {
+        try {
+          const currentUser = await getUserFromSession(request)
+          if (!currentUser) {
+            set.status = 401
+            return {
+              success: false,
+              error: 'Not authenticated'
+            }
+          }
+
+          // Get the libSQL client
+          const client = db.getClient()
+
+          // Update the has_completed_walkthrough flag
+          const result = await client.execute({
+            sql: `UPDATE users 
+                  SET has_completed_walkthrough = 1
+                  WHERE id = ?`,
+            args: [currentUser.id]
+          })
+
+          logger.info(`Marked walkthrough as completed for user ${currentUser.id}`)
+
+          return {
+            success: true,
+            message: 'Walkthrough marked as completed'
+          }
+
+        } catch (error) {
+          logger.error(`Error marking walkthrough as completed: ${error}`)
           set.status = 500
           return {
             success: false,
