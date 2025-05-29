@@ -966,7 +966,34 @@ export function createOnboardingRoutes() {
         };
       }
     })
-    
+    .get('/api/subscription/pricing', async ({ set }) => {
+      try {
+        const publishableKey = process.env.STRIPE_PUBLISHABLE_KEY;
+        const priceId = process.env.STRIPE_PRICE_ID;
+
+        if (!publishableKey || !priceId) {
+          set.status = 500;
+          return {
+            success: false,
+            message: 'Stripe configuration missing'
+          };
+        }
+
+        set.status = 200;
+        return {
+          success: true,
+          publishableKey,
+          priceId
+        };
+      } catch (error) {
+        logger.error(`Error getting Stripe pricing: ${error}`);
+        set.status = 500;
+        return {
+          success: false,
+          message: 'Failed to get Stripe pricing'
+        };
+      }
+    })
     // Simplified checkout endpoint that creates the account
     .post('/api/subscription/checkout', async ({ body, set }) => {
       try {

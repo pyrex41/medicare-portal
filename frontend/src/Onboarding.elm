@@ -34,12 +34,6 @@ port checkoutCompleted : (CheckoutData -> msg) -> Sub msg
 port checkoutError : (ErrorData -> msg) -> Sub msg
 
 
-port requestStripeProduct : () -> Cmd msg
-
-
-port responseStripeProduct : (( String, String ) -> msg) -> Sub msg
-
-
 
 -- MODEL
 
@@ -95,8 +89,14 @@ type alias Model =
     , newAgentIsAdmin : Bool
     , loadingResumeData : Bool
     , paymentStatus : PaymentStatus
-    , subscriptionPriceId : Maybe String
-    , tierPriceId : Maybe String
+    , publishableKey : Maybe String
+    , priceId : Maybe String
+    }
+
+
+type alias StripeProduct =
+    { publishableKey : String
+    , priceId : String
     }
 
 
@@ -270,8 +270,8 @@ init key url =
             , newAgentIsAdmin = True
             , loadingResumeData = False
             , paymentStatus = Loading
-            , subscriptionPriceId = Nothing
-            , tierPriceId = Nothing
+            , publishableKey = Nothing
+            , priceId = Nothing
             }
 
         -- Check if this is a direct page load with frame > 1
@@ -283,7 +283,7 @@ init key url =
                 Just user ->
                     Cmd.batch
                         [ fetchResumeData user.email
-                        , requestStripeProduct ()
+                        , fetchStripeProduct
                         ]
 
                 Nothing ->
@@ -335,7 +335,7 @@ type Msg
     | CheckoutCompletedFromPort CheckoutData
     | CheckoutErrorFromPort ErrorData
     | ProcessCheckoutData CheckoutData
-    | ResponseStripeProduct ( String, String )
+    | ResponseStripeProduct (Result Http.Error StripeProduct)
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -702,13 +702,16 @@ update msg model =
         RefreshPage ->
             ( model, Nav.reload )
 
-        ResponseStripeProduct ( subscriptionPriceId, tierPriceId ) ->
+        ResponseStripeProduct (Ok stripeProduct) ->
             ( { model
-                | subscriptionPriceId = Just subscriptionPriceId
-                , tierPriceId = Just tierPriceId
+                | publishableKey = Just stripeProduct.publishableKey
+                , priceId = Just stripeProduct.priceId
               }
             , Cmd.none
             )
+
+        ResponseStripeProduct (Err _) ->
+            ( model, Cmd.none )
 
 
 
@@ -1295,10 +1298,10 @@ viewPayment model =
                             ]
 
                     else
-                        case ( model.subscriptionPriceId, model.tierPriceId ) of
-                            ( Just subscriptionPriceId, _ ) ->
+                        case model.priceId of
+                            Just priceId ->
                                 node "stripe-checkout"
-                                    [ attribute "price-id" subscriptionPriceId
+                                    [ attribute "price-id" priceId
 
                                     --, attribute "metered-price-id" tierPriceId
                                     , attribute "first-name" model.user.firstName
@@ -1320,10 +1323,10 @@ viewPayment model =
                         ]
 
                 ReadyToComplete ->
-                    case ( model.subscriptionPriceId, model.tierPriceId ) of
-                        ( Just subscriptionPriceId, _ ) ->
+                    case model.priceId of
+                        Just priceId ->
                             node "stripe-checkout"
-                                [ attribute "price-id" subscriptionPriceId
+                                [ attribute "price-id" priceId
 
                                 --, attribute "metered-price-id" tierPriceId
                                 , attribute "first-name" model.user.firstName
@@ -1402,7 +1405,6 @@ subscriptions _ =
         [ paymentCompleted PaymentCompletedFromPort
         , checkoutCompleted CheckoutCompletedFromPort
         , checkoutError CheckoutErrorFromPort
-        , responseStripeProduct ResponseStripeProduct
         ]
 
 
@@ -1524,6 +1526,25 @@ saveAgents model =
                 )
         , expect = Http.expectJson AgentsSaved saveResponseDecoder
         }
+
+
+
+-- Stripe Product
+
+
+fetchStripeProduct : Cmd Msg
+fetchStripeProduct =
+    Http.get
+        { url = "/api/subscription/pricing"
+        , expect = Http.expectJson ResponseStripeProduct stripeProductDecoder
+        }
+
+
+stripeProductDecoder : Decoder StripeProduct
+stripeProductDecoder =
+    Decode.map2 StripeProduct
+        (Decode.field "publishableKey" Decode.string)
+        (Decode.field "priceId" Decode.string)
 
 
 
