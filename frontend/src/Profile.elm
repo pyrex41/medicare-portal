@@ -8,8 +8,11 @@ import Http
 import Json.Decode as Decode exposing (Decoder)
 import Json.Decode.Pipeline as Pipeline
 import Json.Encode as Encode
+import Ports
+import Process
 import Svg exposing (path, svg)
 import Svg.Attributes as SvgAttr
+import Task
 import Time
 
 
@@ -23,6 +26,7 @@ type alias Model =
     , isLoading : Bool
     , error : Maybe String
     , pendingSave : Bool
+    , agentProfileLinkCopied : Bool -- ADDED
     }
 
 
@@ -34,7 +38,7 @@ type alias User =
     , phone : String
     , isAdmin : Bool
     , isAgent : Bool
-    , calendarUrl : String
+    , orgSlug : String -- ADDED
     }
 
 
@@ -45,6 +49,7 @@ init _ =
       , isLoading = True
       , error = Nothing
       , pendingSave = False
+      , agentProfileLinkCopied = False -- ADDED
       }
     , fetchCurrentUser
     )
@@ -61,6 +66,9 @@ type Msg
     | ProfileSaved (Result Http.Error ())
     | NavigateTo String
     | WatchTutorial
+    | CopyAgentProfileLink -- ADDED
+    | AgentProfileLinkCopied Bool -- ADDED
+    | ResetAgentProfileLinkCopiedStatus -- ADDED
 
 
 type alias CurrentUserResponse =
@@ -104,9 +112,6 @@ update msg model =
                                 "phone" ->
                                     { user | phone = String.filter Char.isDigit value }
 
-                                "calendarUrl" ->
-                                    { user | calendarUrl = value }
-
                                 _ ->
                                     user
                     in
@@ -148,6 +153,32 @@ update msg model =
 
         WatchTutorial ->
             ( model, Cmd.none )
+
+        CopyAgentProfileLink ->
+            case model.currentUser of
+                Just user ->
+                    let
+                        agentLink =
+                            "https://" ++ "medicaremax.ai/self-onboarding/" ++ user.orgSlug ++ "?agentId=" ++ String.fromInt user.id
+                    in
+                    ( model, Ports.copyToClipboard agentLink )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        AgentProfileLinkCopied success ->
+            if success then
+                ( { model | agentProfileLinkCopied = True }
+                , Task.perform (\_ -> ResetAgentProfileLinkCopiedStatus) (Process.sleep 2000)
+                )
+
+            else
+                ( { model | error = Just "Failed to copy link to clipboard." }
+                , Cmd.none
+                )
+
+        ResetAgentProfileLinkCopiedStatus ->
+            ( { model | agentProfileLinkCopied = False }, Cmd.none )
 
 
 
@@ -207,7 +238,7 @@ viewContent model =
                         , if user.isAdmin then
                             button
                                 [ class "flex items-center text-sm text-purple-600 hover:text-purple-800"
-                                , onClick (NavigateTo "/change-plan")
+                                , onClick (NavigateTo "/stripe")
                                 ]
                                 [ div [ class "mr-2" ]
                                     [ svg
@@ -226,13 +257,14 @@ viewContent model =
                                             []
                                         ]
                                     ]
-                                , text "Subscription & Payments"
+                                , text "Billing & Payments"
                                 ]
 
                           else
                             text ""
                         ]
-                    , viewBasicInfo user
+                    , viewBasicInfo model user
+                    , viewAgentProfileLinkSection model user -- ADDED
                     , viewSaveButton model
                     ]
 
@@ -241,8 +273,8 @@ viewContent model =
                     [ text "Failed to load profile" ]
 
 
-viewBasicInfo : User -> Html Msg
-viewBasicInfo user =
+viewBasicInfo : Model -> User -> Html Msg
+viewBasicInfo model user =
     div [ class "space-y-6" ]
         [ div [ class "border-b border-gray-200 pb-4" ]
             [ h2 [ class "text-lg font-medium text-gray-900" ]
@@ -253,9 +285,7 @@ viewBasicInfo user =
             , viewField "Last Name" "text" user.lastName "lastName"
             , viewField "Email" "email" user.email "email"
             , viewField "Phone" "tel" user.phone "phone"
-            , viewField "Calendar URL" "url" user.calendarUrl "calendarUrl"
             ]
-        , viewRoleInfo user
         ]
 
 
@@ -281,20 +311,6 @@ viewField label inputType value field =
         ]
 
 
-viewRoleInfo : User -> Html Msg
-viewRoleInfo user =
-    if user.isAdmin then
-        div [ class "mb-6" ]
-            [ label [ class "block text-sm font-medium text-gray-700 mb-2" ]
-                [ text "Role" ]
-            , div [ class "mt-2 text-sm text-gray-500" ]
-                [ text "You have administrator privileges" ]
-            ]
-
-    else
-        text ""
-
-
 viewSaveButton : Model -> Html Msg
 viewSaveButton model =
     div [ class "mt-8 flex justify-center" ]
@@ -315,6 +331,45 @@ viewSaveButton model =
 viewSpinner : Html Msg
 viewSpinner =
     div [ class "animate-spin rounded-full h-5 w-5 border-2 border-blue-500 border-t-transparent" ] []
+
+
+viewAgentProfileLinkSection : Model -> User -> Html Msg
+viewAgentProfileLinkSection model user =
+    let
+        agentProfileLink =
+            "https://medicaremax.ai/self-onboarding/" ++ user.orgSlug ++ "?agentId=" ++ String.fromInt user.id
+    in
+    div [ class "mt-6" ]
+        [ label [ class "block text-sm font-medium text-gray-700 mb-2" ]
+            [ text "Agent Self-Onboarding Link" ]
+        , div [ class "flex items-center space-x-2" ]
+            [ Svg.svg [ SvgAttr.class "h-5 w-5 text-gray-400", SvgAttr.viewBox "0 0 20 20", SvgAttr.fill "currentColor" ]
+                [ Svg.path [ SvgAttr.fillRule "evenodd", SvgAttr.d "M12.586 4.586a2 2 0 112.828 2.828l-3 3a2 2 0 01-2.828 0 1 1 0 00-1.414 1.414 4 4 0 005.656 0l3-3a4 4 0 00-5.656-5.656l-1.5 1.5a1 1 0 101.414 1.414l1.5-1.5zm-5 5a2 2 0 012.828 0 1 1 0 101.414-1.414 4 4 0 00-5.656 0l-3 3a4 4 0 105.656 5.656l1.5-1.5a1 1 0 10-1.414-1.414l-1.5 1.5a2 2 0 11-2.828-2.828l3-3z", SvgAttr.clipRule "evenodd" ] []
+                ]
+            , input
+                [ type_ "text"
+                , class "flex-1 px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 bg-gray-50 text-gray-500"
+                , Html.Attributes.value agentProfileLink
+                , readonly True
+                ]
+                []
+            , button
+                [ class "px-4 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                , onClick CopyAgentProfileLink
+                ]
+                [ text
+                    (if model.agentProfileLinkCopied then
+                        "Copied!"
+
+                     else
+                        "Copy Link"
+                    )
+                ]
+            ]
+        , p [ class "text-gray-500 text-xs mt-1" ]
+            [ text "Share this link with clients or non-clients to gather missing information or capture new leads to your book of business. New leads created in this way will be assigned to you."
+            ]
+        ]
 
 
 
@@ -363,10 +418,11 @@ userDecoder =
         |> Pipeline.required "phone" Decode.string
         |> Pipeline.required "is_admin" Decode.bool
         |> Pipeline.required "is_agent" Decode.bool
-        |> Pipeline.optional "calendar_url" Decode.string ""
+        |> Pipeline.required "organization_slug" Decode.string
 
 
 
+-- ADDED
 -- ENCODERS
 
 
@@ -377,7 +433,6 @@ encodeUser user =
         , ( "lastName", Encode.string user.lastName )
         , ( "email", Encode.string user.email )
         , ( "phone", Encode.string user.phone )
-        , ( "calendar_url", Encode.string user.calendarUrl )
         ]
 
 
@@ -413,26 +468,6 @@ formatPhoneNumber phone =
             ++ String.dropLeft 6 digits
 
 
-formatRole : User -> String
-formatRole user =
-    if user.isAdmin && user.isAgent then
-        "Admin"
-
-    else if user.isAdmin then
-        "Admin"
-
-    else if user.isAgent then
-        "Agent"
-
-    else
-        "User"
-
-
-isAgent : User -> Bool
-isAgent user =
-    user.isAgent
-
-
 
 -- Add this helper function to check for changes
 
@@ -458,4 +493,4 @@ hasChanges model =
 
 subscriptions : Model -> Sub Msg
 subscriptions _ =
-    Sub.none
+    Ports.onCopyResult AgentProfileLinkCopied

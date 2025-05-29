@@ -12,6 +12,7 @@ import Json.Decode as Decode exposing (Decoder)
 import Json.Decode.Pipeline as Pipeline
 import Json.Encode as Encode
 import Parser exposing ((|.), (|=), Parser, chompIf, chompWhile, end, succeed, symbol)
+import Ports
 import StateRegions exposing (Region(..), getRegionStates, regionToString)
 import Svg exposing (path, svg)
 import Svg.Attributes exposing (d, fill, stroke, strokeLinecap, strokeLinejoin, strokeWidth, viewBox)
@@ -104,7 +105,7 @@ settingsObjectDecoder =
     Decode.map3 Settings
         (Decode.field "carrierContracts" (Decode.list Decode.string))
         (Decode.field "stateLicenses" (Decode.list Decode.string))
-        (Decode.oneOf 
+        (Decode.oneOf
             [ Decode.field "forceOrgSenderDetails" Decode.bool
             , Decode.succeed False
             ]
@@ -136,6 +137,9 @@ type alias Model =
     , emailStatus : EmailStatus
     , defaultAgentId : Maybe String
     , forceOrgSenderDetails : Bool
+    , copiedAgentLinks : List String -- Track which agent IDs have had their links copied
+    , currentlyCopyingAgent : Maybe String -- Track which agent's link is currently being copied
+    , orgSlug : String -- ADDED
     }
 
 
@@ -145,6 +149,7 @@ type alias User =
     , firstName : String
     , lastName : String
     , phone : String
+    , orgSlug : String -- ADDED
     }
 
 
@@ -168,6 +173,7 @@ type alias CurrentUser =
     , firstName : String
     , lastName : String
     , phone : String
+    , orgSlug : String -- ADDED
     }
 
 
@@ -231,6 +237,8 @@ type Msg
     | GotEmailResponse (Result Http.Error EmailResponse)
     | SetDefaultAgent String
     | SetDefaultAgentResult (Result Http.Error ())
+    | CopyAgentSelfOnboardingLink String
+    | LinkCopied Bool
 
 
 type alias CurrentUserResponse =
@@ -251,7 +259,7 @@ type alias AgentsResponse =
     }
 
 
-init : Bool -> Nav.Key -> Maybe { id : String, email : String, firstName : String, lastName : String, phone : String, isAdmin : Bool, isAgent : Bool } -> String -> ( Model, Cmd Msg )
+init : Bool -> Nav.Key -> Maybe { id : String, email : String, firstName : String, lastName : String, phone : String, isAdmin : Bool, isAgent : Bool, orgSlug : String } -> String -> ( Model, Cmd Msg )
 init isSetup key currentUser planType =
     let
         initialAgents =
@@ -279,6 +287,7 @@ init isSetup key currentUser planType =
                             , firstName = user.firstName
                             , lastName = user.lastName
                             , phone = user.phone
+                            , orgSlug = user.orgSlug
                             }
                     in
                     if isSetup then
@@ -300,6 +309,7 @@ init isSetup key currentUser planType =
                         , firstName = user.firstName
                         , lastName = user.lastName
                         , phone = user.phone
+                        , orgSlug = user.orgSlug
                         }
                     )
     in
@@ -327,6 +337,9 @@ init isSetup key currentUser planType =
       , emailStatus = NotChecked
       , defaultAgentId = Nothing
       , forceOrgSenderDetails = False
+      , copiedAgentLinks = []
+      , currentlyCopyingAgent = Nothing
+      , orgSlug = Maybe.map .orgSlug convertedCurrentUser |> Maybe.withDefault ""
       }
     , fetchAgents
     )
@@ -550,9 +563,34 @@ viewAgentsList model =
                                     "bg-white"
                         in
                         div [ class (cardBackgroundClass ++ " shadow rounded-lg p-6") ]
-                            [ div [ class "flex items-center justify-between" ]
+                            [ div
+                                [ class "flex items-center justify-between cursor-pointer hover:bg-gray-50 -m-2 p-2 rounded-md"
+                                , onClick (ToggleAgentExpanded agent.id)
+                                ]
                                 [ div [ class "flex items-center" ]
-                                    [ div [ class "ml-4" ]
+                                    [ -- Expand/Collapse Icon
+                                      div [ class "mr-2" ]
+                                        [ svg
+                                            [ Svg.Attributes.class "h-5 w-5 text-gray-400 transform transition-transform duration-200"
+                                            , Svg.Attributes.class
+                                                (if agent.expanded then
+                                                    "rotate-90"
+
+                                                 else
+                                                    ""
+                                                )
+                                            , Svg.Attributes.viewBox "0 0 20 20"
+                                            , Svg.Attributes.fill "currentColor"
+                                            ]
+                                            [ path
+                                                [ Svg.Attributes.fillRule "evenodd"
+                                                , Svg.Attributes.d "M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z"
+                                                , Svg.Attributes.clipRule "evenodd"
+                                                ]
+                                                []
+                                            ]
+                                        ]
+                                    , div [ class "ml-2" ]
                                         [ div [ class "text-lg font-medium text-gray-900" ]
                                             [ text (agent.firstName ++ " " ++ agent.lastName) ]
                                         , div [ class "text-sm text-gray-500" ]
@@ -563,7 +601,7 @@ viewAgentsList model =
                                     [ if not isDefault then
                                         button
                                             [ class "px-3 py-1 text-sm text-blue-600 hover:text-blue-800 font-medium border border-blue-600 rounded-md hover:bg-blue-50"
-                                            , onClick (SetDefaultAgent agent.id)
+                                            , stopPropagationOn "click" (Decode.succeed ( SetDefaultAgent agent.id, True ))
                                             ]
                                             [ text "Set as Default" ]
 
@@ -572,7 +610,7 @@ viewAgentsList model =
                                             [ text "Default Agent" ]
                                     , button
                                         [ class "text-blue-600 hover:text-blue-800 font-medium"
-                                        , onClick (ToggleAgentExpanded agent.id)
+                                        , stopPropagationOn "click" (Decode.succeed ( ToggleAgentExpanded agent.id, True ))
                                         ]
                                         [ text "Edit" ]
                                     , button
@@ -585,7 +623,7 @@ viewAgentsList model =
                                                         "hover:text-red-500"
                                                    )
                                             )
-                                        , onClick (DeleteAgent agent.id)
+                                        , stopPropagationOn "click" (Decode.succeed ( DeleteAgent agent.id, True ))
                                         , disabled (isSelfUser || isDefault)
                                         , title
                                             (if isSelfUser then
@@ -659,16 +697,6 @@ viewAgentsList model =
 viewAgentDetails : Model -> Agent -> Html Msg
 viewAgentDetails model agent =
     let
-        orgCarriers =
-            model.orgSettings
-                |> Maybe.map .carrierContracts
-                |> Maybe.withDefault []
-
-        orgStates =
-            model.orgSettings
-                |> Maybe.map .stateLicenses
-                |> Maybe.withDefault []
-
         fieldError field =
             case field of
                 "phone" ->
@@ -724,12 +752,16 @@ viewAgentDetails model agent =
         onFieldInput field value =
             UpdateAgentField agent.id field value
 
-        onSelectAllCarriers : Bool -> Msg
-        onSelectAllCarriers isSelected =
-            SelectAllCarriersForAgent agent.id isSelected
+        -- Check if organization forces org sender details
+        fieldsDisabled =
+            model.forceOrgSenderDetails
+
+        agentSelfOnboardingUrl =
+            "https://" ++ "medicaremax.ai/self-onboarding/" ++ model.orgSlug ++ "?agentId=" ++ agent.id
     in
     div [ class "space-y-6" ]
-        [ div [ class "space-y-4" ]
+        [ -- Basic Information Section
+          div [ class "space-y-4" ]
             [ div [ class "grid grid-cols-2 gap-4" ]
                 [ div []
                     [ label [ class "block text-sm font-medium text-gray-700" ]
@@ -763,7 +795,7 @@ viewAgentDetails model agent =
             , div [ class "grid grid-cols-2 gap-4" ]
                 [ div []
                     [ label [ class "block text-sm font-medium text-gray-700" ]
-                        [ text "Email"
+                        [ text "Email Address"
                         , errorIndicator "email"
                         ]
                     , input
@@ -777,25 +809,184 @@ viewAgentDetails model agent =
                     ]
                 , div []
                     [ label [ class "block text-sm font-medium text-gray-700" ]
-                        [ text "Phone"
+                        [ text "Phone number"
                         , errorIndicator "phone"
                         ]
-                    , input
-                        [ type_ "tel"
-                        , class "mt-1 px-3 py-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-base"
-                        , value formattedPhone
-                        , onInput (onFieldInput "phone")
-                        , placeholder "(555) 555-5555"
-                        , disabled (not canEditField)
+                    , div [ class "flex" ]
+                        [ span [ class "inline-flex items-center px-3 py-2 rounded-l-md border border-r-0 border-gray-300 bg-gray-50 text-gray-500 shadow-sm" ]
+                            [ text "US" ]
+                        , input
+                            [ type_ "tel"
+                            , class "flex-1 px-3 py-2 rounded-r-md border border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-base focus:z-10"
+                            , value formattedPhone
+                            , onInput (onFieldInput "phone")
+                            , placeholder "+1 (555) 000-0000"
+                            , disabled (not canEditField)
+                            ]
+                            []
                         ]
-                        []
+                    ]
+                ]
+            , div []
+                [ label [ class "block text-sm font-medium text-gray-700" ]
+                    [ text "Calendar Booking Link (optional)" ]
+                , input
+                    [ type_ "text"
+                    , class
+                        ("mt-1 px-3 py-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-base "
+                            ++ (if fieldsDisabled then
+                                    "disabled:bg-gray-100 disabled:text-gray-500"
+
+                                else
+                                    ""
+                               )
+                        )
+                    , value agent.calendarLink
+                    , onInput (onFieldInput "calendarLink")
+                    , placeholder "example.biz"
+                    , disabled (fieldsDisabled || not canEditField)
+                    ]
+                    []
+                , p [ class "text-gray-500 text-xs mt-1" ]
+                    [ text "If provided, this link will be used as one of the options a client may select to connect with your agency. Traditionally this would be a Calendly link, Acuity link, etc." ]
+                ]
+            ]
+        , -- Agent Self-Onboarding Link Section
+          div []
+            [ label [ class "block text-sm font-medium text-gray-700 mb-2" ]
+                [ text "Agent Self-Onboarding Link" ]
+            , div [ class "flex items-center space-x-2" ]
+                [ svg [ Svg.Attributes.class "h-5 w-5 text-gray-400", Svg.Attributes.viewBox "0 0 20 20", Svg.Attributes.fill "currentColor" ]
+                    [ path [ Svg.Attributes.fillRule "evenodd", Svg.Attributes.d "M12.586 4.586a2 2 0 112.828 2.828l-3 3a2 2 0 01-2.828 0 1 1 0 00-1.414 1.414 4 4 0 005.656 0l3-3a4 4 0 00-5.656-5.656l-1.5 1.5a1 1 0 101.414 1.414l1.5-1.5zm-5 5a2 2 0 012.828 0 1 1 0 101.414-1.414 4 4 0 00-5.656 0l-3 3a4 4 0 105.656 5.656l1.5-1.5a1 1 0 10-1.414-1.414l-1.5 1.5a2 2 0 11-2.828-2.828l3-3z", Svg.Attributes.clipRule "evenodd" ] []
+                    ]
+                , input
+                    [ type_ "text"
+                    , class "flex-1 px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 bg-gray-50 text-gray-500"
+                    , value agentSelfOnboardingUrl
+                    , readonly True
+                    ]
+                    []
+                , button
+                    [ class "px-4 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                    , onClick (CopyAgentSelfOnboardingLink agent.id)
+                    ]
+                    [ text
+                        (if List.member agent.id model.copiedAgentLinks then
+                            "Copied!"
+
+                         else
+                            "Copy Link"
+                        )
+                    ]
+                ]
+            , p [ class "text-gray-500 text-xs mt-1" ]
+                [ text "Share this link with clients or non-clients to gather missing information or capture new leads to your book of business. New leads created in this way will be assigned to the agent associated with this link." ]
+            ]
+        , -- Sender Settings Section
+          div []
+            [ h3 [ class "text-sm font-medium text-gray-700 mb-4" ]
+                [ text "Sender Settings" ]
+            , p [ class "text-sm text-gray-500 mb-4" ]
+                [ text "The sender settings below are controlled by your organization's configuration. "
+                , a [ class "text-blue-600 hover:text-blue-800 underline", href "/settings" ]
+                    [ text "Visit Organization Settings" ]
+                , text " to change how agent details are used across your organization. When Organization Details is selected, agents will use the organization's contact information. When Agent Details is selected, agents can use their own contact information set above."
+                ]
+            , div [ class "grid grid-cols-1 md:grid-cols-2 gap-4" ]
+                [ -- Organization Details Card
+                  div
+                    [ class
+                        ("relative rounded-lg border-2 p-6 transition-all "
+                            ++ (if model.forceOrgSenderDetails then
+                                    "border-blue-500 bg-blue-50"
+
+                                else
+                                    "border-gray-200 bg-white"
+                               )
+                        )
+                    ]
+                    [ div [ class "flex items-start" ]
+                        [ div [ class "flex items-center h-5" ]
+                            [ input
+                                [ type_ "radio"
+                                , name ("senderSettings-" ++ agent.id)
+                                , checked model.forceOrgSenderDetails
+                                , class "h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
+                                , disabled True
+                                ]
+                                []
+                            ]
+                        , div [ class "ml-3" ]
+                            [ label [ class "font-medium text-gray-900" ] [ text "Organization Details" ]
+                            , p [ class "text-sm text-gray-500 mt-1" ]
+                                [ if model.forceOrgSenderDetails then
+                                    span []
+                                        [ text "These details are set in the organization settings. "
+                                        , a [ class "text-blue-600 hover:text-blue-800", href "/settings" ] [ text "Change organization defaults" ]
+                                        , text "."
+                                        ]
+
+                                  else
+                                    text "When this option is selected the Organization Details will be used for the signature, phone number, and scheduling link if applicable."
+                                ]
+                            ]
+                        ]
+                    ]
+                , -- Agent Details Card
+                  div
+                    [ class
+                        ("relative rounded-lg border-2 p-6 transition-all "
+                            ++ (if not model.forceOrgSenderDetails then
+                                    "border-blue-500 bg-blue-50"
+
+                                else
+                                    "border-gray-200 bg-white"
+                               )
+                        )
+                    ]
+                    [ div [ class "flex items-start" ]
+                        [ div [ class "flex items-center h-5" ]
+                            [ input
+                                [ type_ "radio"
+                                , name ("senderSettings-" ++ agent.id)
+                                , checked (not model.forceOrgSenderDetails)
+                                , class "h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
+                                , disabled True
+                                ]
+                                []
+                            ]
+                        , div [ class "ml-3" ]
+                            [ label [ class "font-medium text-gray-900" ] [ text "Agent Details" ]
+                            , p [ class "text-sm text-gray-500 mt-1" ]
+                                [ if not model.forceOrgSenderDetails then
+                                    text "These details are set above in this agent's settings."
+
+                                  else
+                                    text "When this option is selected the Agent's personal information from their agent settings will be used for the signature, phone number, and scheduling link if applicable."
+                                ]
+                            ]
+                        ]
                     ]
                 ]
             ]
-        , div [ class "mt-6" ]
-            [ p [ class "text-sm text-gray-500" ]
-                [ text "This agent will automatically use the carriers and state licenses from your organization settings." ]
-            ]
+        , -- Signature Section (only if agent details are enabled)
+          if not model.forceOrgSenderDetails then
+            div []
+                [ label [ class "block text-sm font-medium text-gray-700" ]
+                    [ text "Email & SMS Signature or Sign Off" ]
+                , textarea
+                    [ class "mt-1 px-3 py-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-base"
+                    , value agent.signature
+                    , onInput (onFieldInput "signature")
+                    , rows 3
+                    , placeholder ("Thanks,\n" ++ agent.firstName ++ " " ++ agent.lastName)
+                    , disabled (not canEditField)
+                    ]
+                    []
+                ]
+
+          else
+            text ""
         , if hasChanges then
             div [ class "mt-4 flex justify-end" ]
                 [ button
@@ -1558,6 +1749,12 @@ update msg model =
                             "phone" ->
                                 { agent | phone = formatPhoneNumber (String.filter Char.isDigit value) }
 
+                            "calendarLink" ->
+                                { agent | calendarLink = value }
+
+                            "signature" ->
+                                { agent | signature = value }
+
                             _ ->
                                 agent
 
@@ -1595,6 +1792,40 @@ update msg model =
                 Err _ ->
                     ( { model | isLoading = False, error = Just "Failed to set default agent" }, Cmd.none )
 
+        CopyAgentSelfOnboardingLink agentId ->
+            let
+                agentSelfOnboardingUrl =
+                    "https://" ++ "medicaremax.ai/self-onboarding/" ++ model.orgSlug ++ "?agentId=" ++ agentId
+            in
+            ( { model
+                | copiedAgentLinks = List.filter ((/=) agentId) model.copiedAgentLinks
+                , currentlyCopyingAgent = Just agentId
+              }
+            , Ports.copyToClipboard agentSelfOnboardingUrl
+            )
+
+        LinkCopied success ->
+            case model.currentlyCopyingAgent of
+                Just agentId ->
+                    if success then
+                        ( { model
+                            | copiedAgentLinks = agentId :: model.copiedAgentLinks
+                            , currentlyCopyingAgent = Nothing
+                          }
+                        , Cmd.none
+                        )
+
+                    else
+                        ( { model
+                            | error = Just "Failed to copy link to clipboard"
+                            , currentlyCopyingAgent = Nothing
+                          }
+                        , Cmd.none
+                        )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
 
 
 -- Helper functions
@@ -1630,12 +1861,19 @@ formatPhoneNumber rawPhone =
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
-    case model.pendingSave of
-        Just agentId ->
-            Time.every 2000 (\_ -> DebounceSaveAgent agentId)
+    let
+        timeSub =
+            case model.pendingSave of
+                Just agentId ->
+                    Time.every 2000 (\_ -> DebounceSaveAgent agentId)
 
-        Nothing ->
-            Sub.none
+                Nothing ->
+                    Sub.none
+
+        copyResultSub =
+            Ports.onCopyResult LinkCopied
+    in
+    Sub.batch [ timeSub, copyResultSub ]
 
 
 isValidEmail : String -> Bool
@@ -1763,7 +2001,7 @@ userDecoder =
                 , Decode.field "id" (Decode.map String.fromInt Decode.int)
                 ]
     in
-    Decode.map5 User
+    Decode.map6 User
         idDecoder
         (Decode.field "email" Decode.string)
         (Decode.field "firstName" Decode.string)
@@ -1773,6 +2011,7 @@ userDecoder =
             , Decode.succeed ""
             ]
         )
+        (Decode.field "org_slug" Decode.string)
 
 
 saveAgentDetails : Agent -> Cmd Msg

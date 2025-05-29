@@ -2816,6 +2816,7 @@ updatePage url ( model, cmd ) =
                                                             , isAdmin = user.isAdmin
                                                             , isAgent = user.isAgent
                                                             , phone = ""
+                                                            , orgSlug = user.organizationSlug -- ADDED
                                                             }
                                                         )
 
@@ -2921,6 +2922,7 @@ updatePage url ( model, cmd ) =
                                                             , isAdmin = user.isAdmin
                                                             , isAgent = user.isAgent
                                                             , phone = ""
+                                                            , orgSlug = user.organizationSlug -- ADDED
                                                             }
                                                         )
 
