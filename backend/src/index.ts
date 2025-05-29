@@ -75,6 +75,8 @@ type AgentUpdate = {
   is_agent: boolean
   carriers: string[]
   stateLicenses: string[]
+  bookingLink?: string
+  signature?: string
 }
 
 interface DbRow {
@@ -1333,6 +1335,7 @@ const startServer = async () => {
                 u.last_name,
                 u.email,
                 u.phone,
+                u.booking_link,
                 u.is_admin,
                 u.is_agent,
                 a.settings
@@ -1352,7 +1355,8 @@ const startServer = async () => {
             const settings = row.settings ? JSON.parse(row.settings) : {
               stateLicenses: [],
               carrierContracts: [],
-              stateCarrierSettings: []
+              stateCarrierSettings: [],
+              signature: ''
             }
             
             // Check if this agent is the default agent
@@ -1364,6 +1368,8 @@ const startServer = async () => {
               lastName: row.last_name,
               email: row.email,
               phone: row.phone || '',
+              bookingLink: row.booking_link || '',
+              signature: settings.signature || '',
               isAdmin: Boolean(row.is_admin),
               isAgent: Boolean(row.is_agent),
               isDefault: isDefault,
@@ -1492,6 +1498,7 @@ const startServer = async () => {
                       last_name = ?, 
                       email = ?, 
                       phone = ?,
+                      booking_link = ?,
                       is_agent = ?
                   WHERE id = ? AND organization_id = ?
                   RETURNING *`
@@ -1500,6 +1507,7 @@ const startServer = async () => {
               agent.lastName,
               agent.email,
               agent.phone,
+              agent.bookingLink || '',
               agent.is_agent ? 1 : 0,
               params.id,
               currentUser.organization_id
@@ -1512,6 +1520,7 @@ const startServer = async () => {
                       last_name = ?, 
                       email = ?, 
                       phone = ?,
+                      booking_link = ?,
                       is_admin = ?,
                       is_agent = ?
                   WHERE id = ? AND organization_id = ?
@@ -1521,6 +1530,7 @@ const startServer = async () => {
               agent.lastName,
               agent.email,
               agent.phone,
+              agent.bookingLink || '',
               agent.is_admin ? 1 : 0,
               agent.is_agent ? 1 : 0,
               params.id,
@@ -1551,7 +1561,8 @@ const startServer = async () => {
             emailSendBirthday: false,
             emailSendPolicyAnniversary: false,
             emailSendAep: false,
-            smartSendEnabled: false
+            smartSendEnabled: false,
+            signature: agent.signature || ''
           }
 
           logger.info(`Agent settings to update: ${JSON.stringify(settings, null, 2)}`)
@@ -1591,6 +1602,8 @@ const startServer = async () => {
               lastName: updatedUser.last_name,
               email: updatedUser.email,
               phone: updatedUser.phone || '',
+              bookingLink: updatedUser.booking_link || '',
+              signature: updatedSettings.signature || '',
               is_admin: Boolean(updatedUser.is_admin),
               is_agent: Boolean(updatedUser.is_agent),
               carriers: updatedSettings.carrierContracts,
@@ -1758,6 +1771,7 @@ const startServer = async () => {
                 u.is_admin,
                 u.is_agent,
                 u.phone,
+                u.booking_link,
                 u.organization_id,
                 o.slug as organization_slug,
                 o.subscription_tier,
@@ -1792,6 +1806,7 @@ const startServer = async () => {
               is_admin: Boolean(user.is_admin),
               is_agent: Boolean(user.is_agent),
               phone: user.phone || '',
+              booking_link: user.booking_link || '',
               organization_id: user.organization_id,
               organization_slug: user.organization_slug,
               subscription_tier: user.subscription_tier,
