@@ -578,6 +578,8 @@ export function createOnboardingRoutes() {
         
         // Ensure email is decoded
         const decodedEmail = ensureEmailDecoded(email);
+        const decodedFirstName = decodeURIComponent(firstName || '');
+        const decodedLastName = decodeURIComponent(lastName || '');
         logger.info(`Processing onboarding company update for email: ${decodedEmail}`);
         
         // Find the organization by user email
@@ -638,8 +640,8 @@ export function createOnboardingRoutes() {
             RETURNING id`,
             [
               decodedEmail,
-              firstName || '',
-              lastName || '',
+              decodedFirstName,
+              decodedLastName,
               phone || '',
               organizationId,
               1, // Set as admin
@@ -655,6 +657,13 @@ export function createOnboardingRoutes() {
             id: userResult[0].id,
             organization_id: organizationId
           };
+
+          const defaultAgentId = userResult[0].id;
+
+          await dbInstance.execute(
+            'UPDATE organizations SET default_agent_id = ? WHERE id = ?',
+            [defaultAgentId, organizationId]
+          );  
           
           logger.info(`Created new user (${userInfo.id}) for organization (${organizationId})`);
           
@@ -861,8 +870,8 @@ export function createOnboardingRoutes() {
         logger.info(`Processing onboarding agents for owner email: ${decodedOwnerEmail}`);
         
         // Find the organization by user email
-        const userInfo = await dbInstance.fetchOne<{ organization_id: number }>(
-          'SELECT organization_id FROM users WHERE email = ?',
+        const userInfo = await dbInstance.fetchOne<{ id: number, organization_id: number }>(
+          'SELECT id, organization_id FROM users WHERE email = ?',
           [decodedOwnerEmail]
         );
         
@@ -942,13 +951,18 @@ export function createOnboardingRoutes() {
           createdCount++;
         }
         
-        // Mark onboarding as complete since this is the final step
-        await dbInstance.execute(
-          'UPDATE organizations SET onboarding_completed = 1 WHERE id = ?',
-          [organizationId]
-        );
+        // Set the onboarding user as the default agent for the organization
+        if (userInfo) {
+          await dbInstance.execute(
+            'UPDATE organizations SET default_agent_id = ? WHERE id = ?',
+            [userInfo.id, organizationId]
+          );
+          logger.info(`Set user ${userInfo.id} as default agent for organization ID: ${organizationId}`);
+        } else {
+          logger.warn(`Could not set default agent for organization ${organizationId} because owner user info was not found.`);
+        }
         
-        logger.info(`Created ${createdCount} agents, skipped ${skippedCount}, and marked onboarding as complete for organization ID: ${organizationId}`);
+        logger.info(`Created ${createdCount} agents, skipped ${skippedCount}, for organization ID: ${organizationId}. Onboarding NOT YET marked complete.`);
         
         return {
           success: true,

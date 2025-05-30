@@ -190,7 +190,7 @@ export function createAuthRoutes() {
       set.status = 200;
       return {
         success: true,  
-        redirectUrl: "/contacts",
+        redirectUrl: "/dashboard?walkthrough=true",
         email: user.email
       };
     })

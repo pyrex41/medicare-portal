@@ -36,7 +36,7 @@ Notes:
 ------
 - Some files may have been excluded based on .gitignore rules and Repomix's configuration
 - Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
-- Files matching these patterns are excluded: node_modules/, public/, images/, backup/
+- Files matching these patterns are excluded: node_modules/, **/zipData.json, public/, backup/, src/index.html
 - Files matching patterns in .gitignore are excluded
 - Files matching default ignore patterns are excluded
 
@@ -16802,7 +16802,7 @@ processCsvToContacts csvContent columnMapping carrierMapping =
 ================
 File: src/Dashboard.elm
 ================
-module Dashboard exposing (Model, Msg, init, subscriptions, update, view)
+module Dashboard exposing (Model, Msg(..), init, subscriptions, update, view)
 
 import Browser exposing (Document)
 import Components.LimitBanner as LimitBanner exposing (LimitWarning(..))
@@ -16815,6 +16815,7 @@ import Json.Decode.Pipeline as Pipeline
 import Json.Encode as Encode
 import String
 import Time
+import Walkthrough
 
 
 
@@ -16824,6 +16825,8 @@ import Time
 type alias Model =
     { limitBanner : LimitBanner.Model
     , showTutorialModal : Bool
+    , walkthroughModal : Walkthrough.Model
+    , showWalkthroughModal : Bool
 
     -- Stats (consolidated from both Performance and Activity)
     , quotesSent : Int
@@ -16941,6 +16944,8 @@ type Msg
     | LimitBannerMsg LimitBanner.Msg
     | CloseTutorialModal
     | OpenTutorialModal
+    | WalkthroughMsg Walkthrough.Msg
+    | UserDataReceived Bool -- hasCompletedWalkthrough flag
     | GotDashboardStats (Result Http.Error DashboardStatsResponse)
     | SelectTimeFilter TimeFilter
     | UpdateCustomStartDate String
@@ -17198,9 +17203,14 @@ init flags =
     let
         ( limitBannerModel, limitBannerCmd ) =
             LimitBanner.init
+
+        ( walkthroughModel, walkthroughCmd ) =
+            Walkthrough.init False
     in
     ( { limitBanner = limitBannerModel
       , showTutorialModal = Maybe.withDefault False flags.isPostPayment
+      , walkthroughModal = walkthroughModel
+      , showWalkthroughModal = False
       , quotesSent = 0
       , manualQuotesSent = 0
       , quotesViewed = 0
@@ -17331,6 +17341,40 @@ update msg model =
             ( { model | showTutorialModal = True }
             , Cmd.none
             )
+
+        WalkthroughMsg walkthroughMsg ->
+            let
+                ( walkthroughModel, walkthroughCmd ) =
+                    Walkthrough.update walkthroughMsg model.walkthroughModal
+            in
+            case walkthroughMsg of
+                Walkthrough.CloseModalClicked ->
+                    ( { model | walkthroughModal = walkthroughModel, showWalkthroughModal = False }
+                    , Cmd.map WalkthroughMsg walkthroughCmd
+                    )
+
+                Walkthrough.CompleteWalkthroughResponse (Ok _) ->
+                    ( { model | walkthroughModal = walkthroughModel, showWalkthroughModal = False }
+                    , Cmd.map WalkthroughMsg walkthroughCmd
+                    )
+
+                _ ->
+                    ( { model | walkthroughModal = walkthroughModel }
+                    , Cmd.map WalkthroughMsg walkthroughCmd
+                    )
+
+        UserDataReceived hasCompletedWalkthrough ->
+            if not hasCompletedWalkthrough then
+                let
+                    ( walkthroughModel, _ ) =
+                        Walkthrough.init True
+                in
+                ( { model | showWalkthroughModal = True, walkthroughModal = walkthroughModel }
+                , Cmd.none
+                )
+
+            else
+                ( model, Cmd.none )
 
         GotDashboardStats result ->
             case result of
@@ -17571,6 +17615,12 @@ view model =
                     [ viewUpcomingEmails model ]
                 ]
             ]
+        , -- Walkthrough modal
+          if model.showWalkthroughModal then
+            Html.map WalkthroughMsg (Walkthrough.view model.walkthroughModal)
+
+          else
+            text ""
         ]
     }
 
@@ -22006,6 +22056,7 @@ type alias User =
     , accountStatus : Maybe AccountStatusBanner.AccountStatusDetails
     , demoMode : Bool
     , orgCreateDate : Maybe Date
+    , hasCompletedWalkthrough : Bool
     }
 
 
@@ -22382,11 +22433,11 @@ type PublicPage
     | LandingRoute { quoteId : Maybe String }
     | PricingRoute
     | Pricing2Route
-    | ContactUsRoute
 
 
 type ProtectedPage
     = ContactsRoute
+    | ContactUsRoute
     | ProfileRoute
     | TempLandingRoute
     | ContactRoute String
@@ -22460,7 +22511,7 @@ routeParser =
         , map (PublicRoute PricingRoute) (s "pricing")
         , map (PublicRoute Pricing2Route) (s "pricing2")
         , map (PublicRoute ScheduleMainRoute) (s "schedule-main")
-        , map (PublicRoute ContactUsRoute) (s "contact-us")
+        , map (ProtectedRoute ContactUsRoute) (s "contact-us")
         , map (\orgSlug token -> PublicRoute (VerifyRoute (VerifyParams orgSlug token)))
             (s "auth" </> s "verify" </> string </> string)
         , oneOf
@@ -22736,6 +22787,7 @@ update msg model =
                                             , accountStatus = Nothing
                                             , demoMode = False
                                             , orgCreateDate = Nothing
+                                            , hasCompletedWalkthrough = False
                                             }
                                     , isSetup = isInSetup
                                     , page = LoadingPage -- Force to loading page to prevent UI flicker during redirection
@@ -22782,6 +22834,7 @@ update msg model =
                                 , accountStatus = Nothing
                                 , demoMode = response.demoMode
                                 , orgCreateDate = Just response.orgCreateDate
+                                , hasCompletedWalkthrough = False
                                 }
 
                             -- Initialize demo mode banner with user's demo mode state
@@ -22989,6 +23042,7 @@ update msg model =
                                         , accountStatus = Nothing -- Will fetch this separately
                                         , demoMode = user.demoMode
                                         , orgCreateDate = user.orgCreateDate
+                                        , hasCompletedWalkthrough = user.hasCompletedWalkthrough
                                         }
 
                                 -- Initialize demo mode banner with the user's demo mode status
@@ -23461,12 +23515,8 @@ view model =
                     }
 
                 WalkthroughPage pageModel ->
-                    let
-                        walkthroughView =
-                            Walkthrough.view pageModel
-                    in
-                    { title = walkthroughView.title
-                    , body = [ viewWithNav model (Html.map WalkthroughMsg (div [] walkthroughView.body)) ]
+                    { title = "Walkthrough"
+                    , body = [ viewWithNav model (Html.map WalkthroughMsg (Walkthrough.view pageModel)) ]
                     }
 
                 SelfOnboardingPage pageModel ->
@@ -23696,9 +23746,6 @@ viewNavHeader model =
                     True
 
                 ScheduleMainPage _ ->
-                    True
-
-                ContactUsPage _ ->
                     True
 
                 _ ->
@@ -24106,6 +24153,7 @@ userDecoder =
                                 Decode.fail "Invalid date format"
                     )
             )
+        |> Pipeline.optional "hasCompletedWalkthrough" Decode.bool False
 
 
 type SetupStep
@@ -24647,13 +24695,19 @@ updatePage url ( model, cmd ) =
                                         , Cmd.batch
                                             [ Cmd.map DashboardMsg dashboardCmd
                                             , authCmd
+                                            , case modelWithUpdatedSetup.currentUser of
+                                                Just user ->
+                                                    Cmd.map DashboardMsg (Task.perform (\hasCompleted -> Dashboard.UserDataReceived hasCompleted) (Task.succeed user.hasCompletedWalkthrough))
+
+                                                Nothing ->
+                                                    Cmd.none
                                             ]
                                         )
 
                                     ProtectedRoute WalkthroughRoute ->
                                         let
                                             ( walkthroughModel, walkthroughCmd ) =
-                                                Walkthrough.init modelWithUpdatedSetup.key
+                                                Walkthrough.init False
                                         in
                                         ( { modelWithUpdatedSetup | page = WalkthroughPage walkthroughModel }
                                         , Cmd.batch
@@ -24875,7 +24929,7 @@ updatePage url ( model, cmd ) =
                                             ]
                                         )
 
-                                    PublicRoute ContactUsRoute ->
+                                    ProtectedRoute ContactUsRoute ->
                                         let
                                             ( contactUsModel, contactUsCmd ) =
                                                 ContactUs.init ()
@@ -25254,14 +25308,6 @@ updatePageForcePublic url ( model, cmd ) =
                     , Cmd.map Pricing2Msg pricing2Cmd
                     )
 
-                PublicRoute ContactUsRoute ->
-                    let
-                        ( contactUsModel, contactUsCmd ) =
-                            ContactUs.init ()
-                    in
-                    ( { model | page = ContactUsPage contactUsModel }
-                    , Cmd.map ContactUsMsg contactUsCmd
-                    )
 
         Nothing ->
             ( { model | page = NotFoundPage }
@@ -26295,19 +26341,6 @@ try {
     })
   }
 
-  // Serve VITE_ env variables to Elm upon request
-  app.ports.requestStripeProduct.subscribe(() => {
-    console.log('Requesting Stripe product IDs from Elm');
-    console.log('VITE_STRIPE_SUBSCRIPTION_ID', import.meta.env.VITE_STRIPE_SUBSCRIPTION_ID);
-    console.log('VITE_STRIPE_TIER_ID', import.meta.env.VITE_STRIPE_TIER_ID);
-    const subscriptionId = import.meta.env.VITE_STRIPE_SUBSCRIPTION_ID || '';
-    const tierId = import.meta.env.VITE_STRIPE_TIER_ID || '';
-    const out: [string, string] = [subscriptionId, tierId];
-    console.log("out", out);
-    app.ports.responseStripeProduct.send(out);
-  });
-  
-
   // Listen for payment completion from stripe-checkout
   document.addEventListener('payment-completed', (e: any) => {
     if (app.ports && app.ports.paymentCompleted) {
@@ -27130,12 +27163,6 @@ port checkoutCompleted : (CheckoutData -> msg) -> Sub msg
 port checkoutError : (ErrorData -> msg) -> Sub msg
 
 
-port requestStripeProduct : () -> Cmd msg
-
-
-port responseStripeProduct : (( String, String ) -> msg) -> Sub msg
-
-
 
 -- MODEL
 
@@ -27191,8 +27218,14 @@ type alias Model =
     , newAgentIsAdmin : Bool
     , loadingResumeData : Bool
     , paymentStatus : PaymentStatus
-    , subscriptionPriceId : Maybe String
-    , tierPriceId : Maybe String
+    , publishableKey : Maybe String
+    , priceId : Maybe String
+    }
+
+
+type alias StripeProduct =
+    { publishableKey : String
+    , priceId : String
     }
 
 
@@ -27366,8 +27399,8 @@ init key url =
             , newAgentIsAdmin = True
             , loadingResumeData = False
             , paymentStatus = Loading
-            , subscriptionPriceId = Nothing
-            , tierPriceId = Nothing
+            , publishableKey = Nothing
+            , priceId = Nothing
             }
 
         -- Check if this is a direct page load with frame > 1
@@ -27379,7 +27412,7 @@ init key url =
                 Just user ->
                     Cmd.batch
                         [ fetchResumeData user.email
-                        , requestStripeProduct ()
+                        , fetchStripeProduct
                         ]
 
                 Nothing ->
@@ -27431,7 +27464,7 @@ type Msg
     | CheckoutCompletedFromPort CheckoutData
     | CheckoutErrorFromPort ErrorData
     | ProcessCheckoutData CheckoutData
-    | ResponseStripeProduct ( String, String )
+    | ResponseStripeProduct (Result Http.Error StripeProduct)
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -27798,13 +27831,16 @@ update msg model =
         RefreshPage ->
             ( model, Nav.reload )
 
-        ResponseStripeProduct ( subscriptionPriceId, tierPriceId ) ->
+        ResponseStripeProduct (Ok stripeProduct) ->
             ( { model
-                | subscriptionPriceId = Just subscriptionPriceId
-                , tierPriceId = Just tierPriceId
+                | publishableKey = Just stripeProduct.publishableKey
+                , priceId = Just stripeProduct.priceId
               }
             , Cmd.none
             )
+
+        ResponseStripeProduct (Err _) ->
+            ( model, Cmd.none )
 
 
 
@@ -28391,10 +28427,10 @@ viewPayment model =
                             ]
 
                     else
-                        case ( model.subscriptionPriceId, model.tierPriceId ) of
-                            ( Just subscriptionPriceId, _ ) ->
+                        case model.priceId of
+                            Just priceId ->
                                 node "stripe-checkout"
-                                    [ attribute "price-id" subscriptionPriceId
+                                    [ attribute "price-id" priceId
 
                                     --, attribute "metered-price-id" tierPriceId
                                     , attribute "first-name" model.user.firstName
@@ -28416,10 +28452,10 @@ viewPayment model =
                         ]
 
                 ReadyToComplete ->
-                    case ( model.subscriptionPriceId, model.tierPriceId ) of
-                        ( Just subscriptionPriceId, _ ) ->
+                    case model.priceId of
+                        Just priceId ->
                             node "stripe-checkout"
-                                [ attribute "price-id" subscriptionPriceId
+                                [ attribute "price-id" priceId
 
                                 --, attribute "metered-price-id" tierPriceId
                                 , attribute "first-name" model.user.firstName
@@ -28498,7 +28534,6 @@ subscriptions _ =
         [ paymentCompleted PaymentCompletedFromPort
         , checkoutCompleted CheckoutCompletedFromPort
         , checkoutError CheckoutErrorFromPort
-        , responseStripeProduct ResponseStripeProduct
         ]
 
 
@@ -28620,6 +28655,25 @@ saveAgents model =
                 )
         , expect = Http.expectJson AgentsSaved saveResponseDecoder
         }
+
+
+
+-- Stripe Product
+
+
+fetchStripeProduct : Cmd Msg
+fetchStripeProduct =
+    Http.get
+        { url = "/api/subscription/pricing"
+        , expect = Http.expectJson ResponseStripeProduct stripeProductDecoder
+        }
+
+
+stripeProductDecoder : Decoder StripeProduct
+stripeProductDecoder =
+    Decode.map2 StripeProduct
+        (Decode.field "publishableKey" Decode.string)
+        (Decode.field "priceId" Decode.string)
 
 
 
@@ -30862,6 +30916,7 @@ import Svg exposing (path, svg)
 import Svg.Attributes as SvgAttr
 import Task
 import Time
+import Walkthrough
 
 
 
@@ -30875,6 +30930,8 @@ type alias Model =
     , error : Maybe String
     , pendingSave : Bool
     , agentProfileLinkCopied : Bool -- ADDED
+    , walkthroughModal : Walkthrough.Model
+    , showWalkthroughModal : Bool
     }
 
 
@@ -30892,12 +30949,18 @@ type alias User =
 
 init : () -> ( Model, Cmd Msg )
 init _ =
+    let
+        ( walkthroughModel, _ ) =
+            Walkthrough.init False
+    in
     ( { currentUser = Nothing
       , originalUser = Nothing
       , isLoading = True
       , error = Nothing
       , pendingSave = False
       , agentProfileLinkCopied = False -- ADDED
+      , walkthroughModal = walkthroughModel
+      , showWalkthroughModal = False
       }
     , fetchCurrentUser
     )
@@ -30917,6 +30980,8 @@ type Msg
     | CopyAgentProfileLink -- ADDED
     | AgentProfileLinkCopied Bool -- ADDED
     | ResetAgentProfileLinkCopiedStatus -- ADDED
+    | WalkthroughMsg Walkthrough.Msg
+    | OpenWalkthroughModal
 
 
 type alias CurrentUserResponse =
@@ -31002,6 +31067,36 @@ update msg model =
         WatchTutorial ->
             ( model, Cmd.none )
 
+        OpenWalkthroughModal ->
+            let
+                ( walkthroughModel, _ ) =
+                    Walkthrough.init True
+            in
+            ( { model | showWalkthroughModal = True, walkthroughModal = walkthroughModel }
+            , Cmd.none
+            )
+
+        WalkthroughMsg walkthroughMsg ->
+            let
+                ( walkthroughModel, walkthroughCmd ) =
+                    Walkthrough.update walkthroughMsg model.walkthroughModal
+            in
+            case walkthroughMsg of
+                Walkthrough.CloseModalClicked ->
+                    ( { model | walkthroughModal = walkthroughModel, showWalkthroughModal = False }
+                    , Cmd.map WalkthroughMsg walkthroughCmd
+                    )
+
+                Walkthrough.CompleteWalkthroughResponse (Ok _) ->
+                    ( { model | walkthroughModal = walkthroughModel, showWalkthroughModal = False }
+                    , Cmd.map WalkthroughMsg walkthroughCmd
+                    )
+
+                _ ->
+                    ( { model | walkthroughModal = walkthroughModel }
+                    , Cmd.map WalkthroughMsg walkthroughCmd
+                    )
+
         CopyAgentProfileLink ->
             case model.currentUser of
                 Just user ->
@@ -31045,6 +31140,12 @@ view model =
                 , viewContent model
                 ]
             ]
+        , -- Walkthrough modal
+          if model.showWalkthroughModal then
+            Html.map WalkthroughMsg (Walkthrough.view model.walkthroughModal)
+
+          else
+            text ""
         ]
     }
 
@@ -31062,7 +31163,7 @@ viewContent model =
                     [ div [ class "mb-4 flex justify-end space-x-4" ]
                         [ button
                             [ class "flex items-center text-sm text-blue-600 hover:text-blue-800"
-                            , onClick (NavigateTo "/dashboard?payment_success=true")
+                            , onClick OpenWalkthroughModal
                             ]
                             [ div [ class "mr-2" ]
                                 [ svg
@@ -39133,28 +39234,32 @@ formatPhoneNumber phone =
 ================
 File: src/Walkthrough.elm
 ================
-module Walkthrough exposing (Model, Msg, init, subscriptions, update, view)
+module Walkthrough exposing (Model, Msg(..), init, subscriptions, update, view)
 
-import Browser
-import Browser.Navigation as Nav
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (..)
+import Http
 import Json.Decode as Decode
-
+import Svg
+import Svg.Attributes
 
 
 -- MODEL
 
 
 type alias Model =
-    { key : Nav.Key
+    { isOpen : Bool
+    , isCompleting : Bool
+    , error : Maybe String
     }
 
 
-init : Nav.Key -> ( Model, Cmd Msg )
-init key =
-    ( { key = key
+init : Bool -> ( Model, Cmd Msg )
+init isOpen =
+    ( { isOpen = isOpen
+      , isCompleting = False
+      , error = Nothing
       }
     , Cmd.none
     )
@@ -39165,92 +39270,205 @@ init key =
 
 
 type Msg
-    = NoOp
+    = CloseModalClicked
+    | MarkWalkthroughCompleted
+    | CompleteWalkthroughResponse (Result Http.Error ())
+    | WalkthroughCompletedAndMarked
+    | NoOp
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+        CloseModalClicked ->
+            ( { model | isOpen = False }, Cmd.none )
+
+        MarkWalkthroughCompleted ->
+            ( { model | isCompleting = True, error = Nothing }
+            , markWalkthroughCompleted
+            )
+
+        CompleteWalkthroughResponse (Ok _) ->
+            ( { model | isCompleting = False, isOpen = False }
+            , Cmd.none
+            )
+
+        CompleteWalkthroughResponse (Err _) ->
+            ( { model | isCompleting = False, error = Just "Failed to save walkthrough completion. Please try again." }
+            , Cmd.none
+            )
+
+        WalkthroughCompletedAndMarked ->
+            -- This message is handled by parent components
+            ( model, Cmd.none )
+
         NoOp ->
             ( model, Cmd.none )
+
+
+markWalkthroughCompleted : Cmd Msg
+markWalkthroughCompleted =
+    Http.post
+        { url = "/api/profile/complete-walkthrough"
+        , body = Http.emptyBody
+        , expect = Http.expectWhatever CompleteWalkthroughResponse
+        }
 
 
 
 -- VIEW
 
 
-view : Model -> Browser.Document Msg
+view : Model -> Html Msg
 view model =
-    { title = "Welcome to Medicare Max"
-    , body =
-        [ div [ class "min-h-screen bg-gray-50" ]
-            [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10" ]
-                [ div [ class "bg-white shadow-md rounded-lg overflow-hidden" ]
-                    [ div [ class "px-6 py-4 border-b border-gray-200 bg-[#03045E] text-white" ]
-                        [ h1 [ class "text-2xl font-semibold" ]
-                            [ text "Welcome to Medicare Max" ]
+    if model.isOpen then
+        div []
+            [ -- Modal backdrop
+              div
+                [ class "fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity z-40"
+                , onClick CloseModalClicked
+                ]
+                []
+
+            -- Modal content
+            , div [ class "fixed inset-0 z-50 overflow-y-auto" ]
+                [ div [ class "flex min-h-full items-end justify-center p-4 text-center sm:items-center sm:p-0" ]
+                    [ div
+                        [ class "relative transform overflow-hidden rounded-lg bg-white text-left shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-4xl"
+                        , Html.Events.stopPropagationOn "click" (Decode.succeed ( NoOp, True ))
                         ]
-                    , div [ class "p-6" ]
-                        [ div [ class "mb-8 text-center" ]
-                            [ h2 [ class "text-xl font-medium text-gray-800 mb-2" ]
-                                [ text "Get Started with Our Platform" ]
-                            , p [ class "text-gray-600 max-w-2xl mx-auto" ]
-                                [ text "Watch this video walkthrough to learn how to use Medicare Max and make the most of its features." ]
-                            ]
-                        , div [ class "mx-auto max-w-4xl bg-gray-100 rounded-lg p-6 aspect-video flex items-center justify-center" ]
-                            [ div [ class "text-center" ]
-                                [ div [ class "text-6xl text-gray-400 mb-4" ]
-                                    [ text "▶️" ]
-                                , p [ class "text-gray-500 font-medium" ]
-                                    [ text "Video Walkthrough Coming Soon" ]
-                                , p [ class "text-gray-400 text-sm mt-2" ]
-                                    [ text "This video will demonstrate how to use the Medicare Max platform" ]
+                        [ -- Modal header
+                          div [ class "px-6 py-4 border-b border-gray-200 bg-[#03045E] text-white" ]
+                            [ div [ class "flex items-center justify-between" ]
+                                [ h2 [ class "text-2xl font-semibold" ]
+                                    [ text "Welcome to Medicare Max" ]
+                                , button
+                                    [ type_ "button"
+                                    , class "text-white hover:text-gray-200"
+                                    , onClick CloseModalClicked
+                                    ]
+                                    [ Svg.svg
+                                        [ Svg.Attributes.class "h-6 w-6"
+                                        , Svg.Attributes.fill "none"
+                                        , Svg.Attributes.viewBox "0 0 24 24"
+                                        , Svg.Attributes.stroke "currentColor"
+                                        ]
+                                        [ Svg.path
+                                            [ Svg.Attributes.strokeLinecap "round"
+                                            , Svg.Attributes.strokeLinejoin "round"
+                                            , Svg.Attributes.strokeWidth "2"
+                                            , Svg.Attributes.d "M6 18L18 6M6 6l12 12"
+                                            ]
+                                            []
+                                        ]
+                                    ]
                                 ]
                             ]
-                        , div [ class "mt-10 max-w-3xl mx-auto" ]
-                            [ h3 [ class "text-lg font-medium text-gray-800 mb-4" ]
-                                [ text "Quick Start Guide" ]
-                            , div [ class "bg-blue-50 rounded-lg p-5 border border-blue-100" ]
-                                [ ul [ class "space-y-4" ]
-                                    [ li [ class "flex" ]
-                                        [ div [ class "shrink-0 flex items-center justify-center w-8 h-8 bg-blue-600 text-white rounded-full mr-3" ]
-                                            [ text "1" ]
-                                        , div []
-                                            [ h4 [ class "font-medium text-blue-800" ]
-                                                [ text "Set Up Your Profile" ]
-                                            , p [ class "text-blue-700 mt-1 text-sm" ]
-                                                [ text "Complete your profile information to personalize your experience." ]
+
+                        -- Modal body
+                        , div [ class "p-6 max-h-[calc(100vh-200px)] overflow-y-auto" ]
+                            [ -- Error message
+                              case model.error of
+                                Just errorMsg ->
+                                    div [ class "mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded" ]
+                                        [ text errorMsg ]
+
+                                Nothing ->
+                                    text ""
+
+                            -- Content
+                            , div [ class "mb-8 text-center" ]
+                                [ h3 [ class "text-xl font-medium text-gray-800 mb-2" ]
+                                    [ text "Get Started with Our Platform" ]
+                                , p [ class "text-gray-600 max-w-2xl mx-auto" ]
+                                    [ text "Watch this video walkthrough to learn how to use Medicare Max and make the most of its features." ]
+                                ]
+
+                            -- Video placeholder
+                            , div [ class "mx-auto max-w-3xl bg-gray-100 rounded-lg p-6 aspect-video flex items-center justify-center mb-8" ]
+                                [ div [ class "text-center" ]
+                                    [ div [ class "text-6xl text-gray-400 mb-4" ]
+                                        [ text "▶️" ]
+                                    , p [ class "text-gray-500 font-medium" ]
+                                        [ text "Video Walkthrough Coming Soon" ]
+                                    , p [ class "text-gray-400 text-sm mt-2" ]
+                                        [ text "This video will demonstrate how to use the Medicare Max platform" ]
+                                    ]
+                                ]
+
+                            -- Quick Start Guide
+                            , div [ class "max-w-3xl mx-auto" ]
+                                [ h4 [ class "text-lg font-medium text-gray-800 mb-4" ]
+                                    [ text "Quick Start Guide" ]
+                                , div [ class "bg-blue-50 rounded-lg p-5 border border-blue-100" ]
+                                    [ ul [ class "space-y-4" ]
+                                        [ li [ class "flex" ]
+                                            [ div [ class "shrink-0 flex items-center justify-center w-8 h-8 bg-blue-600 text-white rounded-full mr-3" ]
+                                                [ text "1" ]
+                                            , div []
+                                                [ h5 [ class "font-medium text-blue-800" ]
+                                                    [ text "Set Up Your Profile" ]
+                                                , p [ class "text-blue-700 mt-1 text-sm" ]
+                                                    [ text "Complete your profile information to personalize your experience." ]
+                                                ]
                                             ]
-                                        ]
-                                    , li [ class "flex" ]
-                                        [ div [ class "shrink-0 flex items-center justify-center w-8 h-8 bg-blue-600 text-white rounded-full mr-3" ]
-                                            [ text "2" ]
-                                        , div []
-                                            [ h4 [ class "font-medium text-blue-800" ]
-                                                [ text "Add Clients" ]
-                                            , p [ class "text-blue-700 mt-1 text-sm" ]
-                                                [ text "Start adding your clients to manage their information and policies." ]
+                                        , li [ class "flex" ]
+                                            [ div [ class "shrink-0 flex items-center justify-center w-8 h-8 bg-blue-600 text-white rounded-full mr-3" ]
+                                                [ text "2" ]
+                                            , div []
+                                                [ h5 [ class "font-medium text-blue-800" ]
+                                                    [ text "Add Clients" ]
+                                                , p [ class "text-blue-700 mt-1 text-sm" ]
+                                                    [ text "Start adding your clients to manage their information and policies." ]
+                                                ]
                                             ]
-                                        ]
-                                    , li [ class "flex" ]
-                                        [ div [ class "shrink-0 flex items-center justify-center w-8 h-8 bg-blue-600 text-white rounded-full mr-3" ]
-                                            [ text "3" ]
-                                        , div []
-                                            [ h4 [ class "font-medium text-blue-800" ]
-                                                [ text "Generate Quotes" ]
-                                            , p [ class "text-blue-700 mt-1 text-sm" ]
-                                                [ text "Use our quoting tools to find the best options for your clients." ]
+                                        , li [ class "flex" ]
+                                            [ div [ class "shrink-0 flex items-center justify-center w-8 h-8 bg-blue-600 text-white rounded-full mr-3" ]
+                                                [ text "3" ]
+                                            , div []
+                                                [ h5 [ class "font-medium text-blue-800" ]
+                                                    [ text "Generate Quotes" ]
+                                                , p [ class "text-blue-700 mt-1 text-sm" ]
+                                                    [ text "Use our quoting tools to find the best options for your clients." ]
+                                                ]
                                             ]
                                         ]
                                     ]
                                 ]
                             ]
+
+                        -- Modal footer
+                        , div [ class "bg-gray-50 px-6 py-4 sm:flex sm:flex-row-reverse" ]
+                            [ button
+                                [ type_ "button"
+                                , class "w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-blue-600 text-base font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:ml-3 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                                , onClick MarkWalkthroughCompleted
+                                , disabled model.isCompleting
+                                ]
+                                [ text
+                                    (if model.isCompleting then
+                                        "Saving..."
+
+                                     else
+                                        "Got it, Don't Show Again"
+                                    )
+                                ]
+                            , button
+                                [ type_ "button"
+                                , class "mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:w-auto sm:text-sm"
+                                , onClick CloseModalClicked
+                                ]
+                                [ text "Close" ]
+                            ]
                         ]
                     ]
                 ]
             ]
-        ]
-    }
+
+    else
+        text ""
+
+
 
 
 

@@ -572,6 +572,7 @@ export class Database {
             email_type TEXT NOT NULL,
             scheduled_send_date TEXT NOT NULL,
             scheduled_send_time TEXT NOT NULL DEFAULT '08:30:00',
+            actual_send_datetime TEXT,
             batch_id TEXT,
             status TEXT NOT NULL DEFAULT 'pre-scheduled',
             skip_reason TEXT,
@@ -582,6 +583,7 @@ export class Database {
         indexStatements: [
           `CREATE INDEX IF NOT EXISTS idx_email_schedules_org_contact ON email_schedules (contact_id)`,
           `CREATE INDEX IF NOT EXISTS idx_email_schedules_org_send_date ON email_schedules (scheduled_send_date)`,
+          `CREATE INDEX IF NOT EXISTS idx_email_schedules_org_send_time ON email_schedules (scheduled_send_time)`,
           `CREATE INDEX IF NOT EXISTS idx_email_schedules_status ON email_schedules (status)`,
           `CREATE TRIGGER IF NOT EXISTS update_email_schedules_updated_at
 AFTER UPDATE ON email_schedules
@@ -1382,6 +1384,7 @@ END;`
               email_type TEXT NOT NULL,
               scheduled_send_date TEXT NOT NULL,
               scheduled_send_time TEXT NOT NULL DEFAULT '08:30:00',
+              actual_send_datetime TEXT,
               batch_id TEXT,
               status TEXT NOT NULL DEFAULT 'pre-scheduled',
               skip_reason TEXT,
@@ -1392,6 +1395,7 @@ END;`
           indexSqls: [
             `CREATE INDEX IF NOT EXISTS idx_email_schedules_org_contact ON email_schedules (contact_id)`,
             `CREATE INDEX IF NOT EXISTS idx_email_schedules_org_send_date ON email_schedules (scheduled_send_date)`,
+            `CREATE INDEX IF NOT EXISTS idx_email_schedules_org_send_time ON email_schedules (scheduled_send_time)`,
             `CREATE INDEX IF NOT EXISTS idx_email_schedules_status ON email_schedules (status)`,
             `CREATE TRIGGER IF NOT EXISTS update_email_schedules_updated_at
 AFTER UPDATE ON email_schedules

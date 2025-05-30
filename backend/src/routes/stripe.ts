@@ -33,6 +33,7 @@ export const createStripeRoutes = (app: Elysia) => {
         const status = await checkPaymentStatus(db, user.organization_id);
         logger.info(`Returning subscription status: ${JSON.stringify(status)}`);
         
+        set.status = 200;
         return {
           success: true,
           data: status as SubscriptionStatus

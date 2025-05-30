@@ -105,8 +105,8 @@ export function createDashboardRoutes() {
         const quotesSentSql = `
           SELECT COUNT(*) as count 
           FROM email_schedules 
-          WHERE status IN ('scheduled', 'send', 'sent', 'delivered')
-            AND scheduled_send_date BETWEEN ? AND ?
+          WHERE actual_send_datetime IS NOT NULL
+            AND DATE(actual_send_datetime) BETWEEN ? AND ?
             AND (email_type IS NULL OR email_type NOT LIKE 'followup%')
         `
         const quotesSentResult = await orgDb.fetchOne<{ count: number }>(quotesSentSql, [startDateStr, endDateStr])
@@ -124,12 +124,35 @@ export function createDashboardRoutes() {
         const manualQuotesSent = manualQuotesResult?.count || 0
         logger.info(`Manual Quotes Sent count: ${manualQuotesSent}`)
 
-        // 2. "Quotes Viewed" - count unique contacts who clicked links during the period
+        // 2. "Quotes Viewed" - count unique contacts who clicked links, attributed to an original send in the period
         const quotesViewedSql = `
-          SELECT COUNT(DISTINCT contact_id) as count
-          FROM tracking_clicks
-          WHERE contact_id IS NOT NULL
-            AND DATE(clicked_at) BETWEEN ? AND ?
+          WITH
+          original_sends_in_period_for_stats AS (
+              SELECT
+                  es.contact_id,
+                  es.actual_send_datetime AS original_send_datetime_full
+              FROM email_schedules es
+              WHERE es.actual_send_datetime IS NOT NULL
+                AND DATE(es.actual_send_datetime) BETWEEN ? AND ? -- Reporting period for original sends
+                AND (es.email_type IS NULL OR es.email_type NOT LIKE 'followup%')
+          ),
+          clicks_attributed_for_stats AS (
+              SELECT
+                  tc.contact_id,
+                  (
+                      SELECT 1 -- We just need to know it's attributable
+                      FROM original_sends_in_period_for_stats osip
+                      WHERE osip.contact_id = tc.contact_id
+                        AND osip.original_send_datetime_full <= tc.clicked_at
+                      ORDER BY osip.original_send_datetime_full DESC 
+                      LIMIT 1
+                  ) AS is_attributable
+              FROM tracking_clicks tc
+              WHERE tc.contact_id IS NOT NULL AND tc.clicked_at IS NOT NULL
+          )
+          SELECT COUNT(DISTINCT cas.contact_id) AS count
+          FROM clicks_attributed_for_stats cas
+          WHERE cas.is_attributable = 1;
         `
         const quotesViewedResult = await orgDb.fetchOne<{ count: number }>(quotesViewedSql, [startDateStr, endDateStr])
         const quotesViewed = quotesViewedResult?.count || 0
@@ -140,9 +163,9 @@ export function createDashboardRoutes() {
         const followUpsSql = `
           SELECT COUNT(*) as count
           FROM email_schedules
-          WHERE status IN ('scheduled', 'send', 'delivered') -- Assuming 'scheduled' means sent for past dates
-            AND email_type LIKE 'followup%' 
-            AND scheduled_send_date BETWEEN ? AND ?
+          WHERE actual_send_datetime IS NOT NULL
+            AND DATE(actual_send_datetime) BETWEEN ? AND ?
+            AND email_type LIKE 'followup%'
         `
         const followUpsResult = await orgDb.fetchOne<{ count: number }>(followUpsSql, [startDateStr, endDateStr])
         const followUpsRequested = followUpsResult?.count || 0
@@ -150,10 +173,33 @@ export function createDashboardRoutes() {
 
         // 4. "Health Questions Completed" - unique contacts who completed health questions during the period
         const healthQuestionsCompletedSql = `
-          SELECT COUNT(DISTINCT contact_id) as count
-          FROM eligibility_answers
-          WHERE contact_id IS NOT NULL
-            AND DATE(created_at) BETWEEN ? AND ?
+          WITH
+          original_sends_in_period_for_stats AS (
+              SELECT
+                  es.contact_id,
+                  es.actual_send_datetime AS original_send_datetime_full
+              FROM email_schedules es
+              WHERE es.actual_send_datetime IS NOT NULL
+                AND DATE(es.actual_send_datetime) BETWEEN ? AND ? -- Reporting period for original sends
+                AND (es.email_type IS NULL OR es.email_type NOT LIKE 'followup%')
+          ),
+          health_completions_attributed_for_stats AS (
+              SELECT
+                  ea.contact_id,
+                  (
+                      SELECT 1 -- We just need to know it's attributable
+                      FROM original_sends_in_period_for_stats osip
+                      WHERE osip.contact_id = ea.contact_id
+                        AND osip.original_send_datetime_full <= ea.created_at
+                      ORDER BY osip.original_send_datetime_full DESC
+                      LIMIT 1
+                  ) AS is_attributable
+              FROM eligibility_answers ea
+              WHERE ea.contact_id IS NOT NULL AND ea.created_at IS NOT NULL
+          )
+          SELECT COUNT(DISTINCT hcas.contact_id) AS count
+          FROM health_completions_attributed_for_stats hcas
+          WHERE hcas.is_attributable = 1;
         `
         const healthQuestionsResult = await orgDb.fetchOne<{ count: number }>(healthQuestionsCompletedSql, [startDateStr, endDateStr])
         const healthQuestionsCompleted = healthQuestionsResult?.count || 0
@@ -285,49 +331,77 @@ export function createDashboardRoutes() {
 
         // Get daily breakdown of email performance - track emails sent on each date and their outcomes - EXCLUDE follow-ups
         const sendRankingSql = `
-          WITH emails_sent_by_date AS (
-            SELECT 
-              DATE(scheduled_send_date) as scheduled_send_date,
-              COUNT(*) as quotes_sent,
-              contact_id
-            FROM email_schedules
-            WHERE status IN ('scheduled', 'send', 'sent', 'delivered')
-              AND scheduled_send_date BETWEEN ? AND ?
-              AND (email_type IS NULL OR email_type NOT LIKE 'followup%')
-            GROUP BY DATE(scheduled_send_date), contact_id
+          WITH
+          original_sends_in_period AS (
+              SELECT
+                  es.contact_id,
+                  DATE(es.actual_send_datetime) AS original_send_date,
+                  es.actual_send_datetime AS original_send_datetime_full
+              FROM email_schedules es
+              WHERE es.actual_send_datetime IS NOT NULL
+                AND DATE(es.actual_send_datetime) BETWEEN ? AND ? -- Params: startDateStr, endDateStr
+                AND (es.email_type IS NULL OR es.email_type NOT LIKE 'followup%')
           ),
-          quotes_sent_summary AS (
-            SELECT 
-              scheduled_send_date,
-              COUNT(*) as quotes_sent
-            FROM emails_sent_by_date
-            GROUP BY scheduled_send_date
+          daily_quotes_sent_agg AS (
+              SELECT
+                  original_send_date,
+                  COUNT(DISTINCT contact_id) AS total_quotes_sent
+              FROM original_sends_in_period
+              GROUP BY original_send_date
           ),
-          quotes_viewed_by_send_date AS (
-            SELECT 
-              es.scheduled_send_date,
-              COUNT(DISTINCT tc.contact_id) as quotes_viewed
-            FROM emails_sent_by_date es
-            JOIN tracking_clicks tc ON es.contact_id = tc.contact_id
-            GROUP BY es.scheduled_send_date
+          clicks_attributed AS (
+              SELECT
+                  tc.contact_id,
+                  (
+                      SELECT osip.original_send_date
+                      FROM original_sends_in_period osip
+                      WHERE osip.contact_id = tc.contact_id
+                        AND osip.original_send_datetime_full <= tc.clicked_at -- Original send must be <= click time
+                      ORDER BY osip.original_send_datetime_full DESC
+                      LIMIT 1
+                  ) AS attributable_original_send_date
+              FROM tracking_clicks tc
+              WHERE tc.contact_id IS NOT NULL AND tc.clicked_at IS NOT NULL
           ),
-          health_completed_by_send_date AS (
-            SELECT 
-              es.scheduled_send_date,
-              COUNT(DISTINCT ea.contact_id) as health_completed
-            FROM emails_sent_by_date es
-            JOIN eligibility_answers ea ON es.contact_id = ea.contact_id
-            GROUP BY es.scheduled_send_date
+          daily_quotes_viewed_agg AS (
+              SELECT
+                  attributable_original_send_date,
+                  COUNT(DISTINCT contact_id) AS total_quotes_viewed
+              FROM clicks_attributed
+              WHERE attributable_original_send_date IS NOT NULL -- Ensures linked to an original send in our reporting period
+              GROUP BY attributable_original_send_date
+          ),
+          health_completions_attributed AS (
+              SELECT
+                  ea.contact_id,
+                  (
+                      SELECT osip.original_send_date
+                      FROM original_sends_in_period osip
+                      WHERE osip.contact_id = ea.contact_id
+                        AND osip.original_send_datetime_full <= ea.created_at -- Original send must be <= completion time
+                      ORDER BY osip.original_send_datetime_full DESC
+                      LIMIT 1
+                  ) AS attributable_original_send_date
+              FROM eligibility_answers ea
+              WHERE ea.contact_id IS NOT NULL AND ea.created_at IS NOT NULL
+          ),
+          daily_health_completed_agg AS (
+              SELECT
+                  attributable_original_send_date,
+                  COUNT(DISTINCT contact_id) AS total_health_completed
+              FROM health_completions_attributed
+              WHERE attributable_original_send_date IS NOT NULL
+              GROUP BY attributable_original_send_date
           )
-          SELECT 
-            qs.scheduled_send_date,
-            qs.quotes_sent,
-            COALESCE(qv.quotes_viewed, 0) as quotes_viewed,
-            COALESCE(hc.health_completed, 0) as health_completed
-          FROM quotes_sent_summary qs
-          LEFT JOIN quotes_viewed_by_send_date qv ON qs.scheduled_send_date = qv.scheduled_send_date
-          LEFT JOIN health_completed_by_send_date hc ON qs.scheduled_send_date = hc.scheduled_send_date
-          ORDER BY qs.scheduled_send_date DESC
+          SELECT
+              dqs.original_send_date AS sendDate,
+              dqs.total_quotes_sent AS quotesSent,
+              COALESCE(dqv.total_quotes_viewed, 0) AS quotesViewed,
+              COALESCE(dhc.total_health_completed, 0) AS healthCompleted
+          FROM daily_quotes_sent_agg dqs
+          LEFT JOIN daily_quotes_viewed_agg dqv ON dqs.original_send_date = dqv.attributable_original_send_date
+          LEFT JOIN daily_health_completed_agg dhc ON dqs.original_send_date = dhc.attributable_original_send_date
+          ORDER BY dqs.original_send_date DESC;
         `;
 
         logger.info(`Send ranking: Executing SQL with params: [${startDateStr}, ${endDateStr}]`)
@@ -343,10 +417,10 @@ export function createDashboardRoutes() {
         // Transform results into the expected format with ranking
         const sendRankingData = sendRankingResult.map((row: any, index: number) => ({
           rank: index + 1,
-          sendDate: row.scheduled_send_date || row[0],
-          quotesSent: parseInt(row.quotes_sent || row[1] || 0),
-          quotesViewed: parseInt(row.quotes_viewed || row[2] || 0),
-          healthCompleted: parseInt(row.health_completed || row[3] || 0)
+          sendDate: row.sendDate, // Directly use the aliased column
+          quotesSent: parseInt(row.quotesSent || 0), // Directly use the aliased column
+          quotesViewed: parseInt(row.quotesViewed || 0), // Directly use the aliased column
+          healthCompleted: parseInt(row.healthCompleted || 0) // Directly use the aliased column
         }));
 
         logger.info(`Send ranking: Transformed data count: ${sendRankingData.length}`)

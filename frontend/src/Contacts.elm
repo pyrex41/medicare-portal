@@ -115,6 +115,7 @@ type alias Model =
     , availableFilters : AvailableFilters
     , carriers : List String
     , agents : List User
+    , defaultAgentId : Maybe Int -- Added field for default agent ID
     , key : Nav.Key
     , pagination : PaginationState
     , quotesSent : Int
@@ -319,6 +320,7 @@ init key maybeUser =
             , availableFilters = emptyAvailableFilters
             , carriers = []
             , agents = []
+            , defaultAgentId = Nothing -- Initialize defaultAgentId
             , key = key
             , pagination = { currentPage = 1, totalPages = 1, totalItems = 0, itemsPerPage = 100 }
             , quotesSent = 0
@@ -466,7 +468,7 @@ type Msg
     | GotCurrentUser (Result Http.Error User)
     | NavigateToContact Int
     | GotCarriers (Result Http.Error (List String))
-    | GotAgents (Result Http.Error (List User))
+    | GotAgents (Result Http.Error AgentsResponseWithDefault)
     | SelectUploadAgent Int
     | ShowReassignAgentModal
     | SelectReassignAgent Int
@@ -1325,8 +1327,22 @@ update msg model =
         GotCarriers (Err _) ->
             ( model, Cmd.none )
 
-        GotAgents (Ok agents) ->
-            ( { model | agents = agents }, Cmd.none )
+        GotAgents (Ok response) ->
+            let
+                parser : String -> String
+                parser =
+                    Url.percentDecode >> Maybe.withDefault ""
+
+                parseAgent : User -> User
+                parseAgent agent =
+                    { agent | firstName = parser agent.firstName, lastName = parser agent.lastName, email = parser agent.email }
+            in
+            ( { model
+                | agents = response.agents |> List.map parseAgent
+                , defaultAgentId = response.defaultAgentId |> Maybe.andThen String.toInt
+              }
+            , Cmd.none
+            )
 
         GotAgents (Err error) ->
             ( model, Cmd.none )
@@ -2183,36 +2199,40 @@ viewTableRow model contact =
                     owner.firstName ++ " " ++ owner.lastName
 
                 Nothing ->
+                    -- No contactOwner directly on the contact
                     case contact.agentId of
-                        Just agentId ->
-                            -- Try to find the agent in our agents list
-                            let
-                                matchingAgent =
-                                    List.filter (\agent -> agent.id == agentId) model.agents
-                                        |> List.head
-                            in
-                            case matchingAgent of
-                                Just agent ->
-                                    agent.firstName ++ " " ++ agent.lastName
+                        Just agentIdFromContact ->
+                            -- Try to find the agent by ID from the contact
+                            model.agents
+                                |> List.filter (\agent -> agent.id == agentIdFromContact)
+                                |> List.head
+                                |> Maybe.map (\agent -> agent.firstName ++ " " ++ agent.lastName)
+                                |> Maybe.withDefault ""
 
-                                Nothing ->
-                                    -- Return empty string instead of showing agent ID
-                                    ""
-
+                        -- Fallback if agent ID on contact doesn't match any known agent
                         Nothing ->
-                            -- Find the default agent
-                            let
-                                defaultAgent =
-                                    List.filter (\agent -> agent.isDefault) model.agents
+                            -- No agentId on the contact, try to use the defaultAgentId from the model
+                            case model.defaultAgentId of
+                                Just defAgentId ->
+                                    model.agents
+                                        |> List.filter (\agent -> agent.id == defAgentId)
                                         |> List.head
-                            in
-                            case defaultAgent of
-                                Just agent ->
-                                    agent.firstName ++ " " ++ agent.lastName
+                                        |> Maybe.map (\agent -> agent.firstName ++ " " ++ agent.lastName)
+                                        |> Maybe.withDefault "Default"
 
-                                --++ " (Default)"
+                                -- Fallback if defaultAgentId doesn't match
                                 Nothing ->
-                                    "Default"
+                                    -- No defaultAgentId in model, fall back to single agent logic or "Default"
+                                    if List.length model.agents == 1 then
+                                        case List.head model.agents of
+                                            Just singleAgent ->
+                                                singleAgent.firstName ++ " " ++ singleAgent.lastName
+
+                                            Nothing ->
+                                                "Default"
+
+                                    else
+                                        "Default"
 
         currentCarrier =
             Maybe.withDefault "" contact.currentCarrier
@@ -4285,14 +4305,17 @@ fetchAgents =
 -- Add a decoder for the new response format
 
 
-agentsResponseDecoder : Decoder (List User)
+type alias AgentsResponseWithDefault =
+    { agents : List User
+    , defaultAgentId : Maybe String
+    }
+
+
+agentsResponseDecoder : Decoder AgentsResponseWithDefault
 agentsResponseDecoder =
-    Decode.oneOf
-        [ -- First try the new format (response with agents and defaultAgentId)
-          Decode.field "agents" (Decode.list agentDecoder)
-        , -- Fall back to the old format (just a list of agents)
-          Decode.list agentDecoder
-        ]
+    Decode.succeed AgentsResponseWithDefault
+        |> Pipeline.required "agents" (Decode.list agentDecoder)
+        |> Pipeline.optional "defaultAgentId" (Decode.nullable Decode.string) Nothing
 
 
 checkEmail : String -> Cmd Msg

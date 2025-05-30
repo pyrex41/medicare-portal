@@ -993,19 +993,6 @@ try {
     })
   }
 
-  // Serve VITE_ env variables to Elm upon request
-  app.ports.requestStripeProduct.subscribe(() => {
-    console.log('Requesting Stripe product IDs from Elm');
-    console.log('VITE_STRIPE_SUBSCRIPTION_ID', import.meta.env.VITE_STRIPE_SUBSCRIPTION_ID);
-    console.log('VITE_STRIPE_TIER_ID', import.meta.env.VITE_STRIPE_TIER_ID);
-    const subscriptionId = import.meta.env.VITE_STRIPE_SUBSCRIPTION_ID || '';
-    const tierId = import.meta.env.VITE_STRIPE_TIER_ID || '';
-    const out: [string, string] = [subscriptionId, tierId];
-    console.log("out", out);
-    app.ports.responseStripeProduct.send(out);
-  });
-  
-
   // Listen for payment completion from stripe-checkout
   document.addEventListener('payment-completed', (e: any) => {
     if (app.ports && app.ports.paymentCompleted) {

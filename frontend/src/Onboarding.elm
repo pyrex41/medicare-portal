@@ -14,6 +14,7 @@ import Json.Decode as Decode exposing (Decoder)
 import Json.Decode.Pipeline as Pipeline
 import Json.Encode as Encode
 import MyIcon
+import Process
 import Task
 import Url exposing (Url)
 import Url.Builder exposing (absolute, int, string)
@@ -66,6 +67,29 @@ type alias ErrorData =
     }
 
 
+
+-- Moved these type definitions before Model for correct Elm compilation order
+
+
+type
+    EmailStatus
+    -- Copied from Signup.elm
+    = NotChecked
+    | Checking
+    | Available
+    | AlreadyRegistered String
+    | InvalidFormat
+
+
+type alias
+    EmailCheckResponse
+    -- Copied from Signup.elm
+    =
+    { available : Bool
+    , message : String
+    }
+
+
 type alias Model =
     { user : User
     , frame : Int
@@ -91,6 +115,10 @@ type alias Model =
     , paymentStatus : PaymentStatus
     , publishableKey : Maybe String
     , priceId : Maybe String
+    , agentEmailDebounceCounter : Int -- Added for new agent email check
+    , newAgentEmailStatus : EmailStatus -- Added for new agent email check
+    , savingAgents : Bool -- Added for saving agents state
+    , agentSaveError : Maybe String -- Added for agent save error messages
     }
 
 
@@ -272,6 +300,10 @@ init key url =
             , paymentStatus = Loading
             , publishableKey = Nothing
             , priceId = Nothing
+            , agentEmailDebounceCounter = 0
+            , newAgentEmailStatus = NotChecked
+            , savingAgents = False
+            , agentSaveError = Nothing
             }
 
         -- Check if this is a direct page load with frame > 1
@@ -288,8 +320,11 @@ init key url =
 
                 Nothing ->
                     Nav.pushUrl key "/signup"
+
+        ( baseModel, baseCmds ) =
+            ( { initialModel | loadingResumeData = maybeUser /= Nothing }, redirectCommand )
     in
-    ( { initialModel | loadingResumeData = maybeUser /= Nothing }, redirectCommand )
+    ( baseModel, baseCmds )
 
 
 
@@ -336,6 +371,8 @@ type Msg
     | CheckoutErrorFromPort ErrorData
     | ProcessCheckoutData CheckoutData
     | ResponseStripeProduct (Result Http.Error StripeProduct)
+    | DebounceNewAgentEmailCheck Int
+    | GotNewAgentEmailCheckResponse Int (Result Http.Error EmailCheckResponse)
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -421,8 +458,8 @@ update msg model =
                         )
 
                 3 ->
-                    ( { model | frame = model.frame + 1, paymentStatus = ReadyToComplete }
-                    , Cmd.none
+                    ( { model | savingAgents = True, agentSaveError = Nothing }
+                    , saveAgents model
                     )
 
                 _ ->
@@ -463,22 +500,62 @@ update msg model =
             ( { model | selectedCarriers = newSelectedCarriers }, Cmd.none )
 
         ShowAgentForm ->
-            ( { model | showAgentForm = True }, Cmd.none )
+            ( { model | showAgentForm = True, agentSaveError = Nothing }, Cmd.none )
 
         HideAgentForm ->
-            ( { model | showAgentForm = False }, Cmd.none )
+            ( { model
+                | showAgentForm = False
+                , newAgentFirstName = ""
+                , newAgentLastName = ""
+                , newAgentEmail = ""
+                , newAgentPhone = ""
+                , newAgentIsAdmin = True
+                , newAgentEmailStatus = NotChecked
+                , agentEmailDebounceCounter = 0
+                , agentSaveError = Nothing
+              }
+            , Cmd.none
+            )
 
         AgentFirstNameChanged firstName ->
-            ( { model | newAgentFirstName = firstName }, Cmd.none )
+            ( { model | newAgentFirstName = firstName, agentSaveError = Nothing }, Cmd.none )
 
         AgentLastNameChanged lastName ->
-            ( { model | newAgentLastName = lastName }, Cmd.none )
+            ( { model | newAgentLastName = lastName, agentSaveError = Nothing }, Cmd.none )
 
         AgentEmailChanged email ->
-            ( { model | newAgentEmail = email }, Cmd.none )
+            let
+                newCounter =
+                    model.agentEmailDebounceCounter + 1
+
+                newEmailStatus =
+                    if String.isEmpty email then
+                        NotChecked
+
+                    else if not (isValidEmailFormat email) then
+                        InvalidFormat
+
+                    else
+                        Checking
+
+                updatedModel =
+                    { model
+                        | newAgentEmail = email
+                        , newAgentEmailStatus = newEmailStatus
+                        , agentEmailDebounceCounter = newCounter
+                        , agentSaveError = Nothing
+                    }
+            in
+            ( updatedModel
+            , if newEmailStatus == Checking then
+                debounceNewAgentEmailCheck newCounter
+
+              else
+                Cmd.none
+            )
 
         AgentPhoneChanged phone ->
-            ( { model | newAgentPhone = phone }, Cmd.none )
+            ( { model | newAgentPhone = formatPhoneNumber phone, agentSaveError = Nothing }, Cmd.none )
 
         AgentIsAdminToggled isAdmin ->
             ( { model | newAgentIsAdmin = True }, Cmd.none )
@@ -497,6 +574,8 @@ update msg model =
                     not (String.isEmpty (String.trim model.newAgentFirstName))
                         && not (String.isEmpty (String.trim model.newAgentLastName))
                         && not (String.isEmpty (String.trim model.newAgentEmail))
+                        && model.newAgentEmailStatus
+                        == Available
             in
             if isValid then
                 ( { model
@@ -506,7 +585,10 @@ update msg model =
                     , newAgentLastName = ""
                     , newAgentEmail = ""
                     , newAgentPhone = ""
-                    , newAgentIsAdmin = True -- Keep the field value as True for consistency
+                    , newAgentIsAdmin = True
+                    , newAgentEmailStatus = NotChecked
+                    , agentEmailDebounceCounter = 0
+                    , agentSaveError = Nothing
                   }
                 , Cmd.none
                 )
@@ -535,7 +617,7 @@ update msg model =
             case result of
                 Ok response ->
                     if response.success then
-                        ( model, Cmd.none )
+                        ( model, Nav.pushUrl model.key (buildUrl model 3) )
 
                     else
                         -- Failed to save, redirect to signup
@@ -545,10 +627,34 @@ update msg model =
                     -- Error saving, redirect to signup
                     ( model, Nav.pushUrl model.key "/signup" )
 
-        AgentsSaved _ ->
-            ( model
-            , completeOnboardingLogin model.user.email
-            )
+        AgentsSaved result ->
+            case result of
+                Ok response ->
+                    if response.success then
+                        let
+                            modelAfterSave =
+                                { model
+                                    | frame = 4
+                                    , savingAgents = False
+                                    , agentSaveError = Nothing
+                                    , paymentStatus = ReadyToComplete
+                                }
+                        in
+                        ( modelAfterSave
+                        , Cmd.none
+                        )
+
+                    else
+                        -- Server indicated failure
+                        ( { model | savingAgents = False, agentSaveError = Just response.message }
+                        , Cmd.none
+                        )
+
+                Err httpError ->
+                    -- Network or other HTTP error
+                    ( { model | savingAgents = False, agentSaveError = Just (apiErrorToString (httpErrorToApiError httpError)) }
+                    , Cmd.none
+                    )
 
         GotResumeData result ->
             case result of
@@ -650,8 +756,9 @@ update msg model =
                 Ok status ->
                     ( { model | paymentStatus = Success status }, Cmd.none )
 
-                Err _ ->
-                    ( model, Cmd.none )
+                Err httpError ->
+                    -- Changed from _ to httpError to use it
+                    ( { model | paymentStatus = Error (httpErrorToApiError httpError) }, Cmd.none )
 
         PaymentProcessed result ->
             case result of
@@ -712,6 +819,36 @@ update msg model =
 
         ResponseStripeProduct (Err _) ->
             ( model, Cmd.none )
+
+        DebounceNewAgentEmailCheck counter ->
+            if counter == model.agentEmailDebounceCounter && model.newAgentEmailStatus == Checking then
+                ( model, checkNewAgentEmailAvailability counter model.newAgentEmail )
+
+            else
+                ( model, Cmd.none )
+
+        GotNewAgentEmailCheckResponse counter result ->
+            if counter /= model.agentEmailDebounceCounter then
+                -- Ignore outdated responses
+                ( model, Cmd.none )
+
+            else
+                case result of
+                    Ok response ->
+                        ( { model
+                            | newAgentEmailStatus =
+                                if response.available then
+                                    Available
+
+                                else
+                                    AlreadyRegistered response.message
+                          }
+                        , Cmd.none
+                        )
+
+                    Err _ ->
+                        -- Optionally handle the error, e.g., set to NotChecked or a specific error state
+                        ( { model | newAgentEmailStatus = NotChecked }, Cmd.none )
 
 
 
@@ -915,11 +1052,27 @@ viewCompany model =
             --}
             ]
         , div [ class "mt-10 w-full max-w-md" ]
-            [ button
-                [ class "w-full bg-[#03045e] text-white py-3 px-4 rounded-md hover:bg-[#02034e] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 font-medium"
+            [ case model.agentSaveError of
+                Just err ->
+                    div [ class "mb-4 p-3 bg-red-50 border border-red-200 rounded-md text-sm text-red-700" ]
+                        [ text err ]
+
+                Nothing ->
+                    text ""
+            , button
+                [ classList
+                    [ ( "w-full bg-[#03045e] text-white py-3 px-4 rounded-md hover:bg-[#02034e] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 font-medium", True )
+                    , ( "opacity-50 cursor-not-allowed", model.savingAgents ) -- Disable if saving
+                    ]
                 , onClick ContinueClicked
+                , disabled model.savingAgents -- Disable if saving
                 ]
-                [ text "Continue" ]
+                [ if model.savingAgents then
+                    text "Saving..."
+
+                  else
+                    text "Continue"
+                ]
             ]
         ]
 
@@ -1095,11 +1248,27 @@ viewAddAgents model =
                     ]
             ]
         , div [ class "mt-10 w-full max-w-md" ]
-            [ button
-                [ class "w-full bg-[#03045e] text-white py-3 px-4 rounded-md hover:bg-[#02034e] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 font-medium"
+            [ case model.agentSaveError of
+                Just err ->
+                    div [ class "mb-4 p-3 bg-red-50 border border-red-200 rounded-md text-sm text-red-700" ]
+                        [ text err ]
+
+                Nothing ->
+                    text ""
+            , button
+                [ classList
+                    [ ( "w-full bg-[#03045e] text-white py-3 px-4 rounded-md hover:bg-[#02034e] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 font-medium", True )
+                    , ( "opacity-50 cursor-not-allowed", model.savingAgents ) -- Disable if saving
+                    ]
                 , onClick ContinueClicked
+                , disabled model.savingAgents -- Disable if saving
                 ]
-                [ text "Continue" ]
+                [ if model.savingAgents then
+                    text "Saving..."
+
+                  else
+                    text "Continue"
+                ]
             ]
         ]
 
@@ -1125,12 +1294,12 @@ viewAgentCard model agent =
             -- Changed from items-center to items-start
             [ div [ class "w-16 h-16 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold text-xl" ]
                 -- Increased size and font
-                [ text (String.left 1 agent.firstName ++ String.left 1 agent.lastName) ]
+                [ text (String.left 1 (Maybe.withDefault "" (Url.percentDecode agent.firstName)) ++ String.left 1 (Maybe.withDefault "" (Url.percentDecode agent.lastName))) ]
             , div [ class "ml-4 flex-grow" ]
                 -- Added flex-grow
                 [ div [ class "text-xl font-medium text-gray-900 mb-1" ]
                     -- Increased font size and added margin
-                    [ text (agent.firstName ++ " " ++ agent.lastName) ]
+                    [ text (Maybe.withDefault "" (Url.percentDecode agent.firstName) ++ " " ++ Maybe.withDefault "" (Url.percentDecode agent.lastName)) ]
                 , div [ class "flex flex-col space-y-1 text-sm text-gray-500" ]
                     -- Added spacing
                     [ div [ class "break-all" ] [ text displayEmail ]
@@ -1206,6 +1375,7 @@ viewAgentForm model =
                         , onInput AgentEmailChanged
                         ]
                         []
+                    , viewNewAgentEmailStatusMessage model.newAgentEmailStatus
                     ]
                 , div []
                     [ label [ class "block text-sm font-medium text-gray-700 mb-1" ]
@@ -1227,6 +1397,8 @@ viewAgentForm model =
                             String.isEmpty (String.trim model.newAgentFirstName)
                                 || String.isEmpty (String.trim model.newAgentLastName)
                                 || String.isEmpty (String.trim model.newAgentEmail)
+                                || model.newAgentEmailStatus
+                                /= Available
                          then
                             "w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-400 cursor-not-allowed"
 
@@ -1238,6 +1410,8 @@ viewAgentForm model =
                         (String.isEmpty (String.trim model.newAgentFirstName)
                             || String.isEmpty (String.trim model.newAgentLastName)
                             || String.isEmpty (String.trim model.newAgentEmail)
+                            || model.newAgentEmailStatus
+                            /= Available
                         )
                     ]
                     [ text "Add Agent" ]
@@ -1396,6 +1570,32 @@ apiErrorToString error =
 
 
 
+-- Helper function to convert Http.Error to ApiError
+
+
+httpErrorToApiError : Http.Error -> ApiError
+httpErrorToApiError httpError =
+    case httpError of
+        Http.BadUrl url ->
+            BadUrl url
+
+        Http.Timeout ->
+            Timeout
+
+        Http.NetworkError ->
+            NetworkError
+
+        Http.BadStatus statusCode ->
+            BadStatus statusCode ("HTTP Error " ++ String.fromInt statusCode)
+
+        -- Generic message based on status code
+        Http.BadBody bodyString ->
+            BadPayload bodyString
+
+
+
+-- This is the string explaining why the body was bad
+-- This is the string explaining why the body was bad
 -- SUBSCRIPTIONS
 
 
@@ -1866,3 +2066,52 @@ hijackOn event decoder =
 hijack : msg -> ( msg, Bool )
 hijack msg =
     ( msg, True )
+
+
+
+-- Helper functions for New Agent Email Validation (copied/adapted from Signup.elm)
+
+
+isValidEmailFormat : String -> Bool
+isValidEmailFormat email =
+    String.contains "@" email && String.contains "." email
+
+
+debounceNewAgentEmailCheck : Int -> Cmd Msg
+debounceNewAgentEmailCheck counter =
+    Process.sleep 500
+        |> Task.perform (\_ -> DebounceNewAgentEmailCheck counter)
+
+
+checkNewAgentEmailAvailability : Int -> String -> Cmd Msg
+checkNewAgentEmailAvailability counter email =
+    Http.get
+        { url = "/api/organizations/check-email/" ++ Url.percentEncode email
+        , expect = Http.expectJson (GotNewAgentEmailCheckResponse counter) emailCheckResponseDecoder
+        }
+
+
+emailCheckResponseDecoder : Decoder EmailCheckResponse
+emailCheckResponseDecoder =
+    Decode.map2 EmailCheckResponse
+        (Decode.field "available" Decode.bool)
+        (Decode.field "message" Decode.string)
+
+
+viewNewAgentEmailStatusMessage : EmailStatus -> Html Msg
+viewNewAgentEmailStatusMessage status =
+    case status of
+        NotChecked ->
+            text ""
+
+        Checking ->
+            p [ class "mt-1 text-sm text-blue-600" ] [ text "Checking email..." ]
+
+        Available ->
+            p [ class "mt-1 text-sm text-green-600" ] [ text "Email is available" ]
+
+        AlreadyRegistered message ->
+            p [ class "mt-1 text-sm text-red-600" ] [ text message ]
+
+        InvalidFormat ->
+            p [ class "mt-1 text-sm text-red-600" ] [ text "Please enter a valid email address." ]
