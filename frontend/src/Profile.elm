@@ -14,7 +14,6 @@ import Svg exposing (path, svg)
 import Svg.Attributes as SvgAttr
 import Task
 import Time
-import Walkthrough
 
 
 
@@ -27,9 +26,8 @@ type alias Model =
     , isLoading : Bool
     , error : Maybe String
     , pendingSave : Bool
-    , agentProfileLinkCopied : Bool -- ADDED
-    , walkthroughModal : Walkthrough.Model
-    , showWalkthroughModal : Bool
+    , agentProfileLinkCopied : Bool
+    , showTutorialModal : Bool -- ADDED for tutorial modal
     }
 
 
@@ -41,24 +39,19 @@ type alias User =
     , phone : String
     , isAdmin : Bool
     , isAgent : Bool
-    , orgSlug : String -- ADDED
+    , orgSlug : String
     }
 
 
 init : () -> ( Model, Cmd Msg )
 init _ =
-    let
-        ( walkthroughModel, _ ) =
-            Walkthrough.init False
-    in
     ( { currentUser = Nothing
       , originalUser = Nothing
       , isLoading = True
       , error = Nothing
       , pendingSave = False
-      , agentProfileLinkCopied = False -- ADDED
-      , walkthroughModal = walkthroughModel
-      , showWalkthroughModal = False
+      , agentProfileLinkCopied = False
+      , showTutorialModal = False -- ADDED: Initialize tutorial modal state
       }
     , fetchCurrentUser
     )
@@ -74,12 +67,12 @@ type Msg
     | SaveProfile
     | ProfileSaved (Result Http.Error ())
     | NavigateTo String
-    | WatchTutorial
-    | CopyAgentProfileLink -- ADDED
-    | AgentProfileLinkCopied Bool -- ADDED
-    | ResetAgentProfileLinkCopiedStatus -- ADDED
-    | WalkthroughMsg Walkthrough.Msg
-    | OpenWalkthroughModal
+    | WatchTutorial -- This will now open the tutorial modal
+    | CopyAgentProfileLink
+    | AgentProfileLinkCopied Bool
+    | ResetAgentProfileLinkCopiedStatus
+    | OpenTutorialModal -- ADDED
+    | CloseTutorialModal -- ADDED
 
 
 type alias CurrentUserResponse =
@@ -94,7 +87,7 @@ update msg model =
         GotCurrentUser (Ok response) ->
             ( { model
                 | currentUser = response.user
-                , originalUser = response.user -- Store original user data
+                , originalUser = response.user
                 , isLoading = False
               }
             , Cmd.none
@@ -146,7 +139,7 @@ update msg model =
         ProfileSaved (Ok _) ->
             ( { model
                 | pendingSave = False
-                , originalUser = model.currentUser -- Update original user after successful save
+                , originalUser = model.currentUser
               }
             , Cmd.none
             )
@@ -162,38 +155,24 @@ update msg model =
         NavigateTo path ->
             ( model, Cmd.none )
 
+        -- Main.elm handles navigation
         WatchTutorial ->
-            ( model, Cmd.none )
-
-        OpenWalkthroughModal ->
-            let
-                ( walkthroughModel, _ ) =
-                    Walkthrough.init True
-            in
-            ( { model | showWalkthroughModal = True, walkthroughModal = walkthroughModel }
+            -- Changed to open tutorial modal
+            ( { model | showTutorialModal = True }
             , Cmd.none
             )
 
-        WalkthroughMsg walkthroughMsg ->
-            let
-                ( walkthroughModel, walkthroughCmd ) =
-                    Walkthrough.update walkthroughMsg model.walkthroughModal
-            in
-            case walkthroughMsg of
-                Walkthrough.CloseModalClicked ->
-                    ( { model | walkthroughModal = walkthroughModel, showWalkthroughModal = False }
-                    , Cmd.map WalkthroughMsg walkthroughCmd
-                    )
+        OpenTutorialModal ->
+            -- ADDED
+            ( { model | showTutorialModal = True }
+            , Cmd.none
+            )
 
-                Walkthrough.CompleteWalkthroughResponse (Ok _) ->
-                    ( { model | walkthroughModal = walkthroughModel, showWalkthroughModal = False }
-                    , Cmd.map WalkthroughMsg walkthroughCmd
-                    )
-
-                _ ->
-                    ( { model | walkthroughModal = walkthroughModel }
-                    , Cmd.map WalkthroughMsg walkthroughCmd
-                    )
+        CloseTutorialModal ->
+            -- ADDED
+            ( { model | showTutorialModal = False }
+            , Cmd.none
+            )
 
         CopyAgentProfileLink ->
             case model.currentUser of
@@ -223,7 +202,6 @@ update msg model =
 
 
 
--- Main.elm will handle the actual navigation
 -- VIEW
 
 
@@ -238,9 +216,10 @@ view model =
                 , viewContent model
                 ]
             ]
-        , -- Walkthrough modal
-          if model.showWalkthroughModal then
-            Html.map WalkthroughMsg (Walkthrough.view model.walkthroughModal)
+
+        -- Tutorial modal
+        , if model.showTutorialModal then
+            viewTutorialModal
 
           else
             text ""
@@ -261,7 +240,7 @@ viewContent model =
                     [ div [ class "mb-4 flex justify-end space-x-4" ]
                         [ button
                             [ class "flex items-center text-sm text-blue-600 hover:text-blue-800"
-                            , onClick OpenWalkthroughModal
+                            , onClick OpenTutorialModal -- CHANGED from OpenWalkthroughModal
                             ]
                             [ div [ class "mr-2" ]
                                 [ svg
@@ -311,7 +290,7 @@ viewContent model =
                             text ""
                         ]
                     , viewBasicInfo model user
-                    , viewAgentProfileLinkSection model user -- ADDED
+                    , viewAgentProfileLinkSection model user
                     , viewSaveButton model
                     ]
 
@@ -415,6 +394,42 @@ viewAgentProfileLinkSection model user =
             ]
         , p [ class "text-gray-500 text-xs mt-1" ]
             [ text "Share this link with clients or non-clients to gather missing information or capture new leads to your book of business. New leads created in this way will be assigned to you."
+            ]
+        ]
+
+
+
+-- ADDED: Tutorial Modal View (adapted from Dashboard.elm)
+
+
+viewTutorialModal : Html Msg
+viewTutorialModal =
+    div [ class "fixed inset-0 z-50 bg-gray-600 bg-opacity-50 flex items-center justify-center p-4" ]
+        [ div [ class "bg-white p-4 sm:p-6 rounded-lg shadow-lg max-w-2xl w-full" ]
+            [ div [ class "flex justify-between items-center mb-4" ]
+                [ h2 [ class "text-lg sm:text-xl font-semibold text-[#03045E]" ] [ text "Welcome to MedicareMax!" ]
+                , button
+                    [ class "text-gray-400 hover:text-gray-600 text-xl p-1", onClick CloseTutorialModal ]
+                    [ text "×" ]
+                ]
+            , div [ class "mb-4 sm:mb-6" ]
+                [ iframe
+                    [ src "https://www.youtube.com/embed/dQw4w9WgXcQ" -- Replace with actual tutorial video
+                    , class "w-full aspect-video max-h-[50vh] sm:h-96"
+                    , attribute "allowfullscreen" ""
+                    , attribute "frameborder" "0"
+                    ]
+                    []
+                ]
+            , p [ class "mb-4 text-gray-600 text-sm sm:text-base" ]
+                [ text "This quick setup tutorial will help you get started with MedicareMax and show you how to make the most of its features." ]
+            , div [ class "flex justify-end" ]
+                [ button
+                    [ class "px-4 py-2 bg-[#03045E] text-white rounded-md hover:bg-opacity-90 w-full sm:w-auto"
+                    , onClick CloseTutorialModal
+                    ]
+                    [ text "Close" ]
+                ]
             ]
         ]
 

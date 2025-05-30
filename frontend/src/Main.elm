@@ -2789,7 +2789,7 @@ updatePage url ( model, cmd ) =
                                                 }
 
                                             ( dashboardModel, dashboardCmd ) =
-                                                Dashboard.init dashboardFlags
+                                                Dashboard.init modelWithUpdatedSetup.key dashboardFlags
                                         in
                                         ( { modelWithUpdatedSetup | page = DashboardPage dashboardModel }
                                         , Cmd.batch
@@ -3407,7 +3407,6 @@ updatePageForcePublic url ( model, cmd ) =
                     ( { model | page = Pricing2Page pricing2Model }
                     , Cmd.map Pricing2Msg pricing2Cmd
                     )
-
 
         Nothing ->
             ( { model | page = NotFoundPage }
