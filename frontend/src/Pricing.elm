@@ -36,13 +36,13 @@ type alias Pricing =
 
 basePricing =
     { contacts = 0
-    , price = 50
+    , price = 100
     }
 
 
 tier1Pricing =
-    { contacts = 250
-    , price = 35
+    { contacts = 1
+    , price = 0.25
     }
 
 
@@ -262,24 +262,24 @@ calculatePricing contacts =
         baseSubscription =
             basePricing.price
 
-        -- Calculate number of additional 250-contact tiers needed
-        additionalTiers =
-            if contacts <= tier1Pricing.contacts then
+        -- Calculate number of additional contacts beyond the first 250
+        additionalContacts =
+            if contacts <= 250 then
                 0
 
             else
-                ceiling (toFloat (contacts - tier1Pricing.contacts) / toFloat tier1Pricing.contacts)
+                contacts - 250
 
-        -- Calculate price for additional tiers
+        -- Calculate price for additional contacts
         additionalPrice =
-            toFloat additionalTiers * tier1Pricing.price
+            toFloat additionalContacts * tier1Pricing.price
 
         totalPrice =
             baseSubscription + additionalPrice
 
         -- Create list of tier prices for display
         tierPrices =
-            [ { contacts = contacts - tier1Pricing.contacts
+            [ { contacts = additionalContacts
               , price = additionalPrice
               }
             ]
@@ -395,7 +395,7 @@ view model =
                                     [ text "Includes 250 contacts" ]
                                 ]
                             , div [ class "flex items-baseline gap-2 mb-3" ]
-                                [ span [ class "text-2xl sm:text-3xl font-bold text-gray-900" ] [ text "$50" ]
+                                [ span [ class "text-2xl sm:text-3xl font-bold text-gray-900" ] [ text "$100" ]
                                 , span [ class "text-gray-600" ] [ text "/month" ]
                                 ]
                             , p [ class "text-gray-600 text-sm" ]
@@ -410,11 +410,11 @@ view model =
                                     [ text "Pay as you go" ]
                                 ]
                             , div [ class "flex items-baseline gap-2 mb-3" ]
-                                [ span [ class "text-2xl sm:text-3xl font-bold text-gray-900" ] [ text <| formatCurrency tier1Pricing.price ]
-                                , span [ class "text-gray-600" ] [ text "/250 contacts" ]
+                                [ span [ class "text-2xl sm:text-3xl font-bold text-gray-900" ] [ text "$0.25" ]
+                                , span [ class "text-gray-600" ] [ text "/contact/month" ]
                                 ]
                             , p [ class "text-gray-600 text-sm" ]
-                                [ text "Simple per-tier pricing above base tier." ]
+                                [ text "That's just $3 per contact per year." ]
                             ]
                         ]
                     ]
@@ -490,21 +490,8 @@ view model =
                                                                 ""
 
                                                              else
-                                                                let
-                                                                    numTiers =
-                                                                        ceiling (toFloat tier.contacts / toFloat tier1Pricing.contacts)
-                                                                in
-                                                                String.fromInt numTiers
-                                                                    ++ " bundle"
-                                                                    ++ (if numTiers > 1 then
-                                                                            "s"
-
-                                                                        else
-                                                                            ""
-                                                                       )
-                                                                    ++ " of 250 @ "
-                                                                    ++ formatCurrency tier1Pricing.price
-                                                                    ++ " each:"
+                                                                String.fromInt tier.contacts
+                                                                    ++ " contacts @ $0.25 each:"
                                                             )
                                                         ]
                                                     , span [ class "font-bold" ] [ text (formatCurrency tier.price) ]

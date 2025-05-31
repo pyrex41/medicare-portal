@@ -30,7 +30,6 @@ import Logout
 import MyIcon
 import Onboarding
 import Pricing
-import Pricing2
 import Process
 import Profile
 import Quote
@@ -235,7 +234,6 @@ type Page
     | WaitlistPage Waitlist.Model
     | LandingPage Landing.Model
     | PricingPage Pricing.Model
-    | Pricing2Page Pricing2.Model
     | StripePage Stripe.Model
 
 
@@ -283,7 +281,6 @@ type Msg
     | WaitlistMsg Waitlist.Msg
     | LandingMsg Landing.Msg
     | PricingMsg Pricing.Msg
-    | Pricing2Msg Pricing2.Msg
     | StripeMsg Stripe.Msg
     | TogglePaymentStatus
     | SetSessionResponse (Result Http.Error SetSessionResponseAlias)
@@ -532,7 +529,6 @@ type PublicPage
     | WaitlistRoute
     | LandingRoute { quoteId : Maybe String }
     | PricingRoute
-    | Pricing2Route
 
 
 type ProtectedPage
@@ -609,7 +605,6 @@ routeParser =
         , map (PublicRoute SignupRoute) (s "signup")
         , map (PublicRoute OnboardingRoute) (s "onboarding")
         , map (PublicRoute PricingRoute) (s "pricing")
-        , map (PublicRoute Pricing2Route) (s "pricing2")
         , map (PublicRoute ScheduleMainRoute) (s "schedule-main")
         , map (ProtectedRoute ContactUsRoute) (s "contact-us")
         , map (\orgSlug token -> PublicRoute (VerifyRoute (VerifyParams orgSlug token)))
@@ -620,8 +615,6 @@ routeParser =
             , map (PublicRoute << CompareRoute)
                 (s "compare" <?> compareParamsParser)
             ]
-        , map (\quoteId -> PublicRoute (CompareRoute { quoteId = Just quoteId, orgId = Nothing, tid = Nothing }))
-            (s "compare" </> string)
         , map (PublicRoute << QuoteRoute)
             (s "quote"
                 <?> Query.map4
@@ -1354,20 +1347,6 @@ update msg model =
                 _ ->
                     ( model, Cmd.none )
 
-        Pricing2Msg subMsg ->
-            case model.page of
-                Pricing2Page pricing2Model ->
-                    let
-                        ( newPricing2Model, newCmd ) =
-                            Pricing2.update subMsg pricing2Model
-                    in
-                    ( { model | page = Pricing2Page newPricing2Model }
-                    , Cmd.map Pricing2Msg newCmd
-                    )
-
-                _ ->
-                    ( model, Cmd.none )
-
         StripeMsg subMsg ->
             case model.page of
                 StripePage stripeModel ->
@@ -1646,15 +1625,6 @@ view model =
                     , body = [ viewWithNav model (Html.map PricingMsg pricingView) ]
                     }
 
-                Pricing2Page pricing2Model ->
-                    let
-                        pricing2View =
-                            Pricing2.view pricing2Model
-                    in
-                    { title = "Pricing"
-                    , body = [ viewWithNav model (Html.map Pricing2Msg pricing2View) ]
-                    }
-
                 StripePage stripeModel ->
                     let
                         stripeView =
@@ -1837,9 +1807,6 @@ viewNavHeader model =
                     True
 
                 PricingPage _ ->
-                    True
-
-                Pricing2Page _ ->
                     True
 
                 WaitlistPage _ ->
@@ -2186,9 +2153,6 @@ subscriptions model =
 
                 PricingPage pricingModel ->
                     Sub.none
-
-                Pricing2Page pricing2Model ->
-                    Sub.map Pricing2Msg (Pricing2.subscriptions pricing2Model)
 
                 StripePage stripeModel ->
                     Sub.none
@@ -3017,18 +2981,6 @@ updatePage url ( model, cmd ) =
                                             ]
                                         )
 
-                                    PublicRoute Pricing2Route ->
-                                        let
-                                            ( pricing2Model, pricing2Cmd ) =
-                                                Pricing2.init
-                                        in
-                                        ( { modelWithUpdatedSetup | page = Pricing2Page pricing2Model }
-                                        , Cmd.batch
-                                            [ Cmd.map Pricing2Msg pricing2Cmd
-                                            , authCmd
-                                            ]
-                                        )
-
                                     ProtectedRoute ContactUsRoute ->
                                         let
                                             ( contactUsModel, contactUsCmd ) =
@@ -3369,18 +3321,6 @@ updatePageForcePublic url ( model, cmd ) =
                     , Cmd.map SelfOnboardingMsg selfOnboardingCmd
                     )
 
-                ProtectedRoute _ ->
-                    updatePage url ( model, cmd )
-
-                AdminRoute _ ->
-                    updatePage url ( model, cmd )
-
-                SetupRoute _ ->
-                    updatePage url ( model, cmd )
-
-                NotFound ->
-                    ( { model | page = NotFoundPage }, cmd )
-
                 PublicRoute (LandingRoute params) ->
                     let
                         ( landingModel, landingCmd ) =
@@ -3399,14 +3339,9 @@ updatePageForcePublic url ( model, cmd ) =
                     , Cmd.map PricingMsg pricingCmd
                     )
 
-                PublicRoute Pricing2Route ->
-                    let
-                        ( pricing2Model, pricing2Cmd ) =
-                            Pricing2.init
-                    in
-                    ( { model | page = Pricing2Page pricing2Model }
-                    , Cmd.map Pricing2Msg pricing2Cmd
-                    )
+                -- For any other route type, fall through to the main updatePage or handle as NotFound.
+                _ ->
+                    updatePage url ( model, cmd )
 
         Nothing ->
             ( { model | page = NotFoundPage }
