@@ -34,6 +34,7 @@ interface Quote {
     rate: number;
     discount_rate: number;
     discount_category: string;
+    original_plan_name?: string;
 }
 
 interface QuoteResponse {
@@ -347,6 +348,16 @@ export const quotesRoutes = (app: Elysia) => {
     })
     .post('/api/quotes', async ({ body, set }: { body: QuoteRequestBody, set: any }) => {
         try {
+            // Check if state uses special plans
+            const stateSpecificPlans: Record<string, string[]> = {
+                'MN': ['MN_BASIC', 'MN_EXTB'],
+                'WI': ['WI_BASE', 'WI_HDED'],
+                'MA': ['MA_CORE', 'MA_SUPP1']
+            };
+
+            // Determine which plans to request based on state
+            const plansToRequest = stateSpecificPlans[body.state] || ['G', 'N'];
+
             // Format request body
             const requestBody: QuoteRequest = {
                 zip_code: body.zip_code,
@@ -354,7 +365,7 @@ export const quotesRoutes = (app: Elysia) => {
                 age: Math.max(65, Math.min(110, Number(body.age))),
                 tobacco: body.tobacco === 'true' || body.tobacco === true,
                 gender: body.gender,
-                plans: ['G', 'N'],
+                plans: plansToRequest,
                 carriers: 'supported',
                 county: body.county
             };
@@ -394,17 +405,52 @@ export const quotesRoutes = (app: Elysia) => {
             logger.info(`Quote engine response status: ${response.status}`);
             logger.info(`Quote engine response headers: ${JSON.stringify(response.headers, null, 2)}`);
             logger.info(`Quote engine response data length: ${JSON.stringify(response.data).length} characters`);
-            logger.info(`Quote engine response data preview: ${JSON.stringify(response.data).substring(0, 200)}...`);
+            // logger.info(`Quote engine response data preview: ${JSON.stringify(response.data).substring(0, 500)}...`); // Log more for debugging complex structures
             
-            if (!response.data) {
-                logger.error('Quote engine returned empty response data');
+            if (!response.data || !Array.isArray(response.data)) {
+                logger.error('Quote engine returned empty or invalid response data');
                 set.status = 500;
-                return { error: 'No quote data received from engine' };
+                return { error: 'No quote data received from engine or data is not an array' };
             }
+
+            // Define state-specific plan mappings to their standard equivalents
+            const planAliasMapping: Record<string, { standard: string, original: string }> = {
+                'MN_BASIC': { standard: 'N', original: 'MN_BASIC' },
+                'MN_EXTB': { standard: 'G', original: 'MN_EXTB' },
+                'WI_BASE': { standard: 'N', original: 'WI_BASE' },
+                'WI_HDED': { standard: 'N', original: 'WI_HDED' }, // Assuming WI_HDED maps to N, adjust if needed
+                'MA_CORE': { standard: 'N', original: 'MA_CORE' },
+                'MA_SUPP1': { standard: 'G', original: 'MA_SUPP1' }
+            };
+
+            const processedData = response.data.map((companyQuote: QuoteResponse) => {
+                if (companyQuote.quotes && Array.isArray(companyQuote.quotes)) {
+                    companyQuote.quotes = companyQuote.quotes.map((quote: Quote) => {
+                        const mapping = planAliasMapping[quote.plan.toUpperCase()];
+                        if (mapping) {
+                            return {
+                                ...quote,
+                                original_plan_name: mapping.original,
+                                plan: mapping.standard
+                            };
+                        }
+                        // If not a state-specific plan that needs aliasing, ensure original_plan_name is null or undefined
+                        // if the quote engine might send it for G/N plans directly.
+                        // For now, assume if it's not in mapping, it doesn't get an original_plan_name unless already present.
+                        return {
+                            ...quote,
+                            original_plan_name: quote.original_plan_name || undefined // or null if preferred by Elm decoder
+                        };
+                    });
+                }
+                return companyQuote;
+            });
+
+            logger.info(`Processed quote data preview: ${JSON.stringify(processedData).substring(0, 500)}...`);
 
             // Return quotes from response data
             set.status = 200; // Explicitly set 200 status
-            return response.data;
+            return []; // TEMPORARY: Return empty array to simulate no plans
         } catch (error: any) {
             logger.error(`Error fetching quotes: ${error}`);
             if (axios.isAxiosError(error)) {
