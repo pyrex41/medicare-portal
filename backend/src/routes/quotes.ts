@@ -450,7 +450,7 @@ export const quotesRoutes = (app: Elysia) => {
 
             // Return quotes from response data
             set.status = 200; // Explicitly set 200 status
-            return []; // TEMPORARY: Return empty array to simulate no plans
+            return processedData;
         } catch (error: any) {
             logger.error(`Error fetching quotes: ${error}`);
             if (axios.isAxiosError(error)) {
