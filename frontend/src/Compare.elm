@@ -552,15 +552,15 @@ quoteResponseDecoder =
 
 quoteDataDecoder : Decoder QuoteData
 quoteDataDecoder =
-    D.map8 QuoteData
-        (D.field "rate" D.float)
-        (D.field "discount_rate" D.float)
-        (D.field "discount_category" (D.nullable D.string))
-        (D.field "age" D.int)
-        (D.field "gender" D.string)
-        (D.field "plan" D.string)
-        (D.field "tobacco" D.int)
-        (D.field "original_plan_name" (D.nullable D.string))
+    D.succeed QuoteData
+        |> Pipeline.required "rate" D.float
+        |> Pipeline.required "discount_rate" D.float
+        |> Pipeline.required "discount_category" (D.nullable D.string)
+        |> Pipeline.required "age" D.int
+        |> Pipeline.required "gender" D.string
+        |> Pipeline.required "plan" D.string
+        |> Pipeline.required "tobacco" D.int
+        |> Pipeline.optional "original_plan_name" (D.nullable D.string) Nothing
 
 
 blacklistCarriers : List Carrier

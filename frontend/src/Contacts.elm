@@ -2031,10 +2031,10 @@ view model =
                             , col [ class "w-48" ] [] -- Email
                             , col [ class "w-28" ] [] -- Phone Number
                             , col [ class "w-16" ] [] -- State
-                            , col [ class "w-32" ] [] -- Assigned Agent
+                            , col [ class "w-36" ] [] -- Assigned Agent (increased from w-32)
                             , col [ class "w-20" ] [] -- Current Carrier (reduced from w-24)
-                            , col [ class "w-24" ] [] -- Effective Date
-                            , col [ class "w-20" ] [] -- Actions
+                            , col [ class "w-32" ] [] -- Effective Date (increased from w-28)
+                            , col [ class "w-16" ] [] -- Actions (reduced from w-20)
                             ]
                         , thead [ class "bg-gray-50" ]
                             [ tr []
@@ -2054,15 +2054,13 @@ view model =
                                         []
                                     ]
                                 , tableHeader "Name"
-
-                                --, tableHeader "Status"
                                 , tableHeader "Email"
                                 , tableHeader "Phone"
                                 , tableHeader "State"
                                 , tableHeader "Agent"
                                 , tableHeader "Carrier"
                                 , tableHeader "Eff. Date"
-                                , tableHeader "Actions"
+                                , tableHeader "Edit"
                                 ]
                             ]
                         , tbody [ class "bg-white" ]
@@ -2262,13 +2260,8 @@ viewTableRow model contact =
                     ]
                 ]
             ]
-
-        {--
-        , td [ class compactCellClass ]
-            [ viewStatus contact.status ]
-        --}
-        , td [ class cellClass ]
-            [ text contact.email ]
+        , td [ class cellClass, Html.Attributes.title contact.email ]
+            [ text (truncateEmail contact.email) ]
         , td [ class phoneCellClass ]
             [ text (formatPhoneNumber (Maybe.withDefault "" contact.phoneNumber)) ]
         , td [ class cellClass ]
@@ -2319,6 +2312,15 @@ viewStatus status =
 
 
 -- HELPERS
+
+
+truncateEmail : String -> String
+truncateEmail email =
+    if String.length email > 30 then
+        String.left 30 email ++ "..."
+
+    else
+        email
 
 
 updateContact : Contact -> List Contact -> List Contact
