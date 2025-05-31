@@ -1945,7 +1945,7 @@ viewGvsNModal model =
                     [ div [ class "w-full h-full" ]
                         [ iframe
                             -- [ src "https://player.vimeo.com/video/1075091871?autoplay=0&title=0&byline=0&portrait=0&responsive=1" -- education example
-                            [ src "https://player.vimeo.com/video/1018402330?autoplay=0&title=0&byline=0&portrait=0&responsive=1"
+                            [ src "https://player.vimeo.com/video/1089216242?autoplay=0&title=0&byline=0&portrait=0&responsive=1"
                             , class "w-full h-full"
                             , attribute "frameborder" "0"
                             , attribute "allow" "autoplay; fullscreen; picture-in-picture"
@@ -1977,7 +1977,7 @@ viewQualificationModal model =
                 , div [ class "w-full max-w-3xl mx-auto" ]
                     [ div [ class "relative", style "padding-top" "100%" ]
                         [ iframe
-                            [ src "https://player.vimeo.com/video/1018421414?autoplay=0&title=0&byline=0&portrait=0&responsive=1"
+                            [ src "https://player.vimeo.com/video/1089216242?autoplay=0&title=0&byline=0&portrait=0&responsive=1"
                             , class "w-full h-full absolute top-0 left-0"
                             , attribute "frameborder" "0"
                             , attribute "allow" "autoplay; fullscreen; picture-in-picture"
@@ -2038,7 +2038,7 @@ viewRatesModal model =
                 , div [ class "w-full max-w-3xl mx-auto" ]
                     [ div [ class "relative", style "padding-top" "100%" ]
                         [ iframe
-                            [ src "https://player.vimeo.com/video/1018421439?autoplay=0&title=0&byline=0&portrait=0&responsive=1"
+                            [ src "https://player.vimeo.com/video/1089216242?autoplay=0&title=0&byline=0&portrait=0&responsive=1"
                             , class "w-full h-full absolute top-0 left-0"
                             , attribute "frameborder" "0"
                             , attribute "allow" "autoplay; fullscreen; picture-in-picture"
