@@ -1249,7 +1249,7 @@ viewRenewalItem renewal =
 
 viewTutorialModal : Html Msg
 viewTutorialModal =
-    div [ class "fixed inset-0 z-50 bg-gray-600 bg-opacity-50 flex items-center justify-center p-4" ]
+    div [ class "fixed inset-0 z-50 bg-slate-100 bg-opacity-20 backdrop-blur-sm flex items-center justify-center p-4" ]
         [ div [ class "bg-white p-4 sm:p-6 rounded-lg shadow-lg max-w-2xl w-full" ]
             [ div [ class "flex justify-between items-center mb-4" ]
                 [ h2 [ class "text-lg sm:text-xl font-semibold text-[#03045E]" ] [ text "Welcome to MedicareMax!" ]

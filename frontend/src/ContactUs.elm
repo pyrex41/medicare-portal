@@ -152,10 +152,8 @@ viewContactInfo =
             [ h2 [ class "text-2xl font-semibold text-gray-900 mb-6" ]
                 [ text "Get in Touch" ]
             , div [ class "space-y-6" ]
-                [ viewContactItem (MyIcon.phone 20 "#6B7280") "Phone" "1-800-MEDICARE"
+                [ viewContactItem (MyIcon.phone 20 "#6B7280") "Phone" "816-799-6644"
                 , viewContactItem (MyIcon.mail 20 "#6B7280") "Email" "information@medicaremax.ai"
-                , viewContactItem (MyIcon.mapPin 20 "#6B7280") "Address" "123 Medicare Lane, Suite 100\nHealthcare City, HC 12345"
-                , viewContactItem (MyIcon.clock 20 "#6B7280") "Business Hours" "Monday - Friday: 8AM - 8PM\nSaturday: 9AM - 5PM\nSunday: Closed"
                 ]
             ]
         , div [ class "bg-blue-50 rounded-lg p-6" ]
@@ -171,12 +169,12 @@ viewContactInfo =
                     [ href "/pricing"
                     , class "block text-blue-600 hover:text-blue-800 underline"
                     ]
-                    [ text "View Pricing Plans" ]
+                    [ text "View Pricing" ]
                 , a
-                    [ href "/signup"
+                    [ href "/dashboard?payment_success=true"
                     , class "block text-blue-600 hover:text-blue-800 underline"
                     ]
-                    [ text "Start Free Trial" ]
+                    [ text "Watch Platform Walkthrough" ]
                 ]
             ]
         ]

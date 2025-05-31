@@ -859,13 +859,12 @@ viewOrganizationDetails settings model =
                         ]
                     )
                 , viewFormGroup "Email & SMS Signature or Sign Off"
-                    (textarea
+                    (input
                         [ class "mt-1 px-3 py-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-base"
                         , value settings.signature
                         , onInput UpdateSignature
-                        , rows 3
                         , placeholder
-                            ("Thanks,\nThe team at "
+                            ("The Team at "
                                 ++ (if String.isEmpty settings.brandName then
                                         "Example Biz"
 

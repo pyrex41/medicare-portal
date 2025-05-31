@@ -67,7 +67,10 @@ init key isLoggedIn url =
       , isFromOnboarding = queryParams.onboarding
       , prefilledEmail = queryParams.email
       }
-    , Cmd.none
+    , Http.get
+        { url = "/api/auth/session"
+        , expect = Http.expectJson GotSessionCheck sessionCheckDecoder
+        }
     )
 
 
