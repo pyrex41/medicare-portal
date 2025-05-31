@@ -2788,111 +2788,6 @@ viewAgentDetails model agent =
             , p [ class "text-gray-500 text-xs mt-1" ]
                 [ text "Share this link with clients or non-clients to gather missing information or capture new leads to your book of business. New leads created in this way will be assigned to the agent associated with this link." ]
             ]
-        , -- Sender Settings Section
-          div []
-            [ h3 [ class "text-sm font-medium text-gray-700 mb-4" ]
-                [ text "Sender Settings" ]
-            , p [ class "text-sm text-gray-500 mb-4" ]
-                [ text "The sender settings below are controlled by your organization's configuration. "
-                , a [ class "text-blue-600 hover:text-blue-800 underline", href "/settings" ]
-                    [ text "Visit Organization Settings" ]
-                , text " to change how agent details are used across your organization. When Organization Details is selected, agents will use the organization's contact information. When Agent Details is selected, agents can use their own contact information set above."
-                ]
-            , div [ class "grid grid-cols-1 md:grid-cols-2 gap-4" ]
-                [ -- Organization Details Card
-                  div
-                    [ class
-                        ("relative rounded-lg border-2 p-6 transition-all "
-                            ++ (if model.forceOrgSenderDetails then
-                                    "border-blue-500 bg-blue-50"
-
-                                else
-                                    "border-gray-200 bg-white"
-                               )
-                        )
-                    ]
-                    [ div [ class "flex items-start" ]
-                        [ div [ class "flex items-center h-5" ]
-                            [ input
-                                [ type_ "radio"
-                                , name ("senderSettings-" ++ agent.id)
-                                , checked model.forceOrgSenderDetails
-                                , class "h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
-                                , disabled True
-                                ]
-                                []
-                            ]
-                        , div [ class "ml-3" ]
-                            [ label [ class "font-medium text-gray-900" ] [ text "Organization Details" ]
-                            , p [ class "text-sm text-gray-500 mt-1" ]
-                                [ if model.forceOrgSenderDetails then
-                                    span []
-                                        [ text "These details are set in the organization settings. "
-                                        , a [ class "text-blue-600 hover:text-blue-800", href "/settings" ] [ text "Change organization defaults" ]
-                                        , text "."
-                                        ]
-
-                                  else
-                                    text "When this option is selected the Organization Details will be used for the signature, phone number, and scheduling link if applicable."
-                                ]
-                            ]
-                        ]
-                    ]
-                , -- Agent Details Card
-                  div
-                    [ class
-                        ("relative rounded-lg border-2 p-6 transition-all "
-                            ++ (if not model.forceOrgSenderDetails then
-                                    "border-blue-500 bg-blue-50"
-
-                                else
-                                    "border-gray-200 bg-white"
-                               )
-                        )
-                    ]
-                    [ div [ class "flex items-start" ]
-                        [ div [ class "flex items-center h-5" ]
-                            [ input
-                                [ type_ "radio"
-                                , name ("senderSettings-" ++ agent.id)
-                                , checked (not model.forceOrgSenderDetails)
-                                , class "h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
-                                , disabled True
-                                ]
-                                []
-                            ]
-                        , div [ class "ml-3" ]
-                            [ label [ class "font-medium text-gray-900" ] [ text "Agent Details" ]
-                            , p [ class "text-sm text-gray-500 mt-1" ]
-                                [ if not model.forceOrgSenderDetails then
-                                    text "These details are set above in this agent's settings."
-
-                                  else
-                                    text "When this option is selected the Agent's personal information from their agent settings will be used for the signature, phone number, and scheduling link if applicable."
-                                ]
-                            ]
-                        ]
-                    ]
-                ]
-            ]
-        , -- Signature Section (only if agent details are enabled)
-          if not model.forceOrgSenderDetails then
-            div []
-                [ label [ class "block text-sm font-medium text-gray-700" ]
-                    [ text "Email & SMS Signature or Sign Off" ]
-                , textarea
-                    [ class "mt-1 px-3 py-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-base"
-                    , value agent.signature
-                    , onInput (onFieldInput "signature")
-                    , rows 3
-                    , placeholder ("Thanks,\n" ++ agent.firstName ++ " " ++ agent.lastName)
-                    , disabled (not canEditField)
-                    ]
-                    []
-                ]
-
-          else
-            text ""
         , if hasChanges then
             div [ class "mt-4 flex justify-end" ]
                 [ button
@@ -6487,6 +6382,7 @@ type alias ContactResponse =
     , orgSignature : Bool
     , orgSignatureText : Maybe String
     , carrierContracts : List Carrier
+    , forceOrgSenderDetails : Bool
     }
 
 
@@ -6495,6 +6391,9 @@ type alias Agent =
     , lastName : String
     , email : String
     , phone : String
+    , signature : String
+    , useOrgSenderDetails : Bool
+    , bookingLink : String
     }
 
 
@@ -6546,6 +6445,7 @@ type alias Plan =
     , tobacco : Bool
     , coverageSummary : CoverageList
     , discountDescription : Maybe String
+    , originalPlanName : Maybe String
     }
 
 
@@ -6629,6 +6529,7 @@ type alias Model =
     , carrierContracts : List Carrier
     , currentDate : Maybe Date
     , effectiveDate : Maybe Date
+    , discountCsvString : Maybe String
     , orgId : Maybe String
     , orgName : Maybe String
     , orgLogo : Maybe String
@@ -6649,8 +6550,8 @@ type alias Model =
     , submittingLocation : Bool
     , editingEffectiveDate : Maybe String
     , fetchNewPlans : Bool
-    , discountCsvString : Maybe String
     , activeTooltipPlan : Maybe Plan
+    , forceOrgSenderDetails : Bool
     }
 
 
@@ -6803,6 +6704,7 @@ init key maybeParams =
             , editingEffectiveDate = Nothing
             , fetchNewPlans = False
             , activeTooltipPlan = Nothing
+            , forceOrgSenderDetails = False
             }
     in
     case maybeParams of
@@ -6919,7 +6821,6 @@ buildPlansBody contact currentDate =
             )
       )
     , ( "tobacco", E.bool contact.tobacco )
-    , ( "plans", E.list E.string [ "G", "N" ] )
     , ( "carriers", E.string "supported" )
     ]
         ++ ed
@@ -6955,6 +6856,7 @@ type alias QuoteData =
     , gender : String
     , plan : String
     , tobacco : Int
+    , originalPlanName : Maybe String
     }
 
 
@@ -6969,14 +6871,15 @@ quoteResponseDecoder =
 
 quoteDataDecoder : Decoder QuoteData
 quoteDataDecoder =
-    D.map7 QuoteData
-        (D.field "rate" D.float)
-        (D.field "discount_rate" D.float)
-        (D.field "discount_category" (D.nullable D.string))
-        (D.field "age" D.int)
-        (D.field "gender" D.string)
-        (D.field "plan" D.string)
-        (D.field "tobacco" D.int)
+    D.succeed QuoteData
+        |> Pipeline.required "rate" D.float
+        |> Pipeline.required "discount_rate" D.float
+        |> Pipeline.required "discount_category" (D.nullable D.string)
+        |> Pipeline.required "age" D.int
+        |> Pipeline.required "gender" D.string
+        |> Pipeline.required "plan" D.string
+        |> Pipeline.required "tobacco" D.int
+        |> Pipeline.optional "original_plan_name" (D.nullable D.string) Nothing
 
 
 blacklistCarriers : List Carrier
@@ -7041,6 +6944,7 @@ groupQuotesByPlan responses model =
                 else
                     planNCoverageList
             , discountDescription = Nothing
+            , originalPlanName = quote.originalPlanName
             }
 
         allQuotes =
@@ -7408,6 +7312,7 @@ update msg model =
                         , orgSignatureText = response.orgSignatureText
                         , carrierContracts = response.carrierContracts
                         , loadingContact = False
+                        , forceOrgSenderDetails = response.forceOrgSenderDetails
                     }
 
                 updatedModel =
@@ -7888,7 +7793,23 @@ viewPersonalInfo model =
                     -- Quote From section
                     , div [ class "flex flex-col min-w-[200px]" ]
                         [ p [ class "text-sm text-[#667085] mb-1" ] [ text "Quote From" ]
-                        , if model.useOrg then
+                        , let
+                            -- Determine whether to use org or agent details
+                            effectiveUseOrg =
+                                if model.forceOrgSenderDetails then
+                                    True
+
+                                else
+                                    case model.agent of
+                                        Just agent ->
+                                            agent.useOrgSenderDetails
+
+                                        Nothing ->
+                                            model.useOrg
+
+                            -- fallback to old logic
+                          in
+                          if effectiveUseOrg then
                             -- Organization information
                             div []
                                 [ case model.orgSignatureText of
@@ -8028,6 +7949,14 @@ viewPlanCard model planTypeCode plan =
         isSelected =
             model.selectedPlan == Just plan
 
+        displayPlanBadgeText =
+            case plan.originalPlanName of
+                Just originalName ->
+                    formatOriginalPlanName originalName
+
+                Nothing ->
+                    "PLAN " ++ planTypeCode
+
         ( badgeTextColor, badgeBgColor ) =
             if planTypeCode == "G" then
                 ( "text-[#363F72]", "bg-[#F8F9FC]" )
@@ -8058,7 +7987,7 @@ viewPlanCard model planTypeCode plan =
             [ -- Top row with Plan type badge and radio
               div [ class "flex items-center justify-between p-2 sm:p-4" ]
                 [ div [ class ("px-2.5 py-0.5 rounded-lg text-xs font-medium leading-5 " ++ badgeTextColor ++ " " ++ badgeBgColor) ]
-                    [ text ("PLAN " ++ planTypeCode) ]
+                    [ text displayPlanBadgeText ]
                 , div [ class "flex items-center gap-1.5" ]
                     [ span [ class "text-sm sm:text-sm font-medium text-[#667085]" ] [ text "Select This Plan" ]
                     , if isSelected then
@@ -8150,62 +8079,185 @@ viewPlanCard model planTypeCode plan =
 
 viewPlansSection : Model -> Html Msg
 viewPlansSection model =
-    div [ class "flex flex-col gap-4 sm:gap-0" ]
-        [ -- Plan G Section - Desktop and Mobile
-          div [ class "bg-white rounded-[10px] border border-[#DCE2E5] shadow-[0_1px_2px_rgba(16,24,40,0.05)]" ]
-            [ -- Header (desktop only)
-              div [ class "hidden sm:flex px-4 sm:px-6 py-4 flex-row items-center justify-between border-b border-[#DCE2E5] bg-[#F9F5FF] rounded-t-[10px]" ]
-                [ div [ class "flex items-end gap-3" ]
-                    [ h2 [ class "text-2xl font-extrabold -tracking-[0.04em] text-[#101828] leading-[1.2]" ] [ text "Recommended Plans for You" ]
-                    , p [ class "text-[16px] font-medium text-[#667085] -tracking-[0.04em] leading-[1.2] pb-[2px]" ] [ text "Select one to see if you qualify" ]
+    let
+        hasPlanG =
+            not (List.isEmpty model.plans.planG)
+
+        hasPlanN =
+            not (List.isEmpty model.plans.planN)
+
+        hasAnyPlans =
+            hasPlanG || hasPlanN
+
+        hasOriginalPlanNames =
+            List.any (\p -> p.originalPlanName /= Nothing) model.plans.planG
+                || List.any (\p -> p.originalPlanName /= Nothing) model.plans.planN
+
+        stateSpecificNotice =
+            if hasOriginalPlanNames then
+                div [ class "bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4" ]
+                    [ div [ class "flex items-start gap-3" ]
+                        [ svg [ Svg.Attributes.width "20", Svg.Attributes.height "20", Svg.Attributes.viewBox "0 0 20 20", Svg.Attributes.fill "none", Svg.Attributes.class "flex-shrink-0 mt-0.5" ]
+                            [ path
+                                [ Svg.Attributes.d "M10 0C4.477 0 0 4.477 0 10s4.477 10 10 10 10-4.477 10-10S15.523 0 10 0zm1 15H9v-2h2v2zm0-4H9V5h2v6z"
+                                , Svg.Attributes.fill "#2563EB"
+                                ]
+                                []
+                            ]
+                        , div [ class "flex-1 space-y-2" ]
+                            [ h4 [ class "text-sm font-semibold text-blue-900 mb-1" ]
+                                [ text "State-Specific Plan Names" ]
+                            , p [ class "text-sm text-blue-800" ]
+                                [ text "Your state uses slightly different variations from standardized Medicare Supplement plans. The plans shown reflect these state-specific names and do include additional optional riders that may be available in your state. Premiums may vary accordingly."
+                                ]
+                            , p [ class "text-sm text-blue-800" ]
+                                [ text "We would be happy to discuss these details further with you to help you find the best plan for your needs."
+                                ]
+                            ]
+                        ]
+                    ]
+
+            else
+                text ""
+
+        planGHeader =
+            case List.head model.plans.planG of
+                Just firstPlanG ->
+                    firstPlanG.originalPlanName
+                        |> Maybe.map formatOriginalPlanName
+                        |> Maybe.withDefault "Plan G"
+                        |> (\name -> name ++ " Monthly Premiums")
+
+                Nothing ->
+                    "Plan G Monthly Premiums"
+
+        planNHeader =
+            case List.head model.plans.planN of
+                Just firstPlanN ->
+                    firstPlanN.originalPlanName
+                        |> Maybe.map formatOriginalPlanName
+                        |> Maybe.withDefault "Plan N"
+                        |> (\name -> name ++ " Monthly Premiums")
+
+                Nothing ->
+                    "Plan N Monthly Premiums"
+    in
+    if not hasAnyPlans then
+        -- No plans found, display a message with contact info and button
+        div [ class "bg-white rounded-[10px] border border-[#DCE2E5] shadow-[0_1px_2px_rgba(16,24,40,0.05)] mt-6 p-6 sm:p-8 text-center" ]
+            [ div [ class "w-12 h-12 rounded-full bg-[#F9F5FF] flex items-center justify-center mx-auto mb-4" ]
+                [ svg [ Svg.Attributes.width "26", Svg.Attributes.height "26", Svg.Attributes.viewBox "0 0 24 24", Svg.Attributes.fill "none" ]
+                    [ path
+                        [ Svg.Attributes.d "M12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22Z"
+                        , Svg.Attributes.stroke "#7F56D9"
+                        , Svg.Attributes.strokeWidth "2"
+                        , Svg.Attributes.strokeLinecap "round"
+                        , Svg.Attributes.strokeLinejoin "round"
+                        ]
+                        []
+                    , path
+                        [ Svg.Attributes.d "M12 8V12"
+                        , Svg.Attributes.stroke "#7F56D9"
+                        , Svg.Attributes.strokeWidth "2"
+                        , Svg.Attributes.strokeLinecap "round"
+                        , Svg.Attributes.strokeLinejoin "round"
+                        ]
+                        []
+                    , path
+                        [ Svg.Attributes.d "M12 16H12.01"
+                        , Svg.Attributes.stroke "#7F56D9"
+                        , Svg.Attributes.strokeWidth "2"
+                        , Svg.Attributes.strokeLinecap "round"
+                        , Svg.Attributes.strokeLinejoin "round"
+                        ]
+                        []
                     ]
                 ]
-
-            -- Mobile header
-            , div [ class "block sm:hidden px-4 py-4 border-b border-[#DCE2E5] bg-[#F9F5FF] rounded-t-[10px]" ]
-                [ h2 [ class "text-2xl font-extrabold -tracking-[0.04em] text-[#101828] leading-[1.2]" ] [ text "Recommended Plans" ]
-                , p [ class "text-[16px] font-medium text-[#667085] -tracking-[0.04em] leading-[1.2]" ] [ text "Select one to continue" ]
+            , h3 [ class "text-lg sm:text-xl font-bold text-[#101828] -tracking-[0.02em] mb-2" ]
+                [ text "We couldn't find plans for your specific criteria." ]
+            , p [ class "text-sm sm:text-base text-[#667085] mb-4" ]
+                [ text "Please give us a call at ", span [ class "font-semibold" ] [ text (getPhoneNumberForDisplay model |> formatPhoneNumber) ], text ". We're happy to help you find the best plan for your needs." ]
+            , a
+                [ href (getScheduleLink model)
+                , class "whitespace-nowrap bg-[#03045E] text-white px-5 sm:px-4 py-3 sm:py-2 rounded-lg hover:bg-[#02034D] transition-colors text-sm sm:text-base w-full sm:w-auto text-center max-w-xs mx-auto block font-semibold"
                 ]
-
-            -- Plan G Section
-            , div [ class "px-3 sm:px-4 py-6 bg-white" ]
-                [ h3 [ class "text-xl font-extrabold -tracking-[0.02em] mb-6 text-[#101828]" ] [ text "Plan G Monthly Premiums" ]
-                , div [ class "flex flex-wrap gap-8 justify-center sm:justify-start sm:pl-8" ]
-                    (List.map (viewPlanCard model "G") (getTopPlans model model.plans.planG 3))
-                ]
+                [ text "Connect With Us" ]
             ]
 
-        -- Mobile video button (standalone between Plan G and Plan N)
-        , div [ class "block sm:hidden py-4 px-3" ]
-            [ div [ class "mx-auto max-w-[280px] bg-[#F9F5FF] rounded-[10px] p-4 flex flex-row items-center cursor-pointer gap-4", onClick OpenGvsNVideo ]
-                [ div [ class "w-[33px] h-[33px] rounded-full border border-[#03045E] flex items-center justify-center flex-shrink-0" ]
-                    [ div [ class "w-0 h-0 border-t-[8px] border-t-transparent border-l-[12px] border-l-[#03045E] border-b-[8px] border-b-transparent ml-1" ] []
+    else
+        div [ class "flex flex-col gap-4 sm:gap-0" ]
+            [ -- State-specific notice
+              stateSpecificNotice
+
+            -- Plan G Section - Desktop and Mobile
+            , if hasPlanG then
+                div [ class "bg-white rounded-[10px] border border-[#DCE2E5] shadow-[0_1px_2px_rgba(16,24,40,0.05)]" ]
+                    [ -- Header (desktop only)
+                      div [ class "hidden sm:flex px-4 sm:px-6 py-4 flex-row items-center justify-between border-b border-[#DCE2E5] bg-[#F9F5FF] rounded-t-[10px]" ]
+                        [ div [ class "flex items-end gap-3" ]
+                            [ h2 [ class "text-2xl font-extrabold -tracking-[0.04em] text-[#101828] leading-[1.2]" ] [ text "Recommended Plans for You" ]
+                            , p [ class "text-[16px] font-medium text-[#667085] -tracking-[0.04em] leading-[1.2] pb-[2px]" ] [ text "Select one to see if you qualify" ]
+                            ]
+                        ]
+
+                    -- Mobile header
+                    , div [ class "block sm:hidden px-4 py-4 border-b border-[#DCE2E5] bg-[#F9F5FF] rounded-t-[10px]" ]
+                        [ h2 [ class "text-2xl font-extrabold -tracking-[0.04em] text-[#101828] leading-[1.2]" ] [ text "Recommended Plans" ]
+                        , p [ class "text-[16px] font-medium text-[#667085] -tracking-[0.04em] leading-[1.2]" ] [ text "Select one to continue" ]
+                        ]
+
+                    -- Plan G Section
+                    , div [ class "px-3 sm:px-4 py-6 bg-white" ]
+                        [ h3 [ class "text-xl font-extrabold -tracking-[0.02em] mb-6 text-[#101828]" ] [ text planGHeader ]
+                        , div [ class "flex flex-wrap gap-8 justify-center sm:justify-start sm:pl-8" ]
+                            (List.map (viewPlanCard model "G") (getTopPlans model model.plans.planG 3))
+                        ]
                     ]
-                , div [ class "flex flex-col items-start" ]
-                    [ p [ class "text-[16px] font-bold text-[#03045E] -tracking-[0.03em] leading-[1.21] text-left" ] [ text "Learn About Plan G vs N" ]
-                    , p [ class "text-[12px] text-[#667085] -tracking-[0.03em] leading-[1.21]" ] [ text "Watch the Video" ]
+
+              else
+                text ""
+
+            -- Mobile video button (standalone between Plan G and Plan N)
+            -- Only show if both G and N plans are available
+            , if hasPlanG && hasPlanN then
+                div [ class "block sm:hidden py-4 px-3" ]
+                    [ div [ class "mx-auto max-w-[280px] bg-[#F9F5FF] rounded-[10px] p-4 flex flex-row items-center cursor-pointer gap-4", onClick OpenGvsNVideo ]
+                        [ div [ class "w-[33px] h-[33px] rounded-full border border-[#03045E] flex items-center justify-center flex-shrink-0" ]
+                            [ div [ class "w-0 h-0 border-t-[8px] border-t-transparent border-l-[12px] border-l-[#03045E] border-b-[8px] border-b-transparent ml-1" ] []
+                            ]
+                        , div [ class "flex flex-col items-start" ]
+                            [ p [ class "text-[16px] font-bold text-[#03045E] -tracking-[0.03em] leading-[1.21] text-left" ] [ text "Learn About Plan G vs N" ]
+                            , p [ class "text-[12px] text-[#667085] -tracking-[0.03em] leading-[1.21]" ] [ text "Watch the Video" ]
+                            ]
+                        ]
                     ]
-                ]
+
+              else
+                text ""
+
+            -- Plan N Section (separate container for mobile)
+            , if hasPlanN then
+                div [ class "bg-white rounded-[10px] border border-[#DCE2E5] shadow-[0_1px_2px_rgba(16,24,40,0.05)]" ]
+                    [ -- Plan N Section Header (Mobile only)
+                      div [ class "block sm:hidden px-4 py-4 border-b border-[#DCE2E5] bg-[#F9F5FF] rounded-t-[10px]" ]
+                        [ h2 [ class "text-2xl font-extrabold -tracking-[0.04em] text-[#101828] leading-[1.2]" ] [ text "Plan N Options" ]
+                        ]
+
+                    -- Plan N Content
+                    , div [ class "px-3 sm:px-4 py-6 bg-white" ]
+                        [ h3 [ class "text-xl font-extrabold -tracking-[0.02em] mb-6 text-[#101828]" ] [ text planNHeader ]
+                        , div [ class "flex flex-wrap gap-8 justify-center sm:justify-start sm:pl-8" ]
+                            (List.map (viewPlanCard model "N") (getTopPlans model model.plans.planN 3))
+                        ]
+                    ]
+
+              else
+                text ""
+
+            -- Medicare Advantage Off Ramp Section
+            -- This will also be hidden if no plans were found initially by the top-level `if not hasAnyPlans`
+            , viewMedicareAdvantageOffRamp model
             ]
-
-        -- Plan N Section (separate container for mobile)
-        , div [ class "bg-white rounded-[10px] border border-[#DCE2E5] shadow-[0_1px_2px_rgba(16,24,40,0.05)]" ]
-            [ -- Plan N Section Header (Mobile only)
-              div [ class "block sm:hidden px-4 py-4 border-b border-[#DCE2E5] bg-[#F9F5FF] rounded-t-[10px]" ]
-                [ h2 [ class "text-2xl font-extrabold -tracking-[0.04em] text-[#101828] leading-[1.2]" ] [ text "Plan N Options" ]
-                ]
-
-            -- Plan N Content
-            , div [ class "px-3 sm:px-4 py-6 bg-white" ]
-                [ h3 [ class "text-xl font-extrabold -tracking-[0.02em] mb-6 text-[#101828]" ] [ text "Plan N Monthly Premiums" ]
-                , div [ class "flex flex-wrap gap-8 justify-center sm:justify-start sm:pl-8" ]
-                    (List.map (viewPlanCard model "N") (getTopPlans model model.plans.planN 3))
-                ]
-            ]
-
-        -- Medicare Advantage Off Ramp Section
-        , viewMedicareAdvantageOffRamp model
-        ]
 
 
 
@@ -8369,7 +8421,7 @@ viewGvsNModal model =
                     [ div [ class "w-full h-full" ]
                         [ iframe
                             -- [ src "https://player.vimeo.com/video/1075091871?autoplay=0&title=0&byline=0&portrait=0&responsive=1" -- education example
-                            [ src "https://player.vimeo.com/video/1018402330?autoplay=0&title=0&byline=0&portrait=0&responsive=1"
+                            [ src "https://player.vimeo.com/video/1089216242?autoplay=0&title=0&byline=0&portrait=0&responsive=1"
                             , class "w-full h-full"
                             , attribute "frameborder" "0"
                             , attribute "allow" "autoplay; fullscreen; picture-in-picture"
@@ -8401,7 +8453,7 @@ viewQualificationModal model =
                 , div [ class "w-full max-w-3xl mx-auto" ]
                     [ div [ class "relative", style "padding-top" "100%" ]
                         [ iframe
-                            [ src "https://player.vimeo.com/video/1018421414?autoplay=0&title=0&byline=0&portrait=0&responsive=1"
+                            [ src "https://player.vimeo.com/video/1089216242?autoplay=0&title=0&byline=0&portrait=0&responsive=1"
                             , class "w-full h-full absolute top-0 left-0"
                             , attribute "frameborder" "0"
                             , attribute "allow" "autoplay; fullscreen; picture-in-picture"
@@ -8462,7 +8514,7 @@ viewRatesModal model =
                 , div [ class "w-full max-w-3xl mx-auto" ]
                     [ div [ class "relative", style "padding-top" "100%" ]
                         [ iframe
-                            [ src "https://player.vimeo.com/video/1018421439?autoplay=0&title=0&byline=0&portrait=0&responsive=1"
+                            [ src "https://player.vimeo.com/video/1089216242?autoplay=0&title=0&byline=0&portrait=0&responsive=1"
                             , class "w-full h-full absolute top-0 left-0"
                             , attribute "frameborder" "0"
                             , attribute "allow" "autoplay; fullscreen; picture-in-picture"
@@ -8585,6 +8637,7 @@ contactResponseDecoder =
         |> Pipeline.required "orgSignature" D.bool
         |> Pipeline.optional "orgSignatureText" (D.nullable D.string) Nothing
         |> Pipeline.required "carrierContracts" (D.list carrierDecoder)
+        |> Pipeline.required "forceOrgSenderDetails" D.bool
 
 
 contactDecoder : Decoder Contact
@@ -8607,11 +8660,14 @@ contactDecoder =
 
 agentDecoder : Decoder Agent
 agentDecoder =
-    D.map4 Agent
-        (D.field "firstName" D.string)
-        (D.field "lastName" D.string)
-        (D.field "email" D.string)
-        (D.field "phone" D.string)
+    D.succeed Agent
+        |> Pipeline.required "firstName" D.string
+        |> Pipeline.required "lastName" D.string
+        |> Pipeline.required "email" D.string
+        |> Pipeline.required "phone" D.string
+        |> Pipeline.optional "signature" D.string ""
+        |> Pipeline.optional "useOrgSenderDetails" D.bool True
+        |> Pipeline.optional "bookingLink" D.string ""
 
 
 locationUpdateResponseDecoder : Decoder LocationUpdateResponse
@@ -8691,6 +8747,91 @@ viewMobileTooltip model =
         Nothing ->
             -- No active tooltip
             text ""
+
+
+
+-- Helper function to format state-specific plan names for display
+
+
+formatOriginalPlanName : String -> String
+formatOriginalPlanName originalName =
+    case String.toUpper originalName of
+        "MN_BASIC" ->
+            "Minnesota Basic Plan"
+
+        "MN_EXTB" ->
+            "Minnesota Extended Basic Plan"
+
+        "WI_BASE" ->
+            "Wisconsin Basic Plan"
+
+        "WI_HDED" ->
+            "Wisconsin High Deductible Plan"
+
+        "MA_CORE" ->
+            "Massachusetts Core Plan"
+
+        "MA_SUPP1" ->
+            "Massachusetts Supplement 1 Plan"
+
+        _ ->
+            originalName
+
+
+
+-- Helper to determine which phone number to display based on org/agent settings
+
+
+getPhoneNumberForDisplay : Model -> String
+getPhoneNumberForDisplay model =
+    let
+        effectiveUseOrg =
+            if model.forceOrgSenderDetails then
+                True
+
+            else
+                case model.agent of
+                    Just agent ->
+                        agent.useOrgSenderDetails
+
+                    Nothing ->
+                        model.useOrg
+    in
+    if effectiveUseOrg then
+        Maybe.withDefault "" model.orgPhone
+
+    else
+        case model.agent of
+            Just agent ->
+                agent.phone
+
+            Nothing ->
+                ""
+
+
+
+-- Helper to get the schedule/contact link
+
+
+getScheduleLink : Model -> String
+getScheduleLink model =
+    case model.quoteId of
+        Just id ->
+            let
+                orgQ =
+                    String.split "-" id
+                        |> List.head
+                        |> Maybe.map
+                            (\org ->
+                                "?org=" ++ org ++ "&"
+                            )
+                        |> Maybe.withDefault "?"
+            in
+            "/schedule" ++ orgQ ++ "id=" ++ id ++ "&status=decline"
+
+        -- Using "decline" status as per MA off-ramp button
+        Nothing ->
+            "/contact"
 
 ================
 File: src/Contact.elm
@@ -11085,6 +11226,7 @@ type alias Model =
     , availableFilters : AvailableFilters
     , carriers : List String
     , agents : List User
+    , defaultAgentId : Maybe Int -- Added field for default agent ID
     , key : Nav.Key
     , pagination : PaginationState
     , quotesSent : Int
@@ -11289,6 +11431,7 @@ init key maybeUser =
             , availableFilters = emptyAvailableFilters
             , carriers = []
             , agents = []
+            , defaultAgentId = Nothing -- Initialize defaultAgentId
             , key = key
             , pagination = { currentPage = 1, totalPages = 1, totalItems = 0, itemsPerPage = 100 }
             , quotesSent = 0
@@ -11436,7 +11579,7 @@ type Msg
     | GotCurrentUser (Result Http.Error User)
     | NavigateToContact Int
     | GotCarriers (Result Http.Error (List String))
-    | GotAgents (Result Http.Error (List User))
+    | GotAgents (Result Http.Error AgentsResponseWithDefault)
     | SelectUploadAgent Int
     | ShowReassignAgentModal
     | SelectReassignAgent Int
@@ -12295,8 +12438,22 @@ update msg model =
         GotCarriers (Err _) ->
             ( model, Cmd.none )
 
-        GotAgents (Ok agents) ->
-            ( { model | agents = agents }, Cmd.none )
+        GotAgents (Ok response) ->
+            let
+                parser : String -> String
+                parser =
+                    Url.percentDecode >> Maybe.withDefault ""
+
+                parseAgent : User -> User
+                parseAgent agent =
+                    { agent | firstName = parser agent.firstName, lastName = parser agent.lastName, email = parser agent.email }
+            in
+            ( { model
+                | agents = response.agents |> List.map parseAgent
+                , defaultAgentId = response.defaultAgentId |> Maybe.andThen String.toInt
+              }
+            , Cmd.none
+            )
 
         GotAgents (Err error) ->
             ( model, Cmd.none )
@@ -12985,10 +13142,10 @@ view model =
                             , col [ class "w-48" ] [] -- Email
                             , col [ class "w-28" ] [] -- Phone Number
                             , col [ class "w-16" ] [] -- State
-                            , col [ class "w-32" ] [] -- Assigned Agent
+                            , col [ class "w-36" ] [] -- Assigned Agent (increased from w-32)
                             , col [ class "w-20" ] [] -- Current Carrier (reduced from w-24)
-                            , col [ class "w-24" ] [] -- Effective Date
-                            , col [ class "w-20" ] [] -- Actions
+                            , col [ class "w-32" ] [] -- Effective Date (increased from w-28)
+                            , col [ class "w-16" ] [] -- Actions (reduced from w-20)
                             ]
                         , thead [ class "bg-gray-50" ]
                             [ tr []
@@ -13008,15 +13165,13 @@ view model =
                                         []
                                     ]
                                 , tableHeader "Name"
-
-                                --, tableHeader "Status"
                                 , tableHeader "Email"
                                 , tableHeader "Phone"
                                 , tableHeader "State"
                                 , tableHeader "Agent"
                                 , tableHeader "Carrier"
                                 , tableHeader "Eff. Date"
-                                , tableHeader "Actions"
+                                , tableHeader "Edit"
                                 ]
                             ]
                         , tbody [ class "bg-white" ]
@@ -13153,36 +13308,40 @@ viewTableRow model contact =
                     owner.firstName ++ " " ++ owner.lastName
 
                 Nothing ->
+                    -- No contactOwner directly on the contact
                     case contact.agentId of
-                        Just agentId ->
-                            -- Try to find the agent in our agents list
-                            let
-                                matchingAgent =
-                                    List.filter (\agent -> agent.id == agentId) model.agents
-                                        |> List.head
-                            in
-                            case matchingAgent of
-                                Just agent ->
-                                    agent.firstName ++ " " ++ agent.lastName
+                        Just agentIdFromContact ->
+                            -- Try to find the agent by ID from the contact
+                            model.agents
+                                |> List.filter (\agent -> agent.id == agentIdFromContact)
+                                |> List.head
+                                |> Maybe.map (\agent -> agent.firstName ++ " " ++ agent.lastName)
+                                |> Maybe.withDefault ""
 
-                                Nothing ->
-                                    -- Return empty string instead of showing agent ID
-                                    ""
-
+                        -- Fallback if agent ID on contact doesn't match any known agent
                         Nothing ->
-                            -- Find the default agent
-                            let
-                                defaultAgent =
-                                    List.filter (\agent -> agent.isDefault) model.agents
+                            -- No agentId on the contact, try to use the defaultAgentId from the model
+                            case model.defaultAgentId of
+                                Just defAgentId ->
+                                    model.agents
+                                        |> List.filter (\agent -> agent.id == defAgentId)
                                         |> List.head
-                            in
-                            case defaultAgent of
-                                Just agent ->
-                                    agent.firstName ++ " " ++ agent.lastName
+                                        |> Maybe.map (\agent -> agent.firstName ++ " " ++ agent.lastName)
+                                        |> Maybe.withDefault "Default"
 
-                                --++ " (Default)"
+                                -- Fallback if defaultAgentId doesn't match
                                 Nothing ->
-                                    "Default"
+                                    -- No defaultAgentId in model, fall back to single agent logic or "Default"
+                                    if List.length model.agents == 1 then
+                                        case List.head model.agents of
+                                            Just singleAgent ->
+                                                singleAgent.firstName ++ " " ++ singleAgent.lastName
+
+                                            Nothing ->
+                                                "Default"
+
+                                    else
+                                        "Default"
 
         currentCarrier =
             Maybe.withDefault "" contact.currentCarrier
@@ -13212,13 +13371,8 @@ viewTableRow model contact =
                     ]
                 ]
             ]
-
-        {--
-        , td [ class compactCellClass ]
-            [ viewStatus contact.status ]
-        --}
-        , td [ class cellClass ]
-            [ text contact.email ]
+        , td [ class cellClass, Html.Attributes.title contact.email ]
+            [ text (truncateEmail contact.email) ]
         , td [ class phoneCellClass ]
             [ text (formatPhoneNumber (Maybe.withDefault "" contact.phoneNumber)) ]
         , td [ class cellClass ]
@@ -13269,6 +13423,15 @@ viewStatus status =
 
 
 -- HELPERS
+
+
+truncateEmail : String -> String
+truncateEmail email =
+    if String.length email > 30 then
+        String.left 30 email ++ "..."
+
+    else
+        email
 
 
 updateContact : Contact -> List Contact -> List Contact
@@ -15255,14 +15418,17 @@ fetchAgents =
 -- Add a decoder for the new response format
 
 
-agentsResponseDecoder : Decoder (List User)
+type alias AgentsResponseWithDefault =
+    { agents : List User
+    , defaultAgentId : Maybe String
+    }
+
+
+agentsResponseDecoder : Decoder AgentsResponseWithDefault
 agentsResponseDecoder =
-    Decode.oneOf
-        [ -- First try the new format (response with agents and defaultAgentId)
-          Decode.field "agents" (Decode.list agentDecoder)
-        , -- Fall back to the old format (just a list of agents)
-          Decode.list agentDecoder
-        ]
+    Decode.succeed AgentsResponseWithDefault
+        |> Pipeline.required "agents" (Decode.list agentDecoder)
+        |> Pipeline.optional "defaultAgentId" (Decode.nullable Decode.string) Nothing
 
 
 checkEmail : String -> Cmd Msg
@@ -15911,10 +16077,8 @@ viewContactInfo =
             [ h2 [ class "text-2xl font-semibold text-gray-900 mb-6" ]
                 [ text "Get in Touch" ]
             , div [ class "space-y-6" ]
-                [ viewContactItem (MyIcon.phone 20 "#6B7280") "Phone" "1-800-MEDICARE"
+                [ viewContactItem (MyIcon.phone 20 "#6B7280") "Phone" "816-799-6644"
                 , viewContactItem (MyIcon.mail 20 "#6B7280") "Email" "information@medicaremax.ai"
-                , viewContactItem (MyIcon.mapPin 20 "#6B7280") "Address" "123 Medicare Lane, Suite 100\nHealthcare City, HC 12345"
-                , viewContactItem (MyIcon.clock 20 "#6B7280") "Business Hours" "Monday - Friday: 8AM - 8PM\nSaturday: 9AM - 5PM\nSunday: Closed"
                 ]
             ]
         , div [ class "bg-blue-50 rounded-lg p-6" ]
@@ -15930,12 +16094,12 @@ viewContactInfo =
                     [ href "/pricing"
                     , class "block text-blue-600 hover:text-blue-800 underline"
                     ]
-                    [ text "View Pricing Plans" ]
+                    [ text "View Pricing" ]
                 , a
-                    [ href "/signup"
+                    [ href "/dashboard?payment_success=true"
                     , class "block text-blue-600 hover:text-blue-800 underline"
                     ]
-                    [ text "Start Free Trial" ]
+                    [ text "Watch Platform Walkthrough" ]
                 ]
             ]
         ]
@@ -16805,6 +16969,7 @@ File: src/Dashboard.elm
 module Dashboard exposing (Model, Msg(..), init, subscriptions, update, view)
 
 import Browser exposing (Document)
+import Browser.Navigation as Nav
 import Components.LimitBanner as LimitBanner exposing (LimitWarning(..))
 import Html exposing (..)
 import Html.Attributes exposing (..)
@@ -16815,7 +16980,6 @@ import Json.Decode.Pipeline as Pipeline
 import Json.Encode as Encode
 import String
 import Time
-import Walkthrough
 
 
 
@@ -16825,9 +16989,10 @@ import Walkthrough
 type alias Model =
     { limitBanner : LimitBanner.Model
     , showTutorialModal : Bool
-    , walkthroughModal : Walkthrough.Model
-    , showWalkthroughModal : Bool
+    , key : Nav.Key
 
+    -- walkthroughModal : Walkthrough.Model -- Removed
+    -- , showWalkthroughModal : Bool -- Removed
     -- Stats (consolidated from both Performance and Activity)
     , quotesSent : Int
     , manualQuotesSent : Int
@@ -16944,7 +17109,7 @@ type Msg
     | LimitBannerMsg LimitBanner.Msg
     | CloseTutorialModal
     | OpenTutorialModal
-    | WalkthroughMsg Walkthrough.Msg
+      -- | WalkthroughMsg Walkthrough.Msg -- Removed
     | UserDataReceived Bool -- hasCompletedWalkthrough flag
     | GotDashboardStats (Result Http.Error DashboardStatsResponse)
     | SelectTimeFilter TimeFilter
@@ -17198,19 +17363,21 @@ timeFilterToApiParam filter =
 -- INIT
 
 
-init : Flags -> ( Model, Cmd Msg )
-init flags =
+init : Nav.Key -> Flags -> ( Model, Cmd Msg )
+init key flags =
     let
         ( limitBannerModel, limitBannerCmd ) =
             LimitBanner.init
 
-        ( walkthroughModel, walkthroughCmd ) =
-            Walkthrough.init False
+        -- ( walkthroughModel, walkthroughCmd ) = -- Removed
+        -- Walkthrough.init False -- Removed
     in
     ( { limitBanner = limitBannerModel
       , showTutorialModal = Maybe.withDefault False flags.isPostPayment
-      , walkthroughModal = walkthroughModel
-      , showWalkthroughModal = False
+      , key = key
+
+      -- , walkthroughModal = walkthroughModel -- Removed
+      -- , showWalkthroughModal = False -- Removed
       , quotesSent = 0
       , manualQuotesSent = 0
       , quotesViewed = 0
@@ -17334,7 +17501,7 @@ update msg model =
 
         CloseTutorialModal ->
             ( { model | showTutorialModal = False }
-            , Cmd.none
+            , Nav.pushUrl model.key "/dashboard"
             )
 
         OpenTutorialModal ->
@@ -17342,39 +17509,18 @@ update msg model =
             , Cmd.none
             )
 
-        WalkthroughMsg walkthroughMsg ->
-            let
-                ( walkthroughModel, walkthroughCmd ) =
-                    Walkthrough.update walkthroughMsg model.walkthroughModal
-            in
-            case walkthroughMsg of
-                Walkthrough.CloseModalClicked ->
-                    ( { model | walkthroughModal = walkthroughModel, showWalkthroughModal = False }
-                    , Cmd.map WalkthroughMsg walkthroughCmd
-                    )
-
-                Walkthrough.CompleteWalkthroughResponse (Ok _) ->
-                    ( { model | walkthroughModal = walkthroughModel, showWalkthroughModal = False }
-                    , Cmd.map WalkthroughMsg walkthroughCmd
-                    )
-
-                _ ->
-                    ( { model | walkthroughModal = walkthroughModel }
-                    , Cmd.map WalkthroughMsg walkthroughCmd
-                    )
-
         UserDataReceived hasCompletedWalkthrough ->
-            if not hasCompletedWalkthrough then
-                let
-                    ( walkthroughModel, _ ) =
-                        Walkthrough.init True
-                in
-                ( { model | showWalkthroughModal = True, walkthroughModal = walkthroughModel }
-                , Cmd.none
-                )
-
-            else
-                ( model, Cmd.none )
+            -- if not hasCompletedWalkthrough then -- Removed walkthrough triggering logic
+            --     let
+            --         ( walkthroughModel, _ ) =
+            --             Walkthrough.init True
+            --     in
+            --     ( { model | showWalkthroughModal = True, walkthroughModal = walkthroughModel }
+            --     , Cmd.none
+            --     )
+            -- else
+            --     ( model, Cmd.none )
+            ( model, Cmd.none )
 
         GotDashboardStats result ->
             case result of
@@ -17615,12 +17761,6 @@ view model =
                     [ viewUpcomingEmails model ]
                 ]
             ]
-        , -- Walkthrough modal
-          if model.showWalkthroughModal then
-            Html.map WalkthroughMsg (Walkthrough.view model.walkthroughModal)
-
-          else
-            text ""
         ]
     }
 
@@ -18077,7 +18217,7 @@ viewRenewalItem renewal =
 
 viewTutorialModal : Html Msg
 viewTutorialModal =
-    div [ class "fixed inset-0 z-50 bg-gray-600 bg-opacity-50 flex items-center justify-center p-4" ]
+    div [ class "fixed inset-0 z-50 bg-slate-100 bg-opacity-20 backdrop-blur-sm flex items-center justify-center p-4" ]
         [ div [ class "bg-white p-4 sm:p-6 rounded-lg shadow-lg max-w-2xl w-full" ]
             [ div [ class "flex justify-between items-center mb-4" ]
                 [ h2 [ class "text-lg sm:text-xl font-semibold text-[#03045E]" ] [ text "Welcome to MedicareMax!" ]
@@ -21511,7 +21651,10 @@ init key isLoggedIn url =
       , isFromOnboarding = queryParams.onboarding
       , prefilledEmail = queryParams.email
       }
-    , Cmd.none
+    , Http.get
+        { url = "/api/auth/session"
+        , expect = Http.expectJson GotSessionCheck sessionCheckDecoder
+        }
     )
 
 
@@ -21930,7 +22073,6 @@ import Logout
 import MyIcon
 import Onboarding
 import Pricing
-import Pricing2
 import Process
 import Profile
 import Quote
@@ -22135,7 +22277,6 @@ type Page
     | WaitlistPage Waitlist.Model
     | LandingPage Landing.Model
     | PricingPage Pricing.Model
-    | Pricing2Page Pricing2.Model
     | StripePage Stripe.Model
 
 
@@ -22183,7 +22324,6 @@ type Msg
     | WaitlistMsg Waitlist.Msg
     | LandingMsg Landing.Msg
     | PricingMsg Pricing.Msg
-    | Pricing2Msg Pricing2.Msg
     | StripeMsg Stripe.Msg
     | TogglePaymentStatus
     | SetSessionResponse (Result Http.Error SetSessionResponseAlias)
@@ -22432,7 +22572,6 @@ type PublicPage
     | WaitlistRoute
     | LandingRoute { quoteId : Maybe String }
     | PricingRoute
-    | Pricing2Route
 
 
 type ProtectedPage
@@ -22509,7 +22648,6 @@ routeParser =
         , map (PublicRoute SignupRoute) (s "signup")
         , map (PublicRoute OnboardingRoute) (s "onboarding")
         , map (PublicRoute PricingRoute) (s "pricing")
-        , map (PublicRoute Pricing2Route) (s "pricing2")
         , map (PublicRoute ScheduleMainRoute) (s "schedule-main")
         , map (ProtectedRoute ContactUsRoute) (s "contact-us")
         , map (\orgSlug token -> PublicRoute (VerifyRoute (VerifyParams orgSlug token)))
@@ -22520,8 +22658,6 @@ routeParser =
             , map (PublicRoute << CompareRoute)
                 (s "compare" <?> compareParamsParser)
             ]
-        , map (\quoteId -> PublicRoute (CompareRoute { quoteId = Just quoteId, orgId = Nothing, tid = Nothing }))
-            (s "compare" </> string)
         , map (PublicRoute << QuoteRoute)
             (s "quote"
                 <?> Query.map4
@@ -23254,20 +23390,6 @@ update msg model =
                 _ ->
                     ( model, Cmd.none )
 
-        Pricing2Msg subMsg ->
-            case model.page of
-                Pricing2Page pricing2Model ->
-                    let
-                        ( newPricing2Model, newCmd ) =
-                            Pricing2.update subMsg pricing2Model
-                    in
-                    ( { model | page = Pricing2Page newPricing2Model }
-                    , Cmd.map Pricing2Msg newCmd
-                    )
-
-                _ ->
-                    ( model, Cmd.none )
-
         StripeMsg subMsg ->
             case model.page of
                 StripePage stripeModel ->
@@ -23546,15 +23668,6 @@ view model =
                     , body = [ viewWithNav model (Html.map PricingMsg pricingView) ]
                     }
 
-                Pricing2Page pricing2Model ->
-                    let
-                        pricing2View =
-                            Pricing2.view pricing2Model
-                    in
-                    { title = "Pricing"
-                    , body = [ viewWithNav model (Html.map Pricing2Msg pricing2View) ]
-                    }
-
                 StripePage stripeModel ->
                     let
                         stripeView =
@@ -23739,9 +23852,6 @@ viewNavHeader model =
                 PricingPage _ ->
                     True
 
-                Pricing2Page _ ->
-                    True
-
                 WaitlistPage _ ->
                     True
 
@@ -23898,7 +24008,7 @@ viewNavHeader model =
                                             [ class "block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-[#DCE2E5]"
                                             , onClick (InternalLinkClicked "/profile")
                                             ]
-                                            [ text "Profile" ]
+                                            [ text "Your Profile" ]
 
                                       else
                                         text ""
@@ -23916,7 +24026,7 @@ viewNavHeader model =
                                             [ class "block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-[#DCE2E5]"
                                             , onClick (InternalLinkClicked "/add-agents")
                                             ]
-                                            [ text "Agents" ]
+                                            [ text "Manage Agents" ]
 
                                       else
                                         text ""
@@ -24086,9 +24196,6 @@ subscriptions model =
 
                 PricingPage pricingModel ->
                     Sub.none
-
-                Pricing2Page pricing2Model ->
-                    Sub.map Pricing2Msg (Pricing2.subscriptions pricing2Model)
 
                 StripePage stripeModel ->
                     Sub.none
@@ -24689,7 +24796,7 @@ updatePage url ( model, cmd ) =
                                                 }
 
                                             ( dashboardModel, dashboardCmd ) =
-                                                Dashboard.init dashboardFlags
+                                                Dashboard.init modelWithUpdatedSetup.key dashboardFlags
                                         in
                                         ( { modelWithUpdatedSetup | page = DashboardPage dashboardModel }
                                         , Cmd.batch
@@ -24913,18 +25020,6 @@ updatePage url ( model, cmd ) =
                                         ( { modelWithUpdatedSetup | page = PricingPage pricingModel }
                                         , Cmd.batch
                                             [ Cmd.map PricingMsg pricingCmd
-                                            , authCmd
-                                            ]
-                                        )
-
-                                    PublicRoute Pricing2Route ->
-                                        let
-                                            ( pricing2Model, pricing2Cmd ) =
-                                                Pricing2.init
-                                        in
-                                        ( { modelWithUpdatedSetup | page = Pricing2Page pricing2Model }
-                                        , Cmd.batch
-                                            [ Cmd.map Pricing2Msg pricing2Cmd
                                             , authCmd
                                             ]
                                         )
@@ -25269,18 +25364,6 @@ updatePageForcePublic url ( model, cmd ) =
                     , Cmd.map SelfOnboardingMsg selfOnboardingCmd
                     )
 
-                ProtectedRoute _ ->
-                    updatePage url ( model, cmd )
-
-                AdminRoute _ ->
-                    updatePage url ( model, cmd )
-
-                SetupRoute _ ->
-                    updatePage url ( model, cmd )
-
-                NotFound ->
-                    ( { model | page = NotFoundPage }, cmd )
-
                 PublicRoute (LandingRoute params) ->
                     let
                         ( landingModel, landingCmd ) =
@@ -25299,15 +25382,9 @@ updatePageForcePublic url ( model, cmd ) =
                     , Cmd.map PricingMsg pricingCmd
                     )
 
-                PublicRoute Pricing2Route ->
-                    let
-                        ( pricing2Model, pricing2Cmd ) =
-                            Pricing2.init
-                    in
-                    ( { model | page = Pricing2Page pricing2Model }
-                    , Cmd.map Pricing2Msg pricing2Cmd
-                    )
-
+                -- For any other route type, fall through to the main updatePage or handle as NotFound.
+                _ ->
+                    updatePage url ( model, cmd )
 
         Nothing ->
             ( { model | page = NotFoundPage }
@@ -27143,6 +27220,7 @@ import Json.Decode as Decode exposing (Decoder)
 import Json.Decode.Pipeline as Pipeline
 import Json.Encode as Encode
 import MyIcon
+import Process
 import Task
 import Url exposing (Url)
 import Url.Builder exposing (absolute, int, string)
@@ -27195,6 +27273,29 @@ type alias ErrorData =
     }
 
 
+
+-- Moved these type definitions before Model for correct Elm compilation order
+
+
+type
+    EmailStatus
+    -- Copied from Signup.elm
+    = NotChecked
+    | Checking
+    | Available
+    | AlreadyRegistered String
+    | InvalidFormat
+
+
+type alias
+    EmailCheckResponse
+    -- Copied from Signup.elm
+    =
+    { available : Bool
+    , message : String
+    }
+
+
 type alias Model =
     { user : User
     , frame : Int
@@ -27220,6 +27321,10 @@ type alias Model =
     , paymentStatus : PaymentStatus
     , publishableKey : Maybe String
     , priceId : Maybe String
+    , agentEmailDebounceCounter : Int -- Added for new agent email check
+    , newAgentEmailStatus : EmailStatus -- Added for new agent email check
+    , savingAgents : Bool -- Added for saving agents state
+    , agentSaveError : Maybe String -- Added for agent save error messages
     }
 
 
@@ -27401,6 +27506,10 @@ init key url =
             , paymentStatus = Loading
             , publishableKey = Nothing
             , priceId = Nothing
+            , agentEmailDebounceCounter = 0
+            , newAgentEmailStatus = NotChecked
+            , savingAgents = False
+            , agentSaveError = Nothing
             }
 
         -- Check if this is a direct page load with frame > 1
@@ -27417,8 +27526,11 @@ init key url =
 
                 Nothing ->
                     Nav.pushUrl key "/signup"
+
+        ( baseModel, baseCmds ) =
+            ( { initialModel | loadingResumeData = maybeUser /= Nothing }, redirectCommand )
     in
-    ( { initialModel | loadingResumeData = maybeUser /= Nothing }, redirectCommand )
+    ( baseModel, baseCmds )
 
 
 
@@ -27465,6 +27577,8 @@ type Msg
     | CheckoutErrorFromPort ErrorData
     | ProcessCheckoutData CheckoutData
     | ResponseStripeProduct (Result Http.Error StripeProduct)
+    | DebounceNewAgentEmailCheck Int
+    | GotNewAgentEmailCheckResponse Int (Result Http.Error EmailCheckResponse)
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -27550,8 +27664,8 @@ update msg model =
                         )
 
                 3 ->
-                    ( { model | frame = model.frame + 1, paymentStatus = ReadyToComplete }
-                    , Cmd.none
+                    ( { model | savingAgents = True, agentSaveError = Nothing }
+                    , saveAgents model
                     )
 
                 _ ->
@@ -27592,22 +27706,62 @@ update msg model =
             ( { model | selectedCarriers = newSelectedCarriers }, Cmd.none )
 
         ShowAgentForm ->
-            ( { model | showAgentForm = True }, Cmd.none )
+            ( { model | showAgentForm = True, agentSaveError = Nothing }, Cmd.none )
 
         HideAgentForm ->
-            ( { model | showAgentForm = False }, Cmd.none )
+            ( { model
+                | showAgentForm = False
+                , newAgentFirstName = ""
+                , newAgentLastName = ""
+                , newAgentEmail = ""
+                , newAgentPhone = ""
+                , newAgentIsAdmin = True
+                , newAgentEmailStatus = NotChecked
+                , agentEmailDebounceCounter = 0
+                , agentSaveError = Nothing
+              }
+            , Cmd.none
+            )
 
         AgentFirstNameChanged firstName ->
-            ( { model | newAgentFirstName = firstName }, Cmd.none )
+            ( { model | newAgentFirstName = firstName, agentSaveError = Nothing }, Cmd.none )
 
         AgentLastNameChanged lastName ->
-            ( { model | newAgentLastName = lastName }, Cmd.none )
+            ( { model | newAgentLastName = lastName, agentSaveError = Nothing }, Cmd.none )
 
         AgentEmailChanged email ->
-            ( { model | newAgentEmail = email }, Cmd.none )
+            let
+                newCounter =
+                    model.agentEmailDebounceCounter + 1
+
+                newEmailStatus =
+                    if String.isEmpty email then
+                        NotChecked
+
+                    else if not (isValidEmailFormat email) then
+                        InvalidFormat
+
+                    else
+                        Checking
+
+                updatedModel =
+                    { model
+                        | newAgentEmail = email
+                        , newAgentEmailStatus = newEmailStatus
+                        , agentEmailDebounceCounter = newCounter
+                        , agentSaveError = Nothing
+                    }
+            in
+            ( updatedModel
+            , if newEmailStatus == Checking then
+                debounceNewAgentEmailCheck newCounter
+
+              else
+                Cmd.none
+            )
 
         AgentPhoneChanged phone ->
-            ( { model | newAgentPhone = phone }, Cmd.none )
+            ( { model | newAgentPhone = formatPhoneNumber phone, agentSaveError = Nothing }, Cmd.none )
 
         AgentIsAdminToggled isAdmin ->
             ( { model | newAgentIsAdmin = True }, Cmd.none )
@@ -27626,6 +27780,8 @@ update msg model =
                     not (String.isEmpty (String.trim model.newAgentFirstName))
                         && not (String.isEmpty (String.trim model.newAgentLastName))
                         && not (String.isEmpty (String.trim model.newAgentEmail))
+                        && model.newAgentEmailStatus
+                        == Available
             in
             if isValid then
                 ( { model
@@ -27635,7 +27791,10 @@ update msg model =
                     , newAgentLastName = ""
                     , newAgentEmail = ""
                     , newAgentPhone = ""
-                    , newAgentIsAdmin = True -- Keep the field value as True for consistency
+                    , newAgentIsAdmin = True
+                    , newAgentEmailStatus = NotChecked
+                    , agentEmailDebounceCounter = 0
+                    , agentSaveError = Nothing
                   }
                 , Cmd.none
                 )
@@ -27664,7 +27823,7 @@ update msg model =
             case result of
                 Ok response ->
                     if response.success then
-                        ( model, Cmd.none )
+                        ( model, Nav.pushUrl model.key (buildUrl model 3) )
 
                     else
                         -- Failed to save, redirect to signup
@@ -27674,10 +27833,34 @@ update msg model =
                     -- Error saving, redirect to signup
                     ( model, Nav.pushUrl model.key "/signup" )
 
-        AgentsSaved _ ->
-            ( model
-            , completeOnboardingLogin model.user.email
-            )
+        AgentsSaved result ->
+            case result of
+                Ok response ->
+                    if response.success then
+                        let
+                            modelAfterSave =
+                                { model
+                                    | frame = 4
+                                    , savingAgents = False
+                                    , agentSaveError = Nothing
+                                    , paymentStatus = ReadyToComplete
+                                }
+                        in
+                        ( modelAfterSave
+                        , Cmd.none
+                        )
+
+                    else
+                        -- Server indicated failure
+                        ( { model | savingAgents = False, agentSaveError = Just response.message }
+                        , Cmd.none
+                        )
+
+                Err httpError ->
+                    -- Network or other HTTP error
+                    ( { model | savingAgents = False, agentSaveError = Just (apiErrorToString (httpErrorToApiError httpError)) }
+                    , Cmd.none
+                    )
 
         GotResumeData result ->
             case result of
@@ -27779,8 +27962,9 @@ update msg model =
                 Ok status ->
                     ( { model | paymentStatus = Success status }, Cmd.none )
 
-                Err _ ->
-                    ( model, Cmd.none )
+                Err httpError ->
+                    -- Changed from _ to httpError to use it
+                    ( { model | paymentStatus = Error (httpErrorToApiError httpError) }, Cmd.none )
 
         PaymentProcessed result ->
             case result of
@@ -27841,6 +28025,36 @@ update msg model =
 
         ResponseStripeProduct (Err _) ->
             ( model, Cmd.none )
+
+        DebounceNewAgentEmailCheck counter ->
+            if counter == model.agentEmailDebounceCounter && model.newAgentEmailStatus == Checking then
+                ( model, checkNewAgentEmailAvailability counter model.newAgentEmail )
+
+            else
+                ( model, Cmd.none )
+
+        GotNewAgentEmailCheckResponse counter result ->
+            if counter /= model.agentEmailDebounceCounter then
+                -- Ignore outdated responses
+                ( model, Cmd.none )
+
+            else
+                case result of
+                    Ok response ->
+                        ( { model
+                            | newAgentEmailStatus =
+                                if response.available then
+                                    Available
+
+                                else
+                                    AlreadyRegistered response.message
+                          }
+                        , Cmd.none
+                        )
+
+                    Err _ ->
+                        -- Optionally handle the error, e.g., set to NotChecked or a specific error state
+                        ( { model | newAgentEmailStatus = NotChecked }, Cmd.none )
 
 
 
@@ -28044,11 +28258,27 @@ viewCompany model =
             --}
             ]
         , div [ class "mt-10 w-full max-w-md" ]
-            [ button
-                [ class "w-full bg-[#03045e] text-white py-3 px-4 rounded-md hover:bg-[#02034e] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 font-medium"
+            [ case model.agentSaveError of
+                Just err ->
+                    div [ class "mb-4 p-3 bg-red-50 border border-red-200 rounded-md text-sm text-red-700" ]
+                        [ text err ]
+
+                Nothing ->
+                    text ""
+            , button
+                [ classList
+                    [ ( "w-full bg-[#03045e] text-white py-3 px-4 rounded-md hover:bg-[#02034e] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 font-medium", True )
+                    , ( "opacity-50 cursor-not-allowed", model.savingAgents ) -- Disable if saving
+                    ]
                 , onClick ContinueClicked
+                , disabled model.savingAgents -- Disable if saving
                 ]
-                [ text "Continue" ]
+                [ if model.savingAgents then
+                    text "Saving..."
+
+                  else
+                    text "Continue"
+                ]
             ]
         ]
 
@@ -28224,11 +28454,27 @@ viewAddAgents model =
                     ]
             ]
         , div [ class "mt-10 w-full max-w-md" ]
-            [ button
-                [ class "w-full bg-[#03045e] text-white py-3 px-4 rounded-md hover:bg-[#02034e] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 font-medium"
+            [ case model.agentSaveError of
+                Just err ->
+                    div [ class "mb-4 p-3 bg-red-50 border border-red-200 rounded-md text-sm text-red-700" ]
+                        [ text err ]
+
+                Nothing ->
+                    text ""
+            , button
+                [ classList
+                    [ ( "w-full bg-[#03045e] text-white py-3 px-4 rounded-md hover:bg-[#02034e] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 font-medium", True )
+                    , ( "opacity-50 cursor-not-allowed", model.savingAgents ) -- Disable if saving
+                    ]
                 , onClick ContinueClicked
+                , disabled model.savingAgents -- Disable if saving
                 ]
-                [ text "Continue" ]
+                [ if model.savingAgents then
+                    text "Saving..."
+
+                  else
+                    text "Continue"
+                ]
             ]
         ]
 
@@ -28254,12 +28500,12 @@ viewAgentCard model agent =
             -- Changed from items-center to items-start
             [ div [ class "w-16 h-16 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold text-xl" ]
                 -- Increased size and font
-                [ text (String.left 1 agent.firstName ++ String.left 1 agent.lastName) ]
+                [ text (String.left 1 (Maybe.withDefault "" (Url.percentDecode agent.firstName)) ++ String.left 1 (Maybe.withDefault "" (Url.percentDecode agent.lastName))) ]
             , div [ class "ml-4 flex-grow" ]
                 -- Added flex-grow
                 [ div [ class "text-xl font-medium text-gray-900 mb-1" ]
                     -- Increased font size and added margin
-                    [ text (agent.firstName ++ " " ++ agent.lastName) ]
+                    [ text (Maybe.withDefault "" (Url.percentDecode agent.firstName) ++ " " ++ Maybe.withDefault "" (Url.percentDecode agent.lastName)) ]
                 , div [ class "flex flex-col space-y-1 text-sm text-gray-500" ]
                     -- Added spacing
                     [ div [ class "break-all" ] [ text displayEmail ]
@@ -28335,6 +28581,7 @@ viewAgentForm model =
                         , onInput AgentEmailChanged
                         ]
                         []
+                    , viewNewAgentEmailStatusMessage model.newAgentEmailStatus
                     ]
                 , div []
                     [ label [ class "block text-sm font-medium text-gray-700 mb-1" ]
@@ -28356,6 +28603,8 @@ viewAgentForm model =
                             String.isEmpty (String.trim model.newAgentFirstName)
                                 || String.isEmpty (String.trim model.newAgentLastName)
                                 || String.isEmpty (String.trim model.newAgentEmail)
+                                || model.newAgentEmailStatus
+                                /= Available
                          then
                             "w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-400 cursor-not-allowed"
 
@@ -28367,6 +28616,8 @@ viewAgentForm model =
                         (String.isEmpty (String.trim model.newAgentFirstName)
                             || String.isEmpty (String.trim model.newAgentLastName)
                             || String.isEmpty (String.trim model.newAgentEmail)
+                            || model.newAgentEmailStatus
+                            /= Available
                         )
                     ]
                     [ text "Add Agent" ]
@@ -28525,6 +28776,32 @@ apiErrorToString error =
 
 
 
+-- Helper function to convert Http.Error to ApiError
+
+
+httpErrorToApiError : Http.Error -> ApiError
+httpErrorToApiError httpError =
+    case httpError of
+        Http.BadUrl url ->
+            BadUrl url
+
+        Http.Timeout ->
+            Timeout
+
+        Http.NetworkError ->
+            NetworkError
+
+        Http.BadStatus statusCode ->
+            BadStatus statusCode ("HTTP Error " ++ String.fromInt statusCode)
+
+        -- Generic message based on status code
+        Http.BadBody bodyString ->
+            BadPayload bodyString
+
+
+
+-- This is the string explaining why the body was bad
+-- This is the string explaining why the body was bad
 -- SUBSCRIPTIONS
 
 
@@ -28996,6 +29273,55 @@ hijack : msg -> ( msg, Bool )
 hijack msg =
     ( msg, True )
 
+
+
+-- Helper functions for New Agent Email Validation (copied/adapted from Signup.elm)
+
+
+isValidEmailFormat : String -> Bool
+isValidEmailFormat email =
+    String.contains "@" email && String.contains "." email
+
+
+debounceNewAgentEmailCheck : Int -> Cmd Msg
+debounceNewAgentEmailCheck counter =
+    Process.sleep 500
+        |> Task.perform (\_ -> DebounceNewAgentEmailCheck counter)
+
+
+checkNewAgentEmailAvailability : Int -> String -> Cmd Msg
+checkNewAgentEmailAvailability counter email =
+    Http.get
+        { url = "/api/organizations/check-email/" ++ Url.percentEncode email
+        , expect = Http.expectJson (GotNewAgentEmailCheckResponse counter) emailCheckResponseDecoder
+        }
+
+
+emailCheckResponseDecoder : Decoder EmailCheckResponse
+emailCheckResponseDecoder =
+    Decode.map2 EmailCheckResponse
+        (Decode.field "available" Decode.bool)
+        (Decode.field "message" Decode.string)
+
+
+viewNewAgentEmailStatusMessage : EmailStatus -> Html Msg
+viewNewAgentEmailStatusMessage status =
+    case status of
+        NotChecked ->
+            text ""
+
+        Checking ->
+            p [ class "mt-1 text-sm text-blue-600" ] [ text "Checking email..." ]
+
+        Available ->
+            p [ class "mt-1 text-sm text-green-600" ] [ text "Email is available" ]
+
+        AlreadyRegistered message ->
+            p [ class "mt-1 text-sm text-red-600" ] [ text message ]
+
+        InvalidFormat ->
+            p [ class "mt-1 text-sm text-red-600" ] [ text "Please enter a valid email address." ]
+
 ================
 File: src/Ports.elm
 ================
@@ -29414,13 +29740,13 @@ type alias Pricing =
 
 basePricing =
     { contacts = 0
-    , price = 50
+    , price = 100
     }
 
 
 tier1Pricing =
-    { contacts = 250
-    , price = 35
+    { contacts = 1
+    , price = 0.25
     }
 
 
@@ -29640,24 +29966,24 @@ calculatePricing contacts =
         baseSubscription =
             basePricing.price
 
-        -- Calculate number of additional 250-contact tiers needed
-        additionalTiers =
-            if contacts <= tier1Pricing.contacts then
+        -- Calculate number of additional contacts beyond the first 250
+        additionalContacts =
+            if contacts <= 250 then
                 0
 
             else
-                ceiling (toFloat (contacts - tier1Pricing.contacts) / toFloat tier1Pricing.contacts)
+                contacts - 250
 
-        -- Calculate price for additional tiers
+        -- Calculate price for additional contacts
         additionalPrice =
-            toFloat additionalTiers * tier1Pricing.price
+            toFloat additionalContacts * tier1Pricing.price
 
         totalPrice =
             baseSubscription + additionalPrice
 
         -- Create list of tier prices for display
         tierPrices =
-            [ { contacts = contacts - tier1Pricing.contacts
+            [ { contacts = additionalContacts
               , price = additionalPrice
               }
             ]
@@ -29773,7 +30099,7 @@ view model =
                                     [ text "Includes 250 contacts" ]
                                 ]
                             , div [ class "flex items-baseline gap-2 mb-3" ]
-                                [ span [ class "text-2xl sm:text-3xl font-bold text-gray-900" ] [ text "$50" ]
+                                [ span [ class "text-2xl sm:text-3xl font-bold text-gray-900" ] [ text "$100" ]
                                 , span [ class "text-gray-600" ] [ text "/month" ]
                                 ]
                             , p [ class "text-gray-600 text-sm" ]
@@ -29788,11 +30114,11 @@ view model =
                                     [ text "Pay as you go" ]
                                 ]
                             , div [ class "flex items-baseline gap-2 mb-3" ]
-                                [ span [ class "text-2xl sm:text-3xl font-bold text-gray-900" ] [ text <| formatCurrency tier1Pricing.price ]
-                                , span [ class "text-gray-600" ] [ text "/250 contacts" ]
+                                [ span [ class "text-2xl sm:text-3xl font-bold text-gray-900" ] [ text "$0.25" ]
+                                , span [ class "text-gray-600" ] [ text "/contact/month" ]
                                 ]
                             , p [ class "text-gray-600 text-sm" ]
-                                [ text "Simple per-tier pricing above base tier." ]
+                                [ text "That's just $3 per contact per year." ]
                             ]
                         ]
                     ]
@@ -29868,21 +30194,8 @@ view model =
                                                                 ""
 
                                                              else
-                                                                let
-                                                                    numTiers =
-                                                                        ceiling (toFloat tier.contacts / toFloat tier1Pricing.contacts)
-                                                                in
-                                                                String.fromInt numTiers
-                                                                    ++ " bundle"
-                                                                    ++ (if numTiers > 1 then
-                                                                            "s"
-
-                                                                        else
-                                                                            ""
-                                                                       )
-                                                                    ++ " of 250 @ "
-                                                                    ++ formatCurrency tier1Pricing.price
-                                                                    ++ " each:"
+                                                                String.fromInt tier.contacts
+                                                                    ++ " contacts @ $0.25 each:"
                                                             )
                                                         ]
                                                     , span [ class "font-bold" ] [ text (formatCurrency tier.price) ]
@@ -30916,11 +31229,17 @@ import Svg exposing (path, svg)
 import Svg.Attributes as SvgAttr
 import Task
 import Time
-import Walkthrough
 
 
 
 -- MODEL
+
+
+type alias Settings =
+    { carrierContracts : List String
+    , stateLicenses : List String
+    , forceOrgSenderDetails : Bool
+    }
 
 
 type alias Model =
@@ -30929,9 +31248,10 @@ type alias Model =
     , isLoading : Bool
     , error : Maybe String
     , pendingSave : Bool
-    , agentProfileLinkCopied : Bool -- ADDED
-    , walkthroughModal : Walkthrough.Model
-    , showWalkthroughModal : Bool
+    , agentProfileLinkCopied : Bool
+    , showTutorialModal : Bool -- ADDED for tutorial modal
+    , orgSettings : Maybe Settings
+    , forceOrgSenderDetails : Bool
     }
 
 
@@ -30943,26 +31263,29 @@ type alias User =
     , phone : String
     , isAdmin : Bool
     , isAgent : Bool
-    , orgSlug : String -- ADDED
+    , orgSlug : String
+    , signature : String
+    , useOrgSenderDetails : Bool -- True = use org details, False = use agent details
+    , bookingLink : String
     }
 
 
 init : () -> ( Model, Cmd Msg )
 init _ =
-    let
-        ( walkthroughModel, _ ) =
-            Walkthrough.init False
-    in
     ( { currentUser = Nothing
       , originalUser = Nothing
       , isLoading = True
       , error = Nothing
       , pendingSave = False
-      , agentProfileLinkCopied = False -- ADDED
-      , walkthroughModal = walkthroughModel
-      , showWalkthroughModal = False
+      , agentProfileLinkCopied = False
+      , showTutorialModal = False -- ADDED: Initialize tutorial modal state
+      , orgSettings = Nothing
+      , forceOrgSenderDetails = False
       }
-    , fetchCurrentUser
+    , Cmd.batch
+        [ fetchCurrentUser
+        , fetchOrgSettings
+        ]
     )
 
 
@@ -30973,15 +31296,17 @@ init _ =
 type Msg
     = GotCurrentUser (Result Http.Error CurrentUserResponse)
     | UpdateField String String
+    | UpdateSenderPreference Bool
     | SaveProfile
     | ProfileSaved (Result Http.Error ())
     | NavigateTo String
-    | WatchTutorial
-    | CopyAgentProfileLink -- ADDED
-    | AgentProfileLinkCopied Bool -- ADDED
-    | ResetAgentProfileLinkCopiedStatus -- ADDED
-    | WalkthroughMsg Walkthrough.Msg
-    | OpenWalkthroughModal
+    | WatchTutorial -- This will now open the tutorial modal
+    | CopyAgentProfileLink
+    | AgentProfileLinkCopied Bool
+    | ResetAgentProfileLinkCopiedStatus
+    | OpenTutorialModal -- ADDED
+    | CloseTutorialModal -- ADDED
+    | GotOrgSettings (Result Http.Error Settings)
 
 
 type alias CurrentUserResponse =
@@ -30996,7 +31321,7 @@ update msg model =
         GotCurrentUser (Ok response) ->
             ( { model
                 | currentUser = response.user
-                , originalUser = response.user -- Store original user data
+                , originalUser = response.user
                 , isLoading = False
               }
             , Cmd.none
@@ -31025,10 +31350,26 @@ update msg model =
                                 "phone" ->
                                     { user | phone = String.filter Char.isDigit value }
 
+                                "signature" ->
+                                    { user | signature = value }
+
+                                "bookingLink" ->
+                                    { user | bookingLink = value }
+
                                 _ ->
                                     user
                     in
                     ( { model | currentUser = Just updatedUser }
+                    , Cmd.none
+                    )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        UpdateSenderPreference value ->
+            case model.currentUser of
+                Just user ->
+                    ( { model | currentUser = Just { user | useOrgSenderDetails = value } }
                     , Cmd.none
                     )
 
@@ -31048,7 +31389,7 @@ update msg model =
         ProfileSaved (Ok _) ->
             ( { model
                 | pendingSave = False
-                , originalUser = model.currentUser -- Update original user after successful save
+                , originalUser = model.currentUser
               }
             , Cmd.none
             )
@@ -31064,38 +31405,24 @@ update msg model =
         NavigateTo path ->
             ( model, Cmd.none )
 
+        -- Main.elm handles navigation
         WatchTutorial ->
-            ( model, Cmd.none )
-
-        OpenWalkthroughModal ->
-            let
-                ( walkthroughModel, _ ) =
-                    Walkthrough.init True
-            in
-            ( { model | showWalkthroughModal = True, walkthroughModal = walkthroughModel }
+            -- Changed to open tutorial modal
+            ( { model | showTutorialModal = True }
             , Cmd.none
             )
 
-        WalkthroughMsg walkthroughMsg ->
-            let
-                ( walkthroughModel, walkthroughCmd ) =
-                    Walkthrough.update walkthroughMsg model.walkthroughModal
-            in
-            case walkthroughMsg of
-                Walkthrough.CloseModalClicked ->
-                    ( { model | walkthroughModal = walkthroughModel, showWalkthroughModal = False }
-                    , Cmd.map WalkthroughMsg walkthroughCmd
-                    )
+        OpenTutorialModal ->
+            -- ADDED
+            ( { model | showTutorialModal = True }
+            , Cmd.none
+            )
 
-                Walkthrough.CompleteWalkthroughResponse (Ok _) ->
-                    ( { model | walkthroughModal = walkthroughModel, showWalkthroughModal = False }
-                    , Cmd.map WalkthroughMsg walkthroughCmd
-                    )
-
-                _ ->
-                    ( { model | walkthroughModal = walkthroughModel }
-                    , Cmd.map WalkthroughMsg walkthroughCmd
-                    )
+        CloseTutorialModal ->
+            -- ADDED
+            ( { model | showTutorialModal = False }
+            , Cmd.none
+            )
 
         CopyAgentProfileLink ->
             case model.currentUser of
@@ -31123,9 +31450,23 @@ update msg model =
         ResetAgentProfileLinkCopiedStatus ->
             ( { model | agentProfileLinkCopied = False }, Cmd.none )
 
+        GotOrgSettings (Ok settings) ->
+            ( { model
+                | orgSettings = Just settings
+                , forceOrgSenderDetails = settings.forceOrgSenderDetails
+              }
+            , Cmd.none
+            )
+
+        GotOrgSettings (Err _) ->
+            ( { model
+                | error = Just "Failed to load organization settings"
+              }
+            , Cmd.none
+            )
 
 
--- Main.elm will handle the actual navigation
+
 -- VIEW
 
 
@@ -31140,9 +31481,10 @@ view model =
                 , viewContent model
                 ]
             ]
-        , -- Walkthrough modal
-          if model.showWalkthroughModal then
-            Html.map WalkthroughMsg (Walkthrough.view model.walkthroughModal)
+
+        -- Tutorial modal
+        , if model.showTutorialModal then
+            viewTutorialModal
 
           else
             text ""
@@ -31163,7 +31505,7 @@ viewContent model =
                     [ div [ class "mb-4 flex justify-end space-x-4" ]
                         [ button
                             [ class "flex items-center text-sm text-blue-600 hover:text-blue-800"
-                            , onClick OpenWalkthroughModal
+                            , onClick OpenTutorialModal -- CHANGED from OpenWalkthroughModal
                             ]
                             [ div [ class "mr-2" ]
                                 [ svg
@@ -31213,7 +31555,8 @@ viewContent model =
                             text ""
                         ]
                     , viewBasicInfo model user
-                    , viewAgentProfileLinkSection model user -- ADDED
+                    , viewAgentProfileLinkSection model user
+                    , viewSenderSettingsSection model user
                     , viewSaveButton model
                     ]
 
@@ -31321,6 +31664,201 @@ viewAgentProfileLinkSection model user =
         ]
 
 
+viewSenderSettingsSection : Model -> User -> Html Msg
+viewSenderSettingsSection model user =
+    let
+        -- If org forces org sender details, always use org details
+        -- If org allows choice, use user's preference
+        effectiveUseOrgDetails =
+            if model.forceOrgSenderDetails then
+                True
+
+            else
+                user.useOrgSenderDetails
+
+        canChoose =
+            not model.forceOrgSenderDetails
+    in
+    div [ class "space-y-6" ]
+        [ div [ class "border-b border-gray-200 pb-4" ]
+            [ h2 [ class "text-lg font-medium text-gray-900" ]
+                [ text "Sender Settings" ]
+            ]
+        , div []
+            [ p [ class "text-sm text-gray-500 mb-4" ]
+                [ text "The sender settings below are controlled by your organization's configuration. "
+                , a [ class "text-blue-600 hover:text-blue-800 underline", href "/settings" ]
+                    [ text "Visit Organization Settings" ]
+                , text " to change how agent details are used across your organization. When Organization Details is selected, agents will use the organization's contact information. When Agent Details is selected, agents can use their own contact information set above."
+                ]
+            , div [ class "grid grid-cols-1 md:grid-cols-2 gap-4" ]
+                [ -- Organization Details Card
+                  div
+                    ([ class
+                        ("relative rounded-lg border-2 p-6 transition-all "
+                            ++ (if effectiveUseOrgDetails then
+                                    "border-blue-500 bg-blue-50"
+
+                                else
+                                    "border-gray-200 bg-white"
+                               )
+                        )
+                     , classList [ ( "cursor-pointer", canChoose ) ]
+                     ]
+                        ++ (if canChoose then
+                                [ onClick (UpdateSenderPreference True) ]
+
+                            else
+                                []
+                           )
+                    )
+                    [ div [ class "flex items-start" ]
+                        [ div [ class "flex items-center h-5" ]
+                            [ input
+                                [ type_ "radio"
+                                , name ("senderSettings-" ++ String.fromInt user.id)
+                                , checked effectiveUseOrgDetails
+                                , class "h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
+                                , disabled (not canChoose)
+                                ]
+                                []
+                            ]
+                        , div [ class "ml-3" ]
+                            [ label [ class "font-medium text-gray-900" ] [ text "Organization Details" ]
+                            , p [ class "text-sm text-gray-500 mt-1" ]
+                                [ if model.forceOrgSenderDetails then
+                                    span []
+                                        [ text "These details are set in the organization settings. "
+                                        , a [ class "text-blue-600 hover:text-blue-800", href "/settings" ] [ text "Change organization defaults" ]
+                                        , text "."
+                                        ]
+
+                                  else if effectiveUseOrgDetails then
+                                    text "You have chosen to use the organization's contact information for communications."
+
+                                  else
+                                    text "When this option is selected the Organization Details will be used for the signature, phone number, and scheduling link if applicable."
+                                ]
+                            ]
+                        ]
+                    ]
+                , -- Agent Details Card
+                  div
+                    ([ class
+                        ("relative rounded-lg border-2 p-6 transition-all "
+                            ++ (if not effectiveUseOrgDetails then
+                                    "border-blue-500 bg-blue-50"
+
+                                else
+                                    "border-gray-200 bg-white"
+                               )
+                        )
+                     , classList [ ( "cursor-pointer", canChoose ) ]
+                     ]
+                        ++ (if canChoose then
+                                [ onClick (UpdateSenderPreference False) ]
+
+                            else
+                                []
+                           )
+                    )
+                    [ div [ class "flex items-start" ]
+                        [ div [ class "flex items-center h-5" ]
+                            [ input
+                                [ type_ "radio"
+                                , name ("senderSettings-" ++ String.fromInt user.id)
+                                , checked (not effectiveUseOrgDetails)
+                                , class "h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
+                                , disabled (not canChoose)
+                                ]
+                                []
+                            ]
+                        , div [ class "ml-3" ]
+                            [ label [ class "font-medium text-gray-900" ] [ text "Agent Details" ]
+                            , p [ class "text-sm text-gray-500 mt-1" ]
+                                [ if not effectiveUseOrgDetails then
+                                    text "You have chosen to use your personal information for communications."
+
+                                  else
+                                    text "When this option is selected your personal information from your profile will be used for the signature, phone number, and scheduling link if applicable."
+                                ]
+                            ]
+                        ]
+                    ]
+                ]
+            ]
+        , -- Email & SMS Signature Section (only if agent details are enabled)
+          if not effectiveUseOrgDetails then
+            div [ class "space-y-4" ]
+                [ div []
+                    [ label [ class "block text-sm font-medium text-gray-700" ]
+                        [ text "Calendar Booking Link (optional)" ]
+                    , input
+                        [ type_ "text"
+                        , class "mt-1 px-3 py-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-base"
+                        , Html.Attributes.value user.bookingLink
+                        , onInput (UpdateField "bookingLink")
+                        , placeholder "https://calendly.com/yourname"
+                        ]
+                        []
+                    , p [ class "text-gray-500 text-xs mt-1" ]
+                        [ text "If provided, this link will be used as one of the options a client may select to connect with your agency. Traditionally this would be a Calendly link, Acuity link, etc." ]
+                    ]
+                , div []
+                    [ label [ class "block text-sm font-medium text-gray-700" ]
+                        [ text "Email & SMS Signature or Sign Off" ]
+                    , input
+                        [ type_ "text"
+                        , class "mt-1 px-3 py-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-base"
+                        , Html.Attributes.value user.signature
+                        , onInput (UpdateField "signature")
+                        , placeholder ("Thanks, " ++ user.firstName ++ " " ++ user.lastName)
+                        ]
+                        []
+                    ]
+                ]
+
+          else
+            text ""
+        ]
+
+
+
+-- ADDED: Tutorial Modal View (adapted from Dashboard.elm)
+
+
+viewTutorialModal : Html Msg
+viewTutorialModal =
+    div [ class "fixed inset-0 z-50 bg-slate-100 bg-opacity-20 backdrop-blur-sm flex items-center justify-center p-4" ]
+        [ div [ class "bg-white p-4 sm:p-6 rounded-lg shadow-lg max-w-2xl w-full" ]
+            [ div [ class "flex justify-between items-center mb-4" ]
+                [ h2 [ class "text-lg sm:text-xl font-semibold text-[#03045E]" ] [ text "Welcome to MedicareMax!" ]
+                , button
+                    [ class "text-gray-400 hover:text-gray-600 text-xl p-1", onClick CloseTutorialModal ]
+                    [ text "×" ]
+                ]
+            , div [ class "mb-4 sm:mb-6" ]
+                [ iframe
+                    [ src "https://www.youtube.com/embed/dQw4w9WgXcQ" -- Replace with actual tutorial video
+                    , class "w-full aspect-video max-h-[50vh] sm:h-96"
+                    , attribute "allowfullscreen" ""
+                    , attribute "frameborder" "0"
+                    ]
+                    []
+                ]
+            , p [ class "mb-4 text-gray-600 text-sm sm:text-base" ]
+                [ text "This quick setup tutorial will help you get started with MedicareMax and show you how to make the most of its features." ]
+            , div [ class "flex justify-end" ]
+                [ button
+                    [ class "px-4 py-2 bg-[#03045E] text-white rounded-md hover:bg-opacity-90 w-full sm:w-auto"
+                    , onClick CloseTutorialModal
+                    ]
+                    [ text "Close" ]
+                ]
+            ]
+        ]
+
+
 
 -- HTTP
 
@@ -31330,6 +31868,14 @@ fetchCurrentUser =
     Http.get
         { url = "/api/me"
         , expect = Http.expectJson GotCurrentUser currentUserResponseDecoder
+        }
+
+
+fetchOrgSettings : Cmd Msg
+fetchOrgSettings =
+    Http.get
+        { url = "/api/settings"
+        , expect = Http.expectJson GotOrgSettings orgSettingsDecoder
         }
 
 
@@ -31368,6 +31914,17 @@ userDecoder =
         |> Pipeline.required "is_admin" Decode.bool
         |> Pipeline.required "is_agent" Decode.bool
         |> Pipeline.required "organization_slug" Decode.string
+        |> Pipeline.optional "signature" Decode.string ""
+        |> Pipeline.optional "useOrgSenderDetails" Decode.bool True
+        |> Pipeline.optional "booking_link" Decode.string ""
+
+
+orgSettingsDecoder : Decoder Settings
+orgSettingsDecoder =
+    Decode.succeed Settings
+        |> Pipeline.required "carrierContracts" (Decode.list Decode.string)
+        |> Pipeline.required "stateLicenses" (Decode.list Decode.string)
+        |> Pipeline.required "forceOrgSenderDetails" Decode.bool
 
 
 
@@ -31382,6 +31939,9 @@ encodeUser user =
         , ( "lastName", Encode.string user.lastName )
         , ( "email", Encode.string user.email )
         , ( "phone", Encode.string user.phone )
+        , ( "signature", Encode.string user.signature )
+        , ( "useOrgSenderDetails", Encode.bool user.useOrgSenderDetails )
+        , ( "booking_link", Encode.string user.bookingLink )
         ]
 
 
@@ -31431,6 +31991,12 @@ hasChanges model =
                 /= original.lastName
                 || current.phone
                 /= original.phone
+                || current.signature
+                /= original.signature
+                || current.useOrgSenderDetails
+                /= original.useOrgSenderDetails
+                || current.bookingLink
+                /= original.bookingLink
 
         _ ->
             False
@@ -32190,6 +32756,8 @@ type alias AgentInfo =
     { name : String
     , firstName : String
     , phone : String
+    , useOrgSenderDetails : Bool
+    , bookingLink : String
     }
 
 
@@ -32206,6 +32774,7 @@ type alias ScheduleInfo =
     , organization : OrgInfo
     , agent : AgentInfo
     , useOrg : Bool
+    , forceOrgSenderDetails : Bool
     }
 
 
@@ -32226,6 +32795,7 @@ type alias Model =
     , isLoading : Bool
     , demoMode : Bool
     , demoRedirectUrl : Maybe String
+    , forceOrgSenderDetails : Bool
     }
 
 
@@ -32291,6 +32861,7 @@ init key maybeQuoteId maybeStatus =
       , isLoading = True
       , demoMode = False -- sets CTA to demo mode always
       , demoRedirectUrl = Just "https://calendly.com/josh-musick-medicaremax/medicare-max-demo?month=2025-04" --"https://calendly.com/medicareschool-max/30min"
+      , forceOrgSenderDetails = False
       }
     , Cmd.batch commands
     )
@@ -32307,10 +32878,12 @@ contactInfoDecoder =
 
 agentInfoDecoder : D.Decoder AgentInfo
 agentInfoDecoder =
-    D.map3 AgentInfo
-        (D.field "name" D.string)
-        (D.field "firstName" D.string)
-        (D.field "phone" D.string)
+    D.succeed AgentInfo
+        |> P.required "name" D.string
+        |> P.required "firstName" D.string
+        |> P.required "phone" D.string
+        |> P.optional "use_org_sender_details" D.bool True
+        |> P.optional "booking_link" D.string ""
 
 
 orgInfoDecoder : D.Decoder OrgInfo
@@ -32330,6 +32903,7 @@ scheduleInfoDecoder =
         |> P.required "organization" orgInfoDecoder
         |> P.required "agent" agentInfoDecoder
         |> P.optional "useOrg" D.bool True
+        |> P.optional "force_org_sender_details" D.bool False
 
 
 submitResponseDecoder : D.Decoder SubmitResponse
@@ -32392,6 +32966,27 @@ update msg model =
                                         else
                                             "https://" ++ url
                                     )
+
+                        -- Determine effective redirect URL based on sender settings
+                        effectiveRedirectUrl =
+                            if info.forceOrgSenderDetails then
+                                safeRedirectUrl
+
+                            else if info.agent.useOrgSenderDetails then
+                                safeRedirectUrl
+
+                            else if String.isEmpty info.agent.bookingLink then
+                                -- When using agent settings but no booking link, don't show calendar button
+                                Nothing
+
+                            else
+                                Just
+                                    (if String.startsWith "http" info.agent.bookingLink then
+                                        info.agent.bookingLink
+
+                                     else
+                                        "https://" ++ info.agent.bookingLink
+                                    )
                     in
                     ( { model
                         | scheduleInfo = Just info
@@ -32399,7 +32994,8 @@ update msg model =
                         , name = Just (info.contact.firstName ++ " " ++ info.contact.lastName)
                         , phoneNumber = Just info.contact.phoneNumber
                         , isLoading = False
-                        , redirectUrl = safeRedirectUrl
+                        , redirectUrl = effectiveRedirectUrl
+                        , forceOrgSenderDetails = info.forceOrgSenderDetails
                       }
                     , Cmd.none
                     )
@@ -32655,7 +33251,16 @@ viewCTA model =
 
 viewAcceptButtons : Model -> ScheduleInfo -> Html Msg
 viewAcceptButtons model info =
-    if info.useOrg then
+    let
+        -- Determine whether to use org or agent details
+        effectiveUseOrg =
+            if model.forceOrgSenderDetails then
+                True
+
+            else
+                info.agent.useOrgSenderDetails
+    in
+    if effectiveUseOrg then
         viewAcceptButtonsOrg model info
 
     else
@@ -32664,6 +33269,24 @@ viewAcceptButtons model info =
 
 viewAcceptButtonsAgent : Model -> ScheduleInfo -> Html Msg
 viewAcceptButtonsAgent model info =
+    let
+        -- Use agent phone if available, otherwise fall back to org phone
+        effectivePhone =
+            if String.isEmpty info.agent.phone then
+                info.organization.orgPhone
+
+            else
+                info.agent.phone
+
+        -- Determine the display name for calls
+        phoneDisplayName =
+            if String.isEmpty info.agent.phone then
+                -- Using org phone, so don't personalize with agent name
+                ""
+
+            else
+                info.agent.firstName ++ " "
+    in
     div [ class "space-y-4" ]
         [ case model.redirectUrl of
             Just _ ->
@@ -32702,16 +33325,23 @@ viewAcceptButtonsAgent model info =
                                 [ text ("Request a Call from " ++ info.agent.firstName) ]
                             ]
                         ]
-        , if not (String.isEmpty info.agent.phone) then
+        , if not (String.isEmpty effectivePhone) then
             a
-                [ href ("tel:" ++ info.agent.phone)
+                [ href ("tel:" ++ effectivePhone)
                 , class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
                 ]
                 [ div [ class "flex items-center space-x-3" ]
                     [ span [ class "w-6 h-6 flex items-center justify-center" ]
                         [ MyIcon.phoneOutgoing 24 "#03045E" ]
                     , span [ class "font-semibold text-base" ]
-                        [ text ("Give " ++ info.agent.firstName ++ " Call: " ++ formatPhoneNumber info.agent.phone) ]
+                        [ text
+                            (if String.isEmpty phoneDisplayName then
+                                "Call Now: " ++ formatPhoneNumber effectivePhone
+
+                             else
+                                "Give " ++ phoneDisplayName ++ "a call: " ++ formatPhoneNumber effectivePhone
+                            )
+                        ]
                     ]
                 ]
 
@@ -32780,7 +33410,16 @@ viewAcceptButtonsOrg model info =
 
 viewDeclineButtons : Model -> ScheduleInfo -> Html Msg
 viewDeclineButtons model info =
-    if info.useOrg then
+    let
+        -- Determine whether to use org or agent details
+        effectiveUseOrg =
+            if model.forceOrgSenderDetails then
+                True
+
+            else
+                info.agent.useOrgSenderDetails
+    in
+    if effectiveUseOrg then
         viewDeclineButtonsOrg model info
 
     else
@@ -32789,30 +33428,60 @@ viewDeclineButtons model info =
 
 viewDeclineButtonsAgent : Model -> ScheduleInfo -> Html Msg
 viewDeclineButtonsAgent model info =
+    let
+        -- Use agent phone if available, otherwise fall back to org phone
+        effectivePhone =
+            if String.isEmpty info.agent.phone then
+                info.organization.orgPhone
+
+            else
+                info.agent.phone
+
+        -- Determine the display name for calls
+        phoneDisplayName =
+            if String.isEmpty info.agent.phone then
+                -- Using org phone, so don't personalize with agent name
+                ""
+
+            else
+                info.agent.firstName ++ " "
+    in
     div [ class "space-y-4" ]
-        [ a
-            [ class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
-            , href (makeCalendlyUrl model)
-            , target "_blank"
-            , onClick CalendlyOpened
-            ]
-            [ div [ class "flex items-center space-x-3" ]
-                [ span [ class "w-6 h-6 flex items-center justify-center" ]
-                    [ MyIcon.calendarDays 24 "#03045E" ]
-                , span [ class "font-semibold text-base" ]
-                    [ text ("Schedule a Call with " ++ info.agent.firstName) ]
-                ]
-            ]
-        , if not (String.isEmpty info.agent.phone) then
+        [ case model.redirectUrl of
+            Just _ ->
+                a
+                    [ class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
+                    , href (makeCalendlyUrl model)
+                    , target "_blank"
+                    , onClick CalendlyOpened
+                    ]
+                    [ div [ class "flex items-center space-x-3" ]
+                        [ span [ class "w-6 h-6 flex items-center justify-center" ]
+                            [ MyIcon.calendarDays 24 "#03045E" ]
+                        , span [ class "font-semibold text-base" ]
+                            [ text ("Schedule a Call with " ++ info.agent.firstName) ]
+                        ]
+                    ]
+
+            Nothing ->
+                text ""
+        , if not (String.isEmpty effectivePhone) then
             a
-                [ href ("tel:" ++ info.agent.phone)
+                [ href ("tel:" ++ effectivePhone)
                 , class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
                 ]
                 [ div [ class "flex items-center space-x-3" ]
                     [ span [ class "w-6 h-6 flex items-center justify-center" ]
                         [ MyIcon.phoneOutgoing 24 "#03045E" ]
                     , span [ class "font-semibold text-base" ]
-                        [ text ("Give " ++ info.agent.firstName ++ " a call: " ++ formatPhoneNumber info.agent.phone) ]
+                        [ text
+                            (if String.isEmpty phoneDisplayName then
+                                "Call Now: " ++ formatPhoneNumber effectivePhone
+
+                             else
+                                "Give " ++ phoneDisplayName ++ "a call: " ++ formatPhoneNumber effectivePhone
+                            )
+                        ]
                     ]
                 ]
 
@@ -32934,7 +33603,16 @@ viewDeclineButtonsOrg model info =
 
 viewGenericButtons : Model -> ScheduleInfo -> Html Msg
 viewGenericButtons model info =
-    if info.useOrg then
+    let
+        -- Determine whether to use org or agent details
+        effectiveUseOrg =
+            if model.forceOrgSenderDetails then
+                True
+
+            else
+                info.agent.useOrgSenderDetails
+    in
+    if effectiveUseOrg then
         viewGenericButtonsOrg model info
 
     else
@@ -32943,6 +33621,24 @@ viewGenericButtons model info =
 
 viewGenericButtonsAgent : Model -> ScheduleInfo -> Html Msg
 viewGenericButtonsAgent model info =
+    let
+        -- Use agent phone if available, otherwise fall back to org phone
+        effectivePhone =
+            if String.isEmpty info.agent.phone then
+                info.organization.orgPhone
+
+            else
+                info.agent.phone
+
+        -- Determine the display name for calls
+        phoneDisplayName =
+            if String.isEmpty info.agent.phone then
+                -- Using org phone, so don't personalize with agent name
+                ""
+
+            else
+                info.agent.firstName ++ " "
+    in
     div [ class "space-y-4" ]
         [ case model.redirectUrl of
             Just _ ->
@@ -32981,16 +33677,23 @@ viewGenericButtonsAgent model info =
                                 [ text ("Request a Call from " ++ info.agent.firstName) ]
                             ]
                         ]
-        , if not (String.isEmpty info.agent.phone) then
+        , if not (String.isEmpty effectivePhone) then
             a
-                [ href ("tel:" ++ info.agent.phone)
+                [ href ("tel:" ++ effectivePhone)
                 , class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
                 ]
                 [ div [ class "flex items-center space-x-3" ]
                     [ span [ class "w-6 h-6 flex items-center justify-center" ]
                         [ MyIcon.phoneOutgoing 24 "#03045E" ]
                     , span [ class "font-semibold text-base" ]
-                        [ text ("Give " ++ info.agent.firstName ++ " a call: " ++ formatPhoneNumber info.agent.phone) ]
+                        [ text
+                            (if String.isEmpty phoneDisplayName then
+                                "Call Now: " ++ formatPhoneNumber effectivePhone
+
+                             else
+                                "Give " ++ phoneDisplayName ++ "a call: " ++ formatPhoneNumber effectivePhone
+                            )
+                        ]
                     ]
                 ]
 
@@ -33078,7 +33781,33 @@ makeCalendlyUrl model =
 
 makeCalendlyUrlHelper : Model -> Maybe String -> String
 makeCalendlyUrlHelper model redirectUrl =
-    case redirectUrl of
+    let
+        -- Determine which redirect URL to use based on sender settings
+        effectiveRedirectUrl =
+            case ( model.scheduleInfo, redirectUrl ) of
+                ( Just info, _ ) ->
+                    let
+                        effectiveUseOrg =
+                            if model.forceOrgSenderDetails then
+                                True
+
+                            else
+                                info.agent.useOrgSenderDetails
+                    in
+                    if effectiveUseOrg then
+                        info.organization.orgRedirectUrl
+
+                    else if String.isEmpty info.agent.bookingLink then
+                        -- When using agent settings but no booking link, don't show calendar button
+                        Nothing
+
+                    else
+                        Just info.agent.bookingLink
+
+                ( Nothing, _ ) ->
+                    redirectUrl
+    in
+    case effectiveRedirectUrl of
         Just url ->
             List.Extra.zip
                 [ "email", "name", "location" ]
@@ -35796,13 +36525,12 @@ viewOrganizationDetails settings model =
                         ]
                     )
                 , viewFormGroup "Email & SMS Signature or Sign Off"
-                    (textarea
+                    (input
                         [ class "mt-1 px-3 py-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-base"
                         , value settings.signature
                         , onInput UpdateSignature
-                        , rows 3
                         , placeholder
-                            ("Thanks,\nThe team at "
+                            ("The Team at "
                                 ++ (if String.isEmpty settings.brandName then
                                         "Example Biz"
 
@@ -36006,7 +36734,7 @@ viewDefaultSenderSettings settings =
                     , div [ class "ml-3" ]
                         [ label [ class "font-medium text-gray-900" ] [ text "Agent Details" ]
                         , p [ class "text-sm text-gray-500 mt-1" ]
-                            [ text "When this option is selected the Agent's personal information from their agent settings will be used for the signature, phone number, and scheduling link if applicable." ]
+                            [ text "When this option is selected the Agent will have the choice to use their own name or the organization's name for the signature, phone number, and scheduling link (if applicable)." ]
                         , div [ class "mt-4 text-xs text-gray-400" ]
                             [ div [ class "mb-1" ] [ text "Recommended For:" ]
                             , div [] [ text "Agencies with agents who provide ongoing support for servicing existing clients." ]

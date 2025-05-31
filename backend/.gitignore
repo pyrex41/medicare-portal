@@ -173,3 +173,7 @@ dist
 
 # Finder (MacOS) folder config
 .DS_Store
+
+# Mock database files
+data/replit_mock_db.json
+data/stage_demo_db.json

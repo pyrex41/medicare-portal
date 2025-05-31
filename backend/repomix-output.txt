@@ -36,7 +36,7 @@ Notes:
 ------
 - Some files may have been excluded based on .gitignore rules and Repomix's configuration
 - Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
-- Files matching these patterns are excluded: node_modules/, **/zipData.json
+- Files matching these patterns are excluded: node_modules/, **/zipData.json, public/, backup/, src/index.html
 - Files matching patterns in .gitignore are excluded
 - Files matching default ignore patterns are excluded
 
@@ -75,9 +75,6 @@ migrations/
   create_subscription_tables.sql
   fix_email_tracking.sql
   remove_eligibility_answers_fk.sql
-public/
-  hhd.csv
-  test-bulk-import.html
 scripts/
   add-agent.ts
   apply-contact-migration.ts
@@ -1360,280 +1357,6 @@ CREATE INDEX IF NOT EXISTS idx_contact_events_type ON contact_events(event_type)
 
 -- Optional: Add a comment or log to confirm the migration
 -- Note: Foreign key constraints on contact_id now reference contacts(id) instead of contacts_backup
-
-================
-File: public/hhd.csv
-================
-,ACE/Chubb,AETNA,AFLAC,Allstate,Anthem,CIGNA,Mutual of Omaha,Humana (MIPPA),Humana (Achieve),UHIC
-AL,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,NA,You need to live with a spouse or someone who is at least 18 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
-AK,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,NA,Live with someone 50+. Additional discounts available,NA,Both you and your spouse/partner must have a supplemental plan with CIGNA.,NA,Both you and your spouse/partner must have a supplemental plan with Humana.,NA,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
-AZ,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,Both you and your spouse/partner must have a supplemental plan with Anthem.,You need to live with a spouse or someone who is at least 18 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
-AR,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,NA,You need to live with a spouse or someone who is at least 50 years old.,You need to live with a spouse or someone who is at least 60 years old.,You need to live with a spouse or someone who is at least 18 years old.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
-CA,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,Both you and your spouse/partner must have a supplemental plan with Anthem.,You need to live with a spouse or someone who is at least 50 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,NA,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #. Additional $25 discount for first 12 months for new to Medicare on Plan G.
-CO,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,Both you and your spouse/partner must have a supplemental plan with Anthem.,You need to live with a spouse or someone who is at least 50 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,You need to live with a spouse or someone who is at least 18 years old.,NA,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
-CT,NA,NA,NA,NA,Both you and your spouse/partner must have a supplemental plan with Anthem.,Both you and your spouse/partner must have a supplemental plan with CIGNA.,NA,You need to live with a spouse or someone who is at least 18 years old.,NA,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
-DE,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,NA,You need to live with a spouse or someone who is at least 18 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
-DC,NA,Both you and your spouse/partner must have a supplemental plan with AETNA.,NA,Live with someone 50+. Additional discounts available,NA,Both you and your spouse/partner must have a supplemental plan with CIGNA.,NA,Both you and your spouse/partner must have a supplemental plan with Humana.,NA,NA
-FL,Both you and your spouse/partner must have a supplemental plan with Ace/Chubb.,NA,Both you and your spouse/partner must have a supplemental plan with AFLAC.,Live with someone 50+,NA,Both you and your spouse/partner must have a supplemental plan with CIGNA.,NA,NA,Both you and your spouse/partner must have a supplemental plan with Humana.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
-GA,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,You need to live with a spouse or someone who is at least 60 years old.,You need to live with a spouse or someone who is at least 18 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,You need to live with a spouse or someone who is at least 18 years old.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
-HI,NA,NA,NA,NA,NA,NA,NA,Both you and your spouse/partner must have a supplemental plan with Humana.,NA,NA
-ID,NA,NA,NA,NA,NA,NA,NA,*Value Plan - NA,NA,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
-IL,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+,NA,You need to live with a spouse or someone who is at least 18 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,You need to live with a spouse or someone who is at least 18 years old.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
-IN,Both you and your spouse/partner must have a supplemental plan with Ace/Chubb.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,Both you and your spouse/partner must have a supplemental plan with Anthem.,You need to live with a spouse or someone who is at least 50 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,NA,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
-IA,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,NA,You need to live with a spouse or someone who is at least 50 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
-KS,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,NA,You need to live with a spouse or someone who is at least 50 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
-KY,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,Both you and your spouse/partner/family member must have a supplemental plan with AFLAC.,Live with someone 50+. Additional discounts available,Both you and your spouse/partner must have a supplemental plan with Anthem.,You need to live with a spouse or someone who is at least 18 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
-LA,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,NA,You need to live with a spouse or someone who is at least 50 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
-ME,You need to live with a spouse or someone who is at least 50 years old.,NA,NA,NA,Both you and your spouse/partner must have a supplemental plan with Anthem.,Both you and your spouse/partner must have a supplemental plan with CIGNA.,Both you and your spouse/partner must have a supplemental plan with Mutual of Omaha.,Both you and your spouse/partner must have a supplemental plan with Humana.,NA,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
-MD,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,NA,You need to live with a spouse or someone who is at least 18 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,You need to live with a spouse or someone who is at least 18 years old.,NA,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
-MA,NA,NA,NA,NA,NA,NA,NA,You need to live with a spouse or someone who is at least 18 years old.,NA,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
-MI,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,NA,You need to live with a spouse or someone who is at least 18 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,You need to live with a spouse or someone who is at least 18 years old.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
-MN,NA,NA,NA,Live with someone 50+. Additional discounts available,NA,NA,NA,NA,NA,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
-MS,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,NA,You need to live with a spouse or someone who is at least 18 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,You need to live with a spouse or someone who is at least 18 years old.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
-MO,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,Both you and your spouse/partner must have a supplemental plan with Anthem.,You need to live with someone who is at least 50 years old.,You need to live with a spouse or domestic partner.,Both you and your spouse/partner must have a supplemental plan with Humana.,NA,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
-MT,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 18 years old.,Live with someone 50+. Additional discounts available,NA,You need to live with a spouse or someone who is at least 18 years old. Additional dual-enrollment CIGNA discount available.,You need to live with someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
-NE,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,NA,You need to live with a spouse or someone who is at least 18 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
-NV,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,Both you and your spouse/partner must have a supplemental plan with Anthem.,You need to live with a spouse or someone who is at least 50 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,You need to live with a spouse or someone who is at least 18 years old.,NA,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
-NH,NA,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,NA,NA,You need to live with a spouse or someone who is at least 50 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,NA
-NJ,Both you and your spouse/partner must have a supplemental plan with Ace/Chubb.,Both you and your spouse/partner must have a supplemental plan with AETNA.,Both you and your spouse/partner/family member must have a supplemental plan with AFLAC.,Live with someone 50+,NA,Both you and your spouse/partner must have a supplemental plan with CIGNA.,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,Both you and your spouse/partner must have a supplemental plan with Humana.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
-NM,NA,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,NA,You need to live with a spouse or someone who is at least 50 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,You need to live with a spouse or someone who is at least 18 years old.,NA,NA
-NY,NA,NA,NA,NA,Not accepting new Supps,NA,NA,NA,NA,NA
-NC,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,NA,You need to live with a spouse or someone who is at least 18 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,You need to live with a spouse or someone who is at least 18 years old.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
-ND,NA,NA,Both you and your spouse/partner/family member must have a supplemental plan with AFLAC.,Live with someone 50+. Additional discounts available,NA,You need to live with a spouse or someone who is at least 50 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,NA
-OH,Both you and your spouse/partner must have a supplemental plan with Ace/Chubb.,Both you and your spouse/partner must have a supplemental plan with AETNA.,Both you and your spouse/partner/family member must have a supplemental plan with AFLAC.,Live with someone 50+,Both you and your spouse/partner must have a supplemental plan with Anthem.,Both you and your spouse/partner must have a supplemental plan with CIGNA.,"You need to live with your spouse, partner, or a roomate for the last 12 months.",Both you and your spouse/partner must have a supplemental plan with Humana.,Both you and your spouse/partner must have a supplemental plan with Humana.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
-OK,Both you and your spouse/partner must have a supplemental plan with Ace/Chubb.,Both you and your spouse/partner must have a supplemental plan with AETNA.,Both you and your spouse/partner/family member must have a supplemental plan with AFLAC.,Live with someone 50+. Additional discounts available,NA,Both you and your spouse/partner must have a supplemental plan with CIGNA.,"You need to live with your spouse, partner, or a roomate for the last 12 months.",Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
-OR,NA,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+,NA,Both you and your spouse/partner must have a supplemental plan with CIGNA.,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,NA,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
-PA,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+,NA,You need to live with a spouse or partner. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or domestic partner.,"You need to live with spouse, civil or domestic partner.",You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
-RI,NA,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,NA,NA,You need to live with a spouse or someone who is at least 18 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,NA,NA,NA
-SC,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,NA,You need to live with a spouse or someone who is at least 18 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
-SD,You need to live with a spouse or someone who is at least 50 years old.,NA,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,NA,You need to live with a spouse or someone who is at least 18 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
-TN,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,NA,You need to live with a spouse or someone who is at least 50 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,You need to live with a spouse or someone who is at least 18 years old.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
-TX,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,Both you and your spouse/partner must have a supplemental plan with Anthem.,You need to live with a spouse or someone who is at least 50 years old. Additional dual-enrollment CIGNA discount available.,You need to live with someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
-UT,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,NA,You need to live with a spouse or someone who is at least 18 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,NA,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
-VT,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA
-VA,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,Both you and your spouse/partner must have a supplemental plan with AFLAC.,Live with someone 50+. Additional discounts available,Both you and your spouse/partner must have a supplemental plan with Anthem.,You need to live with a spouse or someone who is at least 50 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,You need to live with a spouse or someone who is at least 18 years old.,NA,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
-WA,Both you and your spouse/partner must have a supplemental plan with Ace/Chubb.,NA,NA,NA,NA,Both you and your spouse/partner must have a supplemental plan with CIGNA.,Both you and your spouse/partner must have a supplemental plan with Mutual of Omaha.,Both you and your spouse/partner must have a supplemental plan with Humana.,NA,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
-WV,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,NA,You need to live with a spouse or someone who is at least 50 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
-WI,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,Both you and your spouse/partner must have a supplemental plan with Anthem.,You need to live with a spouse or someone who is at least 18 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
-WY,You need to live with a spouse or someone who is at least 50 years old.,Both you and your spouse/partner must have a supplemental plan with AETNA.,You need to live with a spouse or someone who is at least 50 years old.,Live with someone 50+. Additional discounts available,NA,You need to live with a spouse or someone who is at least 50 years old. Additional dual-enrollment CIGNA discount available.,You need to live with a spouse or someone who is at least 60 years old.,Both you and your spouse/partner must have a supplemental plan with Humana.,You need to live with a spouse or someone who is at least 18 years old.,Both you and your spouse/partner must have a supplemental plan with AARP / UHC and use the same AARP Membership #.
-
-================
-File: public/test-bulk-import.html
-================
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Bulk Contact Import Test</title>
-  <style>
-    body {
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
-      max-width: 800px;
-      margin: 0 auto;
-      padding: 20px;
-      line-height: 1.6;
-    }
-    h1 {
-      color: #2c3e50;
-      margin-bottom: 20px;
-    }
-    form {
-      background-color: #f9f9f9;
-      padding: 20px;
-      border-radius: 8px;
-      border: 1px solid #ddd;
-      margin-bottom: 20px;
-    }
-    label {
-      display: block;
-      margin-bottom: 8px;
-      font-weight: bold;
-    }
-    input[type="file"] {
-      display: block;
-      margin-bottom: 15px;
-    }
-    .checkbox-group {
-      margin-bottom: 15px;
-    }
-    button {
-      background-color: #3498db;
-      color: white;
-      border: none;
-      padding: 10px 15px;
-      border-radius: 4px;
-      cursor: pointer;
-      font-size: 16px;
-    }
-    button:hover {
-      background-color: #2980b9;
-    }
-    .result {
-      background-color: #f0f7ff;
-      padding: 15px;
-      border-radius: 8px;
-      border: 1px solid #d0e3ff;
-      margin-top: 20px;
-      white-space: pre-wrap;
-      overflow-x: auto;
-    }
-    .info {
-      background-color: #e8f4f8;
-      padding: 15px;
-      border-radius: 8px;
-      border-left: 4px solid #3498db;
-      margin-bottom: 20px;
-    }
-    .info h2 {
-      margin-top: 0;
-      margin-bottom: 10px;
-      color: #2c3e50;
-    }
-  </style>
-</head>
-<body>
-  <h1>Bulk Contact Import Test</h1>
-  
-  <div class="info">
-    <h2>About This Tool</h2>
-    <p>This is a test page for the bulk contact import feature. Use this to test importing CSV files with contact data.</p>
-    <p>Make sure you're logged in as an admin user before testing, as the endpoint requires admin privileges.</p>
-  </div>
-
-  <form id="uploadForm">
-    <label for="csvFile">Select CSV File:</label>
-    <input type="file" id="csvFile" name="file" accept=".csv" required>
-    
-    <div class="checkbox-group">
-      <label>
-        <input type="checkbox" id="overwriteExisting"> Overwrite existing contacts
-      </label>
-    </div>
-    
-    <div class="form-row">
-      <button type="submit">Import Contacts</button>
-    </div>
-  </form>
-  
-  <div id="result" class="result" style="display: none;"></div>
-  
-  <div style="margin-top: 30px;">
-    <h2>Check Import Status</h2>
-    <form id="statusForm">
-      <div class="form-row">
-        <label for="orgId">Organization ID:</label>
-        <input type="text" id="orgId" name="orgId" required>
-      </div>
-      <button type="submit">Check Status</button>
-    </form>
-    
-    <div id="statusResult" class="result" style="display: none;"></div>
-  </div>
-
-  <script>
-    document.getElementById('uploadForm').addEventListener('submit', async function(e) {
-      e.preventDefault();
-      
-      const resultDiv = document.getElementById('result');
-      resultDiv.textContent = 'Processing...';
-      resultDiv.style.display = 'block';
-      
-      try {
-        const formData = new FormData();
-        const csvFile = document.getElementById('csvFile').files[0];
-        const overwriteExisting = document.getElementById('overwriteExisting').checked;
-        
-        formData.append('file', csvFile);
-        formData.append('overwriteExisting', overwriteExisting);
-        
-        // Send request to the API
-        const response = await fetch('/api/contacts/bulk-import', {
-          method: 'POST',
-          body: formData,
-          credentials: 'include' // Important for the session cookie
-        });
-        
-        const data = await response.json();
-        
-        // Display the result
-        resultDiv.textContent = JSON.stringify(data, null, 2);
-        
-        // Update the org ID field with the organization ID from the response
-        if (data.success && data.organizationId) {
-          document.getElementById('orgId').value = data.organizationId;
-        }
-      } catch (error) {
-        resultDiv.textContent = `Error: ${error.message}`;
-      }
-    });
-    
-    document.getElementById('statusForm').addEventListener('submit', async function(e) {
-      e.preventDefault();
-      
-      const statusResultDiv = document.getElementById('statusResult');
-      statusResultDiv.textContent = 'Checking status...';
-      statusResultDiv.style.display = 'block';
-      
-      try {
-        const orgId = document.getElementById('orgId').value.trim();
-        
-        if (!orgId) {
-          statusResultDiv.textContent = 'Please enter an organization ID';
-          return;
-        }
-        
-        // Send request to check the import status
-        const response = await fetch(`/api/contacts/import-status/${orgId}`, {
-          method: 'GET',
-          credentials: 'include' // Important for the session cookie
-        });
-        
-        const data = await response.json();
-        
-        // Display the status result
-        statusResultDiv.textContent = JSON.stringify(data, null, 2);
-        
-        // If the import is still in progress, poll the status every 10 seconds
-        if (data.status === 'in progress') {
-          let pollCount = 0;
-          const maxPolls = 30; // Maximum 5 minutes of polling
-          
-          const pollInterval = setInterval(async () => {
-            pollCount++;
-            
-            if (pollCount > maxPolls) {
-              clearInterval(pollInterval);
-              statusResultDiv.textContent += '\n\nPolling stopped after 5 minutes.';
-              return;
-            }
-            
-            try {
-              const pollResponse = await fetch(`/api/contacts/import-status/${orgId}`, {
-                method: 'GET',
-                credentials: 'include'
-              });
-              
-              const pollData = await pollResponse.json();
-              statusResultDiv.textContent = JSON.stringify(pollData, null, 2);
-              
-              if (pollData.status !== 'in progress') {
-                clearInterval(pollInterval);
-                statusResultDiv.textContent += '\n\nImport completed!';
-              }
-            } catch (pollError) {
-              statusResultDiv.textContent += `\n\nError polling status: ${pollError.message}`;
-              clearInterval(pollInterval);
-            }
-          }, 10000); // Poll every 10 seconds
-        }
-      } catch (error) {
-        statusResultDiv.textContent = `Error: ${error.message}`;
-      }
-    });
-  </script>
-</body>
-</html>
 
 ================
 File: scripts/add-agent.ts
@@ -3633,7 +3356,7 @@ export function createAuthRoutes() {
       set.status = 200;
       return {
         success: true,  
-        redirectUrl: "/contacts",
+        redirectUrl: "/dashboard?payment_success=true",
         email: user.email
       };
     })
@@ -7261,6 +6984,8 @@ export function createOnboardingRoutes() {
         
         // Ensure email is decoded
         const decodedEmail = ensureEmailDecoded(email);
+        const decodedFirstName = decodeURIComponent(firstName || '');
+        const decodedLastName = decodeURIComponent(lastName || '');
         logger.info(`Processing onboarding company update for email: ${decodedEmail}`);
         
         // Find the organization by user email
@@ -7321,8 +7046,8 @@ export function createOnboardingRoutes() {
             RETURNING id`,
             [
               decodedEmail,
-              firstName || '',
-              lastName || '',
+              decodedFirstName,
+              decodedLastName,
               phone || '',
               organizationId,
               1, // Set as admin
@@ -7338,6 +7063,13 @@ export function createOnboardingRoutes() {
             id: userResult[0].id,
             organization_id: organizationId
           };
+
+          const defaultAgentId = userResult[0].id;
+
+          await dbInstance.execute(
+            'UPDATE organizations SET default_agent_id = ? WHERE id = ?',
+            [defaultAgentId, organizationId]
+          );  
           
           logger.info(`Created new user (${userInfo.id}) for organization (${organizationId})`);
           
@@ -7544,8 +7276,8 @@ export function createOnboardingRoutes() {
         logger.info(`Processing onboarding agents for owner email: ${decodedOwnerEmail}`);
         
         // Find the organization by user email
-        const userInfo = await dbInstance.fetchOne<{ organization_id: number }>(
-          'SELECT organization_id FROM users WHERE email = ?',
+        const userInfo = await dbInstance.fetchOne<{ id: number, organization_id: number }>(
+          'SELECT id, organization_id FROM users WHERE email = ?',
           [decodedOwnerEmail]
         );
         
@@ -7625,13 +7357,18 @@ export function createOnboardingRoutes() {
           createdCount++;
         }
         
-        // Mark onboarding as complete since this is the final step
-        await dbInstance.execute(
-          'UPDATE organizations SET onboarding_completed = 1 WHERE id = ?',
-          [organizationId]
-        );
+        // Set the onboarding user as the default agent for the organization
+        if (userInfo) {
+          await dbInstance.execute(
+            'UPDATE organizations SET default_agent_id = ? WHERE id = ?',
+            [userInfo.id, organizationId]
+          );
+          logger.info(`Set user ${userInfo.id} as default agent for organization ID: ${organizationId}`);
+        } else {
+          logger.warn(`Could not set default agent for organization ${organizationId} because owner user info was not found.`);
+        }
         
-        logger.info(`Created ${createdCount} agents, skipped ${skippedCount}, and marked onboarding as complete for organization ID: ${organizationId}`);
+        logger.info(`Created ${createdCount} agents, skipped ${skippedCount}, for organization ID: ${organizationId}. Onboarding NOT YET marked complete.`);
         
         return {
           success: true,
@@ -9523,6 +9260,7 @@ interface Quote {
     rate: number;
     discount_rate: number;
     discount_category: string;
+    original_plan_name?: string;
 }
 
 interface QuoteResponse {
@@ -9685,6 +9423,11 @@ export const quotesRoutes = (app: Elysia) => {
             
             const carrierContracts = orgSettings?.carrierContracts || [];
 
+            // Get forceOrgSenderDetails from org settings with backwards compatibility
+            const forceOrgSenderDetails = orgSettings?.forceOrgSenderDetails !== undefined 
+                ? orgSettings.forceOrgSenderDetails 
+                : Boolean(result.org_signature);
+
             // Get signature from either orgSettings, database column, or fall back to org name
             let signature = orgSettings?.signature || result.signature || result.name;
 
@@ -9719,8 +9462,8 @@ export const quotesRoutes = (app: Elysia) => {
             
             // Try assigned agent first
             if (contact.agent_id) {
-                agent = await mainDb.fetchOne<{ first_name: string, last_name: string, email: string, phone: string }>(
-                    'SELECT first_name, last_name, email, phone FROM users WHERE id = ?',
+                agent = await mainDb.fetchOne<{ first_name: string, last_name: string, email: string, phone: string, booking_link: string, use_org_sender_details: number, signature: string }>(
+                    'SELECT first_name, last_name, email, phone, booking_link, use_org_sender_details, signature FROM users WHERE id = ?',
                     [contact.agent_id]
                 );
             }
@@ -9733,8 +9476,8 @@ export const quotesRoutes = (app: Elysia) => {
                 );
                 
                 if (defaultAgentResult?.default_agent_id) {
-                    agent = await mainDb.fetchOne<{ first_name: string, last_name: string, email: string, phone: string }>(
-                        'SELECT first_name, last_name, email, phone FROM users WHERE id = ?',
+                    agent = await mainDb.fetchOne<{ first_name: string, last_name: string, email: string, phone: string, booking_link: string, use_org_sender_details: number, signature: string }>(
+                        'SELECT first_name, last_name, email, phone, booking_link, use_org_sender_details, signature FROM users WHERE id = ?',
                         [defaultAgentResult.default_agent_id]
                     );
                     
@@ -9755,8 +9498,8 @@ export const quotesRoutes = (app: Elysia) => {
             
             // If still no agent, fall back to first active user
             if (!agent) {
-                agent = await mainDb.fetchOne<{ first_name: string, last_name: string, email: string, phone: string }>(
-                    'SELECT first_name, last_name, email, phone FROM users WHERE organization_id = ? AND is_active = 1 ORDER BY id ASC LIMIT 1',
+                agent = await mainDb.fetchOne<{ first_name: string, last_name: string, email: string, phone: string, booking_link: string, use_org_sender_details: number, signature: string }>(
+                    'SELECT first_name, last_name, email, phone, booking_link, use_org_sender_details, signature FROM users WHERE organization_id = ? AND is_active = 1 ORDER BY id ASC LIMIT 1',
                     [decoded.orgId]
                 );
             }
@@ -9785,16 +9528,20 @@ export const quotesRoutes = (app: Elysia) => {
                 orgSlug: orgSlug || null,
                 orgName: result.name,
                 orgLogo: result.logo_data || null,
-                orgPhone: result.phone || null,
-                orgRedirectUrl: result.redirect_url || null,
+                orgPhone: orgSettings?.phone || result.phone || null,
+                orgRedirectUrl: orgSettings?.redirectUrl || result.redirect_url || null,
                 orgSignature: Boolean(result.org_signature) || false,
                 orgSignatureText: signature,
                 carrierContracts: carrierContracts || null,
+                forceOrgSenderDetails: forceOrgSenderDetails,
                 agent: {
                     firstName: agent.first_name,
                     lastName: agent.last_name,
                     email: agent.email,
-                    phone: agent.phone
+                    phone: agent.phone,
+                    bookingLink: agent.booking_link || '',
+                    useOrgSenderDetails: Boolean(agent.use_org_sender_details),
+                    signature: agent.signature || ''
                 },
                 contact: {
                     id: decoded.contactId,
@@ -9827,6 +9574,16 @@ export const quotesRoutes = (app: Elysia) => {
     })
     .post('/api/quotes', async ({ body, set }: { body: QuoteRequestBody, set: any }) => {
         try {
+            // Check if state uses special plans
+            const stateSpecificPlans: Record<string, string[]> = {
+                'MN': ['MN_BASIC', 'MN_EXTB'],
+                'WI': ['WI_BASE', 'WI_HDED'],
+                'MA': ['MA_CORE', 'MA_SUPP1']
+            };
+
+            // Determine which plans to request based on state
+            const plansToRequest = stateSpecificPlans[body.state] || ['G', 'N'];
+
             // Format request body
             const requestBody: QuoteRequest = {
                 zip_code: body.zip_code,
@@ -9834,7 +9591,7 @@ export const quotesRoutes = (app: Elysia) => {
                 age: Math.max(65, Math.min(110, Number(body.age))),
                 tobacco: body.tobacco === 'true' || body.tobacco === true,
                 gender: body.gender,
-                plans: ['G', 'N'],
+                plans: plansToRequest,
                 carriers: 'supported',
                 county: body.county
             };
@@ -9874,17 +9631,52 @@ export const quotesRoutes = (app: Elysia) => {
             logger.info(`Quote engine response status: ${response.status}`);
             logger.info(`Quote engine response headers: ${JSON.stringify(response.headers, null, 2)}`);
             logger.info(`Quote engine response data length: ${JSON.stringify(response.data).length} characters`);
-            logger.info(`Quote engine response data preview: ${JSON.stringify(response.data).substring(0, 200)}...`);
+            // logger.info(`Quote engine response data preview: ${JSON.stringify(response.data).substring(0, 500)}...`); // Log more for debugging complex structures
             
-            if (!response.data) {
-                logger.error('Quote engine returned empty response data');
+            if (!response.data || !Array.isArray(response.data)) {
+                logger.error('Quote engine returned empty or invalid response data');
                 set.status = 500;
-                return { error: 'No quote data received from engine' };
+                return { error: 'No quote data received from engine or data is not an array' };
             }
+
+            // Define state-specific plan mappings to their standard equivalents
+            const planAliasMapping: Record<string, { standard: string, original: string }> = {
+                'MN_BASIC': { standard: 'N', original: 'MN_BASIC' },
+                'MN_EXTB': { standard: 'G', original: 'MN_EXTB' },
+                'WI_BASE': { standard: 'N', original: 'WI_BASE' },
+                'WI_HDED': { standard: 'N', original: 'WI_HDED' }, // Assuming WI_HDED maps to N, adjust if needed
+                'MA_CORE': { standard: 'N', original: 'MA_CORE' },
+                'MA_SUPP1': { standard: 'G', original: 'MA_SUPP1' }
+            };
+
+            const processedData = response.data.map((companyQuote: QuoteResponse) => {
+                if (companyQuote.quotes && Array.isArray(companyQuote.quotes)) {
+                    companyQuote.quotes = companyQuote.quotes.map((quote: Quote) => {
+                        const mapping = planAliasMapping[quote.plan.toUpperCase()];
+                        if (mapping) {
+                            return {
+                                ...quote,
+                                original_plan_name: mapping.original,
+                                plan: mapping.standard
+                            };
+                        }
+                        // If not a state-specific plan that needs aliasing, ensure original_plan_name is null or undefined
+                        // if the quote engine might send it for G/N plans directly.
+                        // For now, assume if it's not in mapping, it doesn't get an original_plan_name unless already present.
+                        return {
+                            ...quote,
+                            original_plan_name: quote.original_plan_name || undefined // or null if preferred by Elm decoder
+                        };
+                    });
+                }
+                return companyQuote;
+            });
+
+            logger.info(`Processed quote data preview: ${JSON.stringify(processedData).substring(0, 500)}...`);
 
             // Return quotes from response data
             set.status = 200; // Explicitly set 200 status
-            return response.data;
+            return processedData;
         } catch (error: any) {
             logger.error(`Error fetching quotes: ${error}`);
             if (axios.isAxiosError(error)) {
@@ -10154,8 +9946,8 @@ export const scheduleRoutes = (app: Elysia) => {
             const mainDb = new Database();
             
             // Get organization info including slug
-            const orgResult = await mainDb.fetchOne<{ name: string, logo_data: string | null, slug: string, phone: string | null, redirect_url: string | null, org_signature: boolean }>(
-                'SELECT name, logo_data, slug, phone, redirect_url, org_signature FROM organizations WHERE id = ?',
+            const orgResult = await mainDb.fetchOne<{ name: string, logo_data: string | null, slug: string, phone: string | null, redirect_url: string | null, org_signature: boolean, org_settings: string | null }>(
+                'SELECT name, logo_data, slug, phone, redirect_url, org_signature, org_settings FROM organizations WHERE id = ?',
                 [orgId]
             );
 
@@ -10166,6 +9958,19 @@ export const scheduleRoutes = (app: Elysia) => {
                     error: 'Organization not found'
                 };
             }
+
+            // Parse org settings to get forceOrgSenderDetails
+            let orgSettings;
+            try {
+                orgSettings = JSON.parse(orgResult.org_settings || '{}');
+            } catch (e) {
+                logger.warn(`Error parsing org settings for ${orgId}: ${e}`);
+                orgSettings = {};
+            }
+            
+            const forceOrgSenderDetails = orgSettings?.forceOrgSenderDetails !== undefined 
+                ? orgSettings.forceOrgSenderDetails 
+                : Boolean(orgResult.org_signature);
 
             // Get org-specific database
             const orgDb = await Database.getOrInitOrgDb(orgId.toString());
@@ -10192,12 +9997,12 @@ export const scheduleRoutes = (app: Elysia) => {
 
             // Get agent info - first try assigned agent, then fall back to first user
             const agent = contact.agent_id 
-                ? await mainDb.fetchOne<{ first_name: string, last_name: string, phone: string }>(
-                    'SELECT first_name, last_name, phone FROM users WHERE id = ? AND is_active = 1',
+                ? await mainDb.fetchOne<{ first_name: string, last_name: string, phone: string, booking_link: string, use_org_sender_details: number, signature: string }>(
+                    'SELECT first_name, last_name, phone, booking_link, use_org_sender_details, signature FROM users WHERE id = ? AND is_active = 1',
                     [contact.agent_id]
                   )
-                : await mainDb.fetchOne<{ first_name: string, last_name: string, phone: string }>(
-                    'SELECT first_name, last_name, phone FROM users WHERE organization_id = ? AND is_active = 1 ORDER BY id ASC LIMIT 1',
+                : await mainDb.fetchOne<{ first_name: string, last_name: string, phone: string, booking_link: string, use_org_sender_details: number, signature: string }>(
+                    'SELECT first_name, last_name, phone, booking_link, use_org_sender_details, signature FROM users WHERE organization_id = ? AND is_active = 1 ORDER BY id ASC LIMIT 1',
                     [orgId]
                   );
 
@@ -10222,14 +10027,18 @@ export const scheduleRoutes = (app: Elysia) => {
                     name: orgResult.name,
                     logo: orgResult.logo_data,
                     slug: orgResult.slug,
-                    phone: orgResult.phone,
-                    redirectUrl: orgResult.redirect_url
+                    phone: orgSettings?.phone || orgResult.phone || "",
+                    redirectUrl: orgSettings?.redirectUrl || orgResult.redirect_url || null
                 },
                 agent: {
                     name: `${agent.first_name} ${agent.last_name}`,
                     firstName: agent.first_name,
-                    phone: agent.phone || ""
+                    phone: agent.phone || "",
+                    booking_link: agent.booking_link || "",
+                    use_org_sender_details: Boolean(agent.use_org_sender_details),
+                    signature: agent.signature || ""
                 },
+                force_org_sender_details: forceOrgSenderDetails,
                 useOrg: Boolean(orgResult.org_signature)
             };
 
@@ -11812,6 +11621,7 @@ export const createStripeRoutes = (app: Elysia) => {
         const status = await checkPaymentStatus(db, user.organization_id);
         logger.info(`Returning subscription status: ${JSON.stringify(status)}`);
         
+        set.status = 200;
         return {
           success: true,
           data: status as SubscriptionStatus
@@ -13170,6 +12980,9 @@ export class AuthService {
         u.last_name,
         u.is_active,
         u.phone,
+        u.signature,
+        u.use_org_sender_details,
+        u.booking_link,
         o.name as organization_name
        FROM users u
        JOIN organizations o ON u.organization_id = o.id 
@@ -13192,7 +13005,10 @@ export class AuthService {
       last_name: userResult[0][6],
       is_active: userResult[0][7],
       phone: userResult[0][8],
-      organization_name: userResult[0][9]
+      signature: userResult[0][9],
+      use_org_sender_details: Boolean(userResult[0][10]),
+      booking_link: userResult[0][11],
+      organization_name: userResult[0][12]
     };
 
     return user;
@@ -13422,6 +13238,9 @@ export async function getUserFromSession(request: Request) {
         u.last_name,
         u.is_active,
         u.phone,
+        u.signature,
+        u.use_org_sender_details,
+        u.booking_link,
         o.name as organization_name
        FROM users u
        JOIN organizations o ON u.organization_id = o.id 
@@ -13444,7 +13263,10 @@ export async function getUserFromSession(request: Request) {
       last_name: userResult[0][6],
       is_active: userResult[0][7],
       phone: userResult[0][8],
-      organization_name: userResult[0][9]
+      signature: userResult[0][9],
+      use_org_sender_details: Boolean(userResult[0][10]),
+      booking_link: userResult[0][11],
+      organization_name: userResult[0][12]
     };
 
     return user;
@@ -19243,7 +19065,7 @@ const startServer = async () => {
               lastName: updatedUser.last_name,
               email: updatedUser.email,
               phone: updatedUser.phone || '',
-              bookingLink: updatedUser.booking_link || '',
+              booking_link: updatedUser.booking_link || '',
               signature: updatedSettings.signature || '',
               is_admin: Boolean(updatedUser.is_admin),
               is_agent: Boolean(updatedUser.is_agent),
@@ -19413,6 +19235,8 @@ const startServer = async () => {
                 u.is_agent,
                 u.phone,
                 u.booking_link,
+                u.signature,
+                u.use_org_sender_details,
                 u.organization_id,
                 u.has_completed_walkthrough,
                 o.slug as organization_slug,
@@ -19449,6 +19273,8 @@ const startServer = async () => {
               is_agent: Boolean(user.is_agent),
               phone: user.phone || '',
               booking_link: user.booking_link || '',
+              signature: user.signature || '',
+              useOrgSenderDetails: Boolean(user.use_org_sender_details),
               organization_id: user.organization_id,
               organization_slug: user.organization_slug,
               subscription_tier: user.subscription_tier,
@@ -19968,24 +19794,38 @@ const startServer = async () => {
             }
           }
 
-          const { firstName, lastName, phone } = body as { 
+          const { firstName, lastName, phone, signature, useOrgSenderDetails, booking_link } = body as { 
             firstName: string;
             lastName: string;
             phone: string;
+            signature?: string;
+            useOrgSenderDetails?: boolean;
+            booking_link?: string;
           }
 
           // Get the libSQL client
           const client = db.getClient()
 
-          // Update only allowed profile fields
+          // Update profile fields including sender settings
           const result = await client.execute({
             sql: `UPDATE users 
                   SET first_name = ?, 
                       last_name = ?, 
-                      phone = ?
+                      phone = ?,
+                      signature = ?,
+                      use_org_sender_details = ?,
+                      booking_link = ?
                   WHERE id = ?
                   RETURNING *`,
-            args: [firstName, lastName, phone, currentUser.id]
+            args: [
+              firstName, 
+              lastName, 
+              phone, 
+              signature || null,
+              useOrgSenderDetails !== undefined ? (useOrgSenderDetails ? 1 : 0) : null,
+              booking_link || null,
+              currentUser.id
+            ]
           })
 
           if (!result.rows || result.rows.length === 0) {

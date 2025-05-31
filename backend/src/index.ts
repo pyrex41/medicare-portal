@@ -36,6 +36,7 @@ import * as os from 'os'
 import { readdirSync } from 'fs'
 import { parseTrackingId } from './utils/tracking'
 import { createBillingRoutes } from './routes/billing'
+import { createStageDemoRoutes } from './routes/stage-demo'
 
 
 // At the top of the file, add interface for ZIP data
@@ -1017,6 +1018,7 @@ const startServer = async () => {
       // Serve backend static files from public directory
       .use(createStripeRoutes)
       .use(createBillingRoutes)
+      .use(createStageDemoRoutes())
       // Add this endpoint within the app definition
       .post('/api/agents', async ({ body, request, set }) => {
         try {

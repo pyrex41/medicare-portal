@@ -17,8 +17,8 @@ import Date exposing (Date)
 import Dict exposing (Dict)
 import Eligibility
 import Home
-import Html exposing (Html, a, button, div, h1, img, nav, p, text)
-import Html.Attributes exposing (alt, class, href, src)
+import Html exposing (Html, a, button, div, h1, img, nav, p, span, text)
+import Html.Attributes exposing (alt, class, href, src, target)
 import Html.Events exposing (onClick, stopPropagationOn)
 import Http
 import Json.Decode as Decode exposing (Decoder)
@@ -38,6 +38,10 @@ import ScheduleMain
 import SelfServiceOnboarding
 import Settings
 import Signup
+import StageDemoInput
+import StageDemoQuote
+import StageDemoHealth
+import StageDemoCTA
 import Stripe
 import Svg exposing (path, svg)
 import Svg.Attributes exposing (d, fill, viewBox)
@@ -235,6 +239,10 @@ type Page
     | LandingPage Landing.Model
     | PricingPage Pricing.Model
     | StripePage Stripe.Model
+    | StageDemoInputPage StageDemoInput.Model
+    | StageDemoQuotePage StageDemoQuote.Model
+    | StageDemoHealthPage StageDemoHealth.Model
+    | StageDemoCTAPage StageDemoCTA.Model
 
 
 type Msg
@@ -286,6 +294,10 @@ type Msg
     | SetSessionResponse (Result Http.Error SetSessionResponseAlias)
     | LogTrackingClickResult (Result Http.Error ())
     | DemoModeBannerMsg DemoModeBanner.Msg
+    | StageDemoInputMsg StageDemoInput.Msg
+    | StageDemoQuoteMsg StageDemoQuote.Msg
+    | StageDemoHealthMsg StageDemoHealth.Msg
+    | StageDemoCTAMsg StageDemoCTA.Msg
 
 
 type alias Flags =
@@ -529,6 +541,10 @@ type PublicPage
     | WaitlistRoute
     | LandingRoute { quoteId : Maybe String }
     | PricingRoute
+    | StageDemoInputRoute
+    | StageDemoQuoteRoute String
+    | StageDemoHealthRoute String
+    | StageDemoCTARoute String
 
 
 type ProtectedPage
@@ -666,6 +682,10 @@ routeParser =
             (s "setup" </> s "settings" <?> setupProgressDecoder)
         , map (\progress -> SetupRoute (AddAgentsRoute progress))
             (s "setup" </> s "add-agents" <?> setupProgressDecoder)
+        , map (PublicRoute StageDemoInputRoute) (s "stage-demo")
+        , map (\id -> PublicRoute (StageDemoQuoteRoute id)) (s "stage-demo" </> s "quote" </> string)
+        , map (\id -> PublicRoute (StageDemoHealthRoute id)) (s "stage-demo" </> s "health" </> string)
+        , map (\id -> PublicRoute (StageDemoCTARoute id)) (s "stage-demo" </> s "schedule-signup" </> string)
         ]
 
 
@@ -1361,6 +1381,66 @@ update msg model =
                 _ ->
                     ( model, Cmd.none )
 
+        StageDemoInputMsg subMsg ->
+            case model.page of
+                StageDemoInputPage inputModel ->
+                    let
+                        ( newInputModel, newCmd ) =
+                            StageDemoInput.update subMsg inputModel
+                    in
+                    ( { model | page = StageDemoInputPage newInputModel }
+                    , Cmd.map StageDemoInputMsg newCmd
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        StageDemoQuoteMsg subMsg ->
+            case model.page of
+                StageDemoQuotePage quoteModel ->
+                    let
+                        ( newQuoteModel, newCmd ) =
+                            StageDemoQuote.update subMsg quoteModel
+                    in
+                    case subMsg of
+                        StageDemoQuote.NavigateToHealth ->
+                            ( model, Nav.pushUrl model.key ("/stage-demo/health/" ++ quoteModel.tempId) )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        StageDemoHealthMsg subMsg ->
+            case model.page of
+                StageDemoHealthPage healthModel ->
+                    let
+                        ( newHealthModel, newCmd ) =
+                            StageDemoHealth.update subMsg healthModel
+                    in
+                    case subMsg of
+                        StageDemoHealth.NavigateToCTA ->
+                            ( model, Nav.pushUrl model.key ("/stage-demo/schedule-signup/" ++ healthModel.tempId) )
+                        StageDemoHealth.AnswerQuestion _ _ ->
+                            ( { model | page = StageDemoHealthPage newHealthModel }
+                            , Cmd.map StageDemoHealthMsg newCmd
+                            )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        StageDemoCTAMsg subMsg ->
+            case model.page of
+                StageDemoCTAPage ctaModel ->
+                    let
+                        ( newCTAModel, newCmd ) =
+                            StageDemoCTA.update subMsg ctaModel
+                    in
+                    ( { model | page = StageDemoCTAPage newCTAModel }
+                    , Cmd.map StageDemoCTAMsg newCmd
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
+
         TogglePaymentStatus ->
             ( { model | showPaymentStatus = not model.showPaymentStatus }, Cmd.none )
 
@@ -1633,6 +1713,26 @@ view model =
                     { title = stripeView.title
                     , body = [ viewWithNav model (Html.map StripeMsg (div [] stripeView.body)) ]
                     }
+
+                StageDemoInputPage inputModel ->
+                    { title = "Medicare Quote Demo"
+                    , body = [ viewStageDemoWithBanner model (Html.map StageDemoInputMsg (StageDemoInput.view inputModel)) ]
+                    }
+
+                StageDemoQuotePage quoteModel ->
+                    { title = "Your Medicare Quote"
+                    , body = [ viewStageDemoWithBanner model (Html.map StageDemoQuoteMsg (StageDemoQuote.view quoteModel)) ]
+                    }
+
+                StageDemoHealthPage healthModel ->
+                    { title = "Health Questions"
+                    , body = [ viewStageDemoWithBanner model (Html.map StageDemoHealthMsg (StageDemoHealth.view healthModel)) ]
+                    }
+
+                StageDemoCTAPage ctaModel ->
+                    { title = "Schedule Your Sign-Up Call"
+                    , body = [ viewStageDemoWithBanner model (Html.map StageDemoCTAMsg (StageDemoCTA.view ctaModel)) ]
+                    }
     in
     viewPage
 
@@ -1651,6 +1751,39 @@ viewWithNav model content =
                 , Html.map DemoModeBannerMsg (DemoModeBanner.view model.demoModeBanner)
                 , content
                 ]
+        ]
+
+
+viewStageDemoWithBanner : Model -> Html Msg -> Html Msg
+viewStageDemoWithBanner model content =
+    div []
+        [ viewStageDemoBanner
+        , content
+        ]
+
+
+viewStageDemoBanner : Html Msg
+viewStageDemoBanner =
+    div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4" ]
+        [ div [ class "p-3 sm:p-4 border rounded-lg bg-[#F6F1FF] border-[#E9D7FE] text-[#53389E] flex items-center justify-between" ]
+            [ div [ class "flex items-start" ]
+                [ span [ class "inline-flex items-center justify-center h-6 w-6 rounded-full text-[#7F56D9] mt-0.5 mr-3" ]
+                    [ MyIcon.calendarDays 18 "#53389E" ]
+                , div []
+                    [ span [ class "font-semibold text-sm leading-tight" ]
+                        [ text "Stage Demo Mode - See Medicare Max in Action" ]
+                    , div [ class "mt-1 text-xs leading-tight" ]
+                        [ text "Experience how Medicare Max transforms your renewal process. "
+                        , a 
+                            [ onClick (InternalLinkClicked "/stage-demo/schedule-signup/demo")
+                            , class "underline font-semibold hover:text-[#7F56D9] cursor-pointer"
+                            ]
+                            [ text "Schedule your personalized demo call" ]
+                        , text " to learn more."
+                        ]
+                    ]
+                ]
+            ]
         ]
 
 
@@ -2155,6 +2288,18 @@ subscriptions model =
                     Sub.none
 
                 StripePage stripeModel ->
+                    Sub.none
+                
+                StageDemoInputPage _ ->
+                    Sub.none
+                
+                StageDemoQuotePage _ ->
+                    Sub.none
+                
+                StageDemoHealthPage _ ->
+                    Sub.none
+                
+                StageDemoCTAPage _ ->
                     Sub.none
     in
     Sub.batch [ dropdownSub, escDropdownSub, pageSubs ]
@@ -2981,6 +3126,26 @@ updatePage url ( model, cmd ) =
                                             ]
                                         )
 
+                                    PublicRoute StageDemoInputRoute ->
+                                        ( { modelWithUpdatedSetup | page = StageDemoInputPage StageDemoInput.init }
+                                        , Cmd.none
+                                        )
+
+                                    PublicRoute (StageDemoQuoteRoute tempId) ->
+                                        ( { modelWithUpdatedSetup | page = StageDemoQuotePage (StageDemoQuote.init tempId) }
+                                        , Cmd.none
+                                        )
+
+                                    PublicRoute (StageDemoHealthRoute tempId) ->
+                                        ( { modelWithUpdatedSetup | page = StageDemoHealthPage (StageDemoHealth.init tempId) }
+                                        , Cmd.none
+                                        )
+
+                                    PublicRoute (StageDemoCTARoute tempId) ->
+                                        ( { modelWithUpdatedSetup | page = StageDemoCTAPage (StageDemoCTA.init tempId) }
+                                        , Cmd.none
+                                        )
+
                                     ProtectedRoute ContactUsRoute ->
                                         let
                                             ( contactUsModel, contactUsCmd ) =
@@ -3337,6 +3502,26 @@ updatePageForcePublic url ( model, cmd ) =
                     in
                     ( { model | page = PricingPage pricingModel }
                     , Cmd.map PricingMsg pricingCmd
+                    )
+
+                PublicRoute StageDemoInputRoute ->
+                    ( { model | page = StageDemoInputPage StageDemoInput.init }
+                    , Cmd.none
+                    )
+
+                PublicRoute (StageDemoQuoteRoute tempId) ->
+                    ( { model | page = StageDemoQuotePage (StageDemoQuote.init tempId) }
+                    , Cmd.none
+                    )
+
+                PublicRoute (StageDemoHealthRoute tempId) ->
+                    ( { model | page = StageDemoHealthPage (StageDemoHealth.init tempId) }
+                    , Cmd.none
+                    )
+
+                PublicRoute (StageDemoCTARoute tempId) ->
+                    ( { model | page = StageDemoCTAPage (StageDemoCTA.init tempId) }
+                    , Cmd.none
                     )
 
                 -- For any other route type, fall through to the main updatePage or handle as NotFound.
