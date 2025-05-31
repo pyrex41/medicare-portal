@@ -17,6 +17,12 @@ export const requireAuth = new Elysia()
       const url = new URL(request.url)
       const pathname = url.pathname
       
+      // Bypass auth for stage demo API routes
+      if (pathname.startsWith('/api/stage-demo/')) {
+        logger.info(`Auth middleware: bypassing auth for stage demo route: ${pathname}`)
+        return
+      }
+      
       // Bypass auth for SPA routes - belt and suspenders approach
       if ((!pathname.startsWith('/api/') && !pathname.includes('.')) || 
           pathname.startsWith('/compare/') ||
@@ -56,6 +62,14 @@ export const requireAdmin = new Elysia()
       const bypassAuth = request.headers.get('X-Bypass-Auth')
       if (bypassAuth) {
         logger.info(`Admin middleware: bypassing auth due to X-Bypass-Auth header`)
+        return
+      }
+
+      // Check if this is a stage demo route - bypass admin auth
+      const url = new URL(request.url)
+      const pathname = url.pathname
+      if (pathname.startsWith('/api/stage-demo/')) {
+        logger.info(`Admin middleware: bypassing auth for stage demo route: ${pathname}`)
         return
       }
       

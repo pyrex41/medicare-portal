@@ -486,14 +486,16 @@ const startServer = async () => {
         const method = request.method;
         logger.info(`⮕ ${method} ${path}`);
         
-        // Bypass auth for all SPA routes (non-API paths with no file extension)
+        // Bypass auth for all SPA routes (non-API paths with no file extension) and stage demo routes
         if ((!path.startsWith('/api/') && !path.includes('.')) || 
             path.startsWith('/compare/') ||
             path.startsWith('/quote/') ||
             path.startsWith('/eligibility') ||
-            path.startsWith('/schedule')) {
+            path.startsWith('/schedule') ||
+            path.startsWith('/stage-demo') ||
+            path.startsWith('/api/stage-demo/')) {
           
-          logger.info(`[Auth Bypass] Setting bypass header for SPA route: ${path}`);
+          logger.info(`[Auth Bypass] Setting bypass header for stage demo/SPA route: ${path}`);
           // Modify the request headers to include X-Bypass-Auth
           const newHeaders = new Headers(request.headers);
           newHeaders.set('X-Bypass-Auth', 'true');
