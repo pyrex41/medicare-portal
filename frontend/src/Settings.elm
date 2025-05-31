@@ -1068,7 +1068,7 @@ viewDefaultSenderSettings settings =
                     , div [ class "ml-3" ]
                         [ label [ class "font-medium text-gray-900" ] [ text "Agent Details" ]
                         , p [ class "text-sm text-gray-500 mt-1" ]
-                            [ text "When this option is selected the Agent's personal information from their agent settings will be used for the signature, phone number, and scheduling link if applicable." ]
+                            [ text "When this option is selected the Agent will have the choice to use their own name or the organization's name for the signature, phone number, and scheduling link (if applicable)." ]
                         , div [ class "mt-4 text-xs text-gray-400" ]
                             [ div [ class "mb-1" ] [ text "Recommended For:" ]
                             , div [] [ text "Agencies with agents who provide ongoing support for servicing existing clients." ]

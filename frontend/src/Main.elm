@@ -1965,7 +1965,7 @@ viewNavHeader model =
                                             [ class "block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-[#DCE2E5]"
                                             , onClick (InternalLinkClicked "/profile")
                                             ]
-                                            [ text "Profile" ]
+                                            [ text "Your Profile" ]
 
                                       else
                                         text ""
@@ -1983,7 +1983,7 @@ viewNavHeader model =
                                             [ class "block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-[#DCE2E5]"
                                             , onClick (InternalLinkClicked "/add-agents")
                                             ]
-                                            [ text "Agents" ]
+                                            [ text "Manage Agents" ]
 
                                       else
                                         text ""

@@ -20,6 +20,13 @@ import Time
 -- MODEL
 
 
+type alias Settings =
+    { carrierContracts : List String
+    , stateLicenses : List String
+    , forceOrgSenderDetails : Bool
+    }
+
+
 type alias Model =
     { currentUser : Maybe User
     , originalUser : Maybe User -- Store original user data for comparison
@@ -28,6 +35,8 @@ type alias Model =
     , pendingSave : Bool
     , agentProfileLinkCopied : Bool
     , showTutorialModal : Bool -- ADDED for tutorial modal
+    , orgSettings : Maybe Settings
+    , forceOrgSenderDetails : Bool
     }
 
 
@@ -40,6 +49,8 @@ type alias User =
     , isAdmin : Bool
     , isAgent : Bool
     , orgSlug : String
+    , signature : String
+    , useOrgSenderDetails : Bool -- True = use org details, False = use agent details
     }
 
 
@@ -52,8 +63,13 @@ init _ =
       , pendingSave = False
       , agentProfileLinkCopied = False
       , showTutorialModal = False -- ADDED: Initialize tutorial modal state
+      , orgSettings = Nothing
+      , forceOrgSenderDetails = False
       }
-    , fetchCurrentUser
+    , Cmd.batch
+        [ fetchCurrentUser
+        , fetchOrgSettings
+        ]
     )
 
 
@@ -64,6 +80,7 @@ init _ =
 type Msg
     = GotCurrentUser (Result Http.Error CurrentUserResponse)
     | UpdateField String String
+    | UpdateSenderPreference Bool
     | SaveProfile
     | ProfileSaved (Result Http.Error ())
     | NavigateTo String
@@ -73,6 +90,7 @@ type Msg
     | ResetAgentProfileLinkCopiedStatus
     | OpenTutorialModal -- ADDED
     | CloseTutorialModal -- ADDED
+    | GotOrgSettings (Result Http.Error Settings)
 
 
 type alias CurrentUserResponse =
@@ -116,10 +134,23 @@ update msg model =
                                 "phone" ->
                                     { user | phone = String.filter Char.isDigit value }
 
+                                "signature" ->
+                                    { user | signature = value }
+
                                 _ ->
                                     user
                     in
                     ( { model | currentUser = Just updatedUser }
+                    , Cmd.none
+                    )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        UpdateSenderPreference value ->
+            case model.currentUser of
+                Just user ->
+                    ( { model | currentUser = Just { user | useOrgSenderDetails = value } }
                     , Cmd.none
                     )
 
@@ -199,6 +230,21 @@ update msg model =
 
         ResetAgentProfileLinkCopiedStatus ->
             ( { model | agentProfileLinkCopied = False }, Cmd.none )
+
+        GotOrgSettings (Ok settings) ->
+            ( { model
+                | orgSettings = Just settings
+                , forceOrgSenderDetails = settings.forceOrgSenderDetails
+              }
+            , Cmd.none
+            )
+
+        GotOrgSettings (Err _) ->
+            ( { model
+                | error = Just "Failed to load organization settings"
+              }
+            , Cmd.none
+            )
 
 
 
@@ -291,6 +337,7 @@ viewContent model =
                         ]
                     , viewBasicInfo model user
                     , viewAgentProfileLinkSection model user
+                    , viewSenderSettingsSection model user
                     , viewSaveButton model
                     ]
 
@@ -398,6 +445,149 @@ viewAgentProfileLinkSection model user =
         ]
 
 
+viewSenderSettingsSection : Model -> User -> Html Msg
+viewSenderSettingsSection model user =
+    let
+        -- If org forces org sender details, always use org details
+        -- If org allows choice, use user's preference
+        effectiveUseOrgDetails =
+            if model.forceOrgSenderDetails then
+                True
+
+            else
+                user.useOrgSenderDetails
+
+        canChoose =
+            not model.forceOrgSenderDetails
+    in
+    div [ class "space-y-6" ]
+        [ div [ class "border-b border-gray-200 pb-4" ]
+            [ h2 [ class "text-lg font-medium text-gray-900" ]
+                [ text "Sender Settings" ]
+            ]
+        , div []
+            [ p [ class "text-sm text-gray-500 mb-4" ]
+                [ text "The sender settings below are controlled by your organization's configuration. "
+                , a [ class "text-blue-600 hover:text-blue-800 underline", href "/settings" ]
+                    [ text "Visit Organization Settings" ]
+                , text " to change how agent details are used across your organization. When Organization Details is selected, agents will use the organization's contact information. When Agent Details is selected, agents can use their own contact information set above."
+                ]
+            , div [ class "grid grid-cols-1 md:grid-cols-2 gap-4" ]
+                [ -- Organization Details Card
+                  div
+                    ([ class
+                        ("relative rounded-lg border-2 p-6 transition-all "
+                            ++ (if effectiveUseOrgDetails then
+                                    "border-blue-500 bg-blue-50"
+
+                                else
+                                    "border-gray-200 bg-white"
+                               )
+                        )
+                     , classList [ ( "cursor-pointer", canChoose ) ]
+                     ]
+                        ++ (if canChoose then
+                                [ onClick (UpdateSenderPreference True) ]
+
+                            else
+                                []
+                           )
+                    )
+                    [ div [ class "flex items-start" ]
+                        [ div [ class "flex items-center h-5" ]
+                            [ input
+                                [ type_ "radio"
+                                , name ("senderSettings-" ++ String.fromInt user.id)
+                                , checked effectiveUseOrgDetails
+                                , class "h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
+                                , disabled (not canChoose)
+                                ]
+                                []
+                            ]
+                        , div [ class "ml-3" ]
+                            [ label [ class "font-medium text-gray-900" ] [ text "Organization Details" ]
+                            , p [ class "text-sm text-gray-500 mt-1" ]
+                                [ if model.forceOrgSenderDetails then
+                                    span []
+                                        [ text "These details are set in the organization settings. "
+                                        , a [ class "text-blue-600 hover:text-blue-800", href "/settings" ] [ text "Change organization defaults" ]
+                                        , text "."
+                                        ]
+
+                                  else if effectiveUseOrgDetails then
+                                    text "You have chosen to use the organization's contact information for communications."
+
+                                  else
+                                    text "When this option is selected the Organization Details will be used for the signature, phone number, and scheduling link if applicable."
+                                ]
+                            ]
+                        ]
+                    ]
+                , -- Agent Details Card
+                  div
+                    ([ class
+                        ("relative rounded-lg border-2 p-6 transition-all "
+                            ++ (if not effectiveUseOrgDetails then
+                                    "border-blue-500 bg-blue-50"
+
+                                else
+                                    "border-gray-200 bg-white"
+                               )
+                        )
+                     , classList [ ( "cursor-pointer", canChoose ) ]
+                     ]
+                        ++ (if canChoose then
+                                [ onClick (UpdateSenderPreference False) ]
+
+                            else
+                                []
+                           )
+                    )
+                    [ div [ class "flex items-start" ]
+                        [ div [ class "flex items-center h-5" ]
+                            [ input
+                                [ type_ "radio"
+                                , name ("senderSettings-" ++ String.fromInt user.id)
+                                , checked (not effectiveUseOrgDetails)
+                                , class "h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
+                                , disabled (not canChoose)
+                                ]
+                                []
+                            ]
+                        , div [ class "ml-3" ]
+                            [ label [ class "font-medium text-gray-900" ] [ text "Agent Details" ]
+                            , p [ class "text-sm text-gray-500 mt-1" ]
+                                [ if not effectiveUseOrgDetails then
+                                    text "You have chosen to use your personal information for communications."
+
+                                  else
+                                    text "When this option is selected your personal information from your profile will be used for the signature, phone number, and scheduling link if applicable."
+                                ]
+                            ]
+                        ]
+                    ]
+                ]
+            ]
+        , -- Email & SMS Signature Section (only if agent details are enabled)
+          if not effectiveUseOrgDetails then
+            div []
+                [ label [ class "block text-sm font-medium text-gray-700" ]
+                    [ text "Email & SMS Signature or Sign Off" ]
+                , input
+                    [ type_ "text"
+                    , class "mt-1 px-3 py-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-base"
+                    , Html.Attributes.value user.signature
+                    , onInput (UpdateField "signature")
+                    , placeholder ("Thanks, " ++ user.firstName ++ " " ++ user.lastName)
+                    ]
+                    []
+                ]
+
+          else
+            text ""
+        ]
+
+
 
 -- ADDED: Tutorial Modal View (adapted from Dashboard.elm)
 
@@ -446,6 +636,14 @@ fetchCurrentUser =
         }
 
 
+fetchOrgSettings : Cmd Msg
+fetchOrgSettings =
+    Http.get
+        { url = "/api/settings"
+        , expect = Http.expectJson GotOrgSettings orgSettingsDecoder
+        }
+
+
 saveProfile : User -> Cmd Msg
 saveProfile user =
     Http.request
@@ -481,6 +679,16 @@ userDecoder =
         |> Pipeline.required "is_admin" Decode.bool
         |> Pipeline.required "is_agent" Decode.bool
         |> Pipeline.required "organization_slug" Decode.string
+        |> Pipeline.optional "signature" Decode.string ""
+        |> Pipeline.optional "useOrgSenderDetails" Decode.bool True
+
+
+orgSettingsDecoder : Decoder Settings
+orgSettingsDecoder =
+    Decode.succeed Settings
+        |> Pipeline.required "carrierContracts" (Decode.list Decode.string)
+        |> Pipeline.required "stateLicenses" (Decode.list Decode.string)
+        |> Pipeline.required "forceOrgSenderDetails" Decode.bool
 
 
 
@@ -495,6 +703,8 @@ encodeUser user =
         , ( "lastName", Encode.string user.lastName )
         , ( "email", Encode.string user.email )
         , ( "phone", Encode.string user.phone )
+        , ( "signature", Encode.string user.signature )
+        , ( "useOrgSenderDetails", Encode.bool user.useOrgSenderDetails )
         ]
 
 
@@ -544,6 +754,10 @@ hasChanges model =
                 /= original.lastName
                 || current.phone
                 /= original.phone
+                || current.signature
+                /= original.signature
+                || current.useOrgSenderDetails
+                /= original.useOrgSenderDetails
 
         _ ->
             False
