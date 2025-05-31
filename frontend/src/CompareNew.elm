@@ -1,4 +1,4 @@
-module Compare exposing
+module CompareNew exposing
     ( CompareParams
     , Model
     , Msg(..)
@@ -126,7 +126,6 @@ type alias Plan =
     , tobacco : Bool
     , coverageSummary : CoverageList
     , discountDescription : Maybe String
-    , originalPlanName : Maybe String
     }
 
 
@@ -537,7 +536,6 @@ type alias QuoteData =
     , gender : String
     , plan : String
     , tobacco : Int
-    , originalPlanName : Maybe String
     }
 
 
@@ -552,7 +550,7 @@ quoteResponseDecoder =
 
 quoteDataDecoder : Decoder QuoteData
 quoteDataDecoder =
-    D.map8 QuoteData
+    D.map7 QuoteData
         (D.field "rate" D.float)
         (D.field "discount_rate" D.float)
         (D.field "discount_category" (D.nullable D.string))
@@ -560,7 +558,6 @@ quoteDataDecoder =
         (D.field "gender" D.string)
         (D.field "plan" D.string)
         (D.field "tobacco" D.int)
-        (D.field "original_plan_name" (D.nullable D.string))
 
 
 blacklistCarriers : List Carrier
@@ -586,6 +583,155 @@ filterPlansByCarrier plans carrierContracts =
     }
 
 
+
+-- State-specific plan mapping helpers
+
+
+isStateSpecificPlan : String -> Bool
+isStateSpecificPlan planCode =
+    let
+        upperCode =
+            String.toUpper planCode
+    in
+    String.startsWith "MN_" upperCode
+        || String.startsWith "WI_" upperCode
+        || String.startsWith "MA_" upperCode
+
+
+getStateFromPlanCode : String -> Maybe String
+getStateFromPlanCode planCode =
+    let
+        upperCode =
+            String.toUpper planCode
+    in
+    if String.startsWith "MN_" upperCode then
+        Just "MN"
+
+    else if String.startsWith "WI_" upperCode then
+        Just "WI"
+
+    else if String.startsWith "MA_" upperCode then
+        Just "MA"
+
+    else
+        Nothing
+
+
+
+-- Maps state-specific plans to their closest standard equivalent (G or N)
+
+
+mapStateSpecificPlanToStandard : String -> String
+mapStateSpecificPlanToStandard planCode =
+    let
+        upperCode =
+            String.toUpper planCode
+    in
+    case upperCode of
+        -- Minnesota plans
+        "MN_BASIC" ->
+            "N"
+
+        -- Basic is more similar to N (missing some coverage)
+        "MN_EXTB" ->
+            "G"
+
+        -- Extended Basic is similar to G
+        -- Wisconsin plans
+        "WI_BASE" ->
+            "N"
+
+        -- Base plan is similar to N without riders
+        "WI_HDED" ->
+            "N"
+
+        -- High deductible is a variant of N
+        -- Massachusetts plans
+        "MA_CORE" ->
+            "N"
+
+        -- Core is more basic, similar to N
+        "MA_SUPP1" ->
+            "G"
+
+        -- Supplement 1 is comprehensive like G
+        -- Default to original if not state-specific
+        _ ->
+            planCode
+
+
+
+-- Get a friendly display name for state-specific plans
+
+
+getStateSpecificPlanDisplayName : String -> String
+getStateSpecificPlanDisplayName planCode =
+    let
+        upperCode =
+            String.toUpper planCode
+    in
+    case upperCode of
+        -- Minnesota
+        "MN_BASIC" ->
+            "Basic Plan"
+
+        "MN_EXTB" ->
+            "Extended Basic"
+
+        -- Wisconsin
+        "WI_BASE" ->
+            "Basic Plan"
+
+        "WI_HDED" ->
+            "High Deductible"
+
+        -- Massachusetts
+        "MA_CORE" ->
+            "Core Plan"
+
+        "MA_SUPP1" ->
+            "Supplement 1"
+
+        _ ->
+            planCode
+
+
+
+-- Get description for state-specific plans
+
+
+getStateSpecificPlanDescription : String -> String
+getStateSpecificPlanDescription planCode =
+    let
+        upperCode =
+            String.toUpper planCode
+    in
+    case upperCode of
+        -- Minnesota
+        "MN_BASIC" ->
+            "Similar to Plan N. Additional riders available for enhanced coverage."
+
+        "MN_EXTB" ->
+            "Comprehensive coverage similar to Plan G."
+
+        -- Wisconsin
+        "WI_BASE" ->
+            "Similar to Plan N. Additional riders available for enhanced coverage."
+
+        "WI_HDED" ->
+            "Lower premium option with higher out-of-pocket costs."
+
+        -- Massachusetts
+        "MA_CORE" ->
+            "Basic coverage similar to Plan N."
+
+        "MA_SUPP1" ->
+            "Comprehensive coverage similar to Plan G."
+
+        _ ->
+            ""
+
+
 groupQuotesByPlan : List QuoteResponse -> Model -> Plans
 groupQuotesByPlan responses model =
     let
@@ -600,6 +746,21 @@ groupQuotesByPlan responses model =
                         Nothing ->
                             -- Fallback to png if we can't match the carrier
                             "/images/medicare-max-logo.png"
+
+                -- Determine coverage summary based on plan type
+                standardPlanType =
+                    if isStateSpecificPlan quote.plan then
+                        mapStateSpecificPlanToStandard quote.plan
+
+                    else
+                        quote.plan
+
+                coverageSummary =
+                    if String.toUpper standardPlanType == "G" then
+                        planGCoverageList
+
+                    else
+                        planNCoverageList
             in
             { price = quote.rate / 100
             , priceDiscount = quote.discountRate / 100
@@ -611,21 +772,15 @@ groupQuotesByPlan responses model =
             , image = carrierImagePath
             , naic = response.naic
             , name = response.companyName
-            , planType = quote.plan
+            , planType = quote.plan -- Keep original plan type for display
             , premiumStability = ""
             , ratingCategory = ""
             , score = 0
             , select = False
             , state = Maybe.withDefault "" model.state
             , tobacco = quote.tobacco == 1
-            , coverageSummary =
-                if String.toUpper quote.plan == "G" then
-                    planGCoverageList
-
-                else
-                    planNCoverageList
+            , coverageSummary = coverageSummary
             , discountDescription = Nothing
-            , originalPlanName = quote.originalPlanName
             }
 
         allQuotes =
@@ -636,8 +791,15 @@ groupQuotesByPlan responses model =
                             let
                                 upperPlan =
                                     String.toUpper quote.plan
+
+                                -- Check if it's a standard plan or state-specific
+                                isStandardPlan =
+                                    List.member upperPlan [ "G", "N" ]
+
+                                isStatePlan =
+                                    isStateSpecificPlan quote.plan
                             in
-                            if List.member upperPlan [ "G", "N" ] then
+                            if isStandardPlan || isStatePlan then
                                 [ convertToPlan response quote ]
 
                             else
@@ -647,12 +809,37 @@ groupQuotesByPlan responses model =
                 )
                 responses
 
+        -- Categorize plans based on their standard equivalent
         planG =
-            List.filter (\q -> String.toUpper q.planType == "G") allQuotes
+            List.filter
+                (\q ->
+                    let
+                        standardType =
+                            if isStateSpecificPlan q.planType then
+                                mapStateSpecificPlanToStandard q.planType
+
+                            else
+                                q.planType
+                    in
+                    String.toUpper standardType == "G"
+                )
+                allQuotes
                 |> List.sortBy .price
 
         planN =
-            List.filter (\q -> String.toUpper q.planType == "N") allQuotes
+            List.filter
+                (\q ->
+                    let
+                        standardType =
+                            if isStateSpecificPlan q.planType then
+                                mapStateSpecificPlanToStandard q.planType
+
+                            else
+                                q.planType
+                    in
+                    String.toUpper standardType == "N"
+                )
+                allQuotes
                 |> List.sortBy .price
 
         result =
@@ -1630,13 +1817,26 @@ viewPlanCard model planTypeCode plan =
         isSelected =
             model.selectedPlan == Just plan
 
-        displayPlanBadgeText =
-            case plan.originalPlanName of
-                Just originalName ->
-                    formatOriginalPlanName originalName
+        -- Check if this is a state-specific plan
+        isStatePlan =
+            isStateSpecificPlan plan.planType
 
-                Nothing ->
-                    "PLAN " ++ planTypeCode
+        -- Get the display name (either state-specific or standard)
+        displayPlanName =
+            if isStatePlan then
+                getStateSpecificPlanDisplayName plan.planType
+
+            else
+                "PLAN " ++ planTypeCode
+
+        -- Get state code if it's a state plan
+        stateCode =
+            if isStatePlan then
+                getStateFromPlanCode plan.planType
+                    |> Maybe.withDefault ""
+
+            else
+                ""
 
         ( badgeTextColor, badgeBgColor ) =
             if planTypeCode == "G" then
@@ -1667,8 +1867,16 @@ viewPlanCard model planTypeCode plan =
             ]
             [ -- Top row with Plan type badge and radio
               div [ class "flex items-center justify-between p-2 sm:p-4" ]
-                [ div [ class ("px-2.5 py-0.5 rounded-lg text-xs font-medium leading-5 " ++ badgeTextColor ++ " " ++ badgeBgColor) ]
-                    [ text displayPlanBadgeText ]
+                [ div [ class "flex flex-col gap-1" ]
+                    [ div [ class ("px-2.5 py-0.5 rounded-lg text-xs font-medium leading-5 " ++ badgeTextColor ++ " " ++ badgeBgColor ++ " w-fit") ]
+                        [ text displayPlanName ]
+                    , if isStatePlan then
+                        div [ class "text-[10px] text-[#667085]" ]
+                            [ text (getStateSpecificPlanDescription plan.planType) ]
+
+                      else
+                        text ""
+                    ]
                 , div [ class "flex items-center gap-1.5" ]
                     [ span [ class "text-sm sm:text-sm font-medium text-[#667085]" ] [ text "Select This Plan" ]
                     , if isSelected then
@@ -1761,21 +1969,13 @@ viewPlanCard model planTypeCode plan =
 viewPlansSection : Model -> Html Msg
 viewPlansSection model =
     let
-        hasPlanG =
-            not (List.isEmpty model.plans.planG)
+        -- Check if any plans are state-specific
+        hasStateSpecificPlans =
+            List.any (\plan -> isStateSpecificPlan plan.planType) model.plans.planG
+                || List.any (\plan -> isStateSpecificPlan plan.planType) model.plans.planN
 
-        hasPlanN =
-            not (List.isEmpty model.plans.planN)
-
-        hasAnyPlans =
-            hasPlanG || hasPlanN
-
-        hasOriginalPlanNames =
-            List.any (\p -> p.originalPlanName /= Nothing) model.plans.planG
-                || List.any (\p -> p.originalPlanName /= Nothing) model.plans.planN
-
-        stateSpecificNotice =
-            if hasOriginalPlanNames then
+        stateNotice =
+            if hasStateSpecificPlans then
                 div [ class "bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4" ]
                     [ div [ class "flex items-start gap-3" ]
                         [ svg [ Svg.Attributes.width "20", Svg.Attributes.height "20", Svg.Attributes.viewBox "0 0 20 20", Svg.Attributes.fill "none", Svg.Attributes.class "flex-shrink-0 mt-0.5" ]
@@ -1785,14 +1985,12 @@ viewPlansSection model =
                                 ]
                                 []
                             ]
-                        , div [ class "flex-1 space-y-2" ]
+                        , div [ class "flex-1" ]
                             [ h4 [ class "text-sm font-semibold text-blue-900 mb-1" ]
-                                [ text "State-Specific Plan Names" ]
+                                [ text "State-Specific Medicare Supplement Plans" ]
                             , p [ class "text-sm text-blue-800" ]
-                                [ text "Your state uses slightly different variations from standardized Medicare Supplement plans. The plans shown reflect these state-specific names and do include additional optional riders that may be available in your state. Premiums may vary accordingly."
-                                ]
-                            , p [ class "text-sm text-blue-800" ]
-                                [ text "We would be happy to discuss these details further with you to help you find the best plan for your needs."
+                                [ text "Your state uses a unique Medicare Supplement structure. The plans shown are comparable to standard plans but may have different names. Additional coverage options (riders) may be available at a low cost. "
+                                , span [ class "font-medium" ] [ text "We're happy to discuss your specific options." ]
                                 ]
                             ]
                         ]
@@ -1800,145 +1998,66 @@ viewPlansSection model =
 
             else
                 text ""
-
-        planGHeader =
-            case List.head model.plans.planG of
-                Just firstPlanG ->
-                    firstPlanG.originalPlanName
-                        |> Maybe.map formatOriginalPlanName
-                        |> Maybe.withDefault "Plan G"
-                        |> (\name -> name ++ " Monthly Premiums")
-
-                Nothing ->
-                    "Plan G Monthly Premiums"
-
-        planNHeader =
-            case List.head model.plans.planN of
-                Just firstPlanN ->
-                    firstPlanN.originalPlanName
-                        |> Maybe.map formatOriginalPlanName
-                        |> Maybe.withDefault "Plan N"
-                        |> (\name -> name ++ " Monthly Premiums")
-
-                Nothing ->
-                    "Plan N Monthly Premiums"
     in
-    if not hasAnyPlans then
-        -- No plans found, display a message with contact info and button
-        div [ class "bg-white rounded-[10px] border border-[#DCE2E5] shadow-[0_1px_2px_rgba(16,24,40,0.05)] mt-6 p-6 sm:p-8 text-center" ]
-            [ div [ class "w-12 h-12 rounded-full bg-[#F9F5FF] flex items-center justify-center mx-auto mb-4" ]
-                [ svg [ Svg.Attributes.width "26", Svg.Attributes.height "26", Svg.Attributes.viewBox "0 0 24 24", Svg.Attributes.fill "none" ]
-                    [ path
-                        [ Svg.Attributes.d "M12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22Z"
-                        , Svg.Attributes.stroke "#7F56D9"
-                        , Svg.Attributes.strokeWidth "2"
-                        , Svg.Attributes.strokeLinecap "round"
-                        , Svg.Attributes.strokeLinejoin "round"
-                        ]
-                        []
-                    , path
-                        [ Svg.Attributes.d "M12 8V12"
-                        , Svg.Attributes.stroke "#7F56D9"
-                        , Svg.Attributes.strokeWidth "2"
-                        , Svg.Attributes.strokeLinecap "round"
-                        , Svg.Attributes.strokeLinejoin "round"
-                        ]
-                        []
-                    , path
-                        [ Svg.Attributes.d "M12 16H12.01"
-                        , Svg.Attributes.stroke "#7F56D9"
-                        , Svg.Attributes.strokeWidth "2"
-                        , Svg.Attributes.strokeLinecap "round"
-                        , Svg.Attributes.strokeLinejoin "round"
-                        ]
-                        []
+    div [ class "flex flex-col gap-4 sm:gap-0" ]
+        [ -- State-specific notice (if applicable)
+          stateNotice
+
+        -- Plan G Section - Desktop and Mobile
+        , div [ class "bg-white rounded-[10px] border border-[#DCE2E5] shadow-[0_1px_2px_rgba(16,24,40,0.05)]" ]
+            [ -- Header (desktop only)
+              div [ class "hidden sm:flex px-4 sm:px-6 py-4 flex-row items-center justify-between border-b border-[#DCE2E5] bg-[#F9F5FF] rounded-t-[10px]" ]
+                [ div [ class "flex items-end gap-3" ]
+                    [ h2 [ class "text-2xl font-extrabold -tracking-[0.04em] text-[#101828] leading-[1.2]" ] [ text "Recommended Plans for You" ]
+                    , p [ class "text-[16px] font-medium text-[#667085] -tracking-[0.04em] leading-[1.2] pb-[2px]" ] [ text "Select one to see if you qualify" ]
                     ]
                 ]
-            , h3 [ class "text-lg sm:text-xl font-bold text-[#101828] -tracking-[0.02em] mb-2" ]
-                [ text "We couldn't find plans for your specific criteria." ]
-            , p [ class "text-sm sm:text-base text-[#667085] mb-4" ]
-                [ text "Please give us a call at ", span [ class "font-semibold" ] [ text (getPhoneNumberForDisplay model |> formatPhoneNumber) ], text ". We're happy to help you find the best plan for your needs." ]
-            , a
-                [ href (getScheduleLink model)
-                , class "whitespace-nowrap bg-[#03045E] text-white px-5 sm:px-4 py-3 sm:py-2 rounded-lg hover:bg-[#02034D] transition-colors text-sm sm:text-base w-full sm:w-auto text-center max-w-xs mx-auto block font-semibold"
+
+            -- Mobile header
+            , div [ class "block sm:hidden px-4 py-4 border-b border-[#DCE2E5] bg-[#F9F5FF] rounded-t-[10px]" ]
+                [ h2 [ class "text-2xl font-extrabold -tracking-[0.04em] text-[#101828] leading-[1.2]" ] [ text "Recommended Plans" ]
+                , p [ class "text-[16px] font-medium text-[#667085] -tracking-[0.04em] leading-[1.2]" ] [ text "Select one to continue" ]
                 ]
-                [ text "Connect With Us" ]
+
+            -- Plan G Section
+            , div [ class "px-3 sm:px-4 py-6 bg-white" ]
+                [ h3 [ class "text-xl font-extrabold -tracking-[0.02em] mb-6 text-[#101828]" ] [ text "Plan G Monthly Premiums" ]
+                , div [ class "flex flex-wrap gap-8 justify-center sm:justify-start sm:pl-8" ]
+                    (List.map (viewPlanCard model "G") (getTopPlans model model.plans.planG 3))
+                ]
             ]
 
-    else
-        div [ class "flex flex-col gap-4 sm:gap-0" ]
-            [ -- State-specific notice
-              stateSpecificNotice
-
-            -- Plan G Section - Desktop and Mobile
-            , if hasPlanG then
-                div [ class "bg-white rounded-[10px] border border-[#DCE2E5] shadow-[0_1px_2px_rgba(16,24,40,0.05)]" ]
-                    [ -- Header (desktop only)
-                      div [ class "hidden sm:flex px-4 sm:px-6 py-4 flex-row items-center justify-between border-b border-[#DCE2E5] bg-[#F9F5FF] rounded-t-[10px]" ]
-                        [ div [ class "flex items-end gap-3" ]
-                            [ h2 [ class "text-2xl font-extrabold -tracking-[0.04em] text-[#101828] leading-[1.2]" ] [ text "Recommended Plans for You" ]
-                            , p [ class "text-[16px] font-medium text-[#667085] -tracking-[0.04em] leading-[1.2] pb-[2px]" ] [ text "Select one to see if you qualify" ]
-                            ]
-                        ]
-
-                    -- Mobile header
-                    , div [ class "block sm:hidden px-4 py-4 border-b border-[#DCE2E5] bg-[#F9F5FF] rounded-t-[10px]" ]
-                        [ h2 [ class "text-2xl font-extrabold -tracking-[0.04em] text-[#101828] leading-[1.2]" ] [ text "Recommended Plans" ]
-                        , p [ class "text-[16px] font-medium text-[#667085] -tracking-[0.04em] leading-[1.2]" ] [ text "Select one to continue" ]
-                        ]
-
-                    -- Plan G Section
-                    , div [ class "px-3 sm:px-4 py-6 bg-white" ]
-                        [ h3 [ class "text-xl font-extrabold -tracking-[0.02em] mb-6 text-[#101828]" ] [ text planGHeader ]
-                        , div [ class "flex flex-wrap gap-8 justify-center sm:justify-start sm:pl-8" ]
-                            (List.map (viewPlanCard model "G") (getTopPlans model model.plans.planG 3))
-                        ]
+        -- Mobile video button (standalone between Plan G and Plan N)
+        , div [ class "block sm:hidden py-4 px-3" ]
+            [ div [ class "mx-auto max-w-[280px] bg-[#F9F5FF] rounded-[10px] p-4 flex flex-row items-center cursor-pointer gap-4", onClick OpenGvsNVideo ]
+                [ div [ class "w-[33px] h-[33px] rounded-full border border-[#03045E] flex items-center justify-center flex-shrink-0" ]
+                    [ div [ class "w-0 h-0 border-t-[8px] border-t-transparent border-l-[12px] border-l-[#03045E] border-b-[8px] border-b-transparent ml-1" ] []
                     ]
-
-              else
-                text ""
-
-            -- Mobile video button (standalone between Plan G and Plan N)
-            -- Only show if both G and N plans are available
-            , if hasPlanG && hasPlanN then
-                div [ class "block sm:hidden py-4 px-3" ]
-                    [ div [ class "mx-auto max-w-[280px] bg-[#F9F5FF] rounded-[10px] p-4 flex flex-row items-center cursor-pointer gap-4", onClick OpenGvsNVideo ]
-                        [ div [ class "w-[33px] h-[33px] rounded-full border border-[#03045E] flex items-center justify-center flex-shrink-0" ]
-                            [ div [ class "w-0 h-0 border-t-[8px] border-t-transparent border-l-[12px] border-l-[#03045E] border-b-[8px] border-b-transparent ml-1" ] []
-                            ]
-                        , div [ class "flex flex-col items-start" ]
-                            [ p [ class "text-[16px] font-bold text-[#03045E] -tracking-[0.03em] leading-[1.21] text-left" ] [ text "Learn About Plan G vs N" ]
-                            , p [ class "text-[12px] text-[#667085] -tracking-[0.03em] leading-[1.21]" ] [ text "Watch the Video" ]
-                            ]
-                        ]
+                , div [ class "flex flex-col items-start" ]
+                    [ p [ class "text-[16px] font-bold text-[#03045E] -tracking-[0.03em] leading-[1.21] text-left" ] [ text "Learn About Plan G vs N" ]
+                    , p [ class "text-[12px] text-[#667085] -tracking-[0.03em] leading-[1.21]" ] [ text "Watch the Video" ]
                     ]
-
-              else
-                text ""
-
-            -- Plan N Section (separate container for mobile)
-            , if hasPlanN then
-                div [ class "bg-white rounded-[10px] border border-[#DCE2E5] shadow-[0_1px_2px_rgba(16,24,40,0.05)]" ]
-                    [ -- Plan N Section Header (Mobile only)
-                      div [ class "block sm:hidden px-4 py-4 border-b border-[#DCE2E5] bg-[#F9F5FF] rounded-t-[10px]" ]
-                        [ h2 [ class "text-2xl font-extrabold -tracking-[0.04em] text-[#101828] leading-[1.2]" ] [ text "Plan N Options" ]
-                        ]
-
-                    -- Plan N Content
-                    , div [ class "px-3 sm:px-4 py-6 bg-white" ]
-                        [ h3 [ class "text-xl font-extrabold -tracking-[0.02em] mb-6 text-[#101828]" ] [ text planNHeader ]
-                        , div [ class "flex flex-wrap gap-8 justify-center sm:justify-start sm:pl-8" ]
-                            (List.map (viewPlanCard model "N") (getTopPlans model model.plans.planN 3))
-                        ]
-                    ]
-
-              else
-                text ""
-
-            -- Medicare Advantage Off Ramp Section
-            -- This will also be hidden if no plans were found initially by the top-level `if not hasAnyPlans`
-            , viewMedicareAdvantageOffRamp model
+                ]
             ]
+
+        -- Plan N Section (separate container for mobile)
+        , div [ class "bg-white rounded-[10px] border border-[#DCE2E5] shadow-[0_1px_2px_rgba(16,24,40,0.05)]" ]
+            [ -- Plan N Section Header (Mobile only)
+              div [ class "block sm:hidden px-4 py-4 border-b border-[#DCE2E5] bg-[#F9F5FF] rounded-t-[10px]" ]
+                [ h2 [ class "text-2xl font-extrabold -tracking-[0.04em] text-[#101828] leading-[1.2]" ] [ text "Plan N Options" ]
+                ]
+
+            -- Plan N Content
+            , div [ class "px-3 sm:px-4 py-6 bg-white" ]
+                [ h3 [ class "text-xl font-extrabold -tracking-[0.02em] mb-6 text-[#101828]" ] [ text "Plan N Monthly Premiums" ]
+                , div [ class "flex flex-wrap gap-8 justify-center sm:justify-start sm:pl-8" ]
+                    (List.map (viewPlanCard model "N") (getTopPlans model model.plans.planN 3))
+                ]
+            ]
+
+        -- Medicare Advantage Off Ramp Section
+        , viewMedicareAdvantageOffRamp model
+        ]
 
 
 
@@ -2047,20 +2166,12 @@ viewLoading =
         [ div [ class "animate-spin rounded-full h-12 w-12 border-4 border-purple-600 border-t-transparent" ] []
         , p [ class "text-center text-lg font-medium text-gray-600" ]
             [ text "Loading your personalized quote..." ]
-        , div
-            [ class "sm:hidden opacity-0 transition-opacity duration-500 delay-[10000ms] mt-6 px-4 max-w-xs text-center text-sm text-gray-500"
-            , style "animation" "fadeIn 0.5s 5s forwards"
+        , -- Mobile warning with opacity transition after delay
+          -- Using inline styles for the animation since Tailwind doesn't have built-in delayed fade-in
+          div
+            [ class "sm:hidden mt-6 px-4 max-w-xs text-center text-sm text-gray-500"
             ]
             [ text "If page fails to load, please try refreshing or opening in your device's default browser." ]
-        , Html.node "style"
-            []
-            [ text """
-                @keyframes fadeIn {
-                    from { opacity: 0; }
-                    to { opacity: 1; }
-                }
-              """
-            ]
         ]
 
 
@@ -2428,88 +2539,3 @@ viewMobileTooltip model =
         Nothing ->
             -- No active tooltip
             text ""
-
-
-
--- Helper function to format state-specific plan names for display
-
-
-formatOriginalPlanName : String -> String
-formatOriginalPlanName originalName =
-    case String.toUpper originalName of
-        "MN_BASIC" ->
-            "Minnesota Basic Plan"
-
-        "MN_EXTB" ->
-            "Minnesota Extended Basic Plan"
-
-        "WI_BASE" ->
-            "Wisconsin Basic Plan"
-
-        "WI_HDED" ->
-            "Wisconsin High Deductible Plan"
-
-        "MA_CORE" ->
-            "Massachusetts Core Plan"
-
-        "MA_SUPP1" ->
-            "Massachusetts Supplement 1 Plan"
-
-        _ ->
-            originalName
-
-
-
--- Helper to determine which phone number to display based on org/agent settings
-
-
-getPhoneNumberForDisplay : Model -> String
-getPhoneNumberForDisplay model =
-    let
-        effectiveUseOrg =
-            if model.forceOrgSenderDetails then
-                True
-
-            else
-                case model.agent of
-                    Just agent ->
-                        agent.useOrgSenderDetails
-
-                    Nothing ->
-                        model.useOrg
-    in
-    if effectiveUseOrg then
-        Maybe.withDefault "" model.orgPhone
-
-    else
-        case model.agent of
-            Just agent ->
-                agent.phone
-
-            Nothing ->
-                ""
-
-
-
--- Helper to get the schedule/contact link
-
-
-getScheduleLink : Model -> String
-getScheduleLink model =
-    case model.quoteId of
-        Just id ->
-            let
-                orgQ =
-                    String.split "-" id
-                        |> List.head
-                        |> Maybe.map
-                            (\org ->
-                                "?org=" ++ org ++ "&"
-                            )
-                        |> Maybe.withDefault "?"
-            in
-            "/schedule" ++ orgQ ++ "id=" ++ id ++ "&status=decline"
-
-        -- Using "decline" status as per MA off-ramp button
-        Nothing ->
-            "/contact"
