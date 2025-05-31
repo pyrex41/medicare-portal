@@ -320,6 +320,9 @@ export class AuthService {
         u.last_name,
         u.is_active,
         u.phone,
+        u.signature,
+        u.use_org_sender_details,
+        u.booking_link,
         o.name as organization_name
        FROM users u
        JOIN organizations o ON u.organization_id = o.id 
@@ -342,7 +345,10 @@ export class AuthService {
       last_name: userResult[0][6],
       is_active: userResult[0][7],
       phone: userResult[0][8],
-      organization_name: userResult[0][9]
+      signature: userResult[0][9],
+      use_org_sender_details: Boolean(userResult[0][10]),
+      booking_link: userResult[0][11],
+      organization_name: userResult[0][12]
     };
 
     return user;
@@ -572,6 +578,9 @@ export async function getUserFromSession(request: Request) {
         u.last_name,
         u.is_active,
         u.phone,
+        u.signature,
+        u.use_org_sender_details,
+        u.booking_link,
         o.name as organization_name
        FROM users u
        JOIN organizations o ON u.organization_id = o.id 
@@ -594,7 +603,10 @@ export async function getUserFromSession(request: Request) {
       last_name: userResult[0][6],
       is_active: userResult[0][7],
       phone: userResult[0][8],
-      organization_name: userResult[0][9]
+      signature: userResult[0][9],
+      use_org_sender_details: Boolean(userResult[0][10]),
+      booking_link: userResult[0][11],
+      organization_name: userResult[0][12]
     };
 
     return user;

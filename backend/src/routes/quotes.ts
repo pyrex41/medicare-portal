@@ -196,6 +196,11 @@ export const quotesRoutes = (app: Elysia) => {
             
             const carrierContracts = orgSettings?.carrierContracts || [];
 
+            // Get forceOrgSenderDetails from org settings with backwards compatibility
+            const forceOrgSenderDetails = orgSettings?.forceOrgSenderDetails !== undefined 
+                ? orgSettings.forceOrgSenderDetails 
+                : Boolean(result.org_signature);
+
             // Get signature from either orgSettings, database column, or fall back to org name
             let signature = orgSettings?.signature || result.signature || result.name;
 
@@ -230,8 +235,8 @@ export const quotesRoutes = (app: Elysia) => {
             
             // Try assigned agent first
             if (contact.agent_id) {
-                agent = await mainDb.fetchOne<{ first_name: string, last_name: string, email: string, phone: string }>(
-                    'SELECT first_name, last_name, email, phone FROM users WHERE id = ?',
+                agent = await mainDb.fetchOne<{ first_name: string, last_name: string, email: string, phone: string, booking_link: string, use_org_sender_details: number, signature: string }>(
+                    'SELECT first_name, last_name, email, phone, booking_link, use_org_sender_details, signature FROM users WHERE id = ?',
                     [contact.agent_id]
                 );
             }
@@ -244,8 +249,8 @@ export const quotesRoutes = (app: Elysia) => {
                 );
                 
                 if (defaultAgentResult?.default_agent_id) {
-                    agent = await mainDb.fetchOne<{ first_name: string, last_name: string, email: string, phone: string }>(
-                        'SELECT first_name, last_name, email, phone FROM users WHERE id = ?',
+                    agent = await mainDb.fetchOne<{ first_name: string, last_name: string, email: string, phone: string, booking_link: string, use_org_sender_details: number, signature: string }>(
+                        'SELECT first_name, last_name, email, phone, booking_link, use_org_sender_details, signature FROM users WHERE id = ?',
                         [defaultAgentResult.default_agent_id]
                     );
                     
@@ -266,8 +271,8 @@ export const quotesRoutes = (app: Elysia) => {
             
             // If still no agent, fall back to first active user
             if (!agent) {
-                agent = await mainDb.fetchOne<{ first_name: string, last_name: string, email: string, phone: string }>(
-                    'SELECT first_name, last_name, email, phone FROM users WHERE organization_id = ? AND is_active = 1 ORDER BY id ASC LIMIT 1',
+                agent = await mainDb.fetchOne<{ first_name: string, last_name: string, email: string, phone: string, booking_link: string, use_org_sender_details: number, signature: string }>(
+                    'SELECT first_name, last_name, email, phone, booking_link, use_org_sender_details, signature FROM users WHERE organization_id = ? AND is_active = 1 ORDER BY id ASC LIMIT 1',
                     [decoded.orgId]
                 );
             }
@@ -296,16 +301,20 @@ export const quotesRoutes = (app: Elysia) => {
                 orgSlug: orgSlug || null,
                 orgName: result.name,
                 orgLogo: result.logo_data || null,
-                orgPhone: result.phone || null,
-                orgRedirectUrl: result.redirect_url || null,
+                orgPhone: orgSettings?.phone || result.phone || null,
+                orgRedirectUrl: orgSettings?.redirectUrl || result.redirect_url || null,
                 orgSignature: Boolean(result.org_signature) || false,
                 orgSignatureText: signature,
                 carrierContracts: carrierContracts || null,
+                forceOrgSenderDetails: forceOrgSenderDetails,
                 agent: {
                     firstName: agent.first_name,
                     lastName: agent.last_name,
                     email: agent.email,
-                    phone: agent.phone
+                    phone: agent.phone,
+                    bookingLink: agent.booking_link || '',
+                    useOrgSenderDetails: Boolean(agent.use_org_sender_details),
+                    signature: agent.signature || ''
                 },
                 contact: {
                     id: decoded.contactId,

@@ -51,6 +51,7 @@ type alias User =
     , orgSlug : String
     , signature : String
     , useOrgSenderDetails : Bool -- True = use org details, False = use agent details
+    , bookingLink : String
     }
 
 
@@ -136,6 +137,9 @@ update msg model =
 
                                 "signature" ->
                                     { user | signature = value }
+
+                                "bookingLink" ->
+                                    { user | bookingLink = value }
 
                                 _ ->
                                     user
@@ -570,17 +574,33 @@ viewSenderSettingsSection model user =
             ]
         , -- Email & SMS Signature Section (only if agent details are enabled)
           if not effectiveUseOrgDetails then
-            div []
-                [ label [ class "block text-sm font-medium text-gray-700" ]
-                    [ text "Email & SMS Signature or Sign Off" ]
-                , input
-                    [ type_ "text"
-                    , class "mt-1 px-3 py-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-base"
-                    , Html.Attributes.value user.signature
-                    , onInput (UpdateField "signature")
-                    , placeholder ("Thanks, " ++ user.firstName ++ " " ++ user.lastName)
+            div [ class "space-y-4" ]
+                [ div []
+                    [ label [ class "block text-sm font-medium text-gray-700" ]
+                        [ text "Calendar Booking Link (optional)" ]
+                    , input
+                        [ type_ "text"
+                        , class "mt-1 px-3 py-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-base"
+                        , Html.Attributes.value user.bookingLink
+                        , onInput (UpdateField "bookingLink")
+                        , placeholder "https://calendly.com/yourname"
+                        ]
+                        []
+                    , p [ class "text-gray-500 text-xs mt-1" ]
+                        [ text "If provided, this link will be used as one of the options a client may select to connect with your agency. Traditionally this would be a Calendly link, Acuity link, etc." ]
                     ]
-                    []
+                , div []
+                    [ label [ class "block text-sm font-medium text-gray-700" ]
+                        [ text "Email & SMS Signature or Sign Off" ]
+                    , input
+                        [ type_ "text"
+                        , class "mt-1 px-3 py-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-base"
+                        , Html.Attributes.value user.signature
+                        , onInput (UpdateField "signature")
+                        , placeholder ("Thanks, " ++ user.firstName ++ " " ++ user.lastName)
+                        ]
+                        []
+                    ]
                 ]
 
           else
@@ -681,6 +701,7 @@ userDecoder =
         |> Pipeline.required "organization_slug" Decode.string
         |> Pipeline.optional "signature" Decode.string ""
         |> Pipeline.optional "useOrgSenderDetails" Decode.bool True
+        |> Pipeline.optional "booking_link" Decode.string ""
 
 
 orgSettingsDecoder : Decoder Settings
@@ -705,6 +726,7 @@ encodeUser user =
         , ( "phone", Encode.string user.phone )
         , ( "signature", Encode.string user.signature )
         , ( "useOrgSenderDetails", Encode.bool user.useOrgSenderDetails )
+        , ( "booking_link", Encode.string user.bookingLink )
         ]
 
 
@@ -758,6 +780,8 @@ hasChanges model =
                 /= original.signature
                 || current.useOrgSenderDetails
                 /= original.useOrgSenderDetails
+                || current.bookingLink
+                /= original.bookingLink
 
         _ ->
             False

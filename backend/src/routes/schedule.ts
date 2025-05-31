@@ -24,8 +24,8 @@ export const scheduleRoutes = (app: Elysia) => {
             const mainDb = new Database();
             
             // Get organization info including slug
-            const orgResult = await mainDb.fetchOne<{ name: string, logo_data: string | null, slug: string, phone: string | null, redirect_url: string | null, org_signature: boolean }>(
-                'SELECT name, logo_data, slug, phone, redirect_url, org_signature FROM organizations WHERE id = ?',
+            const orgResult = await mainDb.fetchOne<{ name: string, logo_data: string | null, slug: string, phone: string | null, redirect_url: string | null, org_signature: boolean, org_settings: string | null }>(
+                'SELECT name, logo_data, slug, phone, redirect_url, org_signature, org_settings FROM organizations WHERE id = ?',
                 [orgId]
             );
 
@@ -36,6 +36,19 @@ export const scheduleRoutes = (app: Elysia) => {
                     error: 'Organization not found'
                 };
             }
+
+            // Parse org settings to get forceOrgSenderDetails
+            let orgSettings;
+            try {
+                orgSettings = JSON.parse(orgResult.org_settings || '{}');
+            } catch (e) {
+                logger.warn(`Error parsing org settings for ${orgId}: ${e}`);
+                orgSettings = {};
+            }
+            
+            const forceOrgSenderDetails = orgSettings?.forceOrgSenderDetails !== undefined 
+                ? orgSettings.forceOrgSenderDetails 
+                : Boolean(orgResult.org_signature);
 
             // Get org-specific database
             const orgDb = await Database.getOrInitOrgDb(orgId.toString());
@@ -62,12 +75,12 @@ export const scheduleRoutes = (app: Elysia) => {
 
             // Get agent info - first try assigned agent, then fall back to first user
             const agent = contact.agent_id 
-                ? await mainDb.fetchOne<{ first_name: string, last_name: string, phone: string }>(
-                    'SELECT first_name, last_name, phone FROM users WHERE id = ? AND is_active = 1',
+                ? await mainDb.fetchOne<{ first_name: string, last_name: string, phone: string, booking_link: string, use_org_sender_details: number, signature: string }>(
+                    'SELECT first_name, last_name, phone, booking_link, use_org_sender_details, signature FROM users WHERE id = ? AND is_active = 1',
                     [contact.agent_id]
                   )
-                : await mainDb.fetchOne<{ first_name: string, last_name: string, phone: string }>(
-                    'SELECT first_name, last_name, phone FROM users WHERE organization_id = ? AND is_active = 1 ORDER BY id ASC LIMIT 1',
+                : await mainDb.fetchOne<{ first_name: string, last_name: string, phone: string, booking_link: string, use_org_sender_details: number, signature: string }>(
+                    'SELECT first_name, last_name, phone, booking_link, use_org_sender_details, signature FROM users WHERE organization_id = ? AND is_active = 1 ORDER BY id ASC LIMIT 1',
                     [orgId]
                   );
 
@@ -92,14 +105,18 @@ export const scheduleRoutes = (app: Elysia) => {
                     name: orgResult.name,
                     logo: orgResult.logo_data,
                     slug: orgResult.slug,
-                    phone: orgResult.phone,
-                    redirectUrl: orgResult.redirect_url
+                    phone: orgSettings?.phone || orgResult.phone || "",
+                    redirectUrl: orgSettings?.redirectUrl || orgResult.redirect_url || null
                 },
                 agent: {
                     name: `${agent.first_name} ${agent.last_name}`,
                     firstName: agent.first_name,
-                    phone: agent.phone || ""
+                    phone: agent.phone || "",
+                    booking_link: agent.booking_link || "",
+                    use_org_sender_details: Boolean(agent.use_org_sender_details),
+                    signature: agent.signature || ""
                 },
+                force_org_sender_details: forceOrgSenderDetails,
                 useOrg: Boolean(orgResult.org_signature)
             };
 

@@ -1605,7 +1605,7 @@ const startServer = async () => {
               lastName: updatedUser.last_name,
               email: updatedUser.email,
               phone: updatedUser.phone || '',
-              bookingLink: updatedUser.booking_link || '',
+              booking_link: updatedUser.booking_link || '',
               signature: updatedSettings.signature || '',
               is_admin: Boolean(updatedUser.is_admin),
               is_agent: Boolean(updatedUser.is_agent),
@@ -1775,6 +1775,8 @@ const startServer = async () => {
                 u.is_agent,
                 u.phone,
                 u.booking_link,
+                u.signature,
+                u.use_org_sender_details,
                 u.organization_id,
                 u.has_completed_walkthrough,
                 o.slug as organization_slug,
@@ -1811,6 +1813,8 @@ const startServer = async () => {
               is_agent: Boolean(user.is_agent),
               phone: user.phone || '',
               booking_link: user.booking_link || '',
+              signature: user.signature || '',
+              useOrgSenderDetails: Boolean(user.use_org_sender_details),
               organization_id: user.organization_id,
               organization_slug: user.organization_slug,
               subscription_tier: user.subscription_tier,
@@ -2330,24 +2334,38 @@ const startServer = async () => {
             }
           }
 
-          const { firstName, lastName, phone } = body as { 
+          const { firstName, lastName, phone, signature, useOrgSenderDetails, booking_link } = body as { 
             firstName: string;
             lastName: string;
             phone: string;
+            signature?: string;
+            useOrgSenderDetails?: boolean;
+            booking_link?: string;
           }
 
           // Get the libSQL client
           const client = db.getClient()
 
-          // Update only allowed profile fields
+          // Update profile fields including sender settings
           const result = await client.execute({
             sql: `UPDATE users 
                   SET first_name = ?, 
                       last_name = ?, 
-                      phone = ?
+                      phone = ?,
+                      signature = ?,
+                      use_org_sender_details = ?,
+                      booking_link = ?
                   WHERE id = ?
                   RETURNING *`,
-            args: [firstName, lastName, phone, currentUser.id]
+            args: [
+              firstName, 
+              lastName, 
+              phone, 
+              signature || null,
+              useOrgSenderDetails !== undefined ? (useOrgSenderDetails ? 1 : 0) : null,
+              booking_link || null,
+              currentUser.id
+            ]
           })
 
           if (!result.rows || result.rows.length === 0) {

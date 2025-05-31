@@ -63,6 +63,7 @@ type alias ContactResponse =
     , orgSignature : Bool
     , orgSignatureText : Maybe String
     , carrierContracts : List Carrier
+    , forceOrgSenderDetails : Bool
     }
 
 
@@ -71,6 +72,9 @@ type alias Agent =
     , lastName : String
     , email : String
     , phone : String
+    , signature : String
+    , useOrgSenderDetails : Bool
+    , bookingLink : String
     }
 
 
@@ -205,6 +209,7 @@ type alias Model =
     , carrierContracts : List Carrier
     , currentDate : Maybe Date
     , effectiveDate : Maybe Date
+    , discountCsvString : Maybe String
     , orgId : Maybe String
     , orgName : Maybe String
     , orgLogo : Maybe String
@@ -225,8 +230,8 @@ type alias Model =
     , submittingLocation : Bool
     , editingEffectiveDate : Maybe String
     , fetchNewPlans : Bool
-    , discountCsvString : Maybe String
     , activeTooltipPlan : Maybe Plan
+    , forceOrgSenderDetails : Bool
     }
 
 
@@ -379,6 +384,7 @@ init key maybeParams =
             , editingEffectiveDate = Nothing
             , fetchNewPlans = False
             , activeTooltipPlan = Nothing
+            , forceOrgSenderDetails = False
             }
     in
     case maybeParams of
@@ -984,6 +990,7 @@ update msg model =
                         , orgSignatureText = response.orgSignatureText
                         , carrierContracts = response.carrierContracts
                         , loadingContact = False
+                        , forceOrgSenderDetails = response.forceOrgSenderDetails
                     }
 
                 updatedModel =
@@ -1464,7 +1471,23 @@ viewPersonalInfo model =
                     -- Quote From section
                     , div [ class "flex flex-col min-w-[200px]" ]
                         [ p [ class "text-sm text-[#667085] mb-1" ] [ text "Quote From" ]
-                        , if model.useOrg then
+                        , let
+                            -- Determine whether to use org or agent details
+                            effectiveUseOrg =
+                                if model.forceOrgSenderDetails then
+                                    True
+
+                                else
+                                    case model.agent of
+                                        Just agent ->
+                                            agent.useOrgSenderDetails
+
+                                        Nothing ->
+                                            model.useOrg
+
+                            -- fallback to old logic
+                          in
+                          if effectiveUseOrg then
                             -- Organization information
                             div []
                                 [ case model.orgSignatureText of
@@ -2161,6 +2184,7 @@ contactResponseDecoder =
         |> Pipeline.required "orgSignature" D.bool
         |> Pipeline.optional "orgSignatureText" (D.nullable D.string) Nothing
         |> Pipeline.required "carrierContracts" (D.list carrierDecoder)
+        |> Pipeline.required "forceOrgSenderDetails" D.bool
 
 
 contactDecoder : Decoder Contact
@@ -2183,11 +2207,14 @@ contactDecoder =
 
 agentDecoder : Decoder Agent
 agentDecoder =
-    D.map4 Agent
-        (D.field "firstName" D.string)
-        (D.field "lastName" D.string)
-        (D.field "email" D.string)
-        (D.field "phone" D.string)
+    D.succeed Agent
+        |> Pipeline.required "firstName" D.string
+        |> Pipeline.required "lastName" D.string
+        |> Pipeline.required "email" D.string
+        |> Pipeline.required "phone" D.string
+        |> Pipeline.optional "signature" D.string ""
+        |> Pipeline.optional "useOrgSenderDetails" D.bool True
+        |> Pipeline.optional "bookingLink" D.string ""
 
 
 locationUpdateResponseDecoder : Decoder LocationUpdateResponse

@@ -36,6 +36,8 @@ type alias AgentInfo =
     { name : String
     , firstName : String
     , phone : String
+    , useOrgSenderDetails : Bool
+    , bookingLink : String
     }
 
 
@@ -52,6 +54,7 @@ type alias ScheduleInfo =
     , organization : OrgInfo
     , agent : AgentInfo
     , useOrg : Bool
+    , forceOrgSenderDetails : Bool
     }
 
 
@@ -72,6 +75,7 @@ type alias Model =
     , isLoading : Bool
     , demoMode : Bool
     , demoRedirectUrl : Maybe String
+    , forceOrgSenderDetails : Bool
     }
 
 
@@ -137,6 +141,7 @@ init key maybeQuoteId maybeStatus =
       , isLoading = True
       , demoMode = False -- sets CTA to demo mode always
       , demoRedirectUrl = Just "https://calendly.com/josh-musick-medicaremax/medicare-max-demo?month=2025-04" --"https://calendly.com/medicareschool-max/30min"
+      , forceOrgSenderDetails = False
       }
     , Cmd.batch commands
     )
@@ -153,10 +158,12 @@ contactInfoDecoder =
 
 agentInfoDecoder : D.Decoder AgentInfo
 agentInfoDecoder =
-    D.map3 AgentInfo
-        (D.field "name" D.string)
-        (D.field "firstName" D.string)
-        (D.field "phone" D.string)
+    D.succeed AgentInfo
+        |> P.required "name" D.string
+        |> P.required "firstName" D.string
+        |> P.required "phone" D.string
+        |> P.optional "use_org_sender_details" D.bool True
+        |> P.optional "booking_link" D.string ""
 
 
 orgInfoDecoder : D.Decoder OrgInfo
@@ -176,6 +183,7 @@ scheduleInfoDecoder =
         |> P.required "organization" orgInfoDecoder
         |> P.required "agent" agentInfoDecoder
         |> P.optional "useOrg" D.bool True
+        |> P.optional "force_org_sender_details" D.bool False
 
 
 submitResponseDecoder : D.Decoder SubmitResponse
@@ -238,6 +246,27 @@ update msg model =
                                         else
                                             "https://" ++ url
                                     )
+
+                        -- Determine effective redirect URL based on sender settings
+                        effectiveRedirectUrl =
+                            if info.forceOrgSenderDetails then
+                                safeRedirectUrl
+
+                            else if info.agent.useOrgSenderDetails then
+                                safeRedirectUrl
+
+                            else if String.isEmpty info.agent.bookingLink then
+                                -- When using agent settings but no booking link, don't show calendar button
+                                Nothing
+
+                            else
+                                Just
+                                    (if String.startsWith "http" info.agent.bookingLink then
+                                        info.agent.bookingLink
+
+                                     else
+                                        "https://" ++ info.agent.bookingLink
+                                    )
                     in
                     ( { model
                         | scheduleInfo = Just info
@@ -245,7 +274,8 @@ update msg model =
                         , name = Just (info.contact.firstName ++ " " ++ info.contact.lastName)
                         , phoneNumber = Just info.contact.phoneNumber
                         , isLoading = False
-                        , redirectUrl = safeRedirectUrl
+                        , redirectUrl = effectiveRedirectUrl
+                        , forceOrgSenderDetails = info.forceOrgSenderDetails
                       }
                     , Cmd.none
                     )
@@ -501,7 +531,16 @@ viewCTA model =
 
 viewAcceptButtons : Model -> ScheduleInfo -> Html Msg
 viewAcceptButtons model info =
-    if info.useOrg then
+    let
+        -- Determine whether to use org or agent details
+        effectiveUseOrg =
+            if model.forceOrgSenderDetails then
+                True
+
+            else
+                info.agent.useOrgSenderDetails
+    in
+    if effectiveUseOrg then
         viewAcceptButtonsOrg model info
 
     else
@@ -510,6 +549,24 @@ viewAcceptButtons model info =
 
 viewAcceptButtonsAgent : Model -> ScheduleInfo -> Html Msg
 viewAcceptButtonsAgent model info =
+    let
+        -- Use agent phone if available, otherwise fall back to org phone
+        effectivePhone =
+            if String.isEmpty info.agent.phone then
+                info.organization.orgPhone
+
+            else
+                info.agent.phone
+
+        -- Determine the display name for calls
+        phoneDisplayName =
+            if String.isEmpty info.agent.phone then
+                -- Using org phone, so don't personalize with agent name
+                ""
+
+            else
+                info.agent.firstName ++ " "
+    in
     div [ class "space-y-4" ]
         [ case model.redirectUrl of
             Just _ ->
@@ -548,16 +605,23 @@ viewAcceptButtonsAgent model info =
                                 [ text ("Request a Call from " ++ info.agent.firstName) ]
                             ]
                         ]
-        , if not (String.isEmpty info.agent.phone) then
+        , if not (String.isEmpty effectivePhone) then
             a
-                [ href ("tel:" ++ info.agent.phone)
+                [ href ("tel:" ++ effectivePhone)
                 , class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
                 ]
                 [ div [ class "flex items-center space-x-3" ]
                     [ span [ class "w-6 h-6 flex items-center justify-center" ]
                         [ MyIcon.phoneOutgoing 24 "#03045E" ]
                     , span [ class "font-semibold text-base" ]
-                        [ text ("Give " ++ info.agent.firstName ++ " Call: " ++ formatPhoneNumber info.agent.phone) ]
+                        [ text
+                            (if String.isEmpty phoneDisplayName then
+                                "Call Now: " ++ formatPhoneNumber effectivePhone
+
+                             else
+                                "Give " ++ phoneDisplayName ++ "a call: " ++ formatPhoneNumber effectivePhone
+                            )
+                        ]
                     ]
                 ]
 
@@ -626,7 +690,16 @@ viewAcceptButtonsOrg model info =
 
 viewDeclineButtons : Model -> ScheduleInfo -> Html Msg
 viewDeclineButtons model info =
-    if info.useOrg then
+    let
+        -- Determine whether to use org or agent details
+        effectiveUseOrg =
+            if model.forceOrgSenderDetails then
+                True
+
+            else
+                info.agent.useOrgSenderDetails
+    in
+    if effectiveUseOrg then
         viewDeclineButtonsOrg model info
 
     else
@@ -635,30 +708,60 @@ viewDeclineButtons model info =
 
 viewDeclineButtonsAgent : Model -> ScheduleInfo -> Html Msg
 viewDeclineButtonsAgent model info =
+    let
+        -- Use agent phone if available, otherwise fall back to org phone
+        effectivePhone =
+            if String.isEmpty info.agent.phone then
+                info.organization.orgPhone
+
+            else
+                info.agent.phone
+
+        -- Determine the display name for calls
+        phoneDisplayName =
+            if String.isEmpty info.agent.phone then
+                -- Using org phone, so don't personalize with agent name
+                ""
+
+            else
+                info.agent.firstName ++ " "
+    in
     div [ class "space-y-4" ]
-        [ a
-            [ class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
-            , href (makeCalendlyUrl model)
-            , target "_blank"
-            , onClick CalendlyOpened
-            ]
-            [ div [ class "flex items-center space-x-3" ]
-                [ span [ class "w-6 h-6 flex items-center justify-center" ]
-                    [ MyIcon.calendarDays 24 "#03045E" ]
-                , span [ class "font-semibold text-base" ]
-                    [ text ("Schedule a Call with " ++ info.agent.firstName) ]
-                ]
-            ]
-        , if not (String.isEmpty info.agent.phone) then
+        [ case model.redirectUrl of
+            Just _ ->
+                a
+                    [ class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
+                    , href (makeCalendlyUrl model)
+                    , target "_blank"
+                    , onClick CalendlyOpened
+                    ]
+                    [ div [ class "flex items-center space-x-3" ]
+                        [ span [ class "w-6 h-6 flex items-center justify-center" ]
+                            [ MyIcon.calendarDays 24 "#03045E" ]
+                        , span [ class "font-semibold text-base" ]
+                            [ text ("Schedule a Call with " ++ info.agent.firstName) ]
+                        ]
+                    ]
+
+            Nothing ->
+                text ""
+        , if not (String.isEmpty effectivePhone) then
             a
-                [ href ("tel:" ++ info.agent.phone)
+                [ href ("tel:" ++ effectivePhone)
                 , class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
                 ]
                 [ div [ class "flex items-center space-x-3" ]
                     [ span [ class "w-6 h-6 flex items-center justify-center" ]
                         [ MyIcon.phoneOutgoing 24 "#03045E" ]
                     , span [ class "font-semibold text-base" ]
-                        [ text ("Give " ++ info.agent.firstName ++ " a call: " ++ formatPhoneNumber info.agent.phone) ]
+                        [ text
+                            (if String.isEmpty phoneDisplayName then
+                                "Call Now: " ++ formatPhoneNumber effectivePhone
+
+                             else
+                                "Give " ++ phoneDisplayName ++ "a call: " ++ formatPhoneNumber effectivePhone
+                            )
+                        ]
                     ]
                 ]
 
@@ -780,7 +883,16 @@ viewDeclineButtonsOrg model info =
 
 viewGenericButtons : Model -> ScheduleInfo -> Html Msg
 viewGenericButtons model info =
-    if info.useOrg then
+    let
+        -- Determine whether to use org or agent details
+        effectiveUseOrg =
+            if model.forceOrgSenderDetails then
+                True
+
+            else
+                info.agent.useOrgSenderDetails
+    in
+    if effectiveUseOrg then
         viewGenericButtonsOrg model info
 
     else
@@ -789,6 +901,24 @@ viewGenericButtons model info =
 
 viewGenericButtonsAgent : Model -> ScheduleInfo -> Html Msg
 viewGenericButtonsAgent model info =
+    let
+        -- Use agent phone if available, otherwise fall back to org phone
+        effectivePhone =
+            if String.isEmpty info.agent.phone then
+                info.organization.orgPhone
+
+            else
+                info.agent.phone
+
+        -- Determine the display name for calls
+        phoneDisplayName =
+            if String.isEmpty info.agent.phone then
+                -- Using org phone, so don't personalize with agent name
+                ""
+
+            else
+                info.agent.firstName ++ " "
+    in
     div [ class "space-y-4" ]
         [ case model.redirectUrl of
             Just _ ->
@@ -827,16 +957,23 @@ viewGenericButtonsAgent model info =
                                 [ text ("Request a Call from " ++ info.agent.firstName) ]
                             ]
                         ]
-        , if not (String.isEmpty info.agent.phone) then
+        , if not (String.isEmpty effectivePhone) then
             a
-                [ href ("tel:" ++ info.agent.phone)
+                [ href ("tel:" ++ effectivePhone)
                 , class "flex items-center justify-between w-full px-4 py-4 border border-[#03045E] rounded-md text-[#03045E] hover:bg-gray-50 transition"
                 ]
                 [ div [ class "flex items-center space-x-3" ]
                     [ span [ class "w-6 h-6 flex items-center justify-center" ]
                         [ MyIcon.phoneOutgoing 24 "#03045E" ]
                     , span [ class "font-semibold text-base" ]
-                        [ text ("Give " ++ info.agent.firstName ++ " a call: " ++ formatPhoneNumber info.agent.phone) ]
+                        [ text
+                            (if String.isEmpty phoneDisplayName then
+                                "Call Now: " ++ formatPhoneNumber effectivePhone
+
+                             else
+                                "Give " ++ phoneDisplayName ++ "a call: " ++ formatPhoneNumber effectivePhone
+                            )
+                        ]
                     ]
                 ]
 
@@ -924,7 +1061,33 @@ makeCalendlyUrl model =
 
 makeCalendlyUrlHelper : Model -> Maybe String -> String
 makeCalendlyUrlHelper model redirectUrl =
-    case redirectUrl of
+    let
+        -- Determine which redirect URL to use based on sender settings
+        effectiveRedirectUrl =
+            case ( model.scheduleInfo, redirectUrl ) of
+                ( Just info, _ ) ->
+                    let
+                        effectiveUseOrg =
+                            if model.forceOrgSenderDetails then
+                                True
+
+                            else
+                                info.agent.useOrgSenderDetails
+                    in
+                    if effectiveUseOrg then
+                        info.organization.orgRedirectUrl
+
+                    else if String.isEmpty info.agent.bookingLink then
+                        -- When using agent settings but no booking link, don't show calendar button
+                        Nothing
+
+                    else
+                        Just info.agent.bookingLink
+
+                ( Nothing, _ ) ->
+                    redirectUrl
+    in
+    case effectiveRedirectUrl of
         Just url ->
             List.Extra.zip
                 [ "email", "name", "location" ]
