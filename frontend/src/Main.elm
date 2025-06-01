@@ -17,7 +17,7 @@ import Date exposing (Date)
 import Dict exposing (Dict)
 import Eligibility
 import Home
-import Html exposing (Html, a, button, div, h1, img, nav, p, span, text)
+import Html exposing (Html, a, button, div, h1, h3, img, nav, p, span, text)
 import Html.Attributes exposing (alt, class, href, src, target)
 import Html.Events exposing (onClick, stopPropagationOn)
 import Http
@@ -682,10 +682,10 @@ routeParser =
             (s "setup" </> s "settings" <?> setupProgressDecoder)
         , map (\progress -> SetupRoute (AddAgentsRoute progress))
             (s "setup" </> s "add-agents" <?> setupProgressDecoder)
-        , map (PublicRoute StageDemoInputRoute) (s "stage-demo")
         , map (\id -> PublicRoute (StageDemoQuoteRoute id)) (s "stage-demo" </> s "quote" </> string)
         , map (\id -> PublicRoute (StageDemoHealthRoute id)) (s "stage-demo" </> s "health" </> string)
         , map (\id -> PublicRoute (StageDemoCTARoute id)) (s "stage-demo" </> s "schedule-signup" </> string)
+        , map (PublicRoute StageDemoInputRoute) (s "stage-demo")
         ]
 
 
@@ -1420,7 +1420,15 @@ update msg model =
                         StageDemoHealth.NavigateToCTA ->
                             ( model, Nav.pushUrl model.key ("/stage-demo/schedule-signup/" ++ healthModel.tempId) )
 
+                        StageDemoHealth.SkipQuestions ->
+                            ( model, Nav.pushUrl model.key ("/stage-demo/schedule-signup/" ++ healthModel.tempId) )
+
                         StageDemoHealth.AnswerQuestion _ _ ->
+                            ( { model | page = StageDemoHealthPage newHealthModel }
+                            , Cmd.map StageDemoHealthMsg newCmd
+                            )
+
+                        StageDemoHealth.AnswerFollowUp _ _ ->
                             ( { model | page = StageDemoHealthPage newHealthModel }
                             , Cmd.map StageDemoHealthMsg newCmd
                             )
@@ -1762,31 +1770,52 @@ viewWithNav model content =
 viewStageDemoWithBanner : Model -> Html Msg -> Html Msg
 viewStageDemoWithBanner model content =
     div []
-        [ viewStageDemoBanner
+        [ viewStageDemoBanner model
         , content
         ]
 
 
-viewStageDemoBanner : Html Msg
-viewStageDemoBanner =
-    div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4" ]
-        [ div [ class "p-3 sm:p-4 border rounded-lg bg-[#F6F1FF] border-[#E9D7FE] text-[#53389E] flex items-center justify-between" ]
-            [ div [ class "flex items-start" ]
-                [ span [ class "inline-flex items-center justify-center h-6 w-6 rounded-full text-[#7F56D9] mt-0.5 mr-3" ]
-                    [ MyIcon.calendarDays 18 "#53389E" ]
-                , div []
-                    [ span [ class "font-semibold text-sm leading-tight" ]
-                        [ text "Stage Demo Mode - See Medicare Max in Action" ]
-                    , div [ class "mt-1 text-xs leading-tight" ]
-                        [ text "Experience how Medicare Max transforms your renewal process. "
-                        , a
-                            [ onClick (InternalLinkClicked "/stage-demo/schedule-signup/demo")
-                            , class "underline font-semibold hover:text-[#7F56D9] cursor-pointer"
-                            ]
-                            [ text "Schedule your personalized demo call" ]
-                        , text " to learn more."
-                        ]
+viewStageDemoBanner : Model -> Html Msg
+viewStageDemoBanner model =
+    let
+        -- Extract tempId from the current stage demo page
+        maybeTempId =
+            case model.page of
+                StageDemoQuotePage pageModel ->
+                    Just pageModel.tempId
+
+                StageDemoHealthPage pageModel ->
+                    Just pageModel.tempId
+
+                StageDemoCTAPage pageModel ->
+                    Just pageModel.tempId
+
+                _ ->
+                    Nothing
+
+        -- Construct the link with the tempId if available
+        scheduleLink =
+            case maybeTempId of
+                Just tempId ->
+                    "/stage-demo/schedule-signup/" ++ tempId
+
+                Nothing ->
+                    "/stage-demo/schedule-signup/demo"
+    in
+    div [ class "bg-[#F9F5FF] border-b border-[#E9D7FE] py-3" ]
+        [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8" ]
+            [ div [ class "flex items-center justify-center gap-3" ]
+                [ MyIcon.calendarDays 20 "#03045E"
+                , h3 [ class "text-lg font-semibold text-[#03045E]" ] [ text "Stage Demo Mode - See Medicare Max in Action" ]
+                ]
+            , p [ class "text-sm text-[#475467] text-center mt-1" ]
+                [ text "Experience how Medicare Max transforms your renewal process. "
+                , a
+                    [ href scheduleLink
+                    , class "text-[#03045E] underline font-medium cursor-pointer"
                     ]
+                    [ text "Schedule your personalized demo call" ]
+                , text " to learn more."
                 ]
             ]
         ]
@@ -3146,7 +3175,7 @@ updatePage url ( model, cmd ) =
                                         )
 
                                     PublicRoute (StageDemoHealthRoute tempId) ->
-                                        ( { modelWithUpdatedSetup | page = StageDemoHealthPage (StageDemoHealth.init tempId) }
+                                        ( { modelWithUpdatedSetup | page = StageDemoHealthPage (StageDemoHealth.init tempId model.key) }
                                         , Cmd.none
                                         )
 
@@ -3528,7 +3557,7 @@ updatePageForcePublic url ( model, cmd ) =
                     )
 
                 PublicRoute (StageDemoHealthRoute tempId) ->
-                    ( { model | page = StageDemoHealthPage (StageDemoHealth.init tempId) }
+                    ( { model | page = StageDemoHealthPage (StageDemoHealth.init tempId model.key) }
                     , Cmd.none
                     )
 

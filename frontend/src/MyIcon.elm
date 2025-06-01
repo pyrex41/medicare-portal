@@ -753,3 +753,20 @@ mail size color =
         [ Svg.path [ d "m22 7-8.991 5.727a2 2 0 0 1-2.009 0L2 7" ] []
         , Svg.rect [ x "2", y "4", width "20", height "16", rx "2" ] []
         ]
+
+
+shieldCheck : Int -> String -> Svg msg
+shieldCheck size color =
+    svg
+        [ width (String.fromInt size)
+        , height (String.fromInt size)
+        , viewBox "0 0 24 24"
+        , fill "none"
+        , stroke color
+        , strokeWidth "2"
+        , strokeLinecap "round"
+        , strokeLinejoin "round"
+        ]
+        [ Svg.path [ d "M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" ] []
+        , Svg.path [ d "m9 12 2 2 4-4" ] []
+        ]

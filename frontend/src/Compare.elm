@@ -565,7 +565,7 @@ quoteDataDecoder =
 
 blacklistCarriers : List Carrier
 blacklistCarriers =
-    [ Allstate ]
+    [ Allstate, AceChubb ]
 
 
 isCarrierSupported : String -> List Carrier -> Bool

@@ -231,12 +231,12 @@ init tempId key =
             , isLoading = True
             , error = Nothing
             , plans = { planG = [], planN = [] }
-            , state = Nothing
-            , county = Nothing
-            , zip = Nothing
-            , age = Nothing
-            , gender = Nothing
-            , tobacco = Nothing
+            , state = Just "NE"
+            , county = Just "Douglas"
+            , zip = Just "68114"
+            , age = Just 68
+            , gender = Just "F"
+            , tobacco = Just False
             , selectedPlanType = PlanG
             , selectedPlan = Nothing
             , showReviewVideo = False
@@ -261,11 +261,11 @@ init tempId key =
             , orgPhone = Nothing
             , useOrg = False
             , orgSignatureText = Nothing
-            , name = Nothing
+            , name = Just "Jane Customer"
             , contact = Nothing
             , agent = Nothing
             , orgSlug = Nothing
-            , loadingContact = True
+            , loadingContact = False
             , showDiscountInfo = False
             , showLocationModal = False
             , editingZipCode = Nothing
@@ -358,13 +358,13 @@ quoteResponseDecoder =
     D.succeed QuoteResponse
         |> Pipeline.required "naic" D.string
         |> Pipeline.required "group" D.int
-        |> Pipeline.required "companyName" D.string
+        |> Pipeline.required "company_name" D.string
         |> Pipeline.required "quotes" (D.list quoteDataDecoder)
 
 
 blacklistCarriers : List Carrier
 blacklistCarriers =
-    [ Allstate ]
+    [ Allstate, AceChubb ]
 
 
 isCarrierSupported : String -> List Carrier -> Bool
@@ -513,9 +513,23 @@ update msg model =
             let
                 newPlans =
                     groupQuotesByPlan responses model
+
+                myFilter =
+                    List.filter
+                        (\plan ->
+                            case naicToCarrier plan.naic of
+                                Just carrier ->
+                                    not (List.member carrier blacklistCarriers)
+
+                                Nothing ->
+                                    False
+                        )
             in
             ( { model
-                | plans = newPlans
+                | plans =
+                    { planG = myFilter newPlans.planG
+                    , planN = myFilter newPlans.planN
+                    }
                 , isLoading = False
               }
             , Cmd.none
@@ -549,40 +563,9 @@ update msg model =
             )
 
         SelectPlan plan ->
-            ( { model | showQualificationVideo = True }
+            ( { model | selectedPlan = Just plan }
             , Cmd.batch
-                [ Nav.pushUrl model.key
-                    (case model.quoteId of
-                        Just id ->
-                            let
-                                orgIdParam =
-                                    case model.orgId of
-                                        Just orgId ->
-                                            "&orgId=" ++ orgId
-
-                                        Nothing ->
-                                            -- Try to extract orgId from the quoteId as a fallback
-                                            case String.split "-" id |> List.head of
-                                                Just extractedOrgId ->
-                                                    "&orgId=" ++ extractedOrgId
-
-                                                Nothing ->
-                                                    ""
-                            in
-                            "/eligibility?id=" ++ id ++ orgIdParam
-
-                        Nothing ->
-                            let
-                                orgIdParam =
-                                    case model.orgId of
-                                        Just orgId ->
-                                            "?orgId=" ++ orgId
-
-                                        Nothing ->
-                                            ""
-                            in
-                            "/eligibility" ++ orgIdParam
-                    )
+                [ Nav.pushUrl model.key ("/stage-demo/health/" ++ model.tempId)
                 , Task.perform (\_ -> NoOp) (Dom.setViewport 0 0)
                 ]
             )
@@ -872,12 +855,12 @@ viewPersonalInfo model =
 
                                     Nothing ->
                                         text ""
-                                , button [ class "text-xs text-[#2563EB] underline text-left" ] [ text "Change" ]
+                                , button [ class "text-xs text-[#2563EB] underline text-left cursor-not-allowed " ] [ text "Change" ]
                                 ]
                             , div [ class "hidden sm:block" ]
                                 [ div [ class "flex flex-col mt-4 gap-1" ]
                                     [ p [ class "text-xs text-[#667085]" ] [ text "Need a Quote for Someone else?" ]
-                                    , a [ href ("/self-onboarding/" ++ Maybe.withDefault "" model.orgSlug), class "text-xs text-[#667085] underline" ] [ text "Start Here" ]
+                                    , span [ class "text-xs text-[#667085] underline cursor-not-allowed" ] [ text "Start Here" ]
                                     ]
                                 ]
                             ]
@@ -954,7 +937,7 @@ viewPersonalInfo model =
                                                 agent.firstName ++ " " ++ agent.lastName
 
                                             Nothing ->
-                                                "Loading..."
+                                                "Steve Agent"
                                         )
                                     ]
                                 , div [ class "flex flex-col gap-3" ]
@@ -980,7 +963,7 @@ viewPersonalInfo model =
                                                         agent.email
 
                                                     Nothing ->
-                                                        "Loading..."
+                                                        "you@agency.com"
                                                 )
                                             ]
                                         ]
@@ -1011,7 +994,7 @@ viewPersonalInfo model =
                                                         formatPhoneNumber agent.phone
 
                                                     Nothing ->
-                                                        "Loading..."
+                                                        "(888) 888-8888"
                                                 )
                                             ]
                                         ]
@@ -1035,7 +1018,7 @@ viewPersonalInfo model =
             , div [ class "block sm:hidden mt-2 mb-6 justify-center flex items-center w-full" ]
                 [ div [ class "text-sm text-[#667085] text-center flex flex-wrap justify-center items-center gap-1" ]
                     [ text "Need a Quote for Someone else? "
-                    , a [ href ("/self-onboarding/" ++ Maybe.withDefault "" model.orgSlug), class " underline" ] [ text "Start Here" ]
+                    , a [ href "#", class " underline" ] [ text "Start Here" ]
                     ]
                 ]
             ]
@@ -1406,24 +1389,7 @@ viewMedicareAdvantageOffRamp model =
                 ]
             , div [ class "sm:ml-4 flex justify-center sm:justify-start" ]
                 [ a
-                    [ href
-                        (case model.quoteId of
-                            Just id ->
-                                let
-                                    orgQ =
-                                        String.split "-" id
-                                            |> List.head
-                                            |> Maybe.map
-                                                (\org ->
-                                                    "?org=" ++ org ++ "&"
-                                                )
-                                            |> Maybe.withDefault "?"
-                                in
-                                "/schedule" ++ orgQ ++ "id=" ++ id ++ "&status=decline"
-
-                            Nothing ->
-                                "/contact"
-                        )
+                    [ href ("/stage-demo/schedule-signup/" ++ model.tempId)
                     , class "whitespace-nowrap bg-[#03045E] text-white px-5 sm:px-4 py-3 sm:py-2 rounded-lg hover:bg-[#02034D] transition-colors text-sm sm:text-base w-full sm:w-auto text-center"
                     ]
                     [ text "Explore Options" ]
@@ -1436,8 +1402,7 @@ view : Model -> Browser.Document Msg
 view model =
     { title = "Quote - Medicare Max"
     , body =
-        [ viewHeader model.orgLogo model.orgName
-        , div [ class "bg-white min-h-screen pb-12 scroll-smooth" ]
+        [ div [ class "bg-white min-h-screen pb-12 scroll-smooth" ]
             [ if model.loadingContact || model.isLoading then
                 viewLoading
 
@@ -1490,7 +1455,7 @@ viewError error orgSlug =
             , case orgSlug of
                 Just slug ->
                     a
-                        [ href ("/self-onboarding/" ++ slug)
+                        [ href "#"
                         , class "inline-block bg-[#03045E] text-white text-sm font-medium px-6 py-3 rounded hover:bg-[#02034D] transition-colors"
                         ]
                         [ text "Get a New Quote" ]

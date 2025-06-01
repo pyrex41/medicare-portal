@@ -1,0 +1,11 @@
+  {
+    "mcpServers": {
+      "elm-compiler": {
+        "command": "bun",
+        "args": [
+          "run",
+          "/Users/reuben/elm-compiler-mcp/build/index.js"
+        ]
+      }
+    }
+  }
