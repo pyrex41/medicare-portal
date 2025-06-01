@@ -6,24 +6,19 @@ import { getUserFromSession } from '../services/auth'
 export const requireAuth = new Elysia()
   .derive(async ({ request, set }) => {
     try {
-      // Check for auth bypass header - bypass if present
+      // Check for auth bypass header - bypass if present (primarily for SPA non-API routes)
       const bypassAuth = request.headers.get('X-Bypass-Auth')
       if (bypassAuth) {
-        logger.info(`Auth middleware: bypassing auth due to X-Bypass-Auth header`)
+        logger.info(`Auth middleware: bypassing auth due to X-Bypass-Auth header for: ${new URL(request.url).pathname}`)
         return
       }
 
-      // Check if this is a public endpoint that should bypass auth
+      // Check if this is a public endpoint that should bypass auth (e.g. SPA routes, if not caught by header)
       const url = new URL(request.url)
       const pathname = url.pathname
       
-      // Bypass auth for stage demo API routes
-      if (pathname.startsWith('/api/stage-demo/')) {
-        logger.info(`Auth middleware: bypassing auth for stage demo route: ${pathname}`)
-        return
-      }
-      
       // Bypass auth for SPA routes - belt and suspenders approach
+      // This check might still be useful if the X-Bypass-Auth header isn't set for some SPA routes
       if ((!pathname.startsWith('/api/') && !pathname.includes('.')) || 
           pathname.startsWith('/compare/') ||
           pathname.startsWith('/quote/') ||
@@ -42,6 +37,7 @@ export const requireAuth = new Elysia()
         logger.warn(`not user: ${JSON.stringify(!user)}`)
         logger.warn(`Auth middleware: unauthorized access to ${pathname}`)
         set.status = 401
+        // It's important to actually return the response object here for Elysia to halt processing
         return { success: false, error: 'Authentication required' }
       }
       
@@ -61,25 +57,18 @@ export const requireAdmin = new Elysia()
       // Check for auth bypass header - bypass if present
       const bypassAuth = request.headers.get('X-Bypass-Auth')
       if (bypassAuth) {
-        logger.info(`Admin middleware: bypassing auth due to X-Bypass-Auth header`)
-        return
-      }
-
-      // Check if this is a stage demo route - bypass admin auth
-      const url = new URL(request.url)
-      const pathname = url.pathname
-      if (pathname.startsWith('/api/stage-demo/')) {
-        logger.info(`Admin middleware: bypassing auth for stage demo route: ${pathname}`)
+        logger.info(`Admin middleware: bypassing auth due to X-Bypass-Auth header for: ${new URL(request.url).pathname}`)
         return
       }
       
-      // Get user from session
-      const user = await getUserFromSession(request)
+      // Get user from session (should have been populated by requireAuth if it ran)
+      const user = await getUserFromSession(request) // Or, if requireAuth decorates, this could come from context
       
       // If no user or not admin, return 403
       if (!user || !user.is_admin) {
         logger.warn(`Admin middleware: forbidden access to ${new URL(request.url).pathname}`)
         set.status = 403
+        // It's important to actually return the response object here
         return { success: false, error: 'Admin access required' }
       }
       

@@ -38,10 +38,10 @@ import ScheduleMain
 import SelfServiceOnboarding
 import Settings
 import Signup
+import StageDemoCTA
+import StageDemoHealth
 import StageDemoInput
 import StageDemoQuote
-import StageDemoHealth
-import StageDemoCTA
 import Stripe
 import Svg exposing (path, svg)
 import Svg.Attributes exposing (d, fill, viewBox)
@@ -1402,9 +1402,9 @@ update msg model =
                         ( newQuoteModel, newCmd ) =
                             StageDemoQuote.update subMsg quoteModel
                     in
-                    case subMsg of
-                        StageDemoQuote.NavigateToHealth ->
-                            ( model, Nav.pushUrl model.key ("/stage-demo/health/" ++ quoteModel.tempId) )
+                    ( { model | page = StageDemoQuotePage newQuoteModel }
+                    , Cmd.map StageDemoQuoteMsg newCmd
+                    )
 
                 _ ->
                     ( model, Cmd.none )
@@ -1419,6 +1419,7 @@ update msg model =
                     case subMsg of
                         StageDemoHealth.NavigateToCTA ->
                             ( model, Nav.pushUrl model.key ("/stage-demo/schedule-signup/" ++ healthModel.tempId) )
+
                         StageDemoHealth.AnswerQuestion _ _ ->
                             ( { model | page = StageDemoHealthPage newHealthModel }
                             , Cmd.map StageDemoHealthMsg newCmd
@@ -1720,8 +1721,12 @@ view model =
                     }
 
                 StageDemoQuotePage quoteModel ->
+                    let
+                        demoQuoteView =
+                            StageDemoQuote.view quoteModel
+                    in
                     { title = "Your Medicare Quote"
-                    , body = [ viewStageDemoWithBanner model (Html.map StageDemoQuoteMsg (StageDemoQuote.view quoteModel)) ]
+                    , body = [ viewStageDemoWithBanner model (Html.map StageDemoQuoteMsg (div [] demoQuoteView.body)) ]
                     }
 
                 StageDemoHealthPage healthModel ->
@@ -1774,7 +1779,7 @@ viewStageDemoBanner =
                         [ text "Stage Demo Mode - See Medicare Max in Action" ]
                     , div [ class "mt-1 text-xs leading-tight" ]
                         [ text "Experience how Medicare Max transforms your renewal process. "
-                        , a 
+                        , a
                             [ onClick (InternalLinkClicked "/stage-demo/schedule-signup/demo")
                             , class "underline font-semibold hover:text-[#7F56D9] cursor-pointer"
                             ]
@@ -2289,16 +2294,16 @@ subscriptions model =
 
                 StripePage stripeModel ->
                     Sub.none
-                
+
                 StageDemoInputPage _ ->
                     Sub.none
-                
+
                 StageDemoQuotePage _ ->
                     Sub.none
-                
+
                 StageDemoHealthPage _ ->
                     Sub.none
-                
+
                 StageDemoCTAPage _ ->
                     Sub.none
     in
@@ -3132,8 +3137,12 @@ updatePage url ( model, cmd ) =
                                         )
 
                                     PublicRoute (StageDemoQuoteRoute tempId) ->
-                                        ( { modelWithUpdatedSetup | page = StageDemoQuotePage (StageDemoQuote.init tempId) }
-                                        , Cmd.none
+                                        let
+                                            ( stageDemoQuoteModel, stageDemoQuoteCmd ) =
+                                                StageDemoQuote.init tempId modelWithUpdatedSetup.key
+                                        in
+                                        ( { modelWithUpdatedSetup | page = StageDemoQuotePage stageDemoQuoteModel }
+                                        , Cmd.map StageDemoQuoteMsg stageDemoQuoteCmd
                                         )
 
                                     PublicRoute (StageDemoHealthRoute tempId) ->
@@ -3510,8 +3519,12 @@ updatePageForcePublic url ( model, cmd ) =
                     )
 
                 PublicRoute (StageDemoQuoteRoute tempId) ->
-                    ( { model | page = StageDemoQuotePage (StageDemoQuote.init tempId) }
-                    , Cmd.none
+                    let
+                        ( stageDemoQuoteModel, stageDemoQuoteCmd ) =
+                            StageDemoQuote.init tempId model.key
+                    in
+                    ( { model | page = StageDemoQuotePage stageDemoQuoteModel }
+                    , Cmd.map StageDemoQuoteMsg stageDemoQuoteCmd
                     )
 
                 PublicRoute (StageDemoHealthRoute tempId) ->

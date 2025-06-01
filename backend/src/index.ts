@@ -37,6 +37,7 @@ import { readdirSync } from 'fs'
 import { parseTrackingId } from './utils/tracking'
 import { createBillingRoutes } from './routes/billing'
 import { createStageDemoRoutes } from './routes/stage-demo'
+import { requireAuth } from './middleware/auth'
 
 
 // At the top of the file, add interface for ZIP data
@@ -449,80 +450,56 @@ const startServer = async () => {
     logger.info('Database initialized successfully')
 
     const app = new Elysia()
-      // Add error handler
       .use(errorHandler)
-      // Add CORS middleware
       .use(cors({
-        // In development, allow the Vite dev server origin
         origin: process.env.NODE_ENV === 'development' 
           ? 'http://localhost:5173'
-          : false, // Disable CORS in production
+          : false,
         methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-        allowedHeaders: ['Content-Type', 'Cookie'],  // Add Cookie to allowed headers
+        allowedHeaders: ['Content-Type', 'Cookie'],
         credentials: true,
         preflight: true
       }))
-      // Add static file serving
       .use(staticPlugin({
-        assets: join(process.cwd(), 'public'), // Public static files
+        assets: join(process.cwd(), 'public'),
         prefix: '/'
       }))
-      // Try parent dist directory if it exists
       .use(staticPlugin({
-        assets: join(process.cwd(), '..', 'dist'), // Parent dist static files
+        assets: join(process.cwd(), '..', 'dist'),
         prefix: '/'
       }))
-      // Add data directory for specific files
       .use(staticPlugin({
-        assets: join(process.cwd(), 'data/public'), // Data files
+        assets: join(process.cwd(), 'data/public'),
         prefix: '/api/data/public'
       }))
-      // Add SPA route auth bypass handler
       .onRequest(({ request }) => {
         const url = new URL(request.url);
         const path = url.pathname;
-        
-        // Log all requests (combined from the other handler)
         const method = request.method;
         logger.info(`⮕ ${method} ${path}`);
         
-        // Bypass auth for all SPA routes (non-API paths with no file extension) and stage demo routes
+        // X-Bypass-Auth header setting for non-API SPA routes.
+        // Stage demo routes no longer need this header set here if requireAuth is not applied to them.
         if ((!path.startsWith('/api/') && !path.includes('.')) || 
             path.startsWith('/compare/') ||
             path.startsWith('/quote/') ||
             path.startsWith('/eligibility') ||
             path.startsWith('/schedule') ||
-            path.startsWith('/stage-demo') ||
-            path.startsWith('/api/stage-demo/')) {
+            path.startsWith('/stage-demo')) { // Keep /stage-demo here if it serves frontend assets directly
           
-          logger.info(`[Auth Bypass] Setting bypass header for stage demo/SPA route: ${path}`);
-          // Modify the request headers to include X-Bypass-Auth
+          logger.info(`[Auth Bypass] Setting bypass header for SPA route: ${path}`);
           const newHeaders = new Headers(request.headers);
           newHeaders.set('X-Bypass-Auth', 'true');
-          
-          // Create a new request with the modified headers
           Object.defineProperty(request, 'headers', {
             value: newHeaders,
             writable: true
           });
         }
       })
-      // Add explicit OPTIONS handler for preflight
-      .options('/api/contacts/:id', ({ set }) => {
-        set.headers = {
-          'Access-Control-Allow-Origin': 'http://localhost:5173',
-          'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-          'Access-Control-Allow-Credentials': 'true'
-        }
-        return new Response(null, { status: 204 })
-      })
-      // Log all responses
       .onResponse((context) => {
         const { request: { method }, path, set } = context
         logger.info(`⬅ ${method} ${path} ${set.status}`)
       })
-      // Enhanced error handling
       .onError(({ code, error, request }: {
         code: string;
         error: Error;
@@ -542,389 +519,132 @@ const startServer = async () => {
           }
         })
       })
-      // Add health check endpoint
       .get('/health', () => ({ status: 'OK' }))
-      // Register public routes that shouldn't be auth-protected
-      .get('/api/signup/check-email/:email', checkEmailHandler)
-      // GET /api/contacts is now handled by the contactsRoutes module
-      .get('/api/contacts/check-email/:email', async ({ params: { email }, request }) => {
+      
+      // --- Public Routes ---
+      .use(createAuthRoutes()) // Auth routes are public
+      .use(createSignupRoutes()) // Signup routes are public
+      .use(createStageDemoRoutes()) // Stage Demo routes are public
+      .use(createWaitlistRoutes()) // Waitlist routes are public
+      .get('/api/signup/check-email/:email', checkEmailHandler) // Public endpoint from signup
+
+      // --- Protected API Routes ---
+      // All routes under this group will be prefixed with /api and use requireAuth
+      .group('/api', (protectedApp) =>
+        protectedApp
+          .use(requireAuth) // Apply auth middleware to this group
+          .use(settingsRoutes)
+          .use(organizationRoutes)
+          .use(createBrandRoutes())
+          .use(quotesRoutes)
+          .use(createOnboardingRoutes())
+          .use(eligibilityRoutes)
+          .use(createSelfServiceRoutes())
+          .use(scheduleRoutes)
+          .use(contactsRoutes)
+          .use(contactUsRoutes)
+          .use(createDashboardRoutes())
+          .use(createDashboardActivityRoutes())
+          .use(createStripeRoutes)
+          .use(createBillingRoutes)
+          // Standalone GET /api/contacts/check-email/:email needs to be here if it requires auth
+          // If it's public, it should be outside this group.
+          // Assuming it needs auth for now, similar to other contact routes.
+          .get('/contacts/check-email/:email', async ({ params: { email }, request }) => {
         try {
-          const user = await getUserFromSession(request)
+              const user = await getUserFromSession(request) // getUserFromSession now comes from requireAuth context potentially
           if (!user?.organization_id) {
             throw new Error('No organization ID found in session')
           }
-
           const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString())
-          
           const result = await orgDb.fetchOne(
             'SELECT 1 FROM contacts WHERE LOWER(TRIM(email)) = LOWER(TRIM(?))',
             [email]
           )
-
-          return {
-            exists: result !== null
-          }
+              return { exists: result !== null }
         } catch (e) {
           logger.error(`Error checking email existence: ${e}`)
           throw new Error(String(e))
         }
       })
-      .get('/api/contacts/:id', async ({ params: { id }, request }) => {
+          .get('/contacts/:id', async ({ params: { id }, request }) => {
         try {
           const user = await getUserFromSession(request)
-          if (!user?.organization_id) {
-            throw new Error('No organization ID found in session')
-          }
-
+              if (!user?.organization_id) { throw new Error('No organization ID found in session') }
           logger.info(`GET /api/contacts/${id} - Fetching contact for org ${user.organization_id}`)
-          
-          // Get org-specific database
           const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString())
-          
-          // Fetch the contact
-          const result = await orgDb.fetchOne<ContactRow>(
-            'SELECT * FROM contacts WHERE id = ?',
-            [id]
-          )
-
+              const result = await orgDb.fetchOne<ContactRow>('SELECT * FROM contacts WHERE id = ?', [id])
           if (!result) {
             logger.info(`GET /api/contacts/${id} - Contact not found`)
             return new Response('Contact not found', { status: 404 })
           }
-
-          // Return the contact with mapped fields
-          return {
-            id: result.id,
-            first_name: result.first_name,
-            last_name: result.last_name,
-            email: result.email,
-            current_carrier: result.current_carrier,
-            plan_type: result.plan_type,
-            effective_date: result.effective_date,
-            birth_date: result.birth_date,
-            tobacco_user: Boolean(result.tobacco_user),
-            gender: result.gender,
-            state: result.state,
-            zip_code: result.zip_code,
-            agent_id: result.agent_id,
-            last_emailed: result.last_emailed,
-            phone_number: result.phone_number || ''
-          }
-        } catch (e) {
-          logger.error(`Error fetching contact: ${e}`)
-          throw new Error(String(e))
-        }
+              return { /* ... mapping ... */ id: result.id, first_name: result.first_name, last_name: result.last_name, email: result.email, current_carrier: result.current_carrier, plan_type: result.plan_type, effective_date: result.effective_date, birth_date: result.birth_date, tobacco_user: Boolean(result.tobacco_user), gender: result.gender, state: result.state, zip_code: result.zip_code, agent_id: result.agent_id, last_emailed: result.last_emailed, phone_number: result.phone_number || '' }
+            } catch (e) { logger.error(`Error fetching contact: ${e}`); throw new Error(String(e)) }
       })
-      .post('/api/contacts/create', async ({ body, request }) => {
-        console.log('body', body)
+          .post('/contacts/create', async ({ body, request }) => {
         try {
           const user = await getUserFromSession(request)
-          if (!user?.organization_id) {
-            throw new Error('No organization ID found in session')
-          }
-
-          const contact = body as ContactCreate // With an explicit schema, 'body' will be correctly typed
+              if (!user?.organization_id) { throw new Error('No organization ID found in session') }
+              const contact = body as ContactCreate
           logger.info(`Attempting to create contact for org ${user.organization_id}: ${contact.first_name} ${contact.last_name}`)
-          
-          // Get org-specific database
           const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString())
-
-          // Check for existing email
-          const existingContact = await orgDb.fetchOne(
-            'SELECT 1 FROM contacts WHERE LOWER(TRIM(email)) = LOWER(TRIM(?))',
-            [contact.email]
-          )
-
-          if (existingContact) {
-            throw new Error('A contact with this email already exists')
-          }
-          
-          // Map contact_owner_id to agent_id if it exists and agent_id is not set
-          if (contact.contact_owner_id && !contact.agent_id) {
-            contact.agent_id = contact.contact_owner_id
-            logger.info(`Mapped contact_owner_id: ${contact.contact_owner_id} to agent_id`)
-          }
-          
-          const query = `
-            INSERT INTO contacts (
-              first_name, last_name, email, current_carrier, plan_type,
-              effective_date, birth_date, tobacco_user, gender,
-              state, zip_code, agent_id, phone_number
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `
-          
-          const params = [
-            contact.first_name,
-            contact.last_name,
-            contact.email,
-            contact.current_carrier || null,
-            contact.plan_type || null,
-            contact.effective_date || null,
-            contact.birth_date || null,
-            contact.tobacco_user ? 1 : 0, // Convert boolean to integer
-            contact.gender || null,
-            contact.state || null,
-            contact.zip_code || null,
-            contact.agent_id || null,
-            contact.phone_number || null
-          ]
-
-          logger.info(`Executing query with params: ${JSON.stringify(params)}`)
+              const existingContact = await orgDb.fetchOne('SELECT 1 FROM contacts WHERE LOWER(TRIM(email)) = LOWER(TRIM(?))', [contact.email])
+              if (existingContact) { throw new Error('A contact with this email already exists') }
+              if (contact.contact_owner_id && !contact.agent_id) { contact.agent_id = contact.contact_owner_id; logger.info(`Mapped contact_owner_id: ${contact.contact_owner_id} to agent_id`) }
+              const query = `INSERT INTO contacts (first_name, last_name, email, current_carrier, plan_type, effective_date, birth_date, tobacco_user, gender, state, zip_code, agent_id, phone_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+              const params = [contact.first_name, contact.last_name, contact.email, contact.current_carrier || null, contact.plan_type || null, contact.effective_date || null, contact.birth_date || null, contact.tobacco_user ? 1 : 0, contact.gender || null, contact.state || null, contact.zip_code || null, contact.agent_id || null, contact.phone_number || null]
           await orgDb.execute(query, params)
-
-          // Fetch the newly created contact
-          const result = await orgDb.fetchOne<ContactRow>(
-            'SELECT * FROM contacts WHERE email = ? ORDER BY id DESC LIMIT 1',
-            [contact.email]
-          )
-
-          if (!result) {
-            throw new Error('Failed to fetch created contact')
-          }
-
-          // Match response format to schema
-          return {
-            id: result.id,
-            first_name: result.first_name,
-            last_name: result.last_name,
-            email: result.email,
-            current_carrier: result.current_carrier,
-            plan_type: result.plan_type,
-            effective_date: result.effective_date,
-            birth_date: result.birth_date,
-            tobacco_user: Boolean(result.tobacco_user),
-            gender: result.gender,
-            state: result.state,
-            zip_code: result.zip_code,
-            agent_id: result.agent_id,
-            last_emailed: result.last_emailed,
-            phone_number: result.phone_number || ''
-          }
-        } catch (e) {
-          logger.error(`Error creating contact: ${e}`)
-          throw new Error(String(e))
-        }
-      }, // End of handler function
-      { // Start of schema object
-        body: t.Object({
-          first_name: t.String(),
-          last_name: t.String(),
-          email: t.String({ format: 'email' }),
-          phone_number: t.String(),
-          state: t.String(),
-          contact_owner_id: t.Optional(t.Union([t.Number(), t.Null()])),
-          current_carrier: t.Optional(t.Union([t.String(), t.Null()])),
-          effective_date: t.String(),
-          birth_date: t.String(),
-          tobacco_user: t.Boolean(),
-          gender: t.String(),
-          zip_code: t.String(),
-          plan_type: t.Optional(t.Union([t.String(), t.Null()])),
-          agent_id: t.Optional(t.Union([t.Number(), t.Null()]))
-        })
-      }) // End of schema object and route definition
-      .put('/api/contacts/:id', async ({ params: { id }, body, request }: { params: { id: string }, body: ContactCreate, request: Request }) => {
+              const result = await orgDb.fetchOne<ContactRow>('SELECT * FROM contacts WHERE email = ? ORDER BY id DESC LIMIT 1', [contact.email])
+              if (!result) { throw new Error('Failed to fetch created contact') }
+              return { /* ... mapping ... */ id: result.id, first_name: result.first_name, last_name: result.last_name, email: result.email, current_carrier: result.current_carrier, plan_type: result.plan_type, effective_date: result.effective_date, birth_date: result.birth_date, tobacco_user: Boolean(result.tobacco_user), gender: result.gender, state: result.state, zip_code: result.zip_code, agent_id: result.agent_id, last_emailed: result.last_emailed, phone_number: result.phone_number || '' }
+            } catch (e) { logger.error(`Error creating contact: ${e}`); throw new Error(String(e)) }
+          }, { 
+            body: t.Object({ first_name: t.String(), last_name: t.String(), email: t.String({ format: 'email' }), phone_number: t.String(), state: t.String(), contact_owner_id: t.Optional(t.Union([t.Number(), t.Null()]) ), current_carrier: t.Optional(t.Union([t.String(), t.Null()]) ), effective_date: t.String(), birth_date: t.String(), tobacco_user: t.Boolean(), gender: t.String(), zip_code: t.String(), plan_type: t.Optional(t.Union([t.String(), t.Null()]) ), agent_id: t.Optional(t.Union([t.Number(), t.Null()])) })
+          })
+          .put('/contacts/:id', async ({ params: { id }, body, request }) => {
         try {
-          // Get user and org info
           const user = await getUserFromSession(request)
-          if (!user?.organization_id) {
-            throw new Error('No organization ID found in session')
-          }
-
-          // Get org-specific database
+              if (!user?.organization_id) { throw new Error('No organization ID found in session') }
           const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString())
-
           const contact = body as ContactCreate
-          logger.info(`PUT /api/contacts/${id} - Updating contact for org ${user.organization_id}`)
-
-          // Get state from ZIP code
-          const zipInfo = ZIP_DATA[contact.zip_code]
-          if (!zipInfo) {
-            throw new Error(`Invalid ZIP code: ${contact.zip_code}`)
-          }
-
-          // First update the contact
-          const updateQuery = /* sql */ `
-            UPDATE contacts SET 
-              first_name = ?,
-              last_name = ?,
-              email = ?,
-              current_carrier = ?,
-              plan_type = ?,
-              effective_date = ?,
-              birth_date = ?,
-              tobacco_user = ?,
-              gender = ?,
-              state = ?,
-              zip_code = ?,
-              phone_number = ?
-            WHERE id = ?
-          `
-
-          const updateParams = [
-            contact.first_name,
-            contact.last_name,
-            contact.email,
-            contact.current_carrier,
-            contact.plan_type,
-            contact.effective_date,
-            contact.birth_date,
-            contact.tobacco_user,
-            contact.gender,
-            zipInfo.state, // Use state from ZIP code
-            contact.zip_code,
-            contact.phone_number || '',
-            id
-          ]
-
-          // Execute the update
+              const zipInfo = ZIP_DATA[contact.zip_code]; if (!zipInfo) { throw new Error(`Invalid ZIP code: ${contact.zip_code}`) }
+              const updateQuery = `UPDATE contacts SET first_name = ?, last_name = ?, email = ?, current_carrier = ?, plan_type = ?, effective_date = ?, birth_date = ?, tobacco_user = ?, gender = ?, state = ?, zip_code = ?, phone_number = ? WHERE id = ?`
+              const updateParams = [contact.first_name, contact.last_name, contact.email, contact.current_carrier, contact.plan_type, contact.effective_date, contact.birth_date, contact.tobacco_user, contact.gender, zipInfo.state, contact.zip_code, contact.phone_number || '', id]
           await orgDb.execute(updateQuery, updateParams)
-
-          // Then fetch the updated contact
-          const result = await orgDb.fetchOne<ContactRow>(
-            'SELECT * FROM contacts WHERE id = ?',
-            [id]
-          )
-
-          if (!result) {
-            throw new Error(`Contact ${id} not found after update`)
-          }
-
-          logger.info(`Successfully updated contact ${id} in org ${user.organization_id}`)
-
-          // Return the updated contact
-          return {
-            id: result.id,
-            first_name: result.first_name,
-            last_name: result.last_name,
-            email: result.email,
-            current_carrier: result.current_carrier,
-            plan_type: result.plan_type,
-            effective_date: result.effective_date,
-            birth_date: result.birth_date,
-            tobacco_user: Boolean(result.tobacco_user),
-            gender: result.gender,
-            state: result.state,
-            zip_code: result.zip_code,
-            agent_id: result.agent_id,
-            last_emailed: result.last_emailed,
-            phone_number: result.phone_number
-          }
-        } catch (e) {
-          logger.error(`Error updating contact: ${e}`)
-          throw new Error(String(e))
-        }
-      },
-      {
-        body: t.Object({
-          first_name: t.String(),
-          last_name: t.String(),
-          email: t.String({ format: 'email' }),
-          phone_number: t.String(),
-          state: t.String(),
-          contact_owner_id: t.Optional(t.Union([t.Number(), t.Null()])),
-          current_carrier: t.Optional(t.Union([t.String(), t.Null()])),
-          effective_date: t.String(),
-          birth_date: t.String(),
-          tobacco_user: t.Boolean(),
-          gender: t.String(),
-          zip_code: t.String(),
-          plan_type: t.Optional(t.Union([t.String(), t.Null()])),
-          agent_id: t.Optional(t.Union([t.Number(), t.Null()]))
-        })
+              const result = await orgDb.fetchOne<ContactRow>('SELECT * FROM contacts WHERE id = ?', [id])
+              if (!result) { throw new Error(`Contact ${id} not found after update`) }
+              return { /* ... mapping ... */ id: result.id, first_name: result.first_name, last_name: result.last_name, email: result.email, current_carrier: result.current_carrier, plan_type: result.plan_type, effective_date: result.effective_date, birth_date: result.birth_date, tobacco_user: Boolean(result.tobacco_user), gender: result.gender, state: result.state, zip_code: result.zip_code, agent_id: result.agent_id, last_emailed: result.last_emailed, phone_number: result.phone_number }
+            } catch (e) { logger.error(`Error updating contact: ${e}`); throw new Error(String(e)) }
+          }, {
+            body: t.Object({ first_name: t.String(), last_name: t.String(), email: t.String({ format: 'email' }), phone_number: t.String(), state: t.String(), contact_owner_id: t.Optional(t.Union([t.Number(), t.Null()]) ), current_carrier: t.Optional(t.Union([t.String(), t.Null()]) ), effective_date: t.String(), birth_date: t.String(), tobacco_user: t.Boolean(), gender: t.String(), zip_code: t.String(), plan_type: t.Optional(t.Union([t.String(), t.Null()]) ), agent_id: t.Optional(t.Union([t.Number(), t.Null()])) })
       })
-      // Add DELETE endpoint for contacts
-      .delete('/api/contacts', async ({ request }) => {
+          .delete('/contacts', async ({ request }) => {
         try {
           const user = await getUserFromSession(request)
-          if (!user?.organization_id) {
-            throw new Error('No organization ID found in session')
-          }
-
-          // Parse contact IDs from the request
-          const url = new URL(request.url)
-          const ids = url.searchParams.get('ids')
-          if (!ids) {
-            throw new Error('No contact IDs provided')
-          }
-
+              if (!user?.organization_id) { throw new Error('No organization ID found in session') }
+              const url = new URL(request.url); const ids = url.searchParams.get('ids'); if (!ids) { throw new Error('No contact IDs provided') }
           const contactIds = ids.split(',').map(id => parseInt(id.trim(), 10))
-          
-          logger.info(`DELETE /api/contacts - Attempting to delete ${contactIds.length} contacts for org ${user.organization_id}`)
-          
-          // Get org-specific database
           const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString())
-
-          // Create placeholders for SQL IN clause
           const placeholders = contactIds.map(() => '?').join(',')
-          
-          const query = `
-            DELETE FROM contacts 
-            WHERE id IN (${placeholders})
-            RETURNING id
-          `
-
-          const result = await orgDb.execute(query, contactIds)
-          const deletedIds = result.rows?.map((row: { id: number }) => row.id) || []
-
-          logger.info(`DELETE /api/contacts - Successfully deleted ${deletedIds.length} contacts from org ${user.organization_id}`)
-
-          return {
-            success: true,
-            deleted_ids: deletedIds,
-            message: `Successfully deleted ${deletedIds.length} contacts`
-          }
-        } catch (e) {
-          logger.error(`Error deleting contacts: ${e}`)
-          throw new Error(String(e))
-        }
+              const query = `DELETE FROM contacts WHERE id IN (${placeholders}) RETURNING id`
+              const result = await orgDb.execute(query, contactIds); const deletedIds = result.rows?.map((row: { id: number }) => row.id) || []
+              return { success: true, deleted_ids: deletedIds, message: `Successfully deleted ${deletedIds.length} contacts` }
+            } catch (e) { logger.error(`Error deleting contacts: ${e}`); throw new Error(String(e)) }
       })
-      // Add endpoint for reassigning contacts to a different agent
-      .put('/api/contacts/reassign', async ({ request, body }: { request: Request, body: { contact_ids: number[], agent_id: number | null } }) => {
+          .put('/contacts/reassign', async ({ request, body }) => {
         try {
           const user = await getUserFromSession(request)
-          if (!user?.organization_id) {
-            throw new Error('No organization ID found in session')
-          }
-
-          const { contact_ids, agent_id } = body
-          if (!contact_ids || !Array.isArray(contact_ids) || contact_ids.length === 0) {
-            throw new Error('Invalid or empty contact_ids array')
-          }
-
-          logger.info(`PUT /api/contacts/reassign - Reassigning ${contact_ids.length} contacts to agent ${agent_id} for org ${user.organization_id}`)
-          
-          // Get org-specific database
+              if (!user?.organization_id) { throw new Error('No organization ID found in session') }
+              const { contact_ids, agent_id } = body as { contact_ids: number[], agent_id: number | null }
+              if (!contact_ids || !Array.isArray(contact_ids) || contact_ids.length === 0) { throw new Error('Invalid or empty contact_ids array') }
           const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString())
-
-          // Create placeholders for SQL IN clause
           const placeholders = contact_ids.map(() => '?').join(',')
-          
-          const query = `
-            UPDATE contacts 
-            SET agent_id = ?
-            WHERE id IN (${placeholders})
-            RETURNING id
-          `
-
-          const params = [agent_id, ...contact_ids]
-          const result = await orgDb.execute(query, params)
-          const updatedIds = result.rows?.map((row: { id: number }) => row.id) || []
-
-          logger.info(`PUT /api/contacts/reassign - Successfully reassigned ${updatedIds.length} contacts to agent ${agent_id}`)
-
-            return {
-            success: true,
-            updated_ids: updatedIds,
-            message: `Successfully reassigned ${updatedIds.length} contacts to agent ${agent_id}`
-          }
-        } catch (e) {
-          logger.error(`Error reassigning contacts: ${e}`)
-          throw new Error(String(e))
-        }
+              const query = `UPDATE contacts SET agent_id = ? WHERE id IN (${placeholders}) RETURNING id`
+              const params = [agent_id, ...contact_ids]; const result = await orgDb.execute(query, params); const updatedIds = result.rows?.map((row: { id: number }) => row.id) || []
+              return { success: true, updated_ids: updatedIds, message: `Successfully reassigned ${updatedIds.length} contacts to agent ${agent_id}` }
+            } catch (e) { logger.error(`Error reassigning contacts: ${e}`); throw new Error(String(e)) }
       })
-      // Add file upload endpoint
-      .post('/api/contacts/upload', async ({ request, body, set }: { request: Request, body: { file: File, overwrite_duplicates?: boolean | string, duplicateStrategy?: string, agent_id?: string }, set: any }) => {
+          .post('/contacts/upload', async ({ request, body, set }) => {
         try {
           const user = await getUserFromSession(request)
           if (!user?.organization_id) {
@@ -979,50 +699,7 @@ const startServer = async () => {
           throw err;
         }
       })
-      // Add error handler
-      .use(errorHandler)
-      // Add explicit debug log for auth routes
-      .use(app => {
-        logger.info('Registering auth routes...')
-        return app.use(createAuthRoutes())
-      })
-      // Add signup routes
-      .use(app => {
-        logger.info('Registering signup routes...')
-        return app.use(createSignupRoutes())
-      })
-      // Add settings routes
-      .use(settingsRoutes)
-      // Add organization routes
-      .use(organizationRoutes)
-      // Add brand routes
-      .use(createBrandRoutes())
-      // Add quotes routes
-      .use(quotesRoutes)
-      // Add onboarding routes
-      .use(createOnboardingRoutes())
-      // Add eligibility routes
-      .use(eligibilityRoutes)
-      // Add self-service routes
-      .use(createSelfServiceRoutes())
-      // Add schedule routes
-      .use(scheduleRoutes)
-      // Add contacts routes
-      .use(contactsRoutes)
-      // Add contact us form routes
-      .use(contactUsRoutes)
-      // Add waitlist routes
-      .use(createWaitlistRoutes())  // Waitlist routes use their own database connection
-      // Add dashboard routes
-      .use(createDashboardRoutes())
-      // Add dashboard activity routes
-      .use(createDashboardActivityRoutes())
-      // Serve backend static files from public directory
-      .use(createStripeRoutes)
-      .use(createBillingRoutes)
-      .use(createStageDemoRoutes())
-      // Add this endpoint within the app definition
-      .post('/api/agents', async ({ body, request, set }) => {
+          .post('/agents', async ({ body, request, set }) => {
         try {
           // Get current user from session to determine their org
           const currentUser = await getUserFromSession(request)
@@ -1178,8 +855,7 @@ const startServer = async () => {
           }
         }
       })
-      // Add an alias endpoint for POST /api/agents/create to match frontend expectations
-      .post('/api/agents/create', async ({ body, request, set }) => {
+          .post('/agents/create', async ({ body, request, set }) => {
         try {
           // Log the request to the alias endpoint
           logger.info(`POST /api/agents/create - Using the same implementation as /api/agents`)
@@ -1212,6 +888,29 @@ const startServer = async () => {
             newAgent.is_agent = true
           }
 
+              // Get the libSQL client
+              const client = db.getClient()
+              
+              // Get organization settings to inherit carriers and state licenses
+              const orgSettingsResult = await client.execute({
+                sql: `SELECT org_settings FROM organizations WHERE id = ?`,
+                args: [currentUser.organization_id]
+              })
+              
+              let orgSettings = {
+                stateLicenses: [],
+                carrierContracts: [],
+                stateCarrierSettings: []
+              }
+              
+              if (orgSettingsResult.rows.length > 0 && orgSettingsResult.rows[0].org_settings) {
+                try {
+                  const parsedSettings = JSON.parse(orgSettingsResult.rows[0].org_settings as string)
+                  orgSettings = {
+                    stateLicenses: parsedSettings.stateLicenses || [],
+                    carrierContracts: parsedSettings.carrierContracts || [],
+                    stateCarrierSettings: parsedSettings.stateCarrierSettings || []
+                  }
           // Get the libSQL client
           const client = db.getClient()
           

@@ -1,6 +1,8 @@
 import { Elysia, t } from 'elysia';
 import { logger } from '../logger';
 import Database from '../services/unifiedDatabase';
+import fs from 'fs/promises';
+import path from 'path';
 
 const generateTempId = () => Math.random().toString(36).substring(2, 10);
 
@@ -70,14 +72,14 @@ export const createStageDemoRoutes = () => {
         const e164Phone = formattedPhone.startsWith('1') ? `+${formattedPhone}` : `+1${formattedPhone}`;
         
         // Send SMS using Twilio if configured
-        if (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_FROM_NUMBER) {
+        if (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_PHONE_NUMBER) {
           try {
             const twilio = require('twilio');
             const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
             
             await client.messages.create({
               body: `Hi ${firstName}, here's your MedicareMax quote: ${quoteLink}`,
-              from: process.env.TWILIO_FROM_NUMBER,
+              from: process.env.TWILIO_PHONE_NUMBER,
               to: e164Phone
             });
             logger.info(`Stage Demo: SMS sent to ${e164Phone}`);
@@ -85,9 +87,9 @@ export const createStageDemoRoutes = () => {
             logger.warn(`Stage Demo: SMS sending failed: ${smsError}`);
           }
         } else {
-          logger.warn(`Stage Demo: SMS not configured (missing Twilio credentials)`);
+          logger.warn(`Stage Demo: SMS not configured - missing: ${!process.env.TWILIO_ACCOUNT_SID ? 'TWILIO_ACCOUNT_SID ' : ''}${!process.env.TWILIO_AUTH_TOKEN ? 'TWILIO_AUTH_TOKEN ' : ''}${!process.env.TWILIO_PHONE_NUMBER ? 'TWILIO_PHONE_NUMBER' : ''}`);
         }
-
+        set.status = 200;
         return { success: true, message: 'Check your email and texts for your personalized quote!' };
       } catch (error) {
         logger.error(`Stage Demo Error: ${error}`);
@@ -166,5 +168,19 @@ export const createStageDemoRoutes = () => {
         set.status = 500;
         return { success: false, error: 'Failed to retrieve submission' };
       }
+    })
+    .get('/plans', async ({ set }) => {
+      try {
+        const filePath = path.join(__dirname, '../../data/plans.json');
+        const fileContent = await fs.readFile(filePath, 'utf-8');
+        const plansData = JSON.parse(fileContent);
+        return plansData;
+      } catch (error) {
+        logger.error(`Stage Demo Plans Error: ${error}`);
+        set.status = 500;
+        return { success: false, error: 'Failed to retrieve plans data.' };
+      }
+    }, {
+      beforeHandle: []
     });
 };
