@@ -493,7 +493,8 @@ const startServer = async () => {
             path.startsWith('/eligibility') ||
             path.startsWith('/schedule') ||
             path.startsWith('/stage-demo') ||
-            path.startsWith('/api/stage-demo/')) {
+            path.startsWith('/api/stage-demo/') ||
+            path.startsWith('/api/data/public/')) {
           
           logger.info(`[Auth Bypass] Setting bypass header for stage demo/SPA route: ${path}`);
           // Modify the request headers to include X-Bypass-Auth

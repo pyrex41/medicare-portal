@@ -17,13 +17,14 @@ export const requireAuth = new Elysia()
       const url = new URL(request.url)
       const pathname = url.pathname
       
-      // Bypass auth for SPA routes - belt and suspenders approach
+      // Bypass auth for SPA routes and public API endpoints
       // This check might still be useful if the X-Bypass-Auth header isn't set for some SPA routes
       if ((!pathname.startsWith('/api/') && !pathname.includes('.')) || 
           pathname.startsWith('/compare/') ||
           pathname.startsWith('/quote/') ||
           pathname.startsWith('/eligibility') ||
-          pathname.startsWith('/schedule')) {
+          pathname.startsWith('/schedule') ||
+          pathname.startsWith('/api/data/public/')) {
         logger.info(`Auth middleware: bypassing auth for SPA route: ${pathname}`)
         return
       }

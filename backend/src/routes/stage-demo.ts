@@ -174,6 +174,7 @@ export const createStageDemoRoutes = () => {
         const filePath = path.join(__dirname, '../../data/plans.json');
         const fileContent = await fs.readFile(filePath, 'utf-8');
         const plansData = JSON.parse(fileContent);
+        set.status = 200;
         return plansData;
       } catch (error) {
         logger.error(`Stage Demo Plans Error: ${error}`);
