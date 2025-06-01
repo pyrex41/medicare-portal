@@ -141,6 +141,9 @@ successView =
             ]
         , h3 [ Attr.class "text-lg font-medium text-gray-900 mb-2" ] [ text "Success!" ]
         , p [ Attr.class "text-gray-600" ] [ text "Check your email and texts for your personalized Medicare quote!" ]
+        , br [] []
+        , p [] [ text "Or, click here to see your personalized quote" ]
+        , a [ Attr.href "/stage-demo/quote/demo", Attr.class "text-[#03045E] underline font-medium cursor-pointer" ] [ text "View Quote" ]
         ]
 
 
