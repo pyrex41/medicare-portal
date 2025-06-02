@@ -359,9 +359,11 @@ emailTrackingDecoder =
 
 
 type alias ZipInfo =
-    { state : String
+    { success : Bool
+    , state : Maybe String
     , counties : List String
     , cities : List String
+    , error : Maybe String
     }
 
 
@@ -878,16 +880,23 @@ update msg model =
             )
 
         GotZipLookup (Ok zipInfo) ->
-            let
-                form =
-                    model.editForm
+            case ( zipInfo.success, zipInfo.state ) of
+                ( True, Just state ) ->
+                    let
+                        form =
+                            model.editForm
 
-                updatedForm =
-                    { form | state = zipInfo.state }
-            in
-            ( { model | editForm = updatedForm }
-            , Cmd.none
-            )
+                        updatedForm =
+                            { form | state = state }
+                    in
+                    ( { model | editForm = updatedForm }
+                    , Cmd.none
+                    )
+
+                _ ->
+                    ( { model | error = zipInfo.error }
+                    , Cmd.none
+                    )
 
         GotZipLookup (Err _) ->
             ( model, Cmd.none )
@@ -1843,9 +1852,11 @@ lookupZipCode zipCode =
 zipInfoDecoder : Decode.Decoder ZipInfo
 zipInfoDecoder =
     Decode.succeed ZipInfo
-        |> Pipeline.required "state" Decode.string
-        |> Pipeline.required "counties" (Decode.list Decode.string)
-        |> Pipeline.required "cities" (Decode.list Decode.string)
+        |> Pipeline.required "success" Decode.bool
+        |> Pipeline.optional "state" (Decode.nullable Decode.string) Nothing
+        |> Pipeline.optional "counties" (Decode.list Decode.string) []
+        |> Pipeline.optional "cities" (Decode.list Decode.string) []
+        |> Pipeline.optional "error" (Decode.nullable Decode.string) Nothing
 
 
 deleteContact : Int -> Cmd Msg
