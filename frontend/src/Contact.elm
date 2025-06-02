@@ -520,10 +520,26 @@ update msg model =
                 parseAgent : User -> User
                 parseAgent agent =
                     { agent | firstName = parser agent.firstName, lastName = parser agent.lastName, email = parser agent.email }
+
+                oldEditForm =
+                    model.editForm
+
+                newEditForm =
+                    case oldEditForm.contactOwnerId of
+                        Just _ ->
+                            oldEditForm
+
+                        Nothing ->
+                            { oldEditForm
+                                | contactOwnerId =
+                                    response.defaultAgentId
+                                        |> Maybe.andThen String.toInt
+                            }
             in
             ( { model
                 | agents = response.agents |> List.map parseAgent
                 , defaultAgentId = response.defaultAgentId |> Maybe.andThen String.toInt
+                , editForm = newEditForm
               }
             , Cmd.none
             )
@@ -610,9 +626,47 @@ update msg model =
                                     { contact
                                         | birthDate = Just (Date.toIsoString birthDate)
                                         , effectiveDate = Just (Date.toIsoString effectiveDate)
+                                        , contactOwnerId =
+                                            case contact.contactOwnerId of
+                                                Just id ->
+                                                    Just id
+
+                                                Nothing ->
+                                                    model.defaultAgentId
+                                        , gender =
+                                            case contact.gender of
+                                                Just "" ->
+                                                    Just "M"
+
+                                                Just g ->
+                                                    Just g
+
+                                                Nothing ->
+                                                    Just "M"
+                                    }
+
+                                newEditForm =
+                                    { id = Just newContact.id
+                                    , firstName = Maybe.withDefault "" newContact.firstName
+                                    , lastName = Maybe.withDefault "" newContact.lastName
+                                    , email = newContact.email
+                                    , phoneNumber = Maybe.withDefault "" newContact.phoneNumber
+                                    , state = Maybe.withDefault "" newContact.state
+                                    , contactOwnerId = newContact.contactOwnerId
+                                    , currentCarrier = Maybe.withDefault "" newContact.currentCarrier
+                                    , effectiveDate = Maybe.withDefault "" newContact.effectiveDate
+                                    , birthDate = Maybe.withDefault "" newContact.birthDate
+                                    , tobaccoUser = Maybe.withDefault False newContact.tobaccoUser
+                                    , gender = Maybe.withDefault "" newContact.gender
+                                    , zipCode = Maybe.withDefault "" newContact.zipCode
+                                    , planType = newContact.planType |> Maybe.withDefault ""
                                     }
                             in
-                            ( { model | contact = Just newContact, emailSchedule = newSchedule }
+                            ( { model
+                                | contact = Just newContact
+                                , emailSchedule = newSchedule
+                                , editForm = newEditForm
+                              }
                             , Cmd.batch
                                 [ Http.get
                                     { url = "/api/quotes/generate/" ++ String.fromInt contact.id
@@ -665,25 +719,7 @@ update msg model =
         ShowEditModal ->
             case model.contact of
                 Just contact ->
-                    ( { model
-                        | showModal = EditModal
-                        , editForm =
-                            { id = Just contact.id
-                            , firstName = Maybe.withDefault "" contact.firstName
-                            , lastName = Maybe.withDefault "" contact.lastName
-                            , email = contact.email
-                            , phoneNumber = Maybe.withDefault "" contact.phoneNumber
-                            , state = Maybe.withDefault "" contact.state
-                            , contactOwnerId = contact.contactOwnerId
-                            , currentCarrier = Maybe.withDefault "" contact.currentCarrier
-                            , effectiveDate = Maybe.withDefault "" contact.effectiveDate
-                            , birthDate = Maybe.withDefault "" contact.birthDate
-                            , tobaccoUser = Maybe.withDefault False contact.tobaccoUser
-                            , gender = Maybe.withDefault "" contact.gender
-                            , zipCode = Maybe.withDefault "" contact.zipCode
-                            , planType = contact.planType |> Maybe.withDefault ""
-                            }
-                      }
+                    ( { model | showModal = EditModal }
                     , Cmd.none
                     )
 
@@ -1492,17 +1528,17 @@ viewContactForm : ContactForm -> Bool -> Model -> Html Msg
 viewContactForm form isSubmitting model =
     let
         carrierOptions =
-            ( "", "Select a carrier" ) :: List.map (\c -> ( c, c )) (model.orgSettings |> Maybe.map .carrierContracts |> Maybe.withDefault []) ++ [ ( "Other", "Other" ) ]
+            List.map (\c -> ( c, c )) (model.orgSettings |> Maybe.map .carrierContracts |> Maybe.withDefault []) ++ [ ( "Other", "Other" ) ]
 
         planTypeOptions =
-            [ ( "", "Select a plan type" ), ( "Plan N", "Plan N" ), ( "Plan G", "Plan G" ), ( "Other", "Other" ) ]
+            [ ( "Plan N", "Plan N" ), ( "Plan G", "Plan G" ), ( "Other", "Other" ) ]
 
         ( agentOptionsToDisplay, isAgentSelectDisabled ) =
             case model.orgSettings of
                 Just settings ->
                     if settings.allowAgentSettings then
                         -- Allow selecting any agent
-                        ( ( "", "Select Contact Owner" ) :: (model.agents |> List.map (\agent -> ( String.fromInt agent.id, agent.firstName ++ " " ++ agent.lastName )))
+                        ( model.agents |> List.map (\agent -> ( String.fromInt agent.id, agent.firstName ++ " " ++ agent.lastName ))
                         , False
                           -- Not disabled
                         )
@@ -1688,7 +1724,7 @@ viewFormSelect labelText selectedValue field model options =
             , Html.Attributes.value selectedValue
             , onInput (UpdateEditForm field)
             ]
-            (List.map (\( val, label ) -> Html.option [ value val, selected (val == selectedValue) ] [ text label ]) options)
+            (List.map (\( val, label ) -> Html.option [ value val ] [ text label ]) options)
         ]
 
 
