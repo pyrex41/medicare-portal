@@ -124,6 +124,7 @@ type alias Model =
     , healthQuestionsCompleted : Int
     , isLoadingDashboardStats : Bool
     , dashboardStatsError : Maybe String
+    , initialTotalContacts : Int
     }
 
 
@@ -329,6 +330,7 @@ init key maybeUser =
             , healthQuestionsCompleted = 0
             , isLoadingDashboardStats = True
             , dashboardStatsError = Nothing
+            , initialTotalContacts = 0
             }
     in
     ( model
@@ -837,6 +839,12 @@ update msg model =
                     , itemsPerPage = response.limit
                     , totalPages = ceiling (toFloat response.total / toFloat response.limit)
                     }
+                , initialTotalContacts =
+                    if model.initialTotalContacts == 0 then
+                        response.total
+
+                    else
+                        model.initialTotalContacts
               }
             , Cmd.none
             )
@@ -1025,7 +1033,7 @@ update msg model =
 
                         AgentFilter ->
                             model.agents
-                                |> List.filter (\agent -> agent.isAgent)
+                                --|> List.filter (\agent -> agent.isAgent)
                                 |> List.map (\agent -> agent.firstName ++ " " ++ agent.lastName)
 
                         _ ->
@@ -1064,7 +1072,7 @@ update msg model =
                             , agents =
                                 if select then
                                     model.agents
-                                        |> List.filter (\agent -> agent.isAgent)
+                                        --|> List.filter (\agent -> agent.isAgent)
                                         |> List.map (\agent -> agent.id)
 
                                 else
@@ -1102,7 +1110,7 @@ update msg model =
             let
                 visibleContacts =
                     model.contacts
-                        |> filterContacts model.activeFilters model.searchQuery model.currentTime
+                        |> filterContacts model.activeFilters model.searchQuery model.currentTime model.defaultAgentId
                         |> List.map .id
             in
             ( { model | selectedContacts = visibleContacts }
@@ -1917,11 +1925,11 @@ view model =
         [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" ]
             [ -- Stats Section - Make more compact with reduced margins
               div [ class "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-6" ]
-                [ if model.isLoadingContacts then
+                [ if model.initialTotalContacts == 0 && model.isLoadingContacts then
                     statsCardWithSpinner "Total Contacts"
 
                   else
-                    statsCard "Total Contacts" (String.fromInt model.pagination.totalItems)
+                    statsCard "Total Contacts" (String.fromInt model.initialTotalContacts)
                 , if model.isLoadingDashboardStats then
                     statsCardWithSpinner "Quotes Sent"
 
@@ -1948,7 +1956,7 @@ view model =
                     statsCard "Health Questions" (String.fromInt model.healthQuestionsCompleted)
                 ]
             , -- Table Container with overflow handling - reduced vertical spacing
-              div [ class "overflow-x-auto max-w-7xl mx-auto" ]
+              div [ class "overflow-x-auto max-w-7xl mx-auto min-h-[20rem]" ]
                 [ -- Add a container around both the header and the table to ensure they have the same width
                   div [ class "w-full" ]
                     [ -- Contacts header and filters - reduced margin bottom
@@ -1965,6 +1973,7 @@ view model =
                                     [ button
                                         [ class "inline-flex items-center gap-1 px-2 py-1 border rounded-md text-sm text-gray-700 hover:bg-gray-50"
                                         , onClick (ToggleFilterDropdown AgentFilter)
+                                        , Html.Events.stopPropagationOn "mousedown" (Decode.succeed ( NoOp, True ))
                                         ]
                                         [ text "Agent"
                                         , viewIcon "M19 9l-7 7-7-7"
@@ -1982,6 +1991,7 @@ view model =
                                 [ button
                                     [ class "inline-flex items-center gap-1 px-2 py-1 border rounded-md text-sm text-gray-700 hover:bg-gray-50"
                                     , onClick (ToggleFilterDropdown CarrierFilter)
+                                    , Html.Events.stopPropagationOn "mousedown" (Decode.succeed ( NoOp, True ))
                                     ]
                                     [ text "Carrier"
                                     , viewIcon "M19 9l-7 7-7-7"
@@ -1996,6 +2006,7 @@ view model =
                                 [ button
                                     [ class "inline-flex items-center gap-1 px-2 py-1 border rounded-md text-sm text-gray-700 hover:bg-gray-50"
                                     , onClick (ToggleFilterDropdown StateFilter)
+                                    , Html.Events.stopPropagationOn "mousedown" (Decode.succeed ( NoOp, True ))
                                     ]
                                     [ text "State"
                                     , viewIcon "M19 9l-7 7-7-7"
@@ -2841,6 +2852,7 @@ viewCsvUploadModal state isUploading model =
                           else
                             case model.currentUser of
                                 Just user ->
+                                    {--
                                     if user.isAgent && not user.isAdmin then
                                         -- For non-admin agents, show their name as fixed value
                                         let
@@ -2855,32 +2867,33 @@ viewCsvUploadModal state isUploading model =
                                             [ text agentName ]
 
                                     else
-                                        -- For admins, show dropdown with all agents
-                                        let
-                                            agentOptions =
-                                                List.map
-                                                    (\agent ->
-                                                        ( String.fromInt agent.id
-                                                        , agent.firstName ++ " " ++ agent.lastName
-                                                        )
+                                    --}
+                                    -- For admins, show dropdown with all agents
+                                    let
+                                        agentOptions =
+                                            List.map
+                                                (\agent ->
+                                                    ( String.fromInt agent.id
+                                                    , agent.firstName ++ " " ++ agent.lastName
                                                     )
-                                                    model.agents
-
-                                            -- Get default agent ID - either from state.selectedAgentId if valid, or from current user
-                                            defaultAgentId =
-                                                user.id
-                                        in
-                                        Html.select
-                                            [ class "w-full px-4 py-3 bg-white border-[2.5px] border-purple-300 rounded-lg text-gray-700 placeholder-gray-400 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 focus:bg-white transition-all duration-200 appearance-none"
-                                            , value (state.selectedAgentId |> Maybe.map String.fromInt |> Maybe.withDefault "") -- Correctly bind to state.selectedAgentId
-                                            , onInput (\val -> SelectUploadAgent (String.toInt val |> Maybe.withDefault 0))
-                                            ]
-                                            (List.map
-                                                (\( val, label ) ->
-                                                    option [ value val ] [ text label ]
                                                 )
-                                                agentOptions
+                                                model.agents
+
+                                        -- Get default agent ID - either from state.selectedAgentId if valid, or from current user
+                                        defaultAgentId =
+                                            user.id
+                                    in
+                                    Html.select
+                                        [ class "w-full px-4 py-3 bg-white border-[2.5px] border-purple-300 rounded-lg text-gray-700 placeholder-gray-400 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 focus:bg-white transition-all duration-200 appearance-none"
+                                        , value (state.selectedAgentId |> Maybe.map String.fromInt |> Maybe.withDefault "") -- Correctly bind to state.selectedAgentId
+                                        , onInput (\val -> SelectUploadAgent (String.toInt val |> Maybe.withDefault 0))
+                                        ]
+                                        (List.map
+                                            (\( val, label ) ->
+                                                option [ value val ] [ text label ]
                                             )
+                                            agentOptions
+                                        )
 
                                 Nothing ->
                                     text ""
@@ -3505,14 +3518,14 @@ sortContacts maybeColumn direction contacts =
                 contacts
 
 
-filterContacts : Filters -> String -> Time.Posix -> List Contact -> List Contact
-filterContacts filters searchQuery currentTime contacts =
+filterContacts : Filters -> String -> Time.Posix -> Maybe Int -> List Contact -> List Contact
+filterContacts filters searchQuery currentTime defaultAgentId contacts =
     contacts
         |> filterBySearch searchQuery
         |> filterByCarriers filters.carriers
         |> filterByList (\c -> Maybe.withDefault "" c.state) filters.states
         |> filterByAge filters.ageRange
-        |> filterByAgents filters.agents
+        |> filterByAgents filters.agents defaultAgentId
 
 
 filterByCarriers : List String -> List Contact -> List Contact
@@ -4143,14 +4156,12 @@ viewFilterDropdown model filterType =
 
                 AgentFilter ->
                     -- Add "Default" option for unassigned contacts
-                    "Default"
-                        :: (model.agents
-                                |> List.filter (\agent -> agent.isAgent)
-                                |> List.map
-                                    (\agent ->
-                                        agent.firstName ++ " " ++ agent.lastName
-                                    )
-                           )
+                    model.agents
+                        --|> List.filter (\agent -> agent.isAgent)
+                        |> List.map
+                            (\agent ->
+                                agent.firstName ++ " " ++ agent.lastName
+                            )
 
                 _ ->
                     []
@@ -4200,37 +4211,24 @@ viewFilterDropdown model filterType =
                 (case filterType of
                     AgentFilter ->
                         -- Special handling for agent filter since it's using IDs
-                        -- First add the Default option (agentId = 0 means unassigned/default)
-                        label
-                            [ class "flex items-center space-x-2 py-1" ]
-                            [ input
-                                [ type_ "checkbox"
-                                , checked (List.member 0 model.activeFilters.agents)
-                                , onClick (ToggleFilter filterType (String.fromInt 0))
-                                , class "rounded border-gray-300 text-purple-600 focus:ring-purple-500"
-                                ]
-                                []
-                            , span [ class "text-sm text-gray-600" ]
-                                [ text "Default" ]
-                            ]
-                            :: (model.agents
-                                    |> List.filter (\agent -> agent.isAgent)
-                                    |> List.map
-                                        (\agent ->
-                                            label
-                                                [ class "flex items-center space-x-2 py-1" ]
-                                                [ input
-                                                    [ type_ "checkbox"
-                                                    , checked (List.member agent.id model.activeFilters.agents)
-                                                    , onClick (ToggleFilter filterType (String.fromInt agent.id))
-                                                    , class "rounded border-gray-300 text-purple-600 focus:ring-purple-500"
-                                                    ]
-                                                    []
-                                                , span [ class "text-sm text-gray-600" ]
-                                                    [ text (agent.firstName ++ " " ++ agent.lastName) ]
-                                                ]
-                                        )
-                               )
+                        -- The "Default" option (agentId = 0) is removed.
+                        model.agents
+                            --|> List.filter (\agent -> agent.isAgent)
+                            |> List.map
+                                (\agent ->
+                                    label
+                                        [ class "flex items-center space-x-2 py-1" ]
+                                        [ input
+                                            [ type_ "checkbox"
+                                            , checked (List.member agent.id model.activeFilters.agents)
+                                            , onClick (ToggleFilter filterType (String.fromInt agent.id))
+                                            , class "rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                                            ]
+                                            []
+                                        , span [ class "text-sm text-gray-600" ]
+                                            [ text (agent.firstName ++ " " ++ agent.lastName) ]
+                                        ]
+                                )
 
                     _ ->
                         -- Original handling for other filters
@@ -4576,12 +4574,25 @@ toggleAgentList list value =
 -- Add the filterByAgents function
 
 
-filterByAgents : List Int -> List Contact -> List Contact
-filterByAgents agentIds contacts =
+filterByAgents : List Int -> Maybe Int -> List Contact -> List Contact
+filterByAgents agentIds defaultAgentId contacts =
     if List.isEmpty agentIds then
-        contacts
+        -- No specific agents selected, filter by defaultAgentId or unassigned
+        List.filter
+            (\contact ->
+                case contact.agentId of
+                    Just id ->
+                        id == Maybe.withDefault -1 defaultAgentId
+
+                    -- Using -1 as a sentinel for Nothing that won't match any real ID
+                    Nothing ->
+                        True
+             -- Include unassigned contacts
+            )
+            contacts
 
     else
+        -- Specific agents selected
         List.filter
             (\contact ->
                 case contact.agentId of

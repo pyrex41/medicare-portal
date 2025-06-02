@@ -31,8 +31,9 @@ Dependencies:
 
 import BirthdayRules exposing (canPresentDifferentPlanOnly, getDelayedEmailDate, getStateRule, isInBirthdayRuleWindow, isInContinuousOpenEnrollment)
 import Date exposing (Date)
-import Html exposing (Html, div, h2, span, table, tbody, td, text, th, thead, tr)
+import Html exposing (Html, div, h2, p, span, table, tbody, td, text, th, thead, tr)
 import Html.Attributes exposing (class)
+import List.Extra exposing (uniqueBy)
 import Time exposing (Month(..))
 
 
@@ -207,90 +208,13 @@ getScheduledEmails schedule =
 
     else
         let
-            -- Calculate the date one year after the effective date for status checks.
+            schedulingWindowStart : Date
+            schedulingWindowStart =
+                Date.add Date.Months -1 schedule.currentDate
+
             oneYearAfterEffective : Date
             oneYearAfterEffective =
                 Date.add Date.Years 1 schedule.effectiveDate
-
-            -- Check if we're within the first year
-            isWithinFirstYear : Bool
-            isWithinFirstYear =
-                Date.compare schedule.currentDate oneYearAfterEffective == LT
-
-            -- Calculate the next occurrence of an event based on the email type and base date.
-            nextOccurrence : ScheduledEmailType -> Date -> Date
-            nextOccurrence emailType baseDate =
-                let
-                    currentYear : Int
-                    currentYear =
-                        Date.year schedule.currentDate
-
-                    -- Calculate next year's date for birthday and anniversary
-                    nextBirthdayOrAnniversaryYear : Date -> Int
-                    nextBirthdayOrAnniversaryYear date =
-                        let
-                            thisYearDate =
-                                Date.fromCalendarDate currentYear (Date.month date) (Date.day date)
-                        in
-                        if Date.compare thisYearDate schedule.currentDate == LT then
-                            currentYear + 1
-
-                        else
-                            currentYear
-
-                    -- For September blast (previously October), use current year if September hasn't passed yet
-                    septemberThisYear : Date
-                    septemberThisYear =
-                        Date.fromCalendarDate currentYear Sep 1
-
-                    shouldUseNextYearForSeptember : Bool
-                    shouldUseNextYearForSeptember =
-                        Date.compare septemberThisYear schedule.currentDate == LT
-
-                    result =
-                        case emailType of
-                            Birthday ->
-                                -- Calculate birthday date then subtract 14 days
-                                let
-                                    nextBirthday =
-                                        Date.fromCalendarDate
-                                            (nextBirthdayOrAnniversaryYear baseDate)
-                                            (Date.month baseDate)
-                                            (Date.day baseDate)
-                                in
-                                Date.add Date.Days -14 nextBirthday
-
-                            Anniversary ->
-                                -- Calculate anniversary date then subtract 30 days
-                                let
-                                    nextAnniversary =
-                                        Date.fromCalendarDate
-                                            (nextBirthdayOrAnniversaryYear baseDate)
-                                            (Date.month baseDate)
-                                            (Date.day baseDate)
-                                in
-                                Date.add Date.Days -30 nextAnniversary
-
-                            OctoberBlast ->
-                                -- Now using September 1st instead of October 1st
-                                Date.fromCalendarDate
-                                    (if shouldUseNextYearForSeptember then
-                                        currentYear + 1
-
-                                     else
-                                        currentYear
-                                    )
-                                    Sep
-                                    1
-
-                            NewYear ->
-                                -- Not used but keeping for type safety
-                                schedule.currentDate
-
-                            NoEmails ->
-                                schedule.currentDate
-                in
-                result
 
             -- Check if an email should be delayed due to birthday rules
             checkBirthdayRuleDelay : ScheduledEmailType -> Date -> ( Date, ScheduledEmailStatus )
@@ -376,105 +300,145 @@ getScheduledEmails schedule =
                         -- No delay for other email types
                         ( scheduledDate, Scheduled )
 
-            -- Create a scheduled email with the appropriate status.
-            createScheduledEmail : ScheduledEmailType -> Date -> ScheduledEmail
-            createScheduledEmail emailType baseDate =
+            -- Helper function to generate emails for a specific baseDate and emailType,
+            -- considering multiple relevant years.
+            generateEmailsForBaseDate : ScheduledEmailType -> Date -> List ScheduledEmail
+            generateEmailsForBaseDate emailType baseDateForEvent =
                 let
-                    scheduledTime : Date
-                    scheduledTime =
-                        nextOccurrence emailType baseDate
+                    currentEventYear =
+                        Date.year schedule.currentDate
 
-                    ( finalScheduledTime, birthdayRuleStatus ) =
-                        checkBirthdayRuleDelay emailType scheduledTime
+                    -- Consider the year of the scheduling window start, current year, and next year
+                    yearsToConsider =
+                        [ Date.year schedulingWindowStart
+                        , currentEventYear
+                        , currentEventYear + 1
+                        ]
+                            |> List.sort
+                            |> uniqueBy identity
 
-                    status : ScheduledEmailStatus
-                    status =
-                        if Date.compare scheduledTime schedule.currentDate == LT then
-                            -- Skip if the date is in the past
-                            Skipped "Date is in the past"
+                    -- uniqueBy identity works like List.Extra.unique
+                    processYear : Int -> Maybe ScheduledEmail
+                    processYear eventYear =
+                        let
+                            -- Calculate the raw date of the event (e.g., birthday, anniversary, Sept 1st) for the given eventYear
+                            rawEventDateInYear =
+                                case emailType of
+                                    Birthday ->
+                                        Date.fromCalendarDate eventYear (Date.month baseDateForEvent) (Date.day baseDateForEvent)
 
-                        else if
-                            Date.compare scheduledTime oneYearAfterEffective
-                                == LT
-                                && Date.compare scheduledTime schedule.effectiveDate
-                                == GT
-                        then
-                            Skipped "Within first year of effective date"
+                                    Anniversary ->
+                                        Date.fromCalendarDate eventYear (Date.month baseDateForEvent) (Date.day baseDateForEvent)
+
+                                    OctoberBlast ->
+                                        -- AEP Reminder is always September 1st
+                                        Date.fromCalendarDate eventYear Sep 1
+
+                                    NewYear ->
+                                        -- This case should ideally not be hit if NewYear emails are not generated
+                                        Date.fromCalendarDate eventYear Jan 1
+
+                                    NoEmails ->
+                                        -- This case should not be hit during specific email generation
+                                        schedule.currentDate
+
+                            -- Apply pre-notification offsets (e.g., -14 days for Birthday)
+                            scheduledTimeWithOffset =
+                                case emailType of
+                                    Birthday ->
+                                        Date.add Date.Days -14 rawEventDateInYear
+
+                                    Anniversary ->
+                                        Date.add Date.Days -30 rawEventDateInYear
+
+                                    OctoberBlast ->
+                                        rawEventDateInYear
+
+                                    -- No offset defined for OctoberBlast/AEP Reminder
+                                    NewYear ->
+                                        rawEventDateInYear
+
+                                    NoEmails ->
+                                        schedule.currentDate
+
+                            ( finalScheduledTime, birthdayRuleStatus ) =
+                                checkBirthdayRuleDelay emailType scheduledTimeWithOffset
+
+                            status : ScheduledEmailStatus
+                            status =
+                                if Date.compare scheduledTimeWithOffset schedulingWindowStart == LT then
+                                    -- Skip if the calculated scheduled date is before our new observation window starts
+                                    Skipped "Date is in the past (before window start)"
+
+                                else if
+                                    -- Skip if the scheduled date falls within the first year of the policy effective date
+                                    Date.compare scheduledTimeWithOffset oneYearAfterEffective
+                                        == LT
+                                        && Date.compare scheduledTimeWithOffset schedule.effectiveDate
+                                        == GT
+                                then
+                                    Skipped "Within first year of effective date"
+
+                                else
+                                    -- Otherwise, apply status from birthday/anniversary rule checks (Scheduled or Delayed)
+                                    birthdayRuleStatus
+                        in
+                        -- Only create a ScheduledEmail record if it's not skipped for being too old
+                        if status == Skipped "Date is in the past (before window start)" then
+                            Nothing
 
                         else
-                            birthdayRuleStatus
+                            Just
+                                { emailType = emailType
+                                , scheduledTime =
+                                    if status == Delayed "due to birthday rule window" || status == Delayed "due to anniversary rule window" then
+                                        finalScheduledTime
+
+                                    else
+                                        scheduledTimeWithOffset
+                                , status = status
+                                }
                 in
-                { emailType = emailType
-                , scheduledTime =
-                    if status == Delayed "due to birthday rule window" || status == Delayed "due to anniversary rule window" then
-                        finalScheduledTime
+                List.filterMap processYear yearsToConsider
 
-                    else
-                        scheduledTime
-                , status = status
-                }
+            -- Generate emails for each relevant type
+            birthdayEmails =
+                generateEmailsForBaseDate Birthday schedule.birthDate
 
-            -- Helper function to create plan-specific emails for each event type.
-            planSpecificEmail : ScheduledEmailType -> ScheduledEmail
-            planSpecificEmail emailType =
-                let
-                    baseDate =
-                        case emailType of
-                            Birthday ->
-                                schedule.birthDate
+            anniversaryEmails =
+                generateEmailsForBaseDate Anniversary schedule.effectiveDate
 
-                            Anniversary ->
-                                schedule.effectiveDate
+            octoberBlastEmails =
+                -- For OctoberBlast (AEP Reminder), baseDateForEvent is only for year context; actual date is Sep 1st
+                generateEmailsForBaseDate OctoberBlast schedule.currentDate
 
-                            NewYear ->
-                                -- For New Year, we don't need a base date since we always use Jan 1
-                                Date.fromCalendarDate (Date.year schedule.currentDate) Jan 1
-
-                            OctoberBlast ->
-                                -- For October blast, we don't need a base date since we always use Oct 1
-                                Date.fromCalendarDate (Date.year schedule.currentDate) Oct 1
-
-                            NoEmails ->
-                                schedule.currentDate
-                in
-                createScheduledEmail emailType baseDate
-
-            emails =
-                if isWithinFirstYear then
-                    [ { emailType = NoEmails
-                      , scheduledTime = schedule.currentDate
-                      , status = Skipped "Within first year of effective date"
-                      }
-                    ]
-
-                else
-                    [ planSpecificEmail Birthday
-                    , planSpecificEmail Anniversary
-                    , planSpecificEmail OctoberBlast
-
-                    -- New Year email removed from the list
+            allPotentialEmails =
+                List.concat
+                    [ birthdayEmails
+                    , anniversaryEmails
+                    , octoberBlastEmails
                     ]
         in
-        -- Include both scheduled and delayed emails, but filter out individual skipped ones
-        -- except for our special NoEmails case
-        List.filter
-            (\email ->
-                case email.status of
-                    Scheduled ->
-                        True
+        allPotentialEmails
+            |> List.filter
+                (\email ->
+                    -- Show all emails that made it this far: Scheduled, Delayed, or Skipped for specific reasons
+                    -- (like "Within first year..."). Emails skipped for being "too old" are already filtered out.
+                    case email.status of
+                        Scheduled ->
+                            True
 
-                    Delayed _ ->
-                        True
+                        Delayed _ ->
+                            True
 
-                    Skipped reason ->
-                        -- Allow through if it's our NoEmails message
-                        email.emailType == NoEmails
-            )
-            emails
+                        Skipped _ ->
+                            True
+                )
             |> List.sortWith
                 (\a b ->
                     Date.compare a.scheduledTime b.scheduledTime
                 )
+            |> uniqueBy (\email -> ( email.emailType, email.scheduledTime ))
 
 
 
@@ -491,6 +455,9 @@ viewFutureActivity : List ScheduledEmail -> Html msg
 viewFutureActivity scheduledEmails =
     div []
         [ h2 [ class "text-lg font-medium text-gray-900 mb-4" ] [ text "Future Activity" ]
+        , p [ class "text-sm text-gray-600 mb-4" ]
+            [ text "Note: Emails with a scheduled date in the recent past (up to 30 days ago) that have not yet been sent will be sent in a catch-up batch."
+            ]
         , table [ class "min-w-full divide-y divide-gray-300" ]
             [ thead [ class "bg-gray-50" ]
                 [ tr []

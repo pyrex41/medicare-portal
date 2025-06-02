@@ -118,6 +118,25 @@ export const contactsRoutes = new Elysia({ prefix: '/api/contacts' })
 
       logger.info(`Fetching contacts for org ${user.organization_id} - page: ${page}, limit: ${limit}, search: ${search || 'none'}, states: ${states.length ? states.join(',') : 'none'}, carriers: ${carriers.length ? carriers.join(',') : 'none'}, agents: ${agents.length ? agents.join(',') : 'none'}`);
 
+      // Fetch organization's default_agent_id
+      let orgDefaultAgentId: number | null = null;
+      const mainDb = new Database(); // Main database instance
+      try {
+        const orgData = await mainDb.fetchOne<{ default_agent_id: number }>(
+            'SELECT default_agent_id FROM organizations WHERE id = ?',
+            [user.organization_id]
+        );
+        if (orgData && orgData.default_agent_id) {
+            orgDefaultAgentId = orgData.default_agent_id;
+            logger.info(`Organization ${user.organization_id} default agent ID: ${orgDefaultAgentId}`);
+        } else {
+            logger.info(`Organization ${user.organization_id} has no default agent ID configured.`);
+        }
+      } catch (dbError) {
+        logger.error(`Failed to fetch default_agent_id for org ${user.organization_id}: ${dbError}`);
+        // Continue without default_agent_id specific logic if this fails
+      }
+
       // Build base query parts
       let whereConditions = ['1=1'];
       let params: any[] = [];
@@ -161,8 +180,23 @@ export const contactsRoutes = new Elysia({ prefix: '/api/contacts' })
 
       // Add agent filter
       if (agents.length > 0) {
-        whereConditions.push(`agent_id IN (${agents.map(() => '?').join(',')})`);
-        params.push(...agents);
+        const agentFilterConditions: string[] = [];
+        const agentFilterParams: any[] = [];
+
+        // Add condition for explicitly selected agent IDs
+        agentFilterConditions.push(`agent_id IN (${agents.map(() => '?').join(',')})`);
+        agentFilterParams.push(...agents);
+
+        // If the organization's default agent is among the selected agents, also include unassigned contacts
+        if (orgDefaultAgentId !== null && agents.includes(orgDefaultAgentId)) {
+            agentFilterConditions.push('agent_id IS NULL');
+            // No additional params needed for 'IS NULL'
+        }
+        
+        if (agentFilterConditions.length > 0) {
+            whereConditions.push(`(${agentFilterConditions.join(' OR ')})`);
+            params.push(...agentFilterParams); // Parameters for the IN clause
+        }
       }
 
       // Combine conditions
