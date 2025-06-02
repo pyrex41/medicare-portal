@@ -97,7 +97,7 @@ export class EmailService {
         text: `Click this link to log in: ${magicLink}\n\nThis link will expire in 30 minutes.`,
         html: `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <h2 style="color: #333;">Welcome to MedicareMax</h2>
+            <h2 style="color: #333;">Login to MedicareMax</h2>
             <p>Click the button below to log in to your account. This link will expire in 30 minutes.</p>
             <div style="margin: 30px 0;">
               <a href="${magicLink}" 

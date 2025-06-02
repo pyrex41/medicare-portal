@@ -1065,7 +1065,7 @@ viewCompany model =
                     , ( "opacity-50 cursor-not-allowed", model.savingAgents ) -- Disable if saving
                     ]
                 , onClick ContinueClicked
-                , disabled model.savingAgents -- Disable if saving
+                , disabled (model.savingAgents || model.showAgentForm) -- Disable if saving
                 ]
                 [ if model.savingAgents then
                     text "Saving..."
@@ -1181,6 +1181,14 @@ viewLicensing model =
                         )
                     ]
                 ]
+            , div [ class "mt-6 text-sm text-gray-600" ]
+                [ p [ class "mb-2" ] [ text "We're adding new carriers every month!" ]
+                , p []
+                    [ text "Don't see a carrier you want? Email us with carriers and states that you would like to see added to the platform at "
+                    , Html.a [ Html.Attributes.href "mailto:information@medicaremax.com", class "text-indigo-600 hover:text-indigo-800" ] [ text "information@medicaremax.com" ]
+                    , text "."
+                    ]
+                ]
             , div [ class "space-y-4 mt-6" ]
                 [ h3 [ class "text-xl font-medium text-gray-800" ] [ text "Guaranteed Issue Settings" ]
                 , div [ class "flex items-start p-4 bg-blue-50 rounded-md border border-blue-200" ]
@@ -1259,9 +1267,10 @@ viewAddAgents model =
                 [ classList
                     [ ( "w-full bg-[#03045e] text-white py-3 px-4 rounded-md hover:bg-[#02034e] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 font-medium", True )
                     , ( "opacity-50 cursor-not-allowed", model.savingAgents ) -- Disable if saving
+                    , ( "opacity-50 cursor-not-allowed", model.showAgentForm ) -- Disable if showing agent form
                     ]
                 , onClick ContinueClicked
-                , disabled model.savingAgents -- Disable if saving
+                , disabled (model.savingAgents || model.showAgentForm) -- Disable if saving
                 ]
                 [ if model.savingAgents then
                     text "Saving..."

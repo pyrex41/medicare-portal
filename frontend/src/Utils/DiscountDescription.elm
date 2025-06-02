@@ -137,18 +137,19 @@ discountDescription csvString carrier naic state =
                                         )
                         in
                         case carrier of
-                            AceChubb ->
-                                Ok (cleanNA stateInfo.aceChubb)
-
+                            --AceChubb ->
+                            --    Ok (cleanNA stateInfo.aceChubb)
                             Aetna ->
                                 Ok (cleanNA stateInfo.aetna)
 
                             Aflac ->
                                 Ok (cleanNA stateInfo.aflac)
 
+                            {--
                             Allstate ->
                                 Ok (cleanNA stateInfo.allstate)
 
+                            --}
                             Cigna ->
                                 Ok (cleanNA stateInfo.cigna)
 

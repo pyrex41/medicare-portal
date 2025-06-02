@@ -17,9 +17,12 @@ type Carrier
     | UnitedHealthcare
     | Cigna
     | Aflac
-    | Allstate
+      --| Allstate
     | MutualOfOmaha
-    | AceChubb
+
+
+
+--| AceChubb
 
 
 allCarriers : List Carrier
@@ -29,9 +32,11 @@ allCarriers =
     , UnitedHealthcare
     , Cigna
     , Aflac
-    , Allstate
+
+    --, Allstate
     , MutualOfOmaha
-    , AceChubb
+
+    --, AceChubb
     ]
 
 
@@ -53,14 +58,15 @@ carrierToString carrier =
         Aflac ->
             "Aflac"
 
-        Allstate ->
-            "Allstate"
-
+        --Allstate ->
+        --    "Allstate"
         MutualOfOmaha ->
             "Mutual of Omaha"
 
-        AceChubb ->
-            "Ace Chubb"
+
+
+--AceChubb ->
+--    "Ace Chubb"
 
 
 stringToCarrier : String -> Maybe Carrier
@@ -88,19 +94,23 @@ stringToCarrier str =
             Just Aflac
 
         "allstate" ->
-            Just Allstate
+            --Just Allstate
+            Nothing
 
         "mutual of omaha" ->
             Just MutualOfOmaha
 
         "ace chubb" ->
-            Just AceChubb
+            --Just AceChubb
+            Nothing
 
         "ace" ->
-            Just AceChubb
+            --Just AceChubb
+            Nothing
 
         "chubb" ->
-            Just AceChubb
+            --Just AceChubb
+            Nothing
 
         _ ->
             Nothing
@@ -144,20 +154,21 @@ carrierToNaics carrier =
             [ "60380" -- AFLAC
             ]
 
-        Allstate ->
-            [ "60534" -- Allstate Health Solutions (AHL)
-            , "82538" -- Allstate Health Solutions
-            ]
-
+        --Allstate ->
+        --    [ "60534" -- Allstate Health Solutions (AHL)
+        --    , "82538" -- Allstate Health Solutions
+        --    ]
         MutualOfOmaha ->
             [ "13100" -- Omaha Ins Co
             , "71412" -- Mutual Of Omaha Ins Co
             , "72850" -- United World Life Ins Co
             ]
 
-        AceChubb ->
-            [ "20699" -- Ace Prop & Cas Ins Co
-            ]
+
+
+--AceChubb ->
+--    [ "20699" -- Ace Prop & Cas Ins Co
+--    ]
 
 
 naicToCarrier : String -> Maybe Carrier
@@ -230,10 +241,12 @@ naicToCarrier naic =
 
         -- Allstate
         "60534" ->
-            Just Allstate
+            --Just Allstate
+            Nothing
 
         "82538" ->
-            Just Allstate
+            --Just Allstate
+            Nothing
 
         -- Mutual of Omaha
         "13100" ->
@@ -247,7 +260,8 @@ naicToCarrier naic =
 
         -- Ace Chubb
         "20699" ->
-            Just AceChubb
+            --Just AceChubb
+            Nothing
 
         _ ->
             Nothing

@@ -31,9 +31,7 @@ allCarriers =
     , "UnitedHealthcare"
     , "Cigna"
     , "Aflac"
-    , "Allstate"
     , "Mutual of Omaha"
-    , "Ace Chubb"
     ]
 
 
@@ -43,9 +41,7 @@ type Carrier
     | UnitedHealthcare
     | Cigna
     | Aflac
-    | Allstate
     | MutualOfOmaha
-    | AceChubb
 
 
 
@@ -1155,6 +1151,14 @@ viewCarriersOffered settings model =
                     )
                     carriersToUse
                 )
+            ]
+        , div [ class "mt-6 text-sm text-gray-600" ]
+            [ p [ class "mb-2" ] [ text "We're adding new carriers every month!" ]
+            , p []
+                [ text "Don't see a carrier you want? Email us with carriers and states that you would like to see added to the platform at "
+                , Html.a [ Html.Attributes.href "mailto:information@medicaremax.com", class "text-indigo-600 hover:text-indigo-800" ] [ text "information@medicaremax.com" ]
+                , text "."
+                ]
             ]
         ]
 
