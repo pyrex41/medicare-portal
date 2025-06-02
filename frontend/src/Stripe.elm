@@ -345,6 +345,7 @@ viewPaymentMethod paymentMethodData =
         [ div [ class "mb-4" ]
             [ h2 [ class "text-lg font-semibold text-gray-900" ] [ text "Payment method" ]
             , p [ class "text-sm text-gray-500" ] [ text "Change how you pay for your plan." ]
+            , p [ class "text-xs text-gray-500 mt-1" ] [ text "Note: You will need to use the email associated with your billing account to manage your payment method." ]
             ]
         , div [ class "flex-grow flex flex-col justify-center items-center" ]
             [ case paymentMethodData of

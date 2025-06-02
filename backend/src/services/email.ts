@@ -86,12 +86,12 @@ export class EmailService {
 
   async sendMagicLink(email: string, magicLink: string, organizationSlug: string) {
     try {
-      const fromEmail = process.env.SENDGRID_FROM_EMAIL || 'information@medicaremax.ai';
+      const fromEmail = 'information@medicaremax.ai';
       const msg = {
         to: email,
         from: {
           email: fromEmail,
-          name: organizationSlug ? organizationSlug.charAt(0).toUpperCase() + organizationSlug.slice(1) : 'MedicareMax'
+          name: 'MedicareMax'
         },
         subject: 'Your Login Link',
         text: `Click this link to log in: ${magicLink}\n\nThis link will expire in 30 minutes.`,

@@ -121,7 +121,7 @@ encodeForm model =
 
 view : Model -> Browser.Document Msg
 view model =
-    { title = "Not Eligible - Medicare Max"
+    { title = "Follow-up Request - Medicare Max"
     , body =
         [ div [ class "min-h-screen bg-white" ]
             [ nav [ class "bg-white border-b border-gray-200" ]

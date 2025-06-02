@@ -152,8 +152,7 @@ viewContactInfo =
             [ h2 [ class "text-2xl font-semibold text-gray-900 mb-6" ]
                 [ text "Get in Touch" ]
             , div [ class "space-y-6" ]
-                [ viewContactItem (MyIcon.phone 20 "#6B7280") "Phone" "816-799-6644"
-                , viewContactItem (MyIcon.mail 20 "#6B7280") "Email" "information@medicaremax.ai"
+                [ viewContactItem (MyIcon.mail 20 "#6B7280") "Email" "information@medicaremax.ai"
                 ]
             ]
         , div [ class "bg-blue-50 rounded-lg p-6" ]

@@ -24,7 +24,7 @@ export const contactUsRoutes = new Elysia({ prefix: "/api/contact-us" })
       }
 
       // Send email notification to support
-      const fromEmail = process.env.SENDGRID_FROM_EMAIL || 'noreply@medicaremax.ai';
+      const fromEmail = 'information@medicaremax.ai';
       
       await sgMail.send({
         to: "information@medicaremax.ai",
