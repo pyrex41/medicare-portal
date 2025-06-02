@@ -16,6 +16,7 @@ import Json.Encode as Encode
 import Process
 import Task
 import Time exposing (Month(..), Posix, Zone)
+import Url
 import Utils.Formatters exposing (formatPhoneNumber)
 import Utils.MyDate exposing (dateFromMonthDayYear)
 
@@ -53,6 +54,7 @@ type alias User =
     , lastName : String
     , isAdmin : Bool
     , isAgent : Bool
+    , isDefault : Bool
     , organizationId : Int
     , isActive : Bool
     , phone : String
@@ -178,6 +180,8 @@ type alias Model =
     , orgSettings : Maybe Settings
     , emailSendSuccess : Bool
     , demoMode : Bool
+    , agents : List User
+    , defaultAgentId : Maybe Int
     }
 
 
@@ -218,6 +222,25 @@ type alias StateCarrierSetting =
 -- DECODERS
 
 
+fetchAgents : Cmd Msg
+fetchAgents =
+    Http.get
+        { url = "/api/agents"
+        , expect = Http.expectJson GotAgents agentsResponseDecoder
+        }
+
+
+agentsResponseDecoder : Decoder AgentsResponseWithDefault
+agentsResponseDecoder =
+    Decode.succeed AgentsResponseWithDefault
+        |> Pipeline.required "agents" (Decode.list userDecoder)
+        |> Pipeline.optional "defaultAgentId" (Decode.nullable Decode.string) Nothing
+
+
+
+-- Add a decoder for the new response format
+
+
 contactDecoder : Decoder Contact
 contactDecoder =
     Decode.succeed Contact
@@ -244,14 +267,39 @@ contactDecoder =
 userDecoder : Decoder User
 userDecoder =
     Decode.succeed User
-        |> Pipeline.required "id" Decode.int
+        |> Pipeline.required "id"
+            (Decode.oneOf
+                [ Decode.int
+                , Decode.string
+                    |> Decode.andThen
+                        (\str ->
+                            case String.toInt str of
+                                Just intVal ->
+                                    Decode.succeed intVal
+
+                                Nothing ->
+                                    Decode.fail ("Could not convert agent ID string to integer: " ++ str)
+                        )
+                ]
+            )
         |> Pipeline.required "email" Decode.string
-        |> Pipeline.required "first_name" Decode.string
-        |> Pipeline.required "last_name" Decode.string
-        |> Pipeline.required "is_admin" Decode.bool
-        |> Pipeline.required "is_agent" Decode.bool
-        |> Pipeline.required "organization_id" Decode.int
-        |> Pipeline.required "is_active" Decode.bool
+        |> Pipeline.custom
+            (Decode.oneOf
+                [ Decode.field "first_name" Decode.string
+                , Decode.field "firstName" Decode.string
+                ]
+            )
+        |> Pipeline.custom
+            (Decode.oneOf
+                [ Decode.field "last_name" Decode.string
+                , Decode.field "lastName" Decode.string
+                ]
+            )
+        |> Pipeline.optional "is_admin" Decode.bool False
+        |> Pipeline.optional "is_agent" Decode.bool True
+        |> Pipeline.optional "is_default" Decode.bool False
+        |> Pipeline.optional "organization_id" Decode.int 0
+        |> Pipeline.optional "is_active" Decode.bool True
         |> Pipeline.required "phone" Decode.string
 
 
@@ -352,6 +400,8 @@ init key contactId demoMode =
       , orgSettings = Nothing
       , emailSendSuccess = False
       , demoMode = demoMode
+      , agents = []
+      , defaultAgentId = Nothing
       }
     , Cmd.batch
         [ Http.get
@@ -377,6 +427,7 @@ init key contactId demoMode =
             }
         , Task.perform GotCurrentTime Date.today
         , Task.perform GotTimeZone Time.here
+        , fetchAgents
         ]
     )
 
@@ -385,9 +436,16 @@ init key contactId demoMode =
 -- UPDATE
 
 
+type alias AgentsResponseWithDefault =
+    { agents : List User
+    , defaultAgentId : Maybe String
+    }
+
+
 type Msg
     = NoOp
     | GotContact (Result Http.Error Contact)
+    | GotAgents (Result Http.Error AgentsResponseWithDefault)
     | GotCurrentTime Date
     | GotTimeZone Zone
     | ShowEditModal
@@ -451,6 +509,26 @@ update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
         NoOp ->
+            ( model, Cmd.none )
+
+        GotAgents (Ok response) ->
+            let
+                parser : String -> String
+                parser =
+                    Url.percentDecode >> Maybe.withDefault ""
+
+                parseAgent : User -> User
+                parseAgent agent =
+                    { agent | firstName = parser agent.firstName, lastName = parser agent.lastName, email = parser agent.email }
+            in
+            ( { model
+                | agents = response.agents |> List.map parseAgent
+                , defaultAgentId = response.defaultAgentId |> Maybe.andThen String.toInt
+              }
+            , Cmd.none
+            )
+
+        GotAgents (Err error) ->
             ( model, Cmd.none )
 
         GotContact (Ok contact) ->
@@ -527,8 +605,14 @@ update msg model =
                                         (Maybe.withDefault "" contact.state)
                                         stateCarrierSettings
                                         stateLicenses
+
+                                newContact =
+                                    { contact
+                                        | birthDate = Just (Date.toIsoString birthDate)
+                                        , effectiveDate = Just (Date.toIsoString effectiveDate)
+                                    }
                             in
-                            ( { model | contact = Just contact, emailSchedule = newSchedule }
+                            ( { model | contact = Just newContact, emailSchedule = newSchedule }
                             , Cmd.batch
                                 [ Http.get
                                     { url = "/api/quotes/generate/" ++ String.fromInt contact.id
@@ -996,7 +1080,7 @@ view model =
 
                               else
                                 text ""
-                            , viewContactSummary contact model.quoteUrl model.isGeneratingQuote model.healthStatus model.eligibilityQuestions model.followUps model.timeZone model.showAllFollowUps
+                            , viewContactSummary model contact model.quoteUrl model.isGeneratingQuote model.healthStatus model.eligibilityQuestions model.followUps model.timeZone model.showAllFollowUps
                             , if model.orgSettings /= Nothing && model.error == Nothing then
                                 div [ class "bg-white rounded-lg border border-gray-200 p-6 mb-8" ]
                                     [ viewFutureActivity (getScheduledEmails model.emailSchedule) ]
@@ -1100,8 +1184,8 @@ viewHeader contact model =
         ]
 
 
-viewContactSummary : Contact -> Maybe String -> Bool -> Maybe HealthStatus -> List EligibilityQuestion -> List FollowUpRequest -> Zone -> Bool -> Html Msg
-viewContactSummary contact quoteUrl isGeneratingQuote healthStatus eligibilityQuestions followUps zone showAllFollowUps =
+viewContactSummary : Model -> Contact -> Maybe String -> Bool -> Maybe HealthStatus -> List EligibilityQuestion -> List FollowUpRequest -> Zone -> Bool -> Html Msg
+viewContactSummary model contact quoteUrl isGeneratingQuote healthStatus eligibilityQuestions followUps zone showAllFollowUps =
     let
         followUpsSection =
             if not (List.isEmpty followUps) then
@@ -1149,7 +1233,30 @@ viewContactSummary contact quoteUrl isGeneratingQuote healthStatus eligibilityQu
             [ h2 [ class "text-lg font-medium mb-6" ] [ text "Contact Summary" ]
             , div [ class "grid grid-cols-2 gap-x-8 gap-y-6" ]
                 [ viewField "Date of Birth" (Maybe.withDefault "" contact.birthDate)
-                , viewField "Contact Owner" (Maybe.map .firstName contact.contactOwner |> Maybe.withDefault "Default")
+                , viewField "Contact Owner"
+                    (case contact.contactOwner of
+                        Just user ->
+                            user.firstName ++ " " ++ user.lastName
+
+                        Nothing ->
+                            case model.defaultAgentId of
+                                Just i ->
+                                    let
+                                        maybeAgent =
+                                            model.agents
+                                                |> List.filter (\a -> a.id == i)
+                                                |> List.head
+                                    in
+                                    case maybeAgent of
+                                        Just agent ->
+                                            agent.firstName ++ " " ++ agent.lastName
+
+                                        Nothing ->
+                                            "Default"
+
+                                Nothing ->
+                                    "Default"
+                    )
                 , viewField "Phone Number" (formatPhoneNumber (Maybe.withDefault "" contact.phoneNumber))
                 , viewField "Email" contact.email
                 , viewField "Current Carrier" (Maybe.withDefault "" contact.currentCarrier)

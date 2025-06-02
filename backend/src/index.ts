@@ -1352,6 +1352,7 @@ const startServer = async () => {
           })
 
           logger.info(`GET /api/agents - Found ${result.rows.length} agents`)
+          logger.info(JSON.stringify(result.rows))
 
           // Map the database results to the expected format with camelCase field names
           const agents = result.rows.map((row: any) => {
