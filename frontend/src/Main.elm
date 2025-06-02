@@ -2673,8 +2673,20 @@ updatePage url ( model, cmd ) =
                                                             }
                                                         )
 
+                                            contactsFlags =
+                                                case
+                                                    Parser.parse
+                                                        (Parser.s "contacts" <?> Query.string "payment_success")
+                                                        url
+                                                of
+                                                    Just (Just "true") ->
+                                                        Just True
+
+                                                    _ ->
+                                                        Nothing
+
                                             ( contactsModel, contactsCmd ) =
-                                                Contacts.init modelWithUpdatedSetup.key contactsUser
+                                                Contacts.init modelWithUpdatedSetup.key ( contactsFlags, contactsUser )
                                         in
                                         ( { modelWithUpdatedSetup | page = ContactsPage contactsModel }
                                         , Cmd.map ContactsMsg contactsCmd

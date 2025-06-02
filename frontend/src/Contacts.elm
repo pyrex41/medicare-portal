@@ -32,6 +32,7 @@ import Svg exposing (path, svg)
 import Svg.Attributes exposing (d, fill, stroke, viewBox)
 import Task
 import Time
+import TutorialModal exposing (viewTutorialModal)
 import Url exposing (Url)
 import Url.Builder as Url
 import Utils.Formatters exposing (formatPhoneNumber)
@@ -44,7 +45,7 @@ import Utils.Formatters exposing (formatPhoneNumber)
 main : Program () Model Msg
 main =
     Browser.application
-        { init = \flags url key -> init key Nothing
+        { init = \flags url key -> init key ( Nothing, Nothing )
         , view = \model -> { title = "Dashboard", body = [ view model ] }
         , update = update
         , subscriptions = subscriptions
@@ -91,6 +92,7 @@ type Modal
 
 type alias Model =
     { contacts : List Contact
+    , showTutorialModal : Bool -- ADDED
     , selectedContacts : List Int
     , showModal : Modal
     , searchQuery : String
@@ -292,11 +294,12 @@ emptyAvailableFilters =
     }
 
 
-init : Nav.Key -> Maybe User -> ( Model, Cmd Msg )
-init key maybeUser =
+init : Nav.Key -> ( Maybe Bool, Maybe User ) -> ( Model, Cmd Msg )
+init key ( maybePaymentSuccess, maybeUser ) =
     let
         model =
             { contacts = []
+            , showTutorialModal = Maybe.withDefault False maybePaymentSuccess
             , selectedContacts = []
             , showModal = NoModal
             , searchQuery = ""
@@ -418,6 +421,8 @@ emptyUploadState model =
 
 type Msg
     = NoOp
+    | OpenTutorialModal
+    | CloseTutorialModal
     | ShowContactChoiceModal
     | ChooseSingleContact
     | ChooseMultipleContacts
@@ -520,6 +525,14 @@ update msg model =
     case msg of
         NoOp ->
             ( model, Cmd.none )
+
+        OpenTutorialModal ->
+            ( { model | showTutorialModal = True }, Cmd.none )
+
+        CloseTutorialModal ->
+            ( { model | showTutorialModal = False }
+            , Nav.pushUrl model.key "/contacts"
+            )
 
         ShowContactChoiceModal ->
             ( { model | showModal = ContactChoiceModal }, Cmd.none )
@@ -1924,7 +1937,12 @@ view model =
     div [ class "min-h-screen bg-white" ]
         [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" ]
             [ -- Stats Section - Make more compact with reduced margins
-              div [ class "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-6" ]
+              if model.showTutorialModal then
+                viewTutorialModal CloseTutorialModal
+
+              else
+                text ""
+            , div [ class "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-6" ]
                 [ if model.initialTotalContacts == 0 && model.isLoadingContacts then
                     statsCardWithSpinner "Total Contacts"
 
