@@ -38,6 +38,7 @@ type alias Model =
     , showTutorialModal : Bool -- ADDED for tutorial modal
     , orgSettings : Maybe Settings
     , forceOrgSenderDetails : Bool
+    , selfOnboardingUrl : Maybe String
     }
 
 
@@ -67,10 +68,12 @@ init _ =
       , showTutorialModal = False -- ADDED: Initialize tutorial modal state
       , orgSettings = Nothing
       , forceOrgSenderDetails = False
+      , selfOnboardingUrl = Nothing
       }
     , Cmd.batch
         [ fetchCurrentUser
         , fetchOrgSettings
+        , fetchSelfOnboardingUrl
         ]
     )
 
@@ -93,6 +96,7 @@ type Msg
     | OpenTutorialModal -- ADDED
     | CloseTutorialModal -- ADDED
     | GotOrgSettings (Result Http.Error Settings)
+    | GotSelfOnboardingUrl (Result Http.Error SelfOnboardingUrlResponse)
 
 
 type alias CurrentUserResponse =
@@ -248,6 +252,16 @@ update msg model =
             ( { model
                 | error = Just "Failed to load organization settings"
               }
+            , Cmd.none
+            )
+
+        GotSelfOnboardingUrl (Ok response) ->
+            ( { model | selfOnboardingUrl = Just response.selfOnboardingUrl }
+            , Cmd.none
+            )
+
+        GotSelfOnboardingUrl (Err _) ->
+            ( { model | error = Just "Failed to load self-onboarding URL" }
             , Cmd.none
             )
 
@@ -414,8 +428,11 @@ viewSpinner =
 viewAgentProfileLinkSection : Model -> User -> Html Msg
 viewAgentProfileLinkSection model user =
     let
-        agentProfileLink =
-            "https://medicaremax.ai/self-onboarding/" ++ user.orgSlug ++ "?agentId=" ++ String.fromInt user.id
+        maybeAgentProfileLink : Maybe String
+        maybeAgentProfileLink =
+            Maybe.map
+                (\url -> url ++ "?agentId=" ++ String.fromInt user.id)
+                model.selfOnboardingUrl
     in
     div [ class "mt-6" ]
         [ label [ class "block text-sm font-medium text-gray-700 mb-2" ]
@@ -424,13 +441,18 @@ viewAgentProfileLinkSection model user =
             [ Svg.svg [ SvgAttr.class "h-5 w-5 text-gray-400", SvgAttr.viewBox "0 0 20 20", SvgAttr.fill "currentColor" ]
                 [ Svg.path [ SvgAttr.fillRule "evenodd", SvgAttr.d "M12.586 4.586a2 2 0 112.828 2.828l-3 3a2 2 0 01-2.828 0 1 1 0 00-1.414 1.414 4 4 0 005.656 0l3-3a4 4 0 00-5.656-5.656l-1.5 1.5a1 1 0 101.414 1.414l1.5-1.5zm-5 5a2 2 0 012.828 0 1 1 0 101.414-1.414 4 4 0 00-5.656 0l-3 3a4 4 0 105.656 5.656l1.5-1.5a1 1 0 10-1.414-1.414l-1.5 1.5a2 2 0 11-2.828-2.828l3-3z", SvgAttr.clipRule "evenodd" ] []
                 ]
-            , input
-                [ type_ "text"
-                , class "flex-1 px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 bg-gray-50 text-gray-500"
-                , Html.Attributes.value agentProfileLink
-                , readonly True
-                ]
-                []
+            , case maybeAgentProfileLink of
+                Just agentProfileLink ->
+                    input
+                        [ type_ "text"
+                        , class "flex-1 px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 bg-gray-50 text-gray-500"
+                        , Html.Attributes.value agentProfileLink
+                        , readonly True
+                        ]
+                        []
+
+                Nothing ->
+                    text ""
             , button
                 [ class "px-4 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
                 , onClick CopyAgentProfileLink
@@ -612,6 +634,25 @@ viewSenderSettingsSection model user =
 
 -- ADDED: Tutorial Modal View (adapted from Dashboard.elm)
 -- HTTP
+
+
+type alias SelfOnboardingUrlResponse =
+    { selfOnboardingUrl : String
+    }
+
+
+fetchSelfOnboardingUrl : Cmd Msg
+fetchSelfOnboardingUrl =
+    Http.get
+        { url = "/api/self-service-info/"
+        , expect = Http.expectJson GotSelfOnboardingUrl selfOnboardingUrlDecoder
+        }
+
+
+selfOnboardingUrlDecoder : Decoder SelfOnboardingUrlResponse
+selfOnboardingUrlDecoder =
+    Decode.map SelfOnboardingUrlResponse
+        (Decode.field "selfOnboardingUrl" Decode.string)
 
 
 fetchCurrentUser : Cmd Msg
