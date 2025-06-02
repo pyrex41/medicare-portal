@@ -2052,18 +2052,17 @@ view model =
                                 [ text "+ Add Contact" ]
                             ]
                         ]
-                    , table [ class "w-full" ]
+                    , table [ class "w-full table-fixed" ]
                         [ colgroup []
-                            [ col [ class "w-12" ] [] -- Checkbox
-                            , col [ class "w-48" ] [] -- Name
-                            , col [ class "w-16" ] [] -- Contact Status (reduced from w-20)
-                            , col [ class "w-48" ] [] -- Email
-                            , col [ class "w-28" ] [] -- Phone Number
-                            , col [ class "w-16" ] [] -- State
-                            , col [ class "w-36" ] [] -- Assigned Agent (increased from w-32)
-                            , col [ class "w-20" ] [] -- Current Carrier (reduced from w-24)
-                            , col [ class "w-32" ] [] -- Effective Date (increased from w-28)
-                            , col [ class "w-16" ] [] -- Actions (reduced from w-20)
+                            [ col [ class "w-12" ] [] -- Checkbox (3rem = 48px)
+                            , col [ class "w-40" ] [] -- Name (10rem = 160px)
+                            , col [ class "w-56" ] [] -- Email (14rem = 224px)
+                            , col [ class "w-32" ] [] -- Phone (8rem = 128px)
+                            , col [ class "w-16" ] [] -- State (4rem = 64px)
+                            , col [ class "w-36" ] [] -- Agent (9rem = 144px)
+                            , col [ class "w-28" ] [] -- Carrier (7rem = 112px)
+                            , col [ class "w-40" ] [] -- Eff. Date (10rem = 160px) - INCREASED
+                            , col [ class "w-16" ] [] -- Edit (4rem = 64px)
                             ]
                         , thead [ class "bg-gray-50" ]
                             [ tr []
@@ -2097,7 +2096,7 @@ view model =
                                 [ tr []
                                     [ td
                                         [ class "px-3 py-8 text-sm text-gray-500 text-center border-t border-gray-200"
-                                        , attribute "colspan" "10"
+                                        , attribute "colspan" "9"
                                         ]
                                         [ div [ class "flex items-center justify-center gap-3" ]
                                             [ viewSpinner
@@ -2111,7 +2110,7 @@ view model =
                                 [ tr []
                                     [ td
                                         [ class "px-3 py-2 text-sm text-gray-500 text-center border-t border-gray-200"
-                                        , attribute "colspan" "10"
+                                        , attribute "colspan" "9"
                                         ]
                                         [ text "No contacts found" ]
                                     ]
