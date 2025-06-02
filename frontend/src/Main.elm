@@ -1672,7 +1672,7 @@ banner =
                     [ div [ class "flex items-center space-x-4" ]
                         [ div [ class "text-2xl" ] [ text "🔥" ]
                         , span [ class "font-bold text-gray-900 text-base sm:text-lg" ]
-                            [ text "Exclusive Offer Drops Wednesday @ 1PM – Room 213" ]
+                            [ text "Exclusive Offer Drops Wednesday @ 1:30PM – Room 213" ]
                         ]
                     ]
                 , div [ class "hidden sm:block text-right text-sm text-gray-600 max-w-lg" ]
