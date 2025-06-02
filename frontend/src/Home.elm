@@ -131,7 +131,7 @@ update msg model =
 
         NavigateTryItOut ->
             ( model
-            , Nav.pushUrl model.key "/self-onboarding/demo-org"
+            , Nav.load "https://max-stage-demo.replit.app/"
             )
 
         NavigatePricing ->
@@ -249,12 +249,12 @@ view model =
                                 [ onClick NavigateSignup
                                 , class "w-[220px] inline-flex items-center justify-center px-6 py-3.5 rounded-lg text-base font-semibold text-white bg-[#03045E] hover:bg-[#1a1f5f] transition-colors duration-200"
                                 ]
-                                [ text "Sign Up" ]
+                                [ text "Signup" ]
                             , button
                                 [ onClick NavigateTryItOut
                                 , class "w-[220px] inline-flex items-center justify-center px-6 py-3.5 rounded-lg text-base font-semibold text-[#03045E] bg-white border-2 border-[#03045E] hover:bg-gray-50 transition-colors duration-200"
                                 ]
-                                [ text "Login" ]
+                                [ text "Try It Out" ]
                             ]
                         ]
                     , div [ class "relative" ]
@@ -552,10 +552,10 @@ view model =
                                     ]
                                 , div [ class "mt-6 flex justify-center" ]
                                     [ button
-                                        [ onClick NavigateSignup
-                                        , class "inline-flex items-center px-5 py-2 rounded-lg text-base font-medium text-white bg-[#03045E] hover:bg-[#1a1f5f] transition-colors duration-200"
+                                        [ onClick NavigateTryItOut
+                                        , class "w-[220px] inline-flex items-center justify-center px-6 py-3.5 rounded-lg text-base font-semibold text-[#03045E] bg-white border-2 border-[#03045E] hover:bg-gray-50 transition-colors duration-200"
                                         ]
-                                        [ text "Sign Up" ]
+                                        [ text "Try It Out" ]
                                     ]
                                 ]
                             ]
@@ -581,10 +581,10 @@ view model =
                                             ]
                                         , div [ class "mt-10" ]
                                             [ button
-                                                [ onClick NavigateSignup
-                                                , class "inline-flex items-center px-8 py-4 rounded-lg text-lg font-medium text-white bg-[#03045E] hover:bg-[#1a1f5f] transition-colors duration-200"
+                                                [ onClick NavigateTryItOut
+                                                , class "w-[220px] inline-flex items-center justify-center px-6 py-3.5 rounded-lg text-base font-semibold text-[#03045E] bg-white border-2 border-[#03045E] hover:bg-gray-50 transition-colors duration-200"
                                                 ]
-                                                [ text "Sign Up" ]
+                                                [ text "Try It Out" ]
                                             ]
                                         ]
                                     , div [ class "relative w-[500px]" ]
@@ -620,10 +620,10 @@ view model =
                         , p [ class "mt-4 text-lg text-gray-600" ] [ text "Join agents all across the US ready to automate their retention." ]
                         , div [ class "mt-8" ]
                             [ button
-                                [ onClick NavigateSignup
-                                , class "inline-flex items-center px-6 py-3 rounded-lg text-base font-medium text-white bg-[#03045E] hover:bg-[#1a1f5f] transition-colors duration-200"
+                                [ onClick NavigateTryItOut
+                                , class "w-[220px] inline-flex items-center justify-center px-6 py-3.5 rounded-lg text-base font-semibold text-[#03045E] bg-white border-2 border-[#03045E] hover:bg-gray-50 transition-colors duration-200"
                                 ]
-                                [ text "Sign Up" ]
+                                [ text "Try It Out" ]
                             ]
                         ]
                     ]
@@ -635,10 +635,10 @@ view model =
                         , p [ class "mt-4 text-lg text-gray-600" ] [ text "Join agents all across the US ready to reset their books." ]
                         , div [ class "mt-8" ]
                             [ button
-                                [ onClick NavigateSignup
-                                , class "inline-flex items-center px-6 py-3 rounded-lg text-base font-medium text-white bg-[#03045E] hover:bg-[#1a1f5f] transition-colors duration-200 w-full sm:w-auto justify-center"
+                                [ onClick NavigateTryItOut
+                                , class "w-[220px] inline-flex items-center justify-center px-6 py-3.5 rounded-lg text-base font-semibold text-[#03045E] bg-white border-2 border-[#03045E] hover:bg-gray-50 transition-colors duration-200"
                                 ]
-                                [ text "Sign Up" ]
+                                [ text "Try It Out" ]
                             ]
                         ]
                     ]

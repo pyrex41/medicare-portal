@@ -1687,18 +1687,38 @@ viewPublicNav model =
                             , class "px-4 text-gray-600 hover:text-gray-900 text-base font-medium cursor-pointer transition-all duration-200"
                             ]
                             [ text "Pricing" ]
-                        ]
-                    , div [ class "flex items-center gap-x-3" ]
-                        [ button
-                            [ onClick (InternalLinkClicked "/signup")
-                            , class "bg-[#03045E] text-white border-2 border-[#03045E] px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#1a1f5f] transition-colors duration-200 w-24 text-center"
-                            ]
-                            [ text "Sign up" ]
                         , button
                             [ onClick (InternalLinkClicked "/login")
-                            , class "bg-white text-[#03045E] border-2 border-[#03045E] px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors duration-200 w-24 text-center"
+                            , class "px-4 text-gray-600 hover:text-gray-900 text-base font-medium cursor-pointer transition-all duration-200"
                             ]
-                            [ text "Log in" ]
+                            [ text "Login" ]
+                        ]
+                    , div [ class "flex items-center gap-x-3" ]
+                        [ a
+                            [ class "bg-[#03045E] text-white border-2 border-[#03045E] px-7 py-2 rounded-lg text-base font-medium hover:bg-[#1a1f5f] transition-colors duration-200 text-center flex items-center justify-center"
+                            , Html.Attributes.style "min-width" "128px"
+                            , Html.Attributes.style "height" "40px"
+                            , Html.Attributes.style "line-height" "24px"
+                            , Html.Attributes.style "padding-top" "8px"
+                            , Html.Attributes.style "padding-bottom" "8px"
+                            , Html.Attributes.style "padding-left" "28px"
+                            , Html.Attributes.style "padding-right" "28px"
+                            , Html.Attributes.attribute "role" "button"
+                            , onClick (InternalLinkClicked "/signup")
+                            ]
+                            [ text "Signup" ]
+                        , a
+                            [ href "https://max-stage-demo.replit.app"
+                            , class "bg-white text-[#03045E] border-2 border-[#03045E] px-7 py-2 rounded-lg text-base font-medium hover:bg-gray-50 transition-colors duration-200 text-center flex items-center justify-center"
+                            , Html.Attributes.style "min-width" "128px"
+                            , Html.Attributes.style "height" "40px"
+                            , Html.Attributes.style "line-height" "24px"
+                            , Html.Attributes.style "padding-top" "8px"
+                            , Html.Attributes.style "padding-bottom" "8px"
+                            , Html.Attributes.style "padding-left" "28px"
+                            , Html.Attributes.style "padding-right" "28px"
+                            ]
+                            [ text "Try It Out" ]
                         ]
                     ]
                 ]
