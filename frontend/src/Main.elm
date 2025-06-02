@@ -17,7 +17,7 @@ import Date exposing (Date)
 import Dict exposing (Dict)
 import Eligibility
 import Home
-import Html exposing (Html, a, button, div, h1, img, nav, p, text)
+import Html exposing (Html, a, button, div, h1, img, nav, p, span, text)
 import Html.Attributes exposing (alt, class, href, src)
 import Html.Events exposing (onClick, stopPropagationOn)
 import Http
@@ -1658,11 +1658,47 @@ viewWithNav model content =
         ]
 
 
+showBanner : Bool
+showBanner =
+    True
+
+
+banner : Html msg
+banner =
+    div [ class "bg-gradient-to-r from-orange-50 to-orange-100 border-b border-orange-200 w-full" ]
+        [ div [ class "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 space-y-3 text-sm w-full" ]
+            [ div [ class "flex items-center justify-between" ]
+                [ div [ class "flex items-center space-x-4" ]
+                    [ div [ class "flex items-center space-x-4" ]
+                        [ div [ class "text-2xl" ] [ text "🔥" ]
+                        , span [ class "font-bold text-gray-900 text-base sm:text-lg" ]
+                            [ text "Exclusive Offer Drops Wednesday @ 1PM – Room 213" ]
+                        ]
+                    ]
+                , div [ class "hidden sm:block text-right text-sm text-gray-600 max-w-lg" ]
+                    [ div []
+                        [ text "Want to keep more clients—and more commissions?" ]
+                    , div []
+                        [ text "Join us for a special SMS Sales Forum offer available only during the session."
+                        ]
+                    ]
+                ]
+            ]
+        ]
+
+
 viewPublicNav : Model -> Html Msg
 viewPublicNav model =
     div []
-        [ -- Desktop navigation
-          nav [ class "max-w-7xl mx-auto px-6 sm:px-6 lg:px-8 py-4 sm:py-6 sticky top-0 z-50 bg-white hidden lg:block" ]
+        [ -- Top banner
+          if showBanner then
+            banner
+
+          else
+            text ""
+
+        -- Desktop navigation
+        , nav [ class "max-w-7xl mx-auto px-6 sm:px-6 lg:px-8 py-4 sm:py-6 sticky top-0 z-50 bg-white hidden lg:block" ]
             [ div
                 [ class "flex justify-between items-center" ]
                 [ div [ class "flex items-center" ]
