@@ -126,7 +126,7 @@ update msg model =
 
         NavigateSignup ->
             ( model
-            , Nav.pushUrl model.key "/waitlist"
+            , Nav.pushUrl model.key "/signup"
             )
 
         NavigateTryItOut ->

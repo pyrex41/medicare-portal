@@ -717,7 +717,7 @@ update msg model =
                 | showDropdown = False
                 , showPaymentStatus = False
               }
-            , if frag == "/login" then
+            , if List.member frag [ "/login", "/signup" ] then
                 Nav.load frag
 
               else
