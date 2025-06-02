@@ -38,7 +38,8 @@ const defaultSettings: BaseSettings = {
     brandName: "",
     logo: null,
     orgSignature: false,
-    signature: ""
+    signature: "",
+    forceOrgSenderDetails: true
 };
 
 // Helper function to generate default state/carrier settings
@@ -66,7 +67,7 @@ export const settingsRoutes = new Elysia()
 
     try {
         // Get organization settings, logo, and name
-        const orgRow = await db.fetchOne<{ org_settings: string | null, logo_data: string | null, name: string, org_signature: boolean, phone: string | null, redirect_url: string | null, signature: string | null }>(
+        const orgRow = await db.fetchOne<{ org_settings: string | null, logo_data: string | null, name: string, org_signature: boolean, phone: string | null, redirect_url: string | null, signature: string | null, force_org_sender_details: boolean }>(
             'SELECT org_settings, logo_data, name, org_signature, phone, redirect_url, signature FROM organizations WHERE id = ?',
             [user.organization_id]
         );
@@ -159,6 +160,7 @@ export const settingsRoutes = new Elysia()
         };
 
         logger.info(`Sending response`);
+        logger.info(`Response: ${JSON.stringify(response, null, 2)}`);
         return response;
 
     } catch (error) {

@@ -68,6 +68,7 @@ export interface BaseSettings {
   phone?: string;
   redirectUrl?: string;
   signature?: string;
+  forceOrgSenderDetails?: boolean;
 }
 
 export interface UserContext {

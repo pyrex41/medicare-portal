@@ -184,7 +184,6 @@ type Msg
 type alias SettingsResponse =
     { orgSettings : Settings
     , logo : Maybe String
-    , canEditOrgSettings : Bool
     }
 
 
@@ -1295,10 +1294,9 @@ settingsDecoder =
         |> Decode.andThen
             (\success ->
                 if success then
-                    Decode.map3 SettingsResponse
+                    Decode.map2 SettingsResponse
                         (Decode.field "orgSettings" settingsObjectDecoder)
                         (Decode.field "logo" (Decode.nullable Decode.string))
-                        (Decode.field "canEditOrgSettings" boolDecoder)
 
                 else
                     Decode.fail "Settings request was not successful"
@@ -1331,7 +1329,7 @@ settingsObjectDecoder =
         |> Pipeline.optional "phone" Decode.string ""
         |> Pipeline.optional "redirectUrl" Decode.string ""
         |> Pipeline.optional "signature" Decode.string ""
-        |> Pipeline.optional "forceOrgSenderDetails" Decode.bool False
+        |> Pipeline.optional "forceOrgSenderDetails" Decode.bool True
 
 
 stateCarrierSettingDecoder : Decoder StateCarrierSetting

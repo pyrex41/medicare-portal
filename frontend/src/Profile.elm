@@ -22,9 +22,7 @@ import TutorialModal exposing (viewTutorialModal)
 
 
 type alias Settings =
-    { carrierContracts : List String
-    , stateLicenses : List String
-    , forceOrgSenderDetails : Bool
+    { orgSignature : Bool
     }
 
 
@@ -243,7 +241,7 @@ update msg model =
         GotOrgSettings (Ok settings) ->
             ( { model
                 | orgSettings = Just settings
-                , forceOrgSenderDetails = settings.forceOrgSenderDetails
+                , forceOrgSenderDetails = settings.orgSignature
               }
             , Cmd.none
             )
@@ -356,7 +354,11 @@ viewContent model =
                         ]
                     , viewBasicInfo model user
                     , viewAgentProfileLinkSection model user
-                    , viewSenderSettingsSection model user
+                    , if not model.forceOrgSenderDetails then
+                        viewSenderSettingsSection model user
+
+                      else
+                        text ""
                     , viewSaveButton model
                     ]
 
@@ -614,13 +616,13 @@ viewSenderSettingsSection model user =
                     ]
                 , div []
                     [ label [ class "block text-sm font-medium text-gray-700" ]
-                        [ text "Email & SMS Signature or Sign Off" ]
+                        [ text "Name for Email & SMS Signature" ]
                     , input
                         [ type_ "text"
                         , class "mt-1 px-3 py-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-base"
                         , Html.Attributes.value user.signature
                         , onInput (UpdateField "signature")
-                        , placeholder ("Thanks, " ++ user.firstName ++ " " ++ user.lastName)
+                        , placeholder (user.firstName ++ " " ++ user.lastName)
                         ]
                         []
                     ]
@@ -714,9 +716,14 @@ userDecoder =
 orgSettingsDecoder : Decoder Settings
 orgSettingsDecoder =
     Decode.succeed Settings
-        |> Pipeline.required "carrierContracts" (Decode.list Decode.string)
-        |> Pipeline.required "stateLicenses" (Decode.list Decode.string)
-        |> Pipeline.required "forceOrgSenderDetails" Decode.bool
+        |> Pipeline.optional
+            "orgSignature"
+            (Decode.oneOf
+                [ Decode.bool
+                , Decode.map (\n -> n == 1) Decode.int
+                ]
+            )
+            False
 
 
 
