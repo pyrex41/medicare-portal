@@ -52,7 +52,7 @@ init =
             { contacts = 1000
             , averageAge = 3.0
             , rolloverPercent = 7
-            , commissionRate = 300
+            , commissionRate = 350
             }
       , calculatorExpanded = True
       , activePreset = Nothing
@@ -662,15 +662,19 @@ view model =
                                         ]
                                     ]
                                 ]
-                            , div [ class "mt-6" ]
-                                [ div [ class "bg-emerald-600 rounded-lg p-4 sm:p-6 text-white text-center flex flex-col sm:flex-row justify-center gap-8 sm:gap-16" ]
+                            , div [ class "mt-6 w-full" ]
+                                [ div [ class "bg-emerald-600 rounded-lg p-4 sm:p-6 text-white text-center flex flex-col sm:flex-row justify-center gap-24 sm:gap-32 w-full" ]
                                     [ div [ class "text-center" ]
-                                        [ h3 [ class "text-lg mb-2 font-medium text-emerald-100" ] [ text "Return on Investment" ]
-                                        , div [ class "text-3xl sm:text-4xl font-bold mb-1" ] [ text (formatNumber revenue.roi ++ "x") ]
+                                        [ h3 [ class "text-lg mb-2 font-medium text-emerald-100" ] [ text "Monthly Cost" ]
+                                        , div [ class "text-3xl sm:text-4xl font-bold mb-1" ] [ text (formatCurrency pricing.totalPrice) ]
                                         ]
                                     , div [ class "text-center" ]
                                         [ h3 [ class "text-lg mb-2 font-medium text-emerald-100" ] [ text "Net Annual Benefit" ]
                                         , div [ class "text-3xl sm:text-4xl font-bold mb-1" ] [ text (formatCurrencyRounded revenue.netBenefit) ]
+                                        ]
+                                    , div [ class "text-center" ]
+                                        [ h3 [ class "text-lg mb-2 font-medium text-emerald-100" ] [ text "ROI" ]
+                                        , div [ class "text-3xl sm:text-4xl font-bold mb-1" ] [ text (formatNumber revenue.roi ++ "x") ]
                                         ]
                                     ]
                                 ]
