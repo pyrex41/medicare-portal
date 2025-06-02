@@ -140,6 +140,7 @@ type alias Model =
     , copiedAgentLinks : List String -- Track which agent IDs have had their links copied
     , currentlyCopyingAgent : Maybe String -- Track which agent's link is currently being copied
     , orgSlug : String -- ADDED
+    , selfOnboardingUrl : Maybe String
     }
 
 
@@ -239,6 +240,12 @@ type Msg
     | SetDefaultAgentResult (Result Http.Error ())
     | CopyAgentSelfOnboardingLink String
     | LinkCopied Bool
+    | GotSelfOnboardingUrl (Result Http.Error SelfOnboardingUrlResponse)
+
+
+type alias SelfOnboardingUrlResponse =
+    { selfOnboardingUrl : String
+    }
 
 
 type alias CurrentUserResponse =
@@ -340,8 +347,12 @@ init isSetup key currentUser planType =
       , copiedAgentLinks = []
       , currentlyCopyingAgent = Nothing
       , orgSlug = Maybe.map .orgSlug convertedCurrentUser |> Maybe.withDefault ""
+      , selfOnboardingUrl = Nothing
       }
-    , fetchAgents
+    , Cmd.batch
+        [ fetchAgents
+        , fetchSelfOnboardingUrl
+        ]
     )
 
 
@@ -757,7 +768,12 @@ viewAgentDetails model agent =
             model.forceOrgSenderDetails
 
         agentSelfOnboardingUrl =
-            "https://" ++ "medicaremax.ai/self-onboarding/" ++ model.orgSlug ++ "?agentId=" ++ agent.id
+            case model.selfOnboardingUrl of
+                Just url ->
+                    url ++ "?agentId=" ++ agent.id
+
+                Nothing ->
+                    ""
     in
     div [ class "space-y-6" ]
         [ -- Basic Information Section
@@ -1721,6 +1737,14 @@ update msg model =
                 Nothing ->
                     ( model, Cmd.none )
 
+        GotSelfOnboardingUrl result ->
+            case result of
+                Ok response ->
+                    ( { model | selfOnboardingUrl = Just response.selfOnboardingUrl }, Cmd.none )
+
+                Err _ ->
+                    ( model, Cmd.none )
+
 
 
 -- Helper functions
@@ -1794,6 +1818,20 @@ isValidPhone phone =
             String.filter Char.isDigit phone
     in
     String.length digits == 10
+
+
+fetchSelfOnboardingUrl : Cmd Msg
+fetchSelfOnboardingUrl =
+    Http.get
+        { url = "/api/self-service-info/"
+        , expect = Http.expectJson GotSelfOnboardingUrl selfOnboardingUrlDecoder
+        }
+
+
+selfOnboardingUrlDecoder : Decoder SelfOnboardingUrlResponse
+selfOnboardingUrlDecoder =
+    Decode.map SelfOnboardingUrlResponse
+        (Decode.field "selfOnboardingUrl" Decode.string)
 
 
 fetchAgents : Cmd Msg
