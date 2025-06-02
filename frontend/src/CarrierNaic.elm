@@ -267,15 +267,10 @@ naicToCarrier naic =
             Nothing
 
 
-carrierDecoder : Decoder Carrier
+carrierDecoder : Decoder (Maybe Carrier)
 carrierDecoder =
     Decode.string
         |> Decode.andThen
             (\str ->
-                case stringToCarrier str of
-                    Just carrier ->
-                        Decode.succeed carrier
-
-                    Nothing ->
-                        Decode.fail "Invalid carrier"
+                Decode.succeed (stringToCarrier str)
             )

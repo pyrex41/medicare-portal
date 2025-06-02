@@ -62,7 +62,7 @@ type alias ContactResponse =
     , orgPhone : Maybe String
     , orgSignature : Bool
     , orgSignatureText : Maybe String
-    , carrierContracts : List Carrier
+    , carrierContracts : List (Maybe Carrier)
     , forceOrgSenderDetails : Bool
     }
 
@@ -981,6 +981,9 @@ update msg model =
         GotContactData (Ok response) ->
             let
                 -- Update model with contact data
+                carrierStrings =
+                    List.map carrierToString
+
                 updatedModel0 =
                     { model
                         | contact = response.contact
@@ -991,7 +994,9 @@ update msg model =
                         , orgPhone = response.orgPhone
                         , useOrg = response.orgSignature
                         , orgSignatureText = response.orgSignatureText
-                        , carrierContracts = response.carrierContracts
+                        , carrierContracts =
+                            response.carrierContracts
+                                |> List.filterMap identity
                         , loadingContact = False
                         , forceOrgSenderDetails = response.forceOrgSenderDetails
                     }

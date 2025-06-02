@@ -477,7 +477,7 @@ type alias QuoteResponse =
 type alias ContactResponse =
     { success : Bool
     , orgSlug : String
-    , carrierContracts : List Carrier
+    , carrierContracts : List (Maybe Carrier)
     , contact : Contact
     }
 
