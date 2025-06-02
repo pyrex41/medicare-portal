@@ -1497,20 +1497,58 @@ viewContactForm form isSubmitting model =
         planTypeOptions =
             [ ( "", "Select a plan type" ), ( "Plan N", "Plan N" ), ( "Plan G", "Plan G" ), ( "Other", "Other" ) ]
 
-        agentOptions =
+        ( agentOptionsToDisplay, isAgentSelectDisabled ) =
             case model.orgSettings of
                 Just settings ->
-                    case settings.allowAgentSettings of
-                        True ->
-                            -- If agent settings are allowed, show all agents (if available)
-                            []
+                    if settings.allowAgentSettings then
+                        -- Allow selecting any agent
+                        ( ( "", "Select Contact Owner" ) :: (model.agents |> List.map (\agent -> ( String.fromInt agent.id, agent.firstName ++ " " ++ agent.lastName )))
+                        , False
+                          -- Not disabled
+                        )
 
-                        -- TODO: Populate with agents if available in model
-                        False ->
-                            []
+                    else
+                        -- Agent settings not allowed. Show current owner (or default if new) and disable selection.
+                        let
+                            ownerAgent =
+                                form.contactOwnerId
+                                    |> Maybe.andThen (\ownerId -> model.agents |> List.filter (\agent -> agent.id == ownerId) |> List.head)
+
+                            defaultAgent =
+                                model.defaultAgentId
+                                    |> Maybe.andThen (\defId -> model.agents |> List.filter (\agent -> agent.id == defId) |> List.head)
+
+                            displayOption =
+                                case ownerAgent of
+                                    Just agent ->
+                                        Just ( String.fromInt agent.id, agent.firstName ++ " " ++ agent.lastName )
+
+                                    Nothing ->
+                                        case defaultAgent of
+                                            Just agent ->
+                                                Just ( String.fromInt agent.id, agent.firstName ++ " " ++ agent.lastName )
+
+                                            Nothing ->
+                                                if List.isEmpty model.agents then
+                                                    Just ( "", "No agents available" )
+
+                                                else
+                                                    Just ( "", "Unassigned" )
+                        in
+                        ( case displayOption of
+                            Just opt ->
+                                [ opt ]
+
+                            Nothing ->
+                                -- This case should ideally not be reached if logic above is sound
+                                [ ( "", "Configuration error" ) ]
+                        , True
+                          -- Disabled
+                        )
 
                 Nothing ->
-                    []
+                    -- Org settings not loaded
+                    ( [ ( "", "Loading agents..." ) ], True )
 
         selectedCarrier =
             form.currentCarrier
@@ -1527,6 +1565,24 @@ viewContactForm form isSubmitting model =
             , viewFormInput "Last Name" "text" form.lastName LastName model True
             , viewFormInput "Email" "email" form.email Email model True
             , viewFormInput "Phone Number" "text" form.phoneNumber PhoneNumber model False
+            , div [ class "form-group mb-3" ]
+                [ Html.label [ class "block text-xs font-medium text-gray-700 mb-1" ] [ text "Contact Owner" ]
+                , Html.select
+                    [ class "w-full px-2 py-1.5 bg-white border-[1.5px] border-purple-300 rounded-md text-sm text-gray-700 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-1 focus:ring-purple-200 focus:bg-white transition-all duration-200"
+                    , Html.Attributes.value selectedAgentId
+                    , onInput (UpdateEditForm ContactOwnerId)
+                    , Html.Attributes.disabled isAgentSelectDisabled
+                    ]
+                    (agentOptionsToDisplay
+                        |> List.map
+                            (\( val, labelData ) ->
+                                Html.option
+                                    [ Html.Attributes.value val
+                                    ]
+                                    [ text labelData ]
+                            )
+                    )
+                ]
             , viewFormSelect "Current Carrier" selectedCarrier CurrentCarrier model carrierOptions
             , viewFormSelect "Plan Type" selectedPlanType PlanType model planTypeOptions
             , viewFormInput "Effective Date" "date" form.effectiveDate EffectiveDate model False

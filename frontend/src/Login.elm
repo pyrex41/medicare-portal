@@ -125,6 +125,9 @@ update msg model =
                         , Nav.pushUrl model.key "/dashboard"
                         )
 
+                    else if model.email == "" then
+                        ( model, Cmd.none )
+
                     else
                         -- If no valid session, proceed with login
                         let
@@ -156,11 +159,7 @@ update msg model =
                             Time.millisToPosix (Time.posixToMillis now + 60000)
                     in
                     ( { model | resendAvailableAt = Just cooldownTime }
-                    , Http.post
-                        { url = "/api/auth/login"
-                        , body = Http.jsonBody (encodeLoginBody model.email)
-                        , expect = Http.expectJson GotLoginResponse loginResponseDecoder
-                        }
+                    , Cmd.none
                     )
 
         NoOp ->

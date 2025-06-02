@@ -2872,7 +2872,7 @@ viewCsvUploadModal state isUploading model =
                                         in
                                         Html.select
                                             [ class "w-full px-4 py-3 bg-white border-[2.5px] border-purple-300 rounded-lg text-gray-700 placeholder-gray-400 shadow-sm hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 focus:bg-white transition-all duration-200 appearance-none"
-                                            , value (String.fromInt defaultAgentId)
+                                            , value (state.selectedAgentId |> Maybe.map String.fromInt |> Maybe.withDefault "") -- Correctly bind to state.selectedAgentId
                                             , onInput (\val -> SelectUploadAgent (String.toInt val |> Maybe.withDefault 0))
                                             ]
                                             (List.map

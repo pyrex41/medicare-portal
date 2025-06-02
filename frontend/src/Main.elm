@@ -717,7 +717,11 @@ update msg model =
                 | showDropdown = False
                 , showPaymentStatus = False
               }
-            , Nav.pushUrl model.key frag
+            , if frag == "/login" then
+                Nav.load frag
+
+              else
+                Nav.pushUrl model.key frag
             )
 
         UrlChanged url ->
