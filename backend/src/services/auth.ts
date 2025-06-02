@@ -512,6 +512,14 @@ export async function getUserFromSession(request: Request) {
         organization_name: 'Bypass Org'
       };
     }
+
+    // Skip auth for subscription/pricing endpoint
+    if (pathname === '/api/subscription/pricing') {
+      logger.info('Skipping auth check for subscription/pricing endpoint');
+      return { 
+        skip_auth: true,
+      };  
+    }
     
     // Skip auth check for static files
     if (
