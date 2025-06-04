@@ -20,6 +20,7 @@ type alias Model =
     { calculationInputs : PriceModel.CalculationInputs
     , calculatorExpanded : Bool
     , activePreset : Maybe Int
+    , launchPricingEnabled : Bool
     , earningsInputs :
         { overheadCost : Float
         , customerAcquisitionCost : Float
@@ -50,6 +51,7 @@ init =
             }
       , calculatorExpanded = True
       , activePreset = Nothing
+      , launchPricingEnabled = True
       , earningsInputs =
             { overheadCost = 1000 * 100 -- Default to number of contacts * 100
             , customerAcquisitionCost = 400 -- Default CAC of 400
@@ -66,6 +68,7 @@ type Msg
     | CommissionRateChanged Float
     | ToggleCalculator
     | SelectPreset Int
+    | ToggleLaunchPricing
     | OverheadCostChanged Float
     | CustomerAcquisitionCostChanged Float
     | EarningsMultipleChanged Float
@@ -137,6 +140,11 @@ update msg model =
                 | calculationInputs = newCalculationInputs
                 , activePreset = Just value
               }
+            , Cmd.none
+            )
+
+        ToggleLaunchPricing ->
+            ( { model | launchPricingEnabled = not model.launchPricingEnabled }
             , Cmd.none
             )
 
@@ -300,8 +308,12 @@ type alias EnhancedRevenue =
     }
 
 
-calculateEnhancedRevenue : PriceModel.CalculationInputs -> EnhancedRevenue
-calculateEnhancedRevenue inputs =
+
+-- LAUNCH PRICING: Updated to accept launch pricing parameter
+
+
+calculateEnhancedRevenue : PriceModel.CalculationInputs -> Bool -> EnhancedRevenue
+calculateEnhancedRevenue inputs launchPricingEnabled =
     let
         -- Constants from MedicareMax model
         annualConversionRate =
@@ -314,9 +326,9 @@ calculateEnhancedRevenue inputs =
         contactLtv =
             inputs.commissionRate * 3
 
-        -- Pricing calculation
+        -- LAUNCH PRICING: Use new pricing calculation
         pricing =
-            calculatePricing inputs.contacts
+            calculatePricingWithLaunch inputs.contacts launchPricingEnabled
 
         -- Converted contacts
         monthlyConverted =
@@ -360,11 +372,12 @@ calculateEnhancedRevenue inputs =
 view : Model -> Html Msg
 view model =
     let
+        -- LAUNCH PRICING: Use new pricing calculation with launch pricing support
         pricing =
-            calculatePricing model.calculationInputs.contacts
+            calculatePricingWithLaunch model.calculationInputs.contacts model.launchPricingEnabled
 
         revenue =
-            calculateEnhancedRevenue model.calculationInputs
+            calculateEnhancedRevenue model.calculationInputs model.launchPricingEnabled
 
         pricePerContact =
             if model.calculationInputs.contacts > 0 then
@@ -379,6 +392,58 @@ view model =
                 [ h2 [ class "text-4xl sm:text-3xl font-semibold text-gray-900 mt-6" ] [ text "Pricing" ]
                 , p [ class "text-gray-500 mt-2 mb-6 text-center" ] [ text "Transparent pricing. Pay for what you use." ]
 
+                -- LAUNCH PRICING: Toggle and explanation
+                , div [ class "w-full max-w-2xl mb-6 p-4 bg-gradient-to-r from-orange-50 to-red-50 border border-orange-200 rounded-lg" ]
+                    [ div [ class "flex flex-col gap-2" ]
+                        [ -- Top row: Title + Status + Toggle
+                          div [ class "flex items-center justify-between" ]
+                            [ div [ class "flex items-center gap-2" ]
+                                [ span [ class "text-lg font-bold text-orange-800" ] [ text "🚀 Launch Pricing" ]
+                                , div [ class "w-24" ]
+                                    -- Fixed width container to prevent shifting
+                                    [ if model.launchPricingEnabled then
+                                        span [ class "px-2 py-1 bg-orange-200 text-orange-800 text-xs rounded-full font-semibold" ] [ text "ACTIVE" ]
+
+                                      else
+                                        span [ class "px-2 py-1 bg-gray-200 text-gray-600 text-xs rounded-full" ] [ text "INACTIVE" ]
+                                    ]
+                                ]
+                            , -- LAUNCH PRICING: Right-justified toggle switch
+                              button
+                                [ onClick ToggleLaunchPricing
+                                , class "relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2"
+                                , class
+                                    (if model.launchPricingEnabled then
+                                        "bg-orange-600"
+
+                                     else
+                                        "bg-gray-200"
+                                    )
+                                ]
+                                [ span
+                                    [ class "inline-block h-4 w-4 transform rounded-full bg-white transition-transform"
+                                    , class
+                                        (if model.launchPricingEnabled then
+                                            "translate-x-6"
+
+                                         else
+                                            "translate-x-1"
+                                        )
+                                    ]
+                                    []
+                                ]
+                            ]
+                        , -- Bottom row: Description text
+                          p [ class "text-sm text-orange-700" ]
+                            [ span []
+                                [ text "Save 25% on your first year! Limited time offer for early adopters. Use code "
+                                , span [ class "font-bold" ] [ text "SMS25" ]
+                                , text " at checkout."
+                                ]
+                            ]
+                        ]
+                    ]
+
                 -- Pricing Tiers - Responsive Layout
                 , div [ class "w-full flex flex-col md:flex-row gap-4 sm:gap-6 mb-8 sm:mb-12" ]
                     [ div [ class "w-full md:w-1/2 p-5 sm:p-6 border rounded-lg bg-white shadow-sm" ]
@@ -389,8 +454,23 @@ view model =
                                     [ text ("Includes " ++ formatNumber baseThreshold ++ " contacts") ]
                                 ]
                             , div [ class "flex items-baseline gap-2 mb-3" ]
-                                [ span [ class "text-2xl sm:text-3xl font-bold text-gray-900" ] [ text (formatCurrencyRounded basePrice) ]
-                                , span [ class "text-gray-600" ] [ text "/month" ]
+                                [ if model.launchPricingEnabled then
+                                    div [ class "flex flex-col" ]
+                                        [ div [ class "flex items-baseline gap-2" ]
+                                            [ span [ class "text-2xl sm:text-3xl font-bold text-gray-900" ] [ text (formatCurrencyRounded pricing.basePrice) ]
+                                            , span [ class "text-gray-600" ] [ text "/month" ]
+                                            ]
+                                        , div [ class "flex items-baseline gap-2" ]
+                                            [ span [ class "text-lg text-gray-500 line-through" ] [ text (formatCurrencyRounded basePrice) ]
+                                            , span [ class "text-sm font-semibold text-green-600" ] [ text ("Save " ++ formatCurrencyRounded (basePrice - pricing.basePrice)) ]
+                                            ]
+                                        ]
+
+                                  else
+                                    div [ class "flex items-baseline gap-2" ]
+                                        [ span [ class "text-2xl sm:text-3xl font-bold text-gray-900" ] [ text (formatCurrencyRounded pricing.basePrice) ]
+                                        , span [ class "text-gray-600" ] [ text "/month" ]
+                                        ]
                                 ]
                             , p [ class "text-gray-600 text-sm" ]
                                 [ text "Includes all features of the Medicare Max portal platform." ]
@@ -404,11 +484,37 @@ view model =
                                     [ text "Pay as you go" ]
                                 ]
                             , div [ class "flex items-baseline gap-2 mb-3" ]
-                                [ span [ class "text-2xl sm:text-3xl font-bold text-gray-900" ] [ text (formatCurrency abovePricePerContact) ]
-                                , span [ class "text-gray-600" ] [ text "/contact/month" ]
+                                [ if model.launchPricingEnabled then
+                                    div [ class "flex flex-col" ]
+                                        [ div [ class "flex items-baseline gap-2" ]
+                                            [ span [ class "text-2xl sm:text-3xl font-bold text-gray-900" ] [ text (formatCurrency (getAbovePricePerContact model.launchPricingEnabled)) ]
+                                            , span [ class "text-gray-600" ] [ text "/contact/month" ]
+                                            ]
+                                        , div [ class "flex items-baseline gap-2" ]
+                                            [ span [ class "text-lg text-gray-500 line-through" ] [ text (formatCurrency abovePricePerContact) ]
+                                            , span [ class "text-sm font-semibold text-green-600" ] [ text ("Save " ++ formatCurrency (abovePricePerContact - getAbovePricePerContact model.launchPricingEnabled)) ]
+                                            ]
+                                        ]
+
+                                  else
+                                    div [ class "flex items-baseline gap-2" ]
+                                        [ span [ class "text-2xl sm:text-3xl font-bold text-gray-900" ] [ text (formatCurrency abovePricePerContact) ]
+                                        , span [ class "text-gray-600" ] [ text "/contact/month" ]
+                                        ]
                                 ]
                             , p [ class "text-gray-600 text-sm" ]
-                                [ text ("That's just " ++ formatCurrencyRounded (abovePricePerContact * 12) ++ " per contact per year.") ]
+                                [ text
+                                    ("That's just "
+                                        ++ formatCurrencyRounded (getAbovePricePerContact model.launchPricingEnabled * 12)
+                                        ++ " per contact per year"
+                                        ++ (if model.launchPricingEnabled then
+                                                " (normally " ++ formatCurrencyRounded (abovePricePerContact * 12) ++ ")."
+
+                                            else
+                                                "."
+                                           )
+                                    )
+                                ]
                             ]
                         ]
                     ]
@@ -485,7 +591,9 @@ view model =
 
                                                              else
                                                                 String.fromInt tier.contacts
-                                                                    ++ " contacts @ $0.25 each:"
+                                                                    ++ " contacts @ "
+                                                                    ++ formatCurrency (getAbovePricePerContact model.launchPricingEnabled)
+                                                                    ++ " each:"
                                                             )
                                                         ]
                                                     , span [ class "font-bold" ] [ text (formatCurrency tier.price) ]
@@ -503,7 +611,18 @@ view model =
                     , div [ class "flex items-center justify-center" ]
                         [ div [ class "bg-blue-600 rounded-lg p-6 text-white text-center w-full lg:w-96" ]
                             [ h2 [ class "font-bold mb-2 text-lg" ] [ text "Monthly Price" ]
-                            , div [ class "text-4xl sm:text-5xl font-bold mb-2" ] [ text (formatCurrency pricing.totalPrice) ]
+                            , if model.launchPricingEnabled then
+                                div [ class "flex flex-col items-center" ]
+                                    [ div [ class "text-4xl sm:text-5xl font-bold mb-1" ] [ text (formatCurrency pricing.totalPrice) ]
+                                    , div [ class "flex items-center gap-3 mb-2" ]
+                                        [ span [ class "text-lg text-blue-200 line-through" ] [ text (formatCurrency pricing.originalTotalPrice) ]
+                                        , span [ class "px-2 py-1 bg-green-500 text-white text-sm rounded-full font-semibold" ]
+                                            [ text ("Save " ++ formatCurrency pricing.savings) ]
+                                        ]
+                                    ]
+
+                              else
+                                div [ class "text-4xl sm:text-5xl font-bold mb-2" ] [ text (formatCurrency pricing.totalPrice) ]
                             , p [ class "text-sm text-blue-100" ]
                                 [ text ("For " ++ formatNumber (toFloat model.calculationInputs.contacts) ++ " contacts") ]
                             ]
@@ -1257,3 +1376,83 @@ renderEnterpriseValueChart model =
                 ]
             ]
         ]
+
+
+
+-- LAUNCH PRICING: Helper functions for pricing calculations
+
+
+launchPricingDiscount : Float
+launchPricingDiscount =
+    0.25
+
+
+getBasePrice : Bool -> Float
+getBasePrice launchPricingEnabled =
+    if launchPricingEnabled then
+        basePrice * (1 - launchPricingDiscount)
+
+    else
+        basePrice
+
+
+getAbovePricePerContact : Bool -> Float
+getAbovePricePerContact launchPricingEnabled =
+    if launchPricingEnabled then
+        abovePricePerContact * (1 - launchPricingDiscount)
+
+    else
+        abovePricePerContact
+
+
+calculatePricingWithLaunch : Int -> Bool -> { basePrice : Float, tierPrices : List { contacts : Int, price : Float }, totalPrice : Float, originalTotalPrice : Float, savings : Float }
+calculatePricingWithLaunch contacts launchPricingEnabled =
+    let
+        currentBasePrice =
+            getBasePrice launchPricingEnabled
+
+        currentAbovePrice =
+            getAbovePricePerContact launchPricingEnabled
+
+        baseSubscription =
+            currentBasePrice
+
+        -- Calculate number of additional contacts beyond the first 250
+        additionalContacts =
+            if contacts <= baseThreshold then
+                0
+
+            else
+                contacts - baseThreshold
+
+        -- Calculate price for additional contacts
+        additionalPrice =
+            toFloat additionalContacts * currentAbovePrice
+
+        totalPrice =
+            baseSubscription + additionalPrice
+
+        -- Calculate original pricing for comparison
+        originalTotalPrice =
+            basePrice + (toFloat additionalContacts * abovePricePerContact)
+
+        savings =
+            if launchPricingEnabled then
+                originalTotalPrice - totalPrice
+
+            else
+                0
+
+        -- Create list of tier prices for display
+        tierPrices =
+            [ { contacts = additionalContacts
+              , price = additionalPrice
+              }
+            ]
+    in
+    { basePrice = baseSubscription
+    , tierPrices = tierPrices
+    , totalPrice = totalPrice
+    , originalTotalPrice = originalTotalPrice
+    , savings = savings
+    }

@@ -338,6 +338,7 @@ export function createOnboardingRoutes() {
           line_items: lineItems,
           mode: 'subscription',
           redirect_on_completion: 'never',
+          allow_promotion_codes: true,
           automatic_tax: { enabled: true },
           ...(decodedEmail ? { customer_email: decodedEmail } : {})
         })
