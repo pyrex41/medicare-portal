@@ -28,22 +28,16 @@ type alias Model =
     }
 
 
-type alias Pricing =
-    { contacts : Int
-    , price : Float
-    }
+basePrice =
+    100
 
 
-basePricing =
-    { contacts = 0
-    , price = 100
-    }
+baseThreshold =
+    300
 
 
-tier1Pricing =
-    { contacts = 1
-    , price = 0.25
-    }
+abovePricePerContact =
+    0.33
 
 
 init : ( Model, Cmd Msg )
@@ -260,19 +254,19 @@ calculatePricing : Int -> { basePrice : Float, tierPrices : List { contacts : In
 calculatePricing contacts =
     let
         baseSubscription =
-            basePricing.price
+            basePrice
 
         -- Calculate number of additional contacts beyond the first 250
         additionalContacts =
-            if contacts <= 250 then
+            if contacts <= baseThreshold then
                 0
 
             else
-                contacts - 250
+                contacts - baseThreshold
 
         -- Calculate price for additional contacts
         additionalPrice =
-            toFloat additionalContacts * tier1Pricing.price
+            toFloat additionalContacts * abovePricePerContact
 
         totalPrice =
             baseSubscription + additionalPrice
@@ -342,11 +336,11 @@ calculateEnhancedRevenue inputs =
         annualPrice =
             pricing.totalPrice * 12
 
-        roi =
-            annualLtv / annualPrice
-
         netBenefit =
             annualLtv - annualPrice
+
+        roi =
+            netBenefit / annualPrice
     in
     { price = pricing.totalPrice
     , annualPrice = annualPrice
@@ -382,7 +376,7 @@ view model =
     div [ class "min-h-screen bg-white flex flex-col items-center py-0 px-4 sm:px-6 lg:px-8" ]
         [ div [ class "max-w-5xl w-full space-y-8" ]
             [ div [ class "flex flex-col items-center" ]
-                [ h2 [ class "text-4xl sm:text-3xl font-semibold text-gray-900 mt-6" ] [ text "Special Launch Pricing" ]
+                [ h2 [ class "text-4xl sm:text-3xl font-semibold text-gray-900 mt-6" ] [ text "Pricing" ]
                 , p [ class "text-gray-500 mt-2 mb-6 text-center" ] [ text "Transparent pricing. Pay for what you use." ]
 
                 -- Pricing Tiers - Responsive Layout
@@ -392,10 +386,10 @@ view model =
                             [ div [ class "flex justify-between items-center mb-3" ]
                                 [ h3 [ class "font-bold text-lg sm:text-xl text-gray-800" ] [ text "Base Subscription" ]
                                 , span [ class "px-3 py-1 bg-green-100 text-green-800 text-sm rounded-full" ]
-                                    [ text "Includes 250 contacts" ]
+                                    [ text ("Includes " ++ formatNumber baseThreshold ++ " contacts") ]
                                 ]
                             , div [ class "flex items-baseline gap-2 mb-3" ]
-                                [ span [ class "text-2xl sm:text-3xl font-bold text-gray-900" ] [ text "$100" ]
+                                [ span [ class "text-2xl sm:text-3xl font-bold text-gray-900" ] [ text (formatCurrencyRounded basePrice) ]
                                 , span [ class "text-gray-600" ] [ text "/month" ]
                                 ]
                             , p [ class "text-gray-600 text-sm" ]
@@ -410,11 +404,11 @@ view model =
                                     [ text "Pay as you go" ]
                                 ]
                             , div [ class "flex items-baseline gap-2 mb-3" ]
-                                [ span [ class "text-2xl sm:text-3xl font-bold text-gray-900" ] [ text "$0.25" ]
+                                [ span [ class "text-2xl sm:text-3xl font-bold text-gray-900" ] [ text (formatCurrency abovePricePerContact) ]
                                 , span [ class "text-gray-600" ] [ text "/contact/month" ]
                                 ]
                             , p [ class "text-gray-600 text-sm" ]
-                                [ text "That's just $3 per contact per year." ]
+                                [ text ("That's just " ++ formatCurrencyRounded (abovePricePerContact * 12) ++ " per contact per year.") ]
                             ]
                         ]
                     ]
