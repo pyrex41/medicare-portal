@@ -6,6 +6,12 @@ import { setupLineChartAnimations, setupBarChartAnimations, animateFunnelChart }
 
 // Declare Stripe for TypeScript
 declare const Stripe: any;
+declare global {
+  interface Window {
+    Stripe: any;
+    elmApp: any;
+  }
+}
 // Declare Chartist for TypeScript
 // declare const Chartist: any;
 
@@ -43,7 +49,31 @@ customElements.define('stripe-checkout', class extends HTMLElement {
     this.style.minHeight = '500px';
     
     await this.initializeStripe();
+    
+    // Wait for required attributes before mounting
+    await this.waitForRequiredAttributes();
     await this.mountCheckout();
+  }
+
+  async waitForRequiredAttributes(maxAttempts = 30) {
+    const requiredAttributes = ['price-id', 'first-name', 'last-name', 'email'];
+    let attempts = 0;
+    
+    while (attempts < maxAttempts) {
+      const hasAllAttributes = requiredAttributes.every(attr => this.getAttribute(attr));
+      
+      if (hasAllAttributes) {
+        console.log('[Stripe] All required attributes are present');
+        return;
+      }
+      
+      console.log(`[Stripe] Waiting for required attributes (attempt ${attempts + 1}/${maxAttempts})`);
+      await new Promise(resolve => setTimeout(resolve, 100));
+      attempts++;
+    }
+    
+    console.error('[Stripe] Timeout waiting for required attributes');
+    throw new Error('Required attributes not set in time');
   }
 
   attributeChangedCallback(name: string, oldValue: string, newValue: string) {
@@ -59,12 +89,30 @@ customElements.define('stripe-checkout', class extends HTMLElement {
 
   async initializeStripe() {
     if (!this.stripe) {
-      console.log('[Stripe] Loading Stripe.js script');
-      const stripeScript = document.createElement('script');
-      stripeScript.src = 'https://js.stripe.com/v3/';
-      document.head.appendChild(stripeScript);
-      await new Promise(resolve => stripeScript.onload = resolve);
-      console.log('[Stripe] Stripe.js script loaded');
+      console.log('[Stripe] Checking for Stripe.js');
+      
+      // Check if Stripe is already loaded
+      if (!window.Stripe) {
+        console.log('[Stripe] Loading Stripe.js script');
+        
+        // Check if script is already in DOM but still loading
+        let stripeScript = document.querySelector('script[src="https://js.stripe.com/v3/"]');
+        
+        if (!stripeScript) {
+          stripeScript = document.createElement('script');
+          stripeScript.src = 'https://js.stripe.com/v3/';
+          document.head.appendChild(stripeScript);
+        }
+        
+        await new Promise((resolve, reject) => {
+          stripeScript.onload = resolve;
+          stripeScript.onerror = () => reject(new Error('Failed to load Stripe.js'));
+        });
+        
+        console.log('[Stripe] Stripe.js script loaded');
+      } else {
+        console.log('[Stripe] Stripe.js already loaded');
+      }
       
       // Use environment variable if available, otherwise fallback to the hardcoded key
       const publishableKey = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || 
@@ -76,8 +124,8 @@ customElements.define('stripe-checkout', class extends HTMLElement {
     }
   }
 
-  async mountCheckout() {
-    console.log('[Stripe] Mounting checkout form');
+  async mountCheckout(attempt = 1, maxAttempts = 3) {
+    console.log('[Stripe] Mounting checkout form (attempt ' + attempt + ')');
     const priceId = this.getAttribute('price-id');
     // const meteredPriceId = this.getAttribute('metered-price-id');
     const firstName = this.getAttribute('first-name');
@@ -116,6 +164,13 @@ customElements.define('stripe-checkout', class extends HTMLElement {
       });
 
       console.log(`[Stripe] Create checkout session response status: ${response.status}`);
+      
+      if (!response.ok && attempt < maxAttempts) {
+        console.log(`[Stripe] Request failed with status ${response.status}, retrying in 1 second...`);
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        return this.mountCheckout(attempt + 1, maxAttempts);
+      }
+      
       const data = await response.json();
       console.log('[Stripe] Checkout session response data:', data);
       
@@ -184,7 +239,32 @@ customElements.define('stripe-checkout', class extends HTMLElement {
 
     } catch (error) {
       console.error('[Stripe] Error mounting checkout:', error);
-      this.textContent = `Error: ${error instanceof Error ? error.message : 'Failed to load payment form'}`;
+      
+      // Retry if we haven't exceeded max attempts
+      if (attempt < maxAttempts) {
+        console.log(`[Stripe] Retrying mount in 1 second (attempt ${attempt}/${maxAttempts})...`);
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        return this.mountCheckout(attempt + 1, maxAttempts);
+      }
+      
+      // If all retries failed, show error with helpful message
+      const errorMessage = error instanceof Error ? error.message : 'Failed to load payment form';
+      const helpfulMessage = errorMessage.includes('Failed to fetch') || errorMessage.includes('NetworkError') 
+        ? 'Payment form failed to load. This may be caused by an ad blocker or privacy extension. Please disable them for this site and refresh the page.'
+        : 'Payment form failed to load. Please refresh the page and try again.';
+      
+      this.textContent = helpfulMessage;
+      
+      // Send error to Elm
+      const errorData = {
+        success: false,
+        message: helpfulMessage,
+      };
+      
+      const elmApp = (window as any).elmApp;
+      if (elmApp && elmApp.ports && elmApp.ports.checkoutError) {
+        elmApp.ports.checkoutError.send(errorData);
+      }
     }
   }
 

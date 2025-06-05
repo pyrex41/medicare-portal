@@ -436,7 +436,7 @@ view model =
                         , -- Bottom row: Description text
                           p [ class "text-sm text-orange-700" ]
                             [ span []
-                                [ text "Save 25% on your first year! Limited time offer for early adopters. Use code "
+                                [ text "Save 25% on your first year! Limited time offer. Use code "
                                 , span [ class "font-bold" ] [ text "SMS25" ]
                                 , text " at checkout."
                                 ]

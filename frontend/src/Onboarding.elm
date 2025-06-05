@@ -637,11 +637,18 @@ update msg model =
                                     | frame = 4
                                     , savingAgents = False
                                     , agentSaveError = Nothing
-                                    , paymentStatus = ReadyToComplete
+                                    , paymentStatus = 
+                                        if model.priceId == Nothing then
+                                            Loading  -- Keep loading until priceId is available
+                                        else
+                                            ReadyToComplete
                                 }
                         in
                         ( modelAfterSave
-                        , Cmd.none
+                        , if model.priceId == Nothing then
+                            fetchStripeProduct  -- Re-fetch if we don't have it yet
+                          else
+                            Cmd.none
                         )
 
                     else
@@ -813,6 +820,11 @@ update msg model =
             ( { model
                 | publishableKey = Just stripeProduct.publishableKey
                 , priceId = Just stripeProduct.priceId
+                , paymentStatus = 
+                    if model.frame == 4 && model.paymentStatus == Loading then
+                        ReadyToComplete
+                    else
+                        model.paymentStatus
               }
             , Cmd.none
             )
@@ -1519,8 +1531,10 @@ viewPayment model =
                                 []
 
                         _ ->
-                            div [ class "mt-4 p-3 bg-red-50 border border-red-200 rounded-md" ]
-                                [ p [ class "text-red-700" ] [ text "Error loading Stripe product IDs" ]
+                            div [ class "mt-4 p-3 bg-blue-50 border border-blue-200 rounded-md" ]
+                                [ div [ class "animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500 mx-auto mb-4" ] []
+                                , p [ class "text-blue-700 text-center" ] [ text "Loading payment information..." ]
+                                , p [ class "mt-2 text-sm text-blue-600 text-center" ] [ text "If this takes too long, please refresh the page." ]
                                 ]
 
                 PaymentProcessing ->
