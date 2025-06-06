@@ -4,6 +4,7 @@
     "": {
       "name": "dashboard-monorepo",
       "dependencies": {
+        "elm": "^0.19.1-6",
         "tailwindcss-animate": "^1.0.7",
       },
       "devDependencies": {
@@ -15,6 +16,14 @@
   },
   "packages": {
     "@babel/runtime": ["@babel/runtime@7.26.9", "", { "dependencies": { "regenerator-runtime": "^0.14.0" } }, "sha512-aA63XwOkcl4xxQa3HjPMqOP6LiK0ZDv3mUPYEFXkpHbaFjtGggE1A61FjFzJnB+p7/oy2gA8E+rcBNl/zC1tMg=="],
+
+    "@elm_binaries/darwin_arm64": ["@elm_binaries/darwin_arm64@0.19.1-0", "", { "os": "darwin", "cpu": "arm64" }, "sha512-mjbsH7BNHEAmoE2SCJFcfk5fIHwFIpxtSgnEAqMsVLpBUFoEtAeX+LQ+N0vSFJB3WAh73+QYx/xSluxxLcL6dA=="],
+
+    "@elm_binaries/darwin_x64": ["@elm_binaries/darwin_x64@0.19.1-0", "", { "os": "darwin", "cpu": "x64" }, "sha512-QGUtrZTPBzaxgi9al6nr+9313wrnUVHuijzUK39UsPS+pa+n6CmWyV/69sHZeX9qy6UfeugE0PzF3qcUiy2GDQ=="],
+
+    "@elm_binaries/linux_x64": ["@elm_binaries/linux_x64@0.19.1-0", "", { "os": "linux", "cpu": "x64" }, "sha512-T1ZrWVhg2kKAsi8caOd3vp/1A3e21VuCpSG63x8rDie50fHbCytTway9B8WHEdnBFv4mYWiA68dzGxYCiFmU2w=="],
+
+    "@elm_binaries/win32_x64": ["@elm_binaries/win32_x64@0.19.1-0", "", { "os": "win32", "cpu": "x64" }, "sha512-yDleiXqSE9EcqKtd9SkC/4RIW8I71YsXzMPL79ub2bBPHjWTcoyyeBbYjoOB9SxSlArJ74HaoBApzT6hY7Zobg=="],
 
     "@esbuild/aix-ppc64": ["@esbuild/aix-ppc64@0.25.0", "", { "os": "aix", "cpu": "ppc64" }, "sha512-O7vun9Sf8DFjH2UtqK8Ku3LkquL9SZL8OLY1T5NZkA34+wG3OQF7cl4Ql8vdNzM6fzBbYfLaiRLIOZ+2FOCgBQ=="],
 
@@ -133,6 +142,8 @@
     "cross-spawn": ["cross-spawn@6.0.5", "", { "dependencies": { "nice-try": "^1.0.4", "path-key": "^2.0.1", "semver": "^5.5.0", "shebang-command": "^1.2.0", "which": "^1.2.9" } }, "sha512-eTVLrBSt7fjbDygz805pMnstIs2VTBNkRm0qxZd+M7A5XDdxVRWO5MxGBXZhjY4cqLYLdtrGqRf8mBPmzwSpWQ=="],
 
     "date-fns": ["date-fns@2.30.0", "", { "dependencies": { "@babel/runtime": "^7.21.0" } }, "sha512-fnULvOpxnC5/Vg3NCiWelDsLiUc9bRwAPs/+LfTLNvetFCtCTN+yQz15C/fs4AwX1R9K5GLtLfn8QW+dWisaAw=="],
+
+    "elm": ["elm@0.19.1-6", "", { "optionalDependencies": { "@elm_binaries/darwin_arm64": "0.19.1-0", "@elm_binaries/darwin_x64": "0.19.1-0", "@elm_binaries/linux_x64": "0.19.1-0", "@elm_binaries/win32_x64": "0.19.1-0" }, "bin": { "elm": "bin/elm" } }, "sha512-mKYyierHICPdMx/vhiIacdPmTPnh889gjHOZ75ZAoCxo3lZmSWbGP8HMw78wyctJH0HwvTmeKhlYSWboQNYPeQ=="],
 
     "elm-esm": ["elm-esm@1.1.4", "", { "dependencies": { "which": "^2.0.2" }, "bin": { "elm-esm": "src/run.js" } }, "sha512-dGWDtgsdDrhn3GFl/uT6Yt5DIBgnvOmakLNl6brkoYqb7i8mQ/beHoR+emx3ux4M4sq3GpRfRvzMoiRHVcaWKw=="],
 
