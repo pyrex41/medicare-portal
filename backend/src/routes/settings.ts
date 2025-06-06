@@ -1,17 +1,9 @@
 import { Elysia } from 'elysia';
 import { validateSession } from '../services/auth';
 import { Database } from '../database';
-import { type User } from '../types';
+import { type User, type BaseSettings, type StateCarrierSetting } from '../types';
 import { logger } from '../logger';
 import { type Cookie } from '@elysiajs/cookie';
-import { type BaseSettings } from '../types';
-
-interface StateCarrierSetting {
-  state: string;
-  carrier: string;
-  active: boolean;
-  targetGI: boolean;
-}
 
 interface SettingsBody {
     settings?: BaseSettings;
@@ -35,7 +27,24 @@ const defaultSettings: BaseSettings = {
   emailSendBirthday: true,
   emailSendPolicyAnniversary: true,
   emailSendAep: true,
-  smartSendEnabled: false
+  smartSendEnabled: false,
+  // New outreach settings with defaults
+  contactOutreachDelayYears: 1, // Default to 1 year
+  outreachTypes: {
+    birthday: true,
+    enrollmentAnniversary: true,
+    scheduleIncrease: true,
+    aep: true
+  },
+  failedUnderwritingOutreach: {
+    enabled: false, // Default to disabled
+    frequency: 'annual',
+    timing: 'birthday' // Default timing
+  },
+  brandName: '',
+  primaryColor: '#6B46C1',
+  secondaryColor: '#9F7AEA',
+  logo: null
 };
 
 // Helper function to generate default state/carrier settings

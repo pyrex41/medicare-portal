@@ -32,4 +32,39 @@ export interface User {
   last_name: string;
   phone: string;
   organization_name?: string;
+}
+
+export interface StateCarrierSetting {
+  state: string;
+  carrier: string;
+  active: boolean;
+  targetGI: boolean;
+}
+
+export interface BaseSettings {
+  stateLicenses: string[];
+  carrierContracts: string[];
+  stateCarrierSettings: StateCarrierSetting[];
+  allowAgentSettings: boolean;
+  emailSendBirthday: boolean;
+  emailSendPolicyAnniversary: boolean;
+  emailSendAep: boolean;
+  smartSendEnabled: boolean;
+  // New outreach settings
+  contactOutreachDelayYears: number; // 1, 2, or 3 years
+  outreachTypes: {
+    birthday: boolean;
+    enrollmentAnniversary: boolean;
+    scheduleIncrease: boolean;
+    aep: boolean;
+  };
+  failedUnderwritingOutreach: {
+    enabled: boolean;
+    frequency: 'annual'; // For now just annual, could expand later
+    timing: 'birthday' | 'enrollmentAnniversary' | 'aep' | 'scheduleIncrease';
+  };
+  brandName: string;
+  primaryColor: string;
+  secondaryColor: string;
+  logo: string | null;
 } 

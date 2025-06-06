@@ -31,6 +31,18 @@ interface OnboardingData {
     stateLicenses: string[]
     carrierContracts: string[]
     stateCarrierSettings: StateCarrierSetting[]
+    contactOutreachDelayYears: number
+    outreachTypes: {
+      birthday: boolean
+      enrollmentAnniversary: boolean
+      scheduleIncrease: boolean
+      aep: boolean
+    }
+    failedUnderwritingOutreach: {
+      enabled: boolean
+      frequency: string
+      timing: string
+    }
   }
   agents: any[] // Using any for flexibility, could be more specific
 }
@@ -92,6 +104,31 @@ export function createOnboardingRoutes() {
           await client.execute({
             sql: `UPDATE organizations SET slug = ? WHERE id = ?`,
             args: [slug, organizationId]
+          })
+          
+          // Create organization settings with licensing and outreach data
+          const orgSettings = {
+            stateLicenses: data.licensing.stateLicenses,
+            carrierContracts: data.licensing.carrierContracts,
+            stateCarrierSettings: data.licensing.stateCarrierSettings,
+            allowAgentSettings: true,
+            emailSendBirthday: true,
+            emailSendPolicyAnniversary: true,
+            emailSendAep: true,
+            smartSendEnabled: false,
+            contactOutreachDelayYears: data.licensing.contactOutreachDelayYears,
+            outreachTypes: data.licensing.outreachTypes,
+            failedUnderwritingOutreach: data.licensing.failedUnderwritingOutreach,
+            brandName: data.company.agencyName,
+            primaryColor: data.company.primaryColor,
+            secondaryColor: data.company.secondaryColor,
+            logo: data.company.logo || null
+          }
+          
+          // Update organization with settings
+          await client.execute({
+            sql: `UPDATE organizations SET org_settings = ? WHERE id = ?`,
+            args: [JSON.stringify(orgSettings), organizationId]
           })
           
           // 2. Create admin user

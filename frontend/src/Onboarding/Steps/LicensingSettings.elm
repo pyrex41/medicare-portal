@@ -32,6 +32,9 @@ type alias Model =
     , orgSlug : String
     , expandedSections : List String
     , useRecommendedGISettings : Bool
+    , contactOutreachDelayYears : Int
+    , outreachTypes : OutreachTypes
+    , failedUnderwritingOutreach : FailedUnderwritingOutreach
     }
 
 
@@ -40,6 +43,21 @@ type alias StateCarrierSetting =
     , carrier : String
     , active : Bool
     , targetGI : Bool
+    }
+
+
+type alias OutreachTypes =
+    { birthday : Bool
+    , enrollmentAnniversary : Bool
+    , scheduleIncrease : Bool
+    , aep : Bool
+    }
+
+
+type alias FailedUnderwritingOutreach =
+    { enabled : Bool
+    , frequency : String -- "annual" for now
+    , timing : String -- "birthday", "enrollmentAnniversary", "aep", "scheduleIncrease"
     }
 
 
@@ -54,6 +72,9 @@ init key orgSlug =
       , orgSlug = orgSlug
       , expandedSections = [ "State Licenses", "Carrier Contracts", "State & Carrier Settings" ]
       , useRecommendedGISettings = True
+      , contactOutreachDelayYears = 1
+      , outreachTypes = { birthday = True, enrollmentAnniversary = True, scheduleIncrease = True, aep = True }
+      , failedUnderwritingOutreach = { enabled = False, frequency = "annual", timing = "birthday" }
       }
     , Cmd.none
     )
@@ -77,6 +98,10 @@ type Msg
     | GotLicensingSettings (Result Http.Error LicensingSettingsResponse)
     | LicensingSettingsSaved (Result Http.Error ())
     | NoOp
+    | UpdateContactOutreachDelayYears Int
+    | ToggleOutreachType String Bool
+    | ToggleFailedUnderwritingOutreach Bool
+    | UpdateFailedUnderwritingTiming String
 
 
 type OutMsg
@@ -357,6 +382,36 @@ update msg model =
         NoOp ->
             ( model, Cmd.none, NoOutMsg )
 
+        UpdateContactOutreachDelayYears years ->
+            ( { model | contactOutreachDelayYears = years }, Cmd.none, NoOutMsg )
+
+        ToggleOutreachType typeName isActive ->
+            let
+                updatedOutreachTypes =
+                    case typeName of
+                        "birthday" ->
+                            { model.outreachTypes | birthday = isActive }
+
+                        "enrollmentAnniversary" ->
+                            { model.outreachTypes | enrollmentAnniversary = isActive }
+
+                        "scheduleIncrease" ->
+                            { model.outreachTypes | scheduleIncrease = isActive }
+
+                        "aep" ->
+                            { model.outreachTypes | aep = isActive }
+
+                        _ ->
+                            model.outreachTypes
+            in
+            ( { model | outreachTypes = updatedOutreachTypes }, Cmd.none, NoOutMsg )
+
+        ToggleFailedUnderwritingOutreach isActive ->
+            ( { model | failedUnderwritingOutreach = { model.failedUnderwritingOutreach | enabled = isActive } }, Cmd.none, NoOutMsg )
+
+        UpdateFailedUnderwritingTiming timing ->
+            ( { model | failedUnderwritingOutreach = { model.failedUnderwritingOutreach | timing = timing } }, Cmd.none, NoOutMsg )
+
 
 
 -- VIEW
@@ -380,6 +435,9 @@ view model =
                 model.expandedSections
             , viewExpandableSection "State & Carrier Settings"
                 (viewStateCarrierGrid model)
+                model.expandedSections
+            , viewExpandableSection "Outreach Settings"
+                (viewOutreachSettings model)
                 model.expandedSections
             , if model.error /= Nothing then
                 div [ class "bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded" ]
@@ -638,6 +696,69 @@ viewStateCarrierGrid model =
                         [ text "Guaranteed Issue (GI) will be automatically applied to all active state and carrier combinations." ]
                     ]
             ]
+
+
+viewOutreachSettings : Model -> Html Msg
+viewOutreachSettings model =
+    div [ class "space-y-6" ]
+        [ -- Contact Outreach Delay
+          div [ class "space-y-2" ]
+            [ label [ class "block text-sm font-medium text-gray-700" ]
+                [ text "Contact Outreach Delay" ]
+            , select
+                [ class "w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                , onInput (\value -> UpdateContactOutreachDelayYears (String.toInt value |> Maybe.withDefault 1))
+                ]
+                [ option [ value "1", selected (model.contactOutreachDelayYears == 1) ] [ text "1 year" ]
+                , option [ value "2", selected (model.contactOutreachDelayYears == 2) ] [ text "2 years" ]
+                , option [ value "3", selected (model.contactOutreachDelayYears == 3) ] [ text "3 years" ]
+                ]
+            , p [ class "text-sm text-gray-500" ]
+                [ text "How long to wait before reaching out to contacts" ]
+            ]
+        , -- Outreach Types
+          div [ class "space-y-3" ]
+            [ label [ class "block text-sm font-medium text-gray-700" ]
+                [ text "Outreach Types" ]
+            , checkbox "Birthday outreach"
+                model.outreachTypes.birthday
+                (\checked -> ToggleOutreachType "birthday" checked)
+            , checkbox "Enrollment anniversary outreach"
+                model.outreachTypes.enrollmentAnniversary
+                (\checked -> ToggleOutreachType "enrollmentAnniversary" checked)
+            , checkbox "Schedule increase outreach"
+                model.outreachTypes.scheduleIncrease
+                (\checked -> ToggleOutreachType "scheduleIncrease" checked)
+            , checkbox "Annual enrollment period (AEP) outreach"
+                model.outreachTypes.aep
+                (\checked -> ToggleOutreachType "aep" checked)
+            , p [ class "text-sm text-gray-500" ]
+                [ text "At least one outreach type must be selected" ]
+            ]
+        , -- Failed Underwriting Outreach
+          div [ class "space-y-3" ]
+            [ checkbox "Reduce outreach frequency to once per year for contacts who failed underwriting"
+                model.failedUnderwritingOutreach.enabled
+                ToggleFailedUnderwritingOutreach
+            , if model.failedUnderwritingOutreach.enabled then
+                div [ class "ml-6 space-y-2" ]
+                    [ label [ class "block text-sm font-medium text-gray-700" ]
+                        [ text "When to send annual outreach:" ]
+                    , select
+                        [ class "w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                        , onInput UpdateFailedUnderwritingTiming
+                        ]
+                        [ option [ value "birthday", selected (model.failedUnderwritingOutreach.timing == "birthday") ] [ text "Birthday" ]
+                        , option [ value "enrollmentAnniversary", selected (model.failedUnderwritingOutreach.timing == "enrollmentAnniversary") ] [ text "Enrollment Anniversary" ]
+                        , option [ value "aep", selected (model.failedUnderwritingOutreach.timing == "aep") ] [ text "AEP" ]
+                        , option [ value "scheduleIncrease", selected (model.failedUnderwritingOutreach.timing == "scheduleIncrease") ] [ text "Schedule Increase" ]
+                        ]
+                    ]
+
+              else
+                text ""
+            ]
+        ]
 
 
 checkbox : String -> Bool -> (Bool -> msg) -> Html msg

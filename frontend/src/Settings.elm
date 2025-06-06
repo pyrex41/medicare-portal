@@ -167,6 +167,24 @@ type alias Settings =
     , primaryColor : String
     , secondaryColor : String
     , logo : Maybe String
+    , contactOutreachDelayYears : Int
+    , outreachTypes : OutreachTypes
+    , failedUnderwritingOutreach : FailedUnderwritingOutreach
+    }
+
+
+type alias OutreachTypes =
+    { birthday : Bool
+    , enrollmentAnniversary : Bool
+    , scheduleIncrease : Bool
+    , aep : Bool
+    }
+
+
+type alias FailedUnderwritingOutreach =
+    { enabled : Bool
+    , frequency : String -- "annual" for now
+    , timing : String -- "birthday", "enrollmentAnniversary", "aep", "scheduleIncrease"
     }
 
 
@@ -207,6 +225,10 @@ type Msg
     | LogoUploaded (Result Http.Error String)
     | NoOp
     | OrgFinalized (Result Http.Error ())
+    | UpdateContactOutreachDelayYears Int
+    | ToggleOutreachType String Bool
+    | ToggleFailedUnderwritingOutreach Bool
+    | UpdateFailedUnderwritingTiming String
 
 
 type alias SettingsResponse =
@@ -687,6 +709,49 @@ update msg model =
                 Err error ->
                     ( { model | status = Error "Failed to upload logo" }, Cmd.none )
 
+        UpdateContactOutreachDelayYears value ->
+            updateSettings model (\s -> { s | contactOutreachDelayYears = value })
+
+        ToggleOutreachType state active ->
+            updateSettings model
+                (\s ->
+                    { s
+                        | outreachTypes =
+                            { s.outreachTypes
+                                | birthday =
+                                    if state == "birthday" then
+                                        active
+
+                                    else
+                                        s.outreachTypes.birthday
+                                , enrollmentAnniversary =
+                                    if state == "enrollmentAnniversary" then
+                                        active
+
+                                    else
+                                        s.outreachTypes.enrollmentAnniversary
+                                , scheduleIncrease =
+                                    if state == "scheduleIncrease" then
+                                        active
+
+                                    else
+                                        s.outreachTypes.scheduleIncrease
+                                , aep =
+                                    if state == "aep" then
+                                        active
+
+                                    else
+                                        s.outreachTypes.aep
+                                }
+                            }
+                )
+
+        ToggleFailedUnderwritingOutreach value ->
+            updateSettings model (\s -> { s | failedUnderwritingOutreach = { s.failedUnderwritingOutreach | enabled = value } })
+
+        UpdateFailedUnderwritingTiming value ->
+            updateSettings model (\s -> { s | failedUnderwritingOutreach = { s.failedUnderwritingOutreach | timing = value } })
+
 
 updateSettings : Model -> (Settings -> Settings) -> ( Model, Cmd Msg )
 updateSettings model updateFn =
@@ -732,6 +797,9 @@ encodeSettings settings =
         , ( "primaryColor", Encode.string settings.primaryColor )
         , ( "secondaryColor", Encode.string settings.secondaryColor )
         , ( "logo", Maybe.withDefault Encode.null (Maybe.map Encode.string settings.logo) )
+        , ( "contactOutreachDelayYears", Encode.int settings.contactOutreachDelayYears )
+        , ( "outreachTypes", Encode.object (outreachTypesEncoder settings.outreachTypes) )
+        , ( "failedUnderwritingOutreach", Encode.object (failedUnderwritingOutreachEncoder settings.failedUnderwritingOutreach) )
         ]
 
 
@@ -841,6 +909,7 @@ viewSettingsContent maybeSettings canEdit expandedSections planType =
                     ]
                 , viewBrandSettings settings
                 , viewEmailSettings settings
+                , viewOutreachSettings settings
                 , viewExpandableSection "State Licenses"
                     (viewLicensesGrid settings)
                     expandedSections
@@ -971,6 +1040,74 @@ checkbox labelText isChecked onToggle =
             ]
             []
         , span [ class "text-gray-700" ] [ text labelText ]
+        ]
+
+
+viewOutreachSettings : Settings -> Html Msg
+viewOutreachSettings settings =
+    div [ class "bg-white shadow rounded-lg p-6" ]
+        [ h2 [ class "text-lg font-medium mb-4" ] [ text "Contact Outreach Settings" ]
+        , div [ class "space-y-6" ]
+            [ -- Contact Outreach Delay
+              viewFormGroup "Contact Outreach Delay"
+                (div [ class "space-y-2" ]
+                    [ select
+                        [ class "w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-purple-500 focus:border-purple-500"
+                        , onInput (\value -> UpdateContactOutreachDelayYears (String.toInt value |> Maybe.withDefault 1))
+                        ]
+                        [ option [ value "1", selected (settings.contactOutreachDelayYears == 1) ] [ text "1 year" ]
+                        , option [ value "2", selected (settings.contactOutreachDelayYears == 2) ] [ text "2 years" ]
+                        , option [ value "3", selected (settings.contactOutreachDelayYears == 3) ] [ text "3 years" ]
+                        ]
+                    , p [ class "text-sm text-gray-500" ]
+                        [ text "How long to wait before reaching out to contacts" ]
+                    ]
+                )
+            , -- Outreach Types
+              viewFormGroup "Outreach Types"
+                (div [ class "space-y-3" ]
+                    [ checkbox "Birthday outreach"
+                        settings.outreachTypes.birthday
+                        (\checked -> ToggleOutreachType "birthday" checked)
+                    , checkbox "Enrollment anniversary outreach"
+                        settings.outreachTypes.enrollmentAnniversary
+                        (\checked -> ToggleOutreachType "enrollmentAnniversary" checked)
+                    , checkbox "Schedule increase outreach"
+                        settings.outreachTypes.scheduleIncrease
+                        (\checked -> ToggleOutreachType "scheduleIncrease" checked)
+                    , checkbox "Annual enrollment period (AEP) outreach"
+                        settings.outreachTypes.aep
+                        (\checked -> ToggleOutreachType "aep" checked)
+                    , p [ class "text-sm text-gray-500" ]
+                        [ text "At least one outreach type must be selected" ]
+                    ]
+                )
+            , -- Failed Underwriting Outreach
+              viewFormGroup "Failed Underwriting Outreach"
+                (div [ class "space-y-3" ]
+                    [ checkbox "Reduce outreach frequency to once per year for contacts who failed underwriting"
+                        settings.failedUnderwritingOutreach.enabled
+                        ToggleFailedUnderwritingOutreach
+                    , if settings.failedUnderwritingOutreach.enabled then
+                        div [ class "ml-6 space-y-2" ]
+                            [ label [ class "block text-sm font-medium text-gray-700" ]
+                                [ text "When to send annual outreach:" ]
+                            , select
+                                [ class "w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-purple-500 focus:border-purple-500"
+                                , onInput UpdateFailedUnderwritingTiming
+                                ]
+                                [ option [ value "birthday", selected (settings.failedUnderwritingOutreach.timing == "birthday") ] [ text "Birthday" ]
+                                , option [ value "enrollmentAnniversary", selected (settings.failedUnderwritingOutreach.timing == "enrollmentAnniversary") ] [ text "Enrollment Anniversary" ]
+                                , option [ value "aep", selected (settings.failedUnderwritingOutreach.timing == "aep") ] [ text "AEP" ]
+                                , option [ value "scheduleIncrease", selected (settings.failedUnderwritingOutreach.timing == "scheduleIncrease") ] [ text "Schedule Increase" ]
+                                ]
+                            ]
+
+                      else
+                        text ""
+                    ]
+                )
+            ]
         ]
 
 
@@ -1355,6 +1492,9 @@ settingsObjectDecoder =
         |> Pipeline.optional "primaryColor" Decode.string "#6B46C1"
         |> Pipeline.optional "secondaryColor" Decode.string "#9F7AEA"
         |> Pipeline.optional "logo" (Decode.nullable Decode.string) Nothing
+        |> Pipeline.optional "contactOutreachDelayYears" Decode.int 1
+        |> Pipeline.optional "outreachTypes" outreachTypesDecoder { birthday = True, enrollmentAnniversary = True, scheduleIncrease = True, aep = True }
+        |> Pipeline.optional "failedUnderwritingOutreach" failedUnderwritingOutreachDecoder { enabled = False, frequency = "annual", timing = "birthday" }
 
 
 stateCarrierSettingDecoder : Decoder StateCarrierSetting
@@ -1375,6 +1515,40 @@ recommendationsDecoder =
             (Decode.field "active" Decode.bool)
             (Decode.field "targetGI" Decode.bool)
         )
+
+
+outreachTypesDecoder : Decoder OutreachTypes
+outreachTypesDecoder =
+    Decode.map4 OutreachTypes
+        (Decode.field "birthday" Decode.bool)
+        (Decode.field "enrollmentAnniversary" Decode.bool)
+        (Decode.field "scheduleIncrease" Decode.bool)
+        (Decode.field "aep" Decode.bool)
+
+
+failedUnderwritingOutreachDecoder : Decoder FailedUnderwritingOutreach
+failedUnderwritingOutreachDecoder =
+    Decode.map3 FailedUnderwritingOutreach
+        (Decode.field "enabled" Decode.bool)
+        (Decode.field "frequency" Decode.string)
+        (Decode.field "timing" Decode.string)
+
+
+outreachTypesEncoder : OutreachTypes -> List ( String, Encode.Value )
+outreachTypesEncoder types =
+    [ ( "birthday", Encode.bool types.birthday )
+    , ( "enrollmentAnniversary", Encode.bool types.enrollmentAnniversary )
+    , ( "scheduleIncrease", Encode.bool types.scheduleIncrease )
+    , ( "aep", Encode.bool types.aep )
+    ]
+
+
+failedUnderwritingOutreachEncoder : FailedUnderwritingOutreach -> List ( String, Encode.Value )
+failedUnderwritingOutreachEncoder outreach =
+    [ ( "enabled", Encode.bool outreach.enabled )
+    , ( "frequency", Encode.string outreach.frequency )
+    , ( "timing", Encode.string outreach.timing )
+    ]
 
 
 subscriptions : Model -> Sub Msg
