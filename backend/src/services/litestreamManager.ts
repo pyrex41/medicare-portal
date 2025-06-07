@@ -1,6 +1,6 @@
 import { spawn, ChildProcess } from 'child_process';
 import { logger } from '../logger';
-import fs from 'fs/promises';
+import { unlink } from 'fs/promises';
 
 interface ActiveDatabase {
   orgId: string;
@@ -25,7 +25,7 @@ class LitestreamManager {
     process.on('SIGTERM', () => this.shutdown());
     process.on('SIGINT', () => this.shutdown());
     
-    logger.info('[LitestreamManager] Initialized with GCS bucket:', this.GCS_BUCKET_NAME);
+    logger.info(`[LitestreamManager] Initialized with GCS bucket: ${this.GCS_BUCKET_NAME}`);
   }
 
   public static getInstance(): LitestreamManager {
@@ -145,7 +145,9 @@ class LitestreamManager {
 
     logger.info(`[Manager] Running cleanup. Active DBs: ${this.activeDatabases.size}`);
 
-    for (const [orgId, dbInfo] of this.activeDatabases.entries()) {
+    // Convert Map entries to array for iteration compatibility
+    const entries = Array.from(this.activeDatabases.entries());
+    for (const [orgId, dbInfo] of entries) {
       if (now - dbInfo.lastAccessed > this.IDLE_TIMEOUT) {
         logger.info(`[Manager|Org ${orgId}] DB is idle. Shutting down replication and cleaning up cache.`);
 
@@ -156,7 +158,7 @@ class LitestreamManager {
         this.activeDatabases.delete(orgId);
 
         // Delete the local file to save space
-        fs.unlink(dbInfo.localPath).catch(err => {
+        unlink(dbInfo.localPath).catch(err => {
           logger.error(`[Manager|Org ${orgId}] Failed to delete cached file ${dbInfo.localPath}: ${err}`);
         });
       }
@@ -170,7 +172,8 @@ class LitestreamManager {
     clearInterval(this.cleanupInterval);
     
     // Stop all active processes
-    for (const [orgId, dbInfo] of this.activeDatabases.entries()) {
+    const entries = Array.from(this.activeDatabases.entries());
+    for (const [orgId, dbInfo] of entries) {
       logger.info(`[Manager|Org ${orgId}] Stopping replication process`);
       dbInfo.process.kill('SIGINT');
     }

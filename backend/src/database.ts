@@ -18,6 +18,11 @@ import { ZIP_DATA } from './index' // Import ZIP_DATA for state lookup
 // Import the new SQLite database class
 import { SQLiteDatabase } from './sqliteDatabase'
 
+// Import services needed for SQLite bulk import
+import { lockingService } from './services/lockingService'
+import { spawn } from 'child_process'
+import { promisify } from 'util'
+
 // Connection pool to reuse database connections
 interface ConnectionInfo {
   client: any;
@@ -57,7 +62,9 @@ class ConnectionPool {
       let oldestTime = Infinity;
       let oldestUrl = '';
       
-      for (const [connUrl, conn] of this.connections.entries()) {
+      // Convert Map entries to array for iteration compatibility
+      const entries = Array.from(this.connections.entries());
+      for (const [connUrl, conn] of entries) {
         if (conn.lastUsed < oldestTime) {
           oldestTime = conn.lastUsed;
           oldestUrl = connUrl;
@@ -115,7 +122,9 @@ class ConnectionPool {
     const now = Date.now();
     let cleanedCount = 0;
     
-    for (const [url, conn] of this.connections.entries()) {
+    // Convert Map entries to array for iteration compatibility
+    const entries = Array.from(this.connections.entries());
+    for (const [url, conn] of entries) {
       if (now - conn.lastUsed > this.MAX_IDLE_TIME) {
         this.connections.delete(url);
         cleanedCount++;
@@ -894,9 +903,6 @@ END;`
     overwriteExisting: boolean = false,
     agentId?: number | null
   ): Promise<string> {
-    const { lockingService } = await import('./services/lockingService');
-    const { spawn } = await import('child_process');
-    const { promisify } = await import('util');
     const execAsync = promisify(require('child_process').exec);
 
     logger.info(`[BulkImportSQLite|Org ${orgId}] Starting bulk import of ${contacts.length} contacts`);
@@ -1425,7 +1431,6 @@ END;`
       
       // Read CSV file
       const fileContents = await fsPromises.readFile(csvFilePath, 'utf8');
-      const { parse } = await import('csv-parse');
       
       const rows = await new Promise<any[]>((resolve, reject) => {
         const results: any[] = [];

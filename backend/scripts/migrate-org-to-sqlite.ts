@@ -101,7 +101,7 @@ async function migrateOrganization() {
     
     console.log(`✅ Successfully migrated organization "${selectedOrg.name}" to SQLite/GCS`);
     console.log(`   - Database type: sqlite`);
-    console.log(`   - GCS Bucket: ${gcsBucket}`);
+    console.log(`   - GCS Bucket: ${String(gcsBucket)}`);
     console.log(`   - Replica path: litestream-replicas/${orgId}`);
     console.log('\n📝 Next steps:');
     console.log('   1. Test bulk imports with the new architecture');
