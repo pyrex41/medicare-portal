@@ -97,10 +97,10 @@ export class SQLiteDatabase {
     }
   }
 
-  async transaction<T>(callbackOrMode: ((tx: SQLiteDatabase) => Promise<T>) | 'read' | 'write', callback?: (tx: SQLiteDatabase) => Promise<T>): Promise<T> {
+  async transaction<T>(callbackOrMode: ((tx: SQLiteDatabase) => T) | 'read' | 'write', callback?: (tx: SQLiteDatabase) => T): Promise<T> {
     const db = await this.getDb();
     
-    let actualCallback: (tx: SQLiteDatabase) => Promise<T>;
+    let actualCallback: (tx: SQLiteDatabase) => T;
     
     if (typeof callbackOrMode === 'function') {
       actualCallback = callbackOrMode;
@@ -111,9 +111,9 @@ export class SQLiteDatabase {
     }
 
     try {
-      // Create a transaction wrapper
-      const transaction = db.transaction(async () => {
-        return await actualCallback(this);
+      // Create a transaction wrapper - Bun's transaction expects a synchronous function
+      const transaction = db.transaction(() => {
+        return actualCallback(this);
       });
 
       return transaction();
