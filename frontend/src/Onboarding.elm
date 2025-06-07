@@ -651,17 +651,22 @@ update msg model =
                                 { model
                                     | frame = 4
                                     , savingAgents = False
+                                    , showAgentForm = False
                                     , agentSaveError = Nothing
-                                    , paymentStatus = 
+                                    , paymentStatus =
                                         if model.priceId == Nothing then
-                                            Loading  -- Keep loading until priceId is available
+                                            Loading
+                                            -- Keep loading until priceId is available
+
                                         else
                                             ReadyToComplete
                                 }
                         in
                         ( modelAfterSave
                         , if model.priceId == Nothing then
-                            fetchStripeProduct  -- Re-fetch if we don't have it yet
+                            fetchStripeProduct
+                            -- Re-fetch if we don't have it yet
+
                           else
                             Cmd.none
                         )
@@ -835,9 +840,10 @@ update msg model =
             ( { model
                 | publishableKey = Just stripeProduct.publishableKey
                 , priceId = Just stripeProduct.priceId
-                , paymentStatus = 
+                , paymentStatus =
                     if model.frame == 4 && model.paymentStatus == Loading then
                         ReadyToComplete
+
                     else
                         model.paymentStatus
               }
@@ -1587,6 +1593,18 @@ viewPayment model =
                             [ text (apiErrorToString apiError)
                             , br [] []
                             , text "If you're using an ad blocker, please disable it for this site as it may interfere with payment processing."
+                            ]
+                        , div [ class "mt-3 p-2 bg-yellow-50 border border-yellow-200 rounded text-sm" ]
+                            [ p [ class "font-semibold text-yellow-800" ] [ text "Browser Extension Issues:" ]
+                            , p [ class "text-yellow-700 mt-1" ]
+                                [ text "If you see console errors or the payment form isn't working:"
+                                ]
+                            , ul [ class "text-yellow-700 mt-1 ml-4 list-disc" ]
+                                [ li [] [ text "Disable browser extensions (especially ad blockers)" ]
+                                , li [] [ text "Try an incognito/private browsing window" ]
+                                , li [] [ text "Use Chrome, Firefox, or Safari for best compatibility" ]
+                                , li [] [ text "For Opera: disable built-in ad blocker and VPN" ]
+                                ]
                             ]
                         , div [ class "mt-4 flex justify-center" ]
                             [ button

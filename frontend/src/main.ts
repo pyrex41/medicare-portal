@@ -29,6 +29,7 @@ customElements.define('stripe-checkout', class extends HTMLElement {
 
   async connectedCallback() {
     console.log('[Stripe] Element connected to DOM');
+    
     // Check if there's already an active instance
     if ((this.constructor as any).activeInstance) {
       console.log('[Stripe] Cleaning up previous Stripe Checkout instance');
@@ -47,16 +48,27 @@ customElements.define('stripe-checkout', class extends HTMLElement {
     this.style.width = '100%';
     this.style.maxWidth = '800px';
     this.style.minHeight = '500px';
+    this.style.pointerEvents = 'auto';
+    this.style.position = 'relative';
+    this.style.zIndex = '999';
     
     await this.initializeStripe();
     
-    // Wait for required attributes before mounting
-    await this.waitForRequiredAttributes();
-    await this.mountCheckout();
+    // Try to mount immediately if attributes are available, otherwise wait for attributeChangedCallback
+    if (this.hasRequiredAttributes()) {
+      await this.mountCheckout();
+    } else {
+      console.log('[Stripe] Waiting for attributes to be set by Elm...');
+    }
+  }
+
+  hasRequiredAttributes(): boolean {
+    const requiredAttributes = ['price-id']; // Only require price-id
+    return requiredAttributes.every(attr => this.getAttribute(attr));
   }
 
   async waitForRequiredAttributes(maxAttempts = 30) {
-    const requiredAttributes = ['price-id', 'first-name', 'last-name', 'email'];
+    const requiredAttributes = ['price-id']; // Only require price-id
     let attempts = 0;
     
     while (attempts < maxAttempts) {
@@ -72,13 +84,15 @@ customElements.define('stripe-checkout', class extends HTMLElement {
       attempts++;
     }
     
-    console.error('[Stripe] Timeout waiting for required attributes');
-    throw new Error('Required attributes not set in time');
+    console.warn('[Stripe] Timeout waiting for required attributes, proceeding anyway');
+    // Don't throw error, just proceed - let mountCheckout handle missing attributes
   }
 
   attributeChangedCallback(name: string, oldValue: string, newValue: string) {
     console.log(`[Stripe] Attribute changed: ${name} from "${oldValue}" to "${newValue}"`);
-    if (this.isConnected) {
+    
+    if (this.isConnected && this.hasRequiredAttributes()) {
+      console.log('[Stripe] All attributes now available, mounting checkout');
       this.mountCheckout();
     }
   }
@@ -91,12 +105,21 @@ customElements.define('stripe-checkout', class extends HTMLElement {
     if (!this.stripe) {
       console.log('[Stripe] Checking for Stripe.js');
       
+      // Detect Opera and warn about potential issues
+      const isOpera = (navigator.userAgent.indexOf('OPR/') !== -1) || (navigator.userAgent.indexOf('Opera') !== -1);
+      if (isOpera) {
+        console.warn('[Stripe] Opera browser detected. If payment form is not clickable, please:');
+        console.warn('1. Disable Opera\'s built-in ad blocker for this site');
+        console.warn('2. Disable Opera\'s VPN if enabled');
+        console.warn('3. Try in an incognito/private window');
+      }
+      
       // Check if Stripe is already loaded
       if (!window.Stripe) {
         console.log('[Stripe] Loading Stripe.js script');
         
         // Check if script is already in DOM but still loading
-        let stripeScript = document.querySelector('script[src="https://js.stripe.com/v3/"]');
+        let stripeScript = document.querySelector('script[src="https://js.stripe.com/v3/"]') as HTMLScriptElement;
         
         if (!stripeScript) {
           stripeScript = document.createElement('script');
@@ -124,7 +147,7 @@ customElements.define('stripe-checkout', class extends HTMLElement {
     }
   }
 
-  async mountCheckout(attempt = 1, maxAttempts = 3) {
+  async mountCheckout(attempt = 1, maxAttempts = 3): Promise<void> {
     console.log('[Stripe] Mounting checkout form (attempt ' + attempt + ')');
     const priceId = this.getAttribute('price-id');
     // const meteredPriceId = this.getAttribute('metered-price-id');
@@ -140,11 +163,13 @@ customElements.define('stripe-checkout', class extends HTMLElement {
       email: email ? `${email.substring(0, 3)}...${email.split('@')[1] ? '@' + email.split('@')[1] : ''}` : null 
     });
 
-    if (!priceId || !firstName || !lastName || !email) {
-      console.error('[Stripe] Missing required attributes for checkout');
-      this.textContent = 'Error: Missing required attributes';
+    if (!priceId) {
+      console.error('[Stripe] Missing price-id attribute for checkout');
+      this.textContent = 'Error: Missing price information';
       return;
     }
+    
+
 
     try {
       console.log(`[Stripe] Creating checkout session with priceId: ${priceId}, email: ${email}`);
@@ -158,8 +183,8 @@ customElements.define('stripe-checkout', class extends HTMLElement {
         body: JSON.stringify({
           priceId,
           //meteredPriceId,
-          customerEmail: email,
-          customerName: `${firstName} ${lastName}`
+          customerEmail: email || '',
+          customerName: `${firstName || ''} ${lastName || ''}`.trim() || 'Customer'
         }),
       });
 
@@ -190,6 +215,20 @@ customElements.define('stripe-checkout', class extends HTMLElement {
 
       // Create the checkout form
       console.log('[Stripe] Initializing embedded checkout with client secret');
+      
+      // Protect against extension interference
+      this.style.setProperty('isolation', 'isolate', 'important');
+      this.style.setProperty('contain', 'layout style', 'important');
+      
+      // Add error handler for extension interference
+      window.addEventListener('error', (e) => {
+        if (e.filename && e.filename.includes('web-client-content-script.js')) {
+          console.warn('[Stripe] Extension interference detected, but Stripe should still work');
+          e.preventDefault();
+          return false;
+        }
+      }, true);
+      
       this.checkout = await this.stripe.initEmbeddedCheckout({
         clientSecret,
         onComplete: async () => {
@@ -203,7 +242,7 @@ customElements.define('stripe-checkout', class extends HTMLElement {
             
             // Poll for session status to ensure payment is complete
             console.log('[Stripe] Starting to poll for session status');
-            this.pollSessionStatus(sessionId, email, firstName, lastName, clientSecret);
+            this.pollSessionStatus(sessionId, email || '', firstName || '', lastName || '', clientSecret);
             
           } catch (error) {
             console.error('[Stripe] Error handling checkout completion:', error);
@@ -234,8 +273,61 @@ customElements.define('stripe-checkout', class extends HTMLElement {
 
       // Mount the checkout form to the element
       console.log('[Stripe] Mounting checkout to DOM element');
-      await this.checkout.mount(this);
-      console.log('[Stripe] Checkout mounted successfully');
+      
+      try {
+        await this.checkout.mount(this);
+        console.log('[Stripe] Checkout mounted successfully');
+      } catch (mountError: any) {
+        // Handle extension interference during mounting
+        if (mountError.message && mountError.message.includes('MutationObserver')) {
+          console.warn('[Stripe] Extension interference during mount, retrying...');
+          await new Promise(resolve => setTimeout(resolve, 500));
+          await this.checkout.mount(this);
+          console.log('[Stripe] Checkout mounted successfully after retry');
+        } else {
+          throw mountError;
+        }
+      }
+      
+      // Ensure the element is interactive with stronger CSS
+      this.style.pointerEvents = 'auto !important';
+      this.style.position = 'relative';
+      this.style.zIndex = '9999';
+      this.style.isolation = 'isolate';
+      
+      // Create a style element to ensure Stripe elements are clickable (Opera-specific fixes)
+      const stripeStyle = document.createElement('style');
+      stripeStyle.textContent = `
+        stripe-checkout, stripe-checkout * {
+          pointer-events: auto !important;
+          position: relative !important;
+          touch-action: auto !important;
+          user-select: auto !important;
+        }
+        .stripe-checkout-wrapper {
+          pointer-events: auto !important;
+          position: relative !important;
+          z-index: 9999 !important;
+          isolation: isolate !important;
+          touch-action: auto !important;
+        }
+        /* Opera-specific fixes */
+        iframe[src*="js.stripe.com"], iframe[src*="stripe.com"] {
+          pointer-events: auto !important;
+          touch-action: auto !important;
+          position: relative !important;
+          z-index: 10000 !important;
+        }
+      `;
+      document.head.appendChild(stripeStyle);
+      
+      // Ensure all child elements are also clickable
+      const allElements = this.querySelectorAll('*');
+      allElements.forEach((el: Element) => {
+        const htmlEl = el as HTMLElement;
+        htmlEl.style.pointerEvents = 'auto';
+        htmlEl.style.position = 'relative';
+      });
 
     } catch (error) {
       console.error('[Stripe] Error mounting checkout:', error);
