@@ -49,49 +49,77 @@ class LitestreamManager {
     logger.info(`[Manager|Org ${orgId}] DB is cold. Activating now...`);
 
     // 1. Restore the database from GCS
+    let isNewOrganization = false;
     try {
       await this.runLitestreamCommand(`restore -o ${localPath} gcs://${this.GCS_BUCKET_NAME}/litestream-replicas/${orgId}`);
-      logger.info(`[Manager|Org ${orgId}] Restore complete.`);
+      logger.info(`[Manager|Org ${orgId}] Restore complete from existing replica.`);
     } catch (error: any) {
       if (error.stderr && error.stderr.includes("no snapshots found")) {
-        logger.warn(`[Manager|Org ${orgId}] No replica found in GCS. A new empty DB will be created at ${localPath}`);
-        // Litestream restore fails if no replica exists. The file won't be created.
-        // We just need to let the Database constructor handle creating the empty file.
+        logger.info(`[Manager|Org ${orgId}] No replica found in GCS - this is a new organization. Empty DB will be created.`);
+        isNewOrganization = true;
+        // This is expected for new organizations - continue with empty database
+      } else if (error.message.includes("Litestream binary not found")) {
+        logger.error(`[Manager|Org ${orgId}] Litestream binary not available: ${error.message}`);
+        throw new Error(`Database replication unavailable: Litestream not installed. Please contact support.`);
+      } else if (error.stderr && (error.stderr.includes("AccessDenied") || error.stderr.includes("Forbidden"))) {
+        logger.error(`[Manager|Org ${orgId}] GCS access denied: ${error.stderr}`);
+        throw new Error(`Database access error: Unable to connect to storage. Please contact support.`);
+      } else if (error.stderr && error.stderr.includes("timeout")) {
+        logger.error(`[Manager|Org ${orgId}] Network timeout during restore: ${error.stderr}`);
+        throw new Error(`Database restore timeout: Please try again in a moment.`);
       } else {
-        logger.error(`[Manager|Org ${orgId}] Restore failed: ${error.message}`);
-        throw error; // Rethrow other errors
+        logger.error(`[Manager|Org ${orgId}] Unexpected restore failure: ${error.message}`);
+        logger.error(`[Manager|Org ${orgId}] Error details: ${error.stderr || 'No stderr available'}`);
+        throw new Error(`Database restore failed: ${error.message}. Please contact support if this persists.`);
       }
     }
 
     // 2. Start a dedicated 'litestream replicate' process for this DB
-    const litestreamProcess = spawn('litestream', [
-      'replicate',
-      '-config', '/workspace/litestream-single-db.yml' // Template config
-    ], {
-      env: {
-        ...process.env,
-        // Pass the orgId to the config file via environment variable
-        ORG_ID: orgId,
-        GCS_BUCKET_NAME: this.GCS_BUCKET_NAME
-      }
-    });
+    let litestreamProcess: ChildProcess;
+    try {
+      litestreamProcess = spawn('litestream', [
+        'replicate',
+        '-config', '/workspace/litestream-single-db.yml' // Template config
+      ], {
+        env: {
+          ...process.env,
+          // Pass the orgId to the config file via environment variable
+          ORG_ID: orgId,
+          GCS_BUCKET_NAME: this.GCS_BUCKET_NAME
+        }
+      });
+
+      // Handle process spawn errors
+      litestreamProcess.on('error', (error: Error) => {
+        logger.error(`[Manager|Org ${orgId}] Failed to start replication process: ${error.message}`);
+        this.activeDatabases.delete(orgId);
+        if ((error as any).code === 'ENOENT') {
+          throw new Error(`Litestream binary not found during replication start`);
+        }
+      });
+
+    } catch (error: any) {
+      logger.error(`[Manager|Org ${orgId}] Error starting litestream process: ${error.message}`);
+      throw new Error(`Failed to start database replication: ${error.message}`);
+    }
 
     litestreamProcess.stdout?.on('data', (data: Buffer) => {
       logger.info(`[Litestream|Org ${orgId}] ${data.toString().trim()}`);
     });
     
     litestreamProcess.stderr?.on('data', (data: Buffer) => {
-      logger.error(`[Litestream|Org ${orgId}] ${data.toString().trim()}`);
+      const message = data.toString().trim();
+      // Don't log as error for initial replica creation - this is expected for new orgs
+      if (isNewOrganization && message.includes('creating replica')) {
+        logger.info(`[Litestream|Org ${orgId}] ${message}`);
+      } else {
+        logger.error(`[Litestream|Org ${orgId}] ${message}`);
+      }
     });
 
     litestreamProcess.on('exit', (code: number | null, signal: NodeJS.Signals | null) => {
       logger.info(`[Litestream|Org ${orgId}] Process exited with code ${code} and signal ${signal}`);
       // Remove from active databases if the process exits
-      this.activeDatabases.delete(orgId);
-    });
-
-    litestreamProcess.on('error', (error: Error) => {
-      logger.error(`[Litestream|Org ${orgId}] Process error: ${error.message}`);
       this.activeDatabases.delete(orgId);
     });
 
@@ -103,7 +131,11 @@ class LitestreamManager {
       lastAccessed: Date.now()
     });
 
-    logger.info(`[Manager|Org ${orgId}] Replication process started with PID: ${litestreamProcess.pid}. Total active DBs: ${this.activeDatabases.size}`);
+    if (isNewOrganization) {
+      logger.info(`[Manager|Org ${orgId}] New organization setup complete. Replication process started with PID: ${litestreamProcess.pid}. Will create initial replica after first database writes.`);
+    } else {
+      logger.info(`[Manager|Org ${orgId}] Existing organization replication restored. Process PID: ${litestreamProcess.pid}. Total active DBs: ${this.activeDatabases.size}`);
+    }
 
     return localPath;
   }
@@ -130,12 +162,18 @@ class LitestreamManager {
         } else {
           const error = new Error(`Litestream command "${command}" failed with code ${code}: ${stderr}`);
           (error as any).stderr = stderr;
+          (error as any).exitCode = code;
           reject(error);
         }
       });
 
+      // Handle process spawn errors (e.g., binary not found)
       childProcess.on('error', (error: Error) => {
-        reject(new Error(`Failed to spawn litestream: ${error.message}`));
+        if ((error as any).code === 'ENOENT') {
+          reject(new Error(`Litestream binary not found. Please ensure litestream is installed and in your PATH. Original error: ${error.message}`));
+        } else {
+          reject(new Error(`Failed to spawn litestream process: ${error.message}`));
+        }
       });
     });
   }

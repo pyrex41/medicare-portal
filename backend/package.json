@@ -11,6 +11,7 @@
     "generate-data": "bun run scripts/generate-test-data.ts",
     "fix-contacts": "bun run scripts/apply-contact-migration.ts",
     "migrate-to-sqlite": "node scripts/migrate-org-to-sqlite.ts",
+    "test-litestream": "node scripts/test-litestream-setup.js",
     "start": "NODE_ENV=production bun run --no-env-file src/index.ts"
   },
   "dependencies": {
