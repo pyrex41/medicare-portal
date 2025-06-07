@@ -197,6 +197,7 @@ type alias Model =
     , showStatusBanner : Bool
     , showPaymentStatus : Bool
     , demoModeBanner : DemoModeBanner.Model
+    , showLoadingMessage : Bool
     }
 
 
@@ -286,6 +287,7 @@ type Msg
     | SetSessionResponse (Result Http.Error SetSessionResponseAlias)
     | LogTrackingClickResult (Result Http.Error ())
     | DemoModeBannerMsg DemoModeBanner.Msg
+    | ShowLoadingMessage
 
 
 type alias Flags =
@@ -395,6 +397,7 @@ init flags url key =
             , showStatusBanner = True
             , showPaymentStatus = False
             , demoModeBanner = demoModeBannerModel
+            , showLoadingMessage = False
             }
 
         checkSession =
@@ -406,6 +409,10 @@ init flags url key =
         -- Use a very short timer for the initial direct page update for public routes
         directPageUpdate =
             Task.perform (\_ -> DirectPageUpdate) (Process.sleep 50)
+
+        -- Timer to show loading message after 5 seconds
+        loadingMessageTimer =
+            Task.perform (\_ -> ShowLoadingMessage) (Process.sleep 5000)
 
         currentPath =
             url.path
@@ -455,7 +462,7 @@ init flags url key =
 
     else
         -- For protected routes, wait for session verification
-        ( model, Cmd.batch (cmds ++ [ checkSession ]) )
+        ( model, Cmd.batch (cmds ++ [ checkSession, loadingMessageTimer ]) )
 
 
 getQueryDict : Maybe String -> Dict String String
@@ -725,7 +732,7 @@ update msg model =
             )
 
         UrlChanged url ->
-            ( { model | url = url }
+            ( { model | url = url, showLoadingMessage = False }
             , Cmd.none
             )
                 |> updatePage url
@@ -888,6 +895,7 @@ update msg model =
                                             }
                                     , isSetup = isInSetup
                                     , page = LoadingPage -- Force to loading page to prevent UI flicker during redirection
+                                    , showLoadingMessage = False
                                 }
                         in
                         ( newModel
@@ -953,6 +961,7 @@ update msg model =
                                     , currentUser = Just user
                                     , isSetup = isInSetup
                                     , demoModeBanner = demoModeBannerModel
+                                    , showLoadingMessage = False
                                 }
                         in
                         -- Just update the page, which will handle fetching user data if needed
@@ -1150,6 +1159,7 @@ update msg model =
                                     { model
                                         | currentUser = currentUser
                                         , demoModeBanner = demoModeBannerModel
+                                        , showLoadingMessage = False
                                     }
 
                                 -- Fetch account status after user is loaded
@@ -1389,6 +1399,9 @@ update msg model =
             , Cmd.map DemoModeBannerMsg bannerCmd
             )
 
+        ShowLoadingMessage ->
+            ( { model | showLoadingMessage = True }, Cmd.none )
+
 
 view : Model -> Browser.Document Msg
 view model =
@@ -1502,7 +1515,7 @@ view model =
 
                 LoadingPage ->
                     { title = "Loading..."
-                    , body = [ viewLoading ]
+                    , body = [ viewLoading model ]
                     }
 
                 HomePage homeModel ->
@@ -2107,10 +2120,16 @@ viewNotFound =
     }
 
 
-viewLoading : Html msg
-viewLoading =
-    div [ class "min-h-screen bg-gray-50 flex items-center justify-center" ]
+viewLoading : Model -> Html msg
+viewLoading model =
+    div [ class "min-h-screen bg-gray-50 flex flex-col items-center justify-center" ]
         [ div [ class "animate-spin rounded-full h-8 w-8 border-2 border-purple-500 border-t-transparent" ] []
+        , if model.showLoadingMessage then
+            p [ class "mt-4 text-gray-600 text-sm" ]
+                [ text "Click refresh if the page doesn't load" ]
+
+          else
+            text ""
         ]
 
 

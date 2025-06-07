@@ -884,16 +884,45 @@ update msg model =
                         ( { model | newAgentEmailStatus = NotChecked }, Cmd.none )
 
         UpdateContactOutreachDelayYears years ->
-            ( model, Cmd.none )
+            ( { model | contactOutreachDelayYears = years }, Cmd.none )
 
         ToggleOutreachType typeName isActive ->
-            ( model, Cmd.none )
+            let
+                newOutreachTypes =
+                    model.outreachTypes
+
+                updatedOutreachTypes =
+                    case typeName of
+                        "birthday" ->
+                            { newOutreachTypes | birthday = isActive }
+
+                        "enrollmentAnniversary" ->
+                            { newOutreachTypes | enrollmentAnniversary = isActive }
+
+                        "scheduleIncrease" ->
+                            { newOutreachTypes | scheduleIncrease = isActive }
+
+                        "aep" ->
+                            { newOutreachTypes | aep = isActive }
+
+                        _ ->
+                            newOutreachTypes
+            in
+            ( { model | outreachTypes = updatedOutreachTypes }, Cmd.none )
 
         ToggleFailedUnderwritingOutreach isActive ->
-            ( model, Cmd.none )
+            let
+                newFailedUnderwriting =
+                    model.failedUnderwritingOutreach
+            in
+            ( { model | failedUnderwritingOutreach = { newFailedUnderwriting | enabled = isActive } }, Cmd.none )
 
         UpdateFailedUnderwritingTiming timing ->
-            ( model, Cmd.none )
+            let
+                newFailedUnderwriting =
+                    model.failedUnderwritingOutreach
+            in
+            ( { model | failedUnderwritingOutreach = { newFailedUnderwriting | timing = timing } }, Cmd.none )
 
 
 
