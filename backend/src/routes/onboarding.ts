@@ -840,17 +840,17 @@ export function createOnboardingRoutes() {
           smartSendEnabled: useSmartSend !== undefined ? useSmartSend : ((settings as any)['smartSendEnabled'] || false),
           stateLicenses: stateLicenses || [],
           stateCarrierSettings: stateCarrierSettings || [],
-          contactOutreachDelayYears: contactOutreachDelayYears || 0,
+          contactOutreachDelayYears: contactOutreachDelayYears || 1,
           outreachTypes: outreachTypes || {
-            birthday: false,
-            enrollmentAnniversary: false,
-            scheduleIncrease: false,
-            aep: false
+            birthday: true,
+            enrollmentAnniversary: true,
+            scheduleIncrease: true,
+            aep: true
           },
           failedUnderwritingOutreach: failedUnderwritingOutreach || {
             enabled: false,
-            frequency: '',
-            timing: ''
+            frequency: 'annual',
+            timing: 'birthday'
           }
         };
         

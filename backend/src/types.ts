@@ -69,6 +69,19 @@ export interface BaseSettings {
   redirectUrl?: string;
   signature?: string;
   forceOrgSenderDetails?: boolean;
+  // New outreach settings
+  contactOutreachDelayYears?: number;
+  outreachTypes?: {
+    birthday: boolean;
+    enrollmentAnniversary: boolean;
+    scheduleIncrease: boolean;
+    aep: boolean;
+  };
+  failedUnderwritingOutreach?: {
+    enabled: boolean;
+    frequency: string;
+    timing: string;
+  };
 }
 
 export interface UserContext {

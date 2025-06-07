@@ -39,7 +39,20 @@ const defaultSettings: BaseSettings = {
     logo: null,
     orgSignature: false,
     signature: "",
-    forceOrgSenderDetails: true
+    forceOrgSenderDetails: true,
+    // New outreach settings defaults
+    contactOutreachDelayYears: 1,
+    outreachTypes: {
+        birthday: true,
+        enrollmentAnniversary: true,
+        scheduleIncrease: true,
+        aep: true
+    },
+    failedUnderwritingOutreach: {
+        enabled: false,
+        frequency: "annual",
+        timing: "birthday"
+    }
 };
 
 // Helper function to generate default state/carrier settings
@@ -198,16 +211,16 @@ export const settingsRoutes = new Elysia()
             logger.info(`Organization settings body: ${JSON.stringify(typedBody, null, 2)}`);
             
             // Extract logo from settings if it exists
-            const settingsObj = typedBody.settings || typedBody;
-            const name = 'name' in settingsObj ? settingsObj.name : null;
-            const logo = 'logo' in settingsObj ? settingsObj.logo : null;
-            const orgSignature = 'orgSignature' in settingsObj ? settingsObj.orgSignature : false;
-            const phone = 'phone' in settingsObj ? settingsObj.phone : null;
-            const redirectUrl = 'redirectUrl' in settingsObj ? settingsObj.redirectUrl : null;
-            const signature = 'signature' in settingsObj ? settingsObj.signature : null;
+            const settingsObj = typedBody.settings || (typedBody as any);
+            const name = 'name' in settingsObj ? (settingsObj as any).name : null;
+            const logo = 'logo' in settingsObj ? (settingsObj as any).logo : null;
+            const orgSignature = 'orgSignature' in settingsObj ? (settingsObj as any).orgSignature : false;
+            const phone = 'phone' in settingsObj ? (settingsObj as any).phone : null;
+            const redirectUrl = 'redirectUrl' in settingsObj ? (settingsObj as any).redirectUrl : null;
+            const signature = 'signature' in settingsObj ? (settingsObj as any).signature : null;
             
             // For backwards compatibility, sync forceOrgSenderDetails with orgSignature
-            const forceOrgSenderDetails = 'forceOrgSenderDetails' in settingsObj ? settingsObj.forceOrgSenderDetails : orgSignature;
+            const forceOrgSenderDetails = 'forceOrgSenderDetails' in settingsObj ? (settingsObj as any).forceOrgSenderDetails : orgSignature;
             
             const settingsWithoutLogo = { ...settingsObj };
             if ('logo' in settingsWithoutLogo) {
@@ -373,6 +386,7 @@ export const settingsRoutes = new Elysia()
       const carriers = await db.fetchAll(
         `SELECT name
          FROM carriers
+         WHERE name NOT IN ('Ace Chubb', 'Allstate')
          ORDER BY name`
       );
 
