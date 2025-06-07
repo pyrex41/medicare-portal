@@ -21,18 +21,7 @@ import Task
 
 
 
--- Constants
-
-
-allCarriers : List String
-allCarriers =
-    [ "Aetna"
-    , "Humana"
-    , "UnitedHealthcare"
-    , "Cigna"
-    , "Aflac"
-    , "Mutual of Omaha"
-    ]
+-- Constants - removed hardcoded carriers, will fetch from backend
 
 
 type Carrier
@@ -78,6 +67,25 @@ type alias CurrentUser =
 
 type alias DeactivatedPair =
     { carrier : String
+    }
+
+
+
+-- Add new outreach settings types from Onboarding.elm
+
+
+type alias OutreachTypes =
+    { birthday : Bool
+    , enrollmentAnniversary : Bool
+    , scheduleIncrease : Bool
+    , aep : Bool
+    }
+
+
+type alias FailedUnderwritingOutreach =
+    { enabled : Bool
+    , frequency : String -- "annual" for now
+    , timing : String -- "birthday", "enrollmentAnniversary", "aep", "scheduleIncrease"
     }
 
 
@@ -127,6 +135,11 @@ type alias Settings =
     , redirectUrl : String
     , signature : String
     , forceOrgSenderDetails : Bool
+
+    -- Add new outreach settings from Onboarding.elm
+    , contactOutreachDelayYears : Int
+    , outreachTypes : OutreachTypes
+    , failedUnderwritingOutreach : FailedUnderwritingOutreach
     }
 
 
@@ -179,6 +192,11 @@ type Msg
     | DragLeave
     | GotFiles File (List File)
     | UpdateForceOrgSenderDetails Bool
+      -- New outreach settings messages
+    | UpdateContactOutreachDelayYears Int
+    | ToggleOutreachType String Bool
+    | ToggleFailedUnderwritingOutreach Bool
+    | UpdateFailedUnderwritingTiming String
 
 
 type alias SettingsResponse =
@@ -421,11 +439,7 @@ update msg model =
                 Just settings ->
                     let
                         carriersToUse =
-                            if List.isEmpty model.loadedCarriers then
-                                allCarriers
-
-                            else
-                                model.loadedCarriers
+                            model.loadedCarriers
 
                         newSettings =
                             { settings
@@ -653,6 +667,57 @@ update msg model =
         UpdateForceOrgSenderDetails value ->
             updateSettings model (\s -> { s | forceOrgSenderDetails = value })
 
+        -- New outreach settings message handlers
+        UpdateContactOutreachDelayYears years ->
+            updateSettings model (\s -> { s | contactOutreachDelayYears = years })
+
+        ToggleOutreachType typeName isActive ->
+            updateSettings model
+                (\s ->
+                    let
+                        newOutreachTypes =
+                            s.outreachTypes
+                    in
+                    { s
+                        | outreachTypes =
+                            case typeName of
+                                "birthday" ->
+                                    { newOutreachTypes | birthday = isActive }
+
+                                "enrollmentAnniversary" ->
+                                    { newOutreachTypes | enrollmentAnniversary = isActive }
+
+                                "scheduleIncrease" ->
+                                    { newOutreachTypes | scheduleIncrease = isActive }
+
+                                "aep" ->
+                                    { newOutreachTypes | aep = isActive }
+
+                                _ ->
+                                    newOutreachTypes
+                    }
+                )
+
+        ToggleFailedUnderwritingOutreach isActive ->
+            updateSettings model
+                (\s ->
+                    let
+                        newFailedUnderwriting =
+                            s.failedUnderwritingOutreach
+                    in
+                    { s | failedUnderwritingOutreach = { newFailedUnderwriting | enabled = isActive } }
+                )
+
+        UpdateFailedUnderwritingTiming timing ->
+            updateSettings model
+                (\s ->
+                    let
+                        newFailedUnderwriting =
+                            s.failedUnderwritingOutreach
+                    in
+                    { s | failedUnderwritingOutreach = { newFailedUnderwriting | timing = timing } }
+                )
+
 
 updateSettings : Model -> (Settings -> Settings) -> ( Model, Cmd Msg )
 updateSettings model updateFn =
@@ -709,6 +774,9 @@ encodeSettings settings =
         , ( "redirectUrl", Encode.string settings.redirectUrl )
         , ( "signature", Encode.string settings.signature )
         , ( "forceOrgSenderDetails", Encode.bool settings.forceOrgSenderDetails )
+        , ( "contactOutreachDelayYears", Encode.int settings.contactOutreachDelayYears )
+        , ( "outreachTypes", Encode.object [ ( "birthday", Encode.bool settings.outreachTypes.birthday ), ( "enrollmentAnniversary", Encode.bool settings.outreachTypes.enrollmentAnniversary ), ( "scheduleIncrease", Encode.bool settings.outreachTypes.scheduleIncrease ), ( "aep", Encode.bool settings.outreachTypes.aep ) ] )
+        , ( "failedUnderwritingOutreach", Encode.object [ ( "enabled", Encode.bool settings.failedUnderwritingOutreach.enabled ), ( "frequency", Encode.string settings.failedUnderwritingOutreach.frequency ), ( "timing", Encode.string settings.failedUnderwritingOutreach.timing ) ] )
         ]
 
 
@@ -797,6 +865,7 @@ viewSettings model =
                 div [ class "space-y-12" ]
                     [ viewOrganizationDetails settings model
                     , viewCarriersOffered settings model
+                    , viewOutreachSettings settings model
                     , viewSelfOnboardingLink model
                     , viewDefaultSenderSettings settings
                     ]
@@ -1061,7 +1130,7 @@ viewDefaultSenderSettings settings =
                             []
                         ]
                     , div [ class "ml-3" ]
-                        [ label [ class "font-medium text-gray-900" ] [ text "Agent Details" ]
+                        [ label [ class "font-medium text-gray-900" ] [ text "Agent Choice" ]
                         , p [ class "text-sm text-gray-500 mt-1" ]
                             [ text "When this option is selected the Agent will have the choice to use their own name or the organization's name for the signature, phone number, and scheduling link (if applicable)." ]
                         , div [ class "mt-4 text-xs text-gray-400" ]
@@ -1119,11 +1188,7 @@ viewCarriersOffered : Settings -> Model -> Html Msg
 viewCarriersOffered settings model =
     let
         carriersToUse =
-            if List.isEmpty model.loadedCarriers then
-                allCarriers
-
-            else
-                model.loadedCarriers
+            model.loadedCarriers
     in
     div [ class "bg-white shadow rounded-lg p-6" ]
         [ h2 [ class "text-lg font-medium text-gray-900 mb-6" ] [ text "Carriers Offered" ]
@@ -1162,6 +1227,68 @@ viewCarriersOffered settings model =
         ]
 
 
+viewOutreachSettings : Settings -> Model -> Html Msg
+viewOutreachSettings settings model =
+    div [ class "bg-white shadow rounded-lg p-6" ]
+        [ h2 [ class "text-lg font-medium text-gray-900 mb-6" ] [ text "Contact Outreach Settings" ]
+        , p [ class "text-sm text-gray-500 mb-6" ]
+            [ text "Configure how and when to reach out to your contacts." ]
+        , div [ class "space-y-6" ]
+            [ -- Contact Outreach Delay
+              div [ class "space-y-2" ]
+                [ label [ class "block text-sm font-medium text-gray-700" ]
+                    [ text "Contact Outreach Delay" ]
+                , select
+                    [ class "w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                    , onInput (\value -> UpdateContactOutreachDelayYears (String.toInt value |> Maybe.withDefault 1))
+                    ]
+                    [ option [ value "1", selected (settings.contactOutreachDelayYears == 1) ] [ text "1 year" ]
+                    , option [ value "2", selected (settings.contactOutreachDelayYears == 2) ] [ text "2 years" ]
+                    , option [ value "3", selected (settings.contactOutreachDelayYears == 3) ] [ text "3 years" ]
+                    ]
+                , p [ class "text-sm text-gray-500" ]
+                    [ text "How long to wait before reaching out to contacts" ]
+                ]
+            , -- Outreach Types
+              div [ class "space-y-3" ]
+                [ label [ class "block text-sm font-medium text-gray-700" ]
+                    [ text "Outreach Types" ]
+                , div [ class "space-y-2" ]
+                    [ checkbox "Birthday outreach" settings.outreachTypes.birthday (\checked -> ToggleOutreachType "birthday" checked)
+                    , checkbox "Enrollment anniversary outreach" settings.outreachTypes.enrollmentAnniversary (\checked -> ToggleOutreachType "enrollmentAnniversary" checked)
+                    , checkbox "Schedule increase outreach" settings.outreachTypes.scheduleIncrease (\checked -> ToggleOutreachType "scheduleIncrease" checked)
+                    , checkbox "Annual enrollment period (AEP) outreach" settings.outreachTypes.aep (\checked -> ToggleOutreachType "aep" checked)
+                    ]
+                , p [ class "text-sm text-gray-500" ]
+                    [ text "At least one outreach type must be selected" ]
+                ]
+            , -- Failed Underwriting Outreach
+              div [ class "space-y-3" ]
+                [ checkbox "Reduce outreach frequency to once per year for contacts who failed underwriting"
+                    settings.failedUnderwritingOutreach.enabled
+                    ToggleFailedUnderwritingOutreach
+                , if settings.failedUnderwritingOutreach.enabled then
+                    div [ class "ml-6 space-y-2" ]
+                        [ label [ class "block text-sm font-medium text-gray-700" ]
+                            [ text "When to send annual outreach:" ]
+                        , select
+                            [ class "w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                            , onInput UpdateFailedUnderwritingTiming
+                            ]
+                            [ option [ value "birthday", selected (settings.failedUnderwritingOutreach.timing == "birthday") ] [ text "Birthday" ]
+                            , option [ value "enrollmentAnniversary", selected (settings.failedUnderwritingOutreach.timing == "enrollmentAnniversary") ] [ text "Enrollment Anniversary" ]
+                            , option [ value "aep", selected (settings.failedUnderwritingOutreach.timing == "aep") ] [ text "AEP" ]
+                            , option [ value "scheduleIncrease", selected (settings.failedUnderwritingOutreach.timing == "scheduleIncrease") ] [ text "Schedule Increase" ]
+                            ]
+                        ]
+
+                  else
+                    text ""
+                ]
+            ]
+        ]
+
+
 viewCarriersGrid : Settings -> Model -> Html Msg
 viewCarriersGrid settings model =
     viewCarriersOffered settings model
@@ -1186,11 +1313,7 @@ viewStateCarrierGrid : Settings -> Model -> Html Msg
 viewStateCarrierGrid settings model =
     let
         carriersToUse =
-            if List.isEmpty model.loadedCarriers then
-                allCarriers
-
-            else
-                model.loadedCarriers
+            model.loadedCarriers
     in
     div []
         [ div [ class "mb-6" ]
@@ -1330,6 +1453,26 @@ settingsObjectDecoder =
         |> Pipeline.optional "redirectUrl" Decode.string ""
         |> Pipeline.optional "signature" Decode.string ""
         |> Pipeline.optional "forceOrgSenderDetails" Decode.bool True
+        |> Pipeline.optional "contactOutreachDelayYears" Decode.int 0
+        |> Pipeline.optional "outreachTypes" outreachTypesDecoder (OutreachTypes False False False False)
+        |> Pipeline.optional "failedUnderwritingOutreach" failedUnderwritingOutreachDecoder (FailedUnderwritingOutreach False "" "")
+
+
+outreachTypesDecoder : Decoder OutreachTypes
+outreachTypesDecoder =
+    Decode.map4 OutreachTypes
+        (Decode.field "birthday" Decode.bool)
+        (Decode.field "enrollmentAnniversary" Decode.bool)
+        (Decode.field "scheduleIncrease" Decode.bool)
+        (Decode.field "aep" Decode.bool)
+
+
+failedUnderwritingOutreachDecoder : Decoder FailedUnderwritingOutreach
+failedUnderwritingOutreachDecoder =
+    Decode.map3 FailedUnderwritingOutreach
+        (Decode.field "enabled" Decode.bool)
+        (Decode.field "frequency" Decode.string)
+        (Decode.field "timing" Decode.string)
 
 
 stateCarrierSettingDecoder : Decoder StateCarrierSetting

@@ -87,9 +87,7 @@ allCarriers =
     , "UnitedHealthcare"
     , "Cigna"
     , "Aflac"
-    , "Allstate"
     , "Mutual of Omaha"
-    , "Ace Chubb"
     ]
 
 

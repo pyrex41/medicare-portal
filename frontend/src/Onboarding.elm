@@ -1600,8 +1600,9 @@ viewPayment model =
                                 [ text "If you see console errors or the payment form isn't working:"
                                 ]
                             , ul [ class "text-yellow-700 mt-1 ml-4 list-disc" ]
-                                [ li [] [ text "Disable browser extensions (especially ad blockers)" ]
+                                [ li [] [ text "Disable LastPass, ad blockers, and other extensions" ]
                                 , li [] [ text "Try an incognito/private browsing window" ]
+                                , li [] [ text "If you see '404 setup_intent' errors, refresh the page" ]
                                 , li [] [ text "Use Chrome, Firefox, or Safari for best compatibility" ]
                                 , li [] [ text "For Opera: disable built-in ad blocker and VPN" ]
                                 ]
