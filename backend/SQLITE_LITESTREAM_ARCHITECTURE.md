@@ -451,3 +451,85 @@ gsutil ls -la gs://bucket/litestream-replicas/test-org-123/snapshots/
 This flow ensures that new organizations are seamlessly onboarded with zero manual intervention while maintaining the same replication guarantees as existing organizations.
 
 ## Bulk Import Enhancements
+
+## Strategic SDK Usage: Hybrid Approach
+
+### Why Both SDKs?
+
+You're absolutely correct that **Replit Object Storage IS Google Cloud Storage** with managed authentication. This insight leads to an optimal **hybrid approach** that leverages the strengths of both SDKs:
+
+#### Replit SDK (`@replit/object-storage`)
+- ✅ **Zero-config authentication** - Works automatically in Replit environment  
+- ✅ **Simplified operations** - Great for listing, checking existence, basic file ops
+- ✅ **Same underlying storage** - Accesses the exact same GCS bucket
+- ❌ **Limited advanced features** - No `ifGenerationMatch` for atomic operations
+- ❌ **Replit-only** - External scheduler can't use this SDK
+
+#### GCS SDK (`@google-cloud/storage`)
+- ✅ **Full feature set** - Supports `ifGenerationMatch` for atomic locking
+- ✅ **Universal compatibility** - Works everywhere (Replit, Fly.io, local, etc.)
+- ✅ **Explicit control** - Fine-grained control over bucket, auth, and operations
+- ❌ **More configuration** - Requires explicit credentials and setup
+
+### Optimal Architecture
+
+```typescript
+// === ATOMIC LOCKING (GCS SDK) ===
+// Use GCS SDK for operations requiring atomic guarantees
+await lockFile.save(lockContent, { ifGenerationMatch: 0 }); // Atomic create-if-not-exists
+
+// === REPLICA MANAGEMENT (Replit SDK) ===  
+// Use Replit SDK for simpler operations with managed auth
+const replicas = await replitStorage.listOrganizations();
+const hasReplica = await replitStorage.hasReplica(orgId);
+
+// === LITESTREAM REPLICATION (GCS) ===
+// Litestream uses standard GCS for reliable, tested replication
+litestream replicate -config litestream-gcs.yml
+```
+
+### Implementation
+
+**1. Enhanced Locking Service** (GCS SDK for atomic operations)
+```typescript
+// src/services/lockingService.ts - Uses GCS SDK
+await lockFile.save(lockContent, { ifGenerationMatch: 0 });
+```
+
+**2. Replica Management Service** (Replit SDK for convenience)
+```typescript
+// src/services/replitStorageManager.ts - Uses Replit SDK  
+const replicas = await this.client.list({ prefix: 'litestream-replicas/' });
+```
+
+**3. Litestream Configuration** (Standard GCS)
+```yaml
+# litestream-single-db.yml
+replicas:
+  - type: gcs
+    bucket: ${GCS_BUCKET_NAME}
+    path: litestream-replicas/${ORG_ID}
+```
+
+### Benefits of This Approach
+
+1. **Unified Storage**: All components access the same GCS bucket
+2. **Managed Auth**: Replit SDK handles auth automatically on Replit  
+3. **Atomic Safety**: GCS SDK provides atomic locking for critical operations
+4. **Portability**: External components (scheduler) use standard GCS SDK
+5. **Best of Both**: Simplified ops where possible, full control where needed
+
+### Environment Variables
+
+```bash
+# For Replit SDK (auto-configured)
+# No additional config needed in Replit environment
+
+# For GCS SDK and Litestream
+GCS_BUCKET_NAME=your-bucket-name
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
+```
+
+This hybrid approach acknowledges that Replit Object Storage IS GCS while strategically using each SDK where it provides the most value.
+
+## Database Operations

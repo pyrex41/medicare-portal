@@ -1,9 +1,10 @@
 import { Client } from '@replit/object-storage';
-import { logger } from '../utils/logger.js';
+import { logger } from '../logger';
 
 /**
- * Unified Replit Object Storage manager for both locking and replica operations
- * Provides a clean interface over the Replit Object Storage SDK
+ * Unified Replit Object Storage manager for replica management operations
+ * Uses the Replit SDK for managed auth and simplified operations
+ * Note: For atomic locking operations, we still use the GCS SDK in lockingService.ts
  */
 export class ReplitStorageManager {
   private client: Client;
@@ -18,76 +19,6 @@ export class ReplitStorageManager {
       ReplitStorageManager.instance = new ReplitStorageManager();
     }
     return ReplitStorageManager.instance;
-  }
-
-  // === LOCKING OPERATIONS ===
-
-  /**
-   * Acquire a lock for exclusive operations
-   */
-  async acquireLock(lockKey: string, ttlMs: number = 30000): Promise<boolean> {
-    const lockPath = `locks/${lockKey}`;
-    
-    try {
-      // Check if lock already exists
-      const existsResult = await this.client.exists(lockPath);
-      if (!existsResult.ok) {
-        logger.error(`Failed to check lock existence: ${existsResult.error}`);
-        return false;
-      }
-
-      if (existsResult.value) {
-        // Lock exists, check if it's expired
-        const lockDataResult = await this.client.downloadAsText(lockPath);
-        if (lockDataResult.ok) {
-          const lockData = JSON.parse(lockDataResult.value);
-          if (Date.now() < lockData.expiresAt) {
-            logger.info(`Lock ${lockKey} is still active`);
-            return false; // Lock is still valid
-          }
-        }
-      }
-
-      // Create/update lock
-      const lockData = {
-        acquiredAt: Date.now(),
-        expiresAt: Date.now() + ttlMs,
-        lockKey
-      };
-
-      const uploadResult = await this.client.uploadFromText(lockPath, JSON.stringify(lockData));
-      if (!uploadResult.ok) {
-        logger.error(`Failed to acquire lock: ${uploadResult.error}`);
-        return false;
-      }
-
-      logger.info(`Lock ${lockKey} acquired successfully`);
-      return true;
-    } catch (error) {
-      logger.error(`Error acquiring lock ${lockKey}:`, error);
-      return false;
-    }
-  }
-
-  /**
-   * Release a lock
-   */
-  async releaseLock(lockKey: string): Promise<boolean> {
-    const lockPath = `locks/${lockKey}`;
-    
-    try {
-      const deleteResult = await this.client.delete(lockPath);
-      if (!deleteResult.ok) {
-        logger.error(`Failed to release lock: ${deleteResult.error}`);
-        return false;
-      }
-
-      logger.info(`Lock ${lockKey} released successfully`);
-      return true;
-    } catch (error) {
-      logger.error(`Error releasing lock ${lockKey}:`, error);
-      return false;
-    }
   }
 
   // === REPLICA MANAGEMENT ===
@@ -107,7 +38,7 @@ export class ReplitStorageManager {
 
       return listResult.value.length > 0;
     } catch (error) {
-      logger.error(`Error checking replica for org ${orgId}:`, error);
+      logger.error(`Error checking replica for org ${orgId}: ${error instanceof Error ? error.message : String(error)}`);
       return false;
     }
   }
@@ -134,86 +65,81 @@ export class ReplitStorageManager {
 
       return Array.from(orgIds);
     } catch (error) {
-      logger.error('Error listing organizations:', error);
+      logger.error(`Error listing organizations: ${error instanceof Error ? error.message : String(error)}`);
       return [];
     }
   }
 
   /**
-   * Get replica metadata and size for an organization
+   * Get replica metadata and file count for an organization
+   * Note: Replit SDK doesn't expose size/lastModified consistently, 
+   * so we focus on file count and existence
    */
   async getReplicaInfo(orgId: string): Promise<{
     exists: boolean;
-    size: number;
-    lastModified?: Date;
     fileCount: number;
+    hasSnapshots: boolean;
+    hasWalFiles: boolean;
   }> {
     const replicaPath = `litestream-replicas/${orgId}/`;
     
     try {
       const listResult = await this.client.list({ prefix: replicaPath });
       if (!listResult.ok) {
-        return { exists: false, size: 0, fileCount: 0 };
+        return { exists: false, fileCount: 0, hasSnapshots: false, hasWalFiles: false };
       }
 
       const files = listResult.value;
-      const totalSize = files.reduce((sum, file) => sum + (file.size || 0), 0);
-      const latestFile = files.reduce((latest, file) => {
-        if (!latest || !latest.lastModified || !file.lastModified) return latest || file;
-        return new Date(file.lastModified) > new Date(latest.lastModified) ? file : latest;
-      }, files[0]);
+      const hasSnapshots = files.some(f => f.name.includes('/snapshots/'));
+      const hasWalFiles = files.some(f => f.name.includes('/wal/'));
 
       return {
         exists: files.length > 0,
-        size: totalSize,
         fileCount: files.length,
-        lastModified: latestFile?.lastModified ? new Date(latestFile.lastModified) : undefined
+        hasSnapshots,
+        hasWalFiles
       };
     } catch (error) {
-      logger.error(`Error getting replica info for org ${orgId}:`, error);
-      return { exists: false, size: 0, fileCount: 0 };
+      logger.error(`Error getting replica info for org ${orgId}: ${error instanceof Error ? error.message : String(error)}`);
+      return { exists: false, fileCount: 0, hasSnapshots: false, hasWalFiles: false };
     }
   }
 
   /**
-   * Clean up old locks (utility method)
+   * Clean up orphaned replica directories (utility method)
    */
-  async cleanupExpiredLocks(): Promise<number> {
+  async cleanupOrphanedReplicas(validOrgIds: string[]): Promise<number> {
     try {
-      const listResult = await this.client.list({ prefix: 'locks/' });
-      if (!listResult.ok) {
-        logger.error(`Failed to list locks for cleanup: ${listResult.error}`);
-        return 0;
-      }
-
+      const allOrgs = await this.listOrganizations();
+      const orphanedOrgs = allOrgs.filter(orgId => !validOrgIds.includes(orgId));
+      
       let cleanedCount = 0;
-      const now = Date.now();
-
-      for (const lockObject of listResult.value) {
+      for (const orgId of orphanedOrgs) {
         try {
-          const lockDataResult = await this.client.downloadAsText(lockObject.name);
-          if (lockDataResult.ok) {
-            const lockData = JSON.parse(lockDataResult.value);
-            if (now > lockData.expiresAt) {
-              const deleteResult = await this.client.delete(lockObject.name);
+          const replicaPath = `litestream-replicas/${orgId}/`;
+          const listResult = await this.client.list({ prefix: replicaPath });
+          
+          if (listResult.ok) {
+            for (const object of listResult.value) {
+              const deleteResult = await this.client.delete(object.name);
               if (deleteResult.ok) {
                 cleanedCount++;
-                logger.info(`Cleaned up expired lock: ${lockObject.name}`);
               }
             }
+            logger.info(`Cleaned up orphaned replica for org: ${orgId}`);
           }
         } catch (error) {
-          logger.error(`Error processing lock ${lockObject.name} during cleanup:`, error);
+          logger.error(`Error cleaning up replica for org ${orgId}: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
 
       if (cleanedCount > 0) {
-        logger.info(`Cleaned up ${cleanedCount} expired locks`);
+        logger.info(`Cleaned up ${cleanedCount} orphaned replica files`);
       }
 
       return cleanedCount;
     } catch (error) {
-      logger.error('Error during lock cleanup:', error);
+      logger.error(`Error during replica cleanup: ${error instanceof Error ? error.message : String(error)}`);
       return 0;
     }
   }
@@ -228,7 +154,7 @@ export class ReplitStorageManager {
   }
 
   /**
-   * Test connectivity and permissions
+   * Test connectivity and permissions using Replit's managed auth
    */
   async testConnection(): Promise<{ success: boolean; error?: string }> {
     try {
@@ -256,6 +182,46 @@ export class ReplitStorageManager {
       return { success: true };
     } catch (error) {
       return { success: false, error: `Connection test failed: ${error}` };
+    }
+  }
+
+  /**
+   * Get replica size estimate by listing files
+   * (Since size isn't reliably exposed, we estimate based on file count)
+   */
+  async getReplicaSizeEstimate(orgId: string): Promise<{
+    totalFiles: number;
+    snapshotFiles: number;
+    walFiles: number;
+    sizeCategory: 'small' | 'medium' | 'large';
+  }> {
+    const replicaPath = `litestream-replicas/${orgId}/`;
+    
+    try {
+      const listResult = await this.client.list({ prefix: replicaPath });
+      if (!listResult.ok) {
+        return { totalFiles: 0, snapshotFiles: 0, walFiles: 0, sizeCategory: 'small' };
+      }
+
+      const files = listResult.value;
+      const snapshotFiles = files.filter(f => f.name.includes('/snapshots/')).length;
+      const walFiles = files.filter(f => f.name.includes('/wal/')).length;
+      const totalFiles = files.length;
+
+      // Rough categorization based on file count
+      let sizeCategory: 'small' | 'medium' | 'large' = 'small';
+      if (totalFiles > 100) sizeCategory = 'large';
+      else if (totalFiles > 20) sizeCategory = 'medium';
+
+      return {
+        totalFiles,
+        snapshotFiles, 
+        walFiles,
+        sizeCategory
+      };
+    } catch (error) {
+      logger.error(`Error estimating replica size for org ${orgId}: ${error instanceof Error ? error.message : String(error)}`);
+      return { totalFiles: 0, snapshotFiles: 0, walFiles: 0, sizeCategory: 'small' };
     }
   }
 }
