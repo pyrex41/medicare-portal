@@ -1,0 +1,9 @@
+dbs:
+  - path: /tmp/org-${ORG_ID}.db
+    replicas:
+      - type: gcs
+        bucket: ${GCS_BUCKET_NAME}
+        path: litestream-replicas/${ORG_ID}
+        sync-interval: 1s
+        retention: 7d
+        snapshot-interval: 24h

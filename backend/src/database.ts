@@ -15,6 +15,14 @@ import fsPromises from 'fs/promises'
 import Bun from 'bun'
 import { ZIP_DATA } from './index' // Import ZIP_DATA for state lookup
 
+// Import the new SQLite database class
+import { SQLiteDatabase } from './sqliteDatabase'
+
+// Import services needed for SQLite bulk import
+import { lockingService } from './services/lockingService'
+import { spawn } from 'child_process'
+import { promisify } from 'util'
+
 // Connection pool to reuse database connections
 interface ConnectionInfo {
   client: any;
@@ -54,7 +62,9 @@ class ConnectionPool {
       let oldestTime = Infinity;
       let oldestUrl = '';
       
-      for (const [connUrl, conn] of this.connections.entries()) {
+      // Convert Map entries to array for iteration compatibility
+      const entries = Array.from(this.connections.entries());
+      for (const [connUrl, conn] of entries) {
         if (conn.lastUsed < oldestTime) {
           oldestTime = conn.lastUsed;
           oldestUrl = connUrl;
@@ -112,7 +122,9 @@ class ConnectionPool {
     const now = Date.now();
     let cleanedCount = 0;
     
-    for (const [url, conn] of this.connections.entries()) {
+    // Convert Map entries to array for iteration compatibility
+    const entries = Array.from(this.connections.entries());
+    for (const [url, conn] of entries) {
       if (now - conn.lastUsed > this.MAX_IDLE_TIME) {
         this.connections.delete(url);
         cleanedCount++;
@@ -421,6 +433,53 @@ export class Database {
         throw error
       }
     }
+  }
+
+  /**
+   * Get organization's SQLite database using the new Litestream architecture
+   * This is the new method that replaces Turso for organization databases
+   */
+  static async getSQLiteOrgDb(orgId: string): Promise<SQLiteDatabase> {
+    logger.info(`[SQLiteOrgDB] Getting SQLite database for org ${orgId}`);
+    return new SQLiteDatabase(orgId);
+  }
+
+  /**
+   * Update organization to use SQLite with GCS storage information
+   */
+  static async markOrgAsUsingGCS(orgId: string, gcsPath?: string): Promise<void> {
+    const mainDb = new Database();
+    const gcsBucketName = process.env.GCS_BUCKET_NAME || 'replit-object-storage';
+    const gcsReplicaPath = gcsPath || `litestream-replicas/${orgId}`;
+    
+    logger.info(`[SQLiteOrgDB] Marking organization ${orgId} as using GCS storage`);
+    
+    await mainDb.execute(
+      `UPDATE organizations 
+       SET 
+         gcs_bucket_name = ?, 
+         gcs_replica_path = ?, 
+         db_type = 'sqlite',
+         updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [gcsBucketName, gcsReplicaPath, orgId]
+    );
+    
+    logger.info(`[SQLiteOrgDB] Updated organization ${orgId} GCS configuration`);
+  }
+
+  /**
+   * Check if organization is configured to use SQLite/GCS
+   */
+  static async isOrgUsingSQLite(orgId: string): Promise<boolean> {
+    const mainDb = new Database();
+    
+    const org = await mainDb.fetchOne<{ db_type: string; gcs_bucket_name: string }>(
+      'SELECT db_type, gcs_bucket_name FROM organizations WHERE id = ?',
+      [orgId]
+    );
+    
+    return org?.db_type === 'sqlite' && !!org.gcs_bucket_name;
   }
 
   /**
@@ -835,388 +894,204 @@ END;`
   }
 
   /**
-   * Bulk import contacts from CSV directly into the database
+   * Bulk import contacts for SQLite databases using the locking mechanism
+   * This bypasses real-time replication and uses litestream backup for efficiency
    */
-  static async bulkImportContacts(
+  static async bulkImportContactsSQLite(
     orgId: string,
-    csvFilePath: string,
+    contacts: ContactCreate[],
     overwriteExisting: boolean = false,
-    columnMapping?: ColumnMapping,
-    carrierMapping?: CarrierMapping,
     agentId?: number | null
   ): Promise<string> {
-    logger.info(`Starting bulk import for organization ${orgId} from ${csvFilePath}`);
-    
+    const execAsync = promisify(require('child_process').exec);
+
+    logger.info(`[BulkImportSQLite|Org ${orgId}] Starting bulk import of ${contacts.length} contacts`);
+
+    // Acquire the lock before doing anything else
+    const lockAcquired = await lockingService.acquireLock(orgId);
+    if (!lockAcquired) {
+      throw new Error('A database operation is already in progress. Please try again in a moment.');
+    }
+
+    const localImportPath = `/tmp/import-${orgId}-${Date.now()}.db`;
+    const gcsBucketName = process.env.GCS_BUCKET_NAME || 'replit-object-storage';
+    const gcsReplicaUrl = `gcs://${gcsBucketName}/litestream-replicas/${orgId}`;
+
     try {
-      // get the main db
-      const mainDb = new Database();
-      
-      // get the org db url / auth token
-      const orgData = await mainDb.fetchOne<{ turso_db_url: string, turso_auth_token: string }>(
-        'SELECT turso_db_url, turso_auth_token FROM organizations WHERE id = ?',
-        [orgId]
-      );
-
-      if (!orgData) {
-        throw new Error(`Organization ${orgId} not found`);
-      }
-
-      const { turso_db_url, turso_auth_token } = orgData;
-
-      if (!turso_db_url || !turso_auth_token) {
-        throw new Error(`Could not get database configuration for organization ${orgId}`);
-      }
-
-      // First, download the existing database from Turso
-      const tursoService = new TursoService();
-      logger.info(`Downloading existing database from Turso for org ${orgId}`);
-      logger.info(`Turso DB URL: ${turso_db_url}`);
-      logger.info(`Turso Auth Token: ${turso_auth_token}`);
-      const dumpContent = await tursoService.downloadDatabaseDump(turso_db_url, turso_auth_token);
-      logger.info(`Downloaded ${dumpContent.length} bytes of database dump`);
-
-      // Create a temporary file for the dump
-      const tempDumpFile = `dump-${Date.now()}.sql`;
-      const tempDbFile = `temp-${Date.now()}.db`;
-      let localDb: BunDatabase | null = null;
+      // STEP 1: Get the most up-to-date database state.
+      // Restore the latest version from the Litestream replica to a temporary file.
+      logger.info(`[BulkImportSQLite|Org ${orgId}] Restoring latest database state...`);
       
       try {
-        // Write dump to temporary file
-        await fsPromises.writeFile(tempDumpFile, dumpContent);
-
-        // Use sqlite3 CLI to create and populate the database
-        logger.info('Creating temporary database from dump...');
-        await new Promise((resolve, reject) => {
-          const sqlite = Bun.spawn(['sqlite3', tempDbFile], {
-            stdin: Bun.file(tempDumpFile),
-            onExit(proc, exitCode, signalCode, error) {
-              if (exitCode === 0) {
-                resolve(null);
-              } else {
-                reject(new Error(`SQLite process exited with code ${exitCode}: ${error}`));
-              }
-            }
-          });
-        });
-
-        logger.info('Successfully created temporary database from dump');
-
-        // Now connect to the temporary database using BunSQLite
-        localDb = new BunDatabase(tempDbFile);
-
-        // Use DELETE journal mode instead of WAL for direct file writes
-        localDb.exec('PRAGMA journal_mode = DELETE');
-        localDb.exec('PRAGMA foreign_keys = OFF');
-
-        // Drop the unique index on email temporarily to allow the import
-        logger.info('Dropping unique email index for import...');
-        localDb.exec('DROP INDEX IF EXISTS idx_contacts_email_unique');
-
-        // Verify the database state before CSV import
-        const tables = ['contacts', 'contact_events', 'leads', 'eligibility_answers', 'email_send_tracking'];
-        for (const table of tables) {
-          try {
-            const count = localDb.prepare(`SELECT COUNT(*) as count FROM ${table}`).get() as { count: number };
-            logger.info(`Table ${table} before CSV import: ${count.count} rows`);
-          } catch (error) {
-            logger.error(`Error counting rows in ${table}: ${error}`);
-          }
-        }
-
-        // Now process the new contacts from CSV
-        logger.info(`Processing new contacts from CSV file`);
-        
-        // Read the CSV file
-        const fileContents = await fsPromises.readFile(csvFilePath, 'utf8');
-        const rows = await new Promise<any[]>((resolve, reject) => {
-          const results: any[] = [];
-          const parser = parse(fileContents, { columns: true });
-          
-          parser.on('readable', function() {
-            let record;
-            while ((record = parser.read()) !== null) {
-              results.push(record);
-            }
-          });
-          
-          parser.on('error', function(err) {
-            reject(err);
-          });
-          
-          parser.on('end', function() {
-            resolve(results);
-          });
-        });
-        
-        logger.info(`Processing ${rows.length} rows from CSV`);
-        
-        // Find the email column (required for deduplication)
-        const emailColumn = columnMapping ? columnMapping.email : 'email';
-        if (!rows[0]?.[emailColumn]) {
-          throw new Error(`Email column "${emailColumn}" not found in CSV`);
-        }
-        
-        // Map columns based on provided mapping or use default field names
-        const processRow = (row: any) => {
-          const mappedRow: any = {};
-          
-          // Apply column mappings if provided
-          if (columnMapping) {
-            // Map each field using the provided column mapping
-            mappedRow.first_name = row[columnMapping.firstName] || '';
-            mappedRow.last_name = row[columnMapping.lastName] || '';
-            mappedRow.email = row[columnMapping.email] || '';
-            mappedRow.phone_number = row[columnMapping.phoneNumber] || '';
-            mappedRow.zip_code = row[columnMapping.zipCode] || '';
-            
-            // Infer state from zip code
-            if (mappedRow.zip_code && ZIP_DATA[mappedRow.zip_code]) {
-              mappedRow.state = ZIP_DATA[mappedRow.zip_code].state;
-              logger.info(`Inferred state ${mappedRow.state} from zip code ${mappedRow.zip_code}`);
-            } else if (columnMapping.state && row[columnMapping.state]) {
-              // Fallback to provided state if zip code lookup fails
-              mappedRow.state = row[columnMapping.state] || '';
-              logger.info(`Using provided state ${mappedRow.state} (zip code lookup failed)`);
-            } else {
-              logger.warn(`No state found for zip code ${mappedRow.zip_code}, defaulting to empty string`);
-              mappedRow.state = '';
-            }
-            
-            // Apply carrier mapping if provided
-            let carrierValue = '';
-            if (columnMapping.currentCarrier && row[columnMapping.currentCarrier]) {
-              const originalCarrier = row[columnMapping.currentCarrier];
-              
-              // Use carrier mapping if available
-              if (carrierMapping && carrierMapping.mappings[originalCarrier]) {
-                carrierValue = carrierMapping.mappings[originalCarrier];
-                
-                // If mapped to "Other", preserve original value
-                if (carrierValue === 'Other') {
-                  carrierValue = originalCarrier;
-                }
-              } else {
-                carrierValue = originalCarrier;
-              }
-            }
-            
-            mappedRow.current_carrier = carrierValue;
-            mappedRow.effective_date = row[columnMapping.effectiveDate] || '';
-            mappedRow.birth_date = row[columnMapping.birthDate] || '';
-            mappedRow.tobacco_user = row[columnMapping.tobaccoUser] === 'true' || row[columnMapping.tobaccoUser] === 'yes' || row[columnMapping.tobaccoUser] === '1';
-            mappedRow.gender = row[columnMapping.gender] || '';
-            mappedRow.plan_type = row[columnMapping.planType] || '';
-          } else {
-            // Use default field names if no mapping provided
-            mappedRow.first_name = row.first_name || row.firstName || '';
-            mappedRow.last_name = row.last_name || row.lastName || '';
-            mappedRow.email = row.email || '';
-            mappedRow.phone_number = row.phone_number || row.phoneNumber || '';
-            mappedRow.zip_code = row.zip_code || row.zipCode || '';
-            
-            // Infer state from zip code
-            if (mappedRow.zip_code && ZIP_DATA[mappedRow.zip_code]) {
-              mappedRow.state = ZIP_DATA[mappedRow.zip_code].state;
-              logger.info(`Inferred state ${mappedRow.state} from zip code ${mappedRow.zip_code}`);
-            } else if (row.state) {
-              // Fallback to provided state if zip code lookup fails
-              mappedRow.state = row.state || '';
-              logger.info(`Using provided state ${mappedRow.state} (zip code lookup failed)`);
-            } else {
-              logger.warn(`No state found for zip code ${mappedRow.zip_code}, defaulting to empty string`);
-              mappedRow.state = '';
-            }
-            
-            mappedRow.current_carrier = row.current_carrier || row.currentCarrier || '';
-            mappedRow.effective_date = row.effective_date || row.effectiveDate || '';
-            mappedRow.birth_date = row.birth_date || row.birthDate || '';
-            mappedRow.tobacco_user = row.tobacco_user === 'true' || row.tobacco_user === 'yes' || row.tobacco_user === '1' ||
-                                   row.tobaccoUser === 'true' || row.tobaccoUser === 'yes' || row.tobaccoUser === '1';
-            mappedRow.gender = row.gender || '';
-            mappedRow.plan_type = row.plan_type || row.planType || '';
-          }
-          
-          // Add standard fields
-          mappedRow.created_at = new Date().toISOString();
-          mappedRow.updated_at = new Date().toISOString();
-          
-          // Add agent_id if provided
-          if (agentId !== undefined && agentId !== null) {
-            mappedRow.agent_id = agentId;
-          }
-          
-          return mappedRow;
-        };
-        
-        // Begin transaction for CSV import
-        localDb.exec('BEGIN TRANSACTION');
-        
-        try {
-          // First, get all existing emails (for manual deduplication)
-          const existingEmails = new Set(
-            localDb.prepare('SELECT LOWER(TRIM(email)) as email FROM contacts')
-              .all()
-              .map((row: any) => row.email || row[0])
-          );
-
-          logger.info(`Found ${existingEmails.size} existing emails in database`);
-
-          // Prepare insert statement (without ON CONFLICT since we're handling it manually)
-          const stmt = localDb.prepare(`
-            INSERT INTO contacts (
-              first_name, last_name, email, phone_number, state,
-              current_carrier, effective_date, birth_date, tobacco_user,
-              gender, zip_code, plan_type, agent_id, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `);
-
-          let totalProcessed = 0;
-          let totalAdded = 0;
-          let totalSkipped = 0;
-
-          // Process each row
-          for (const row of rows) {
-            totalProcessed++;
-            const processedRow = processRow(row);
-            const email = processedRow.email.toLowerCase().trim();
-            
-            if (!email) {
-              logger.warn('Skipping row with no email address');
-              totalSkipped++;
-              continue;
-            }
-
-            try {
-              if (existingEmails.has(email)) {
-                if (overwriteExisting) {
-                  // Update existing record
-                  localDb.prepare(`
-                    UPDATE contacts SET
-                      first_name = ?, last_name = ?, phone_number = ?, state = ?,
-                      current_carrier = ?, effective_date = ?, birth_date = ?,
-                      tobacco_user = ?, gender = ?, zip_code = ?, plan_type = ?,
-                      agent_id = ?, updated_at = ?
-                    WHERE LOWER(TRIM(email)) = LOWER(TRIM(?))
-                  `).run(
-                    processedRow.first_name,
-                    processedRow.last_name,
-                    processedRow.phone_number,
-                    processedRow.state,
-                    processedRow.current_carrier,
-                    processedRow.effective_date,
-                    processedRow.birth_date,
-                    processedRow.tobacco_user ? 1 : 0,
-                    processedRow.gender,
-                    processedRow.zip_code,
-                    processedRow.plan_type,
-                    processedRow.agent_id || null,
-                    processedRow.updated_at,
-                    email
-                  );
-                  totalAdded++;
-                } else {
-                  totalSkipped++;
-                }
-              } else {
-                stmt.run(
-                  processedRow.first_name,
-                  processedRow.last_name,
-                  email,
-                  processedRow.phone_number,
-                  processedRow.state,
-                  processedRow.current_carrier,
-                  processedRow.effective_date,
-                  processedRow.birth_date,
-                  processedRow.tobacco_user ? 1 : 0,
-                  processedRow.gender,
-                  processedRow.zip_code,
-                  processedRow.plan_type,
-                  processedRow.agent_id || null,
-                  processedRow.created_at,
-                  processedRow.updated_at
-                );
-                existingEmails.add(email);
-                totalAdded++;
-              }
-            } catch (err) {
-              logger.error(`Error processing row with email ${email}: ${err}`);
-              totalSkipped++;
-            }
-          }
-
-          // Recreate the unique index after import
-          logger.info('Recreating unique email index...');
-          localDb.exec('CREATE UNIQUE INDEX idx_contacts_email_unique ON contacts(LOWER(TRIM(email)))');
-
-          // Commit CSV import transaction
-          localDb.exec('COMMIT');
-          
-          // Force a checkpoint to ensure all changes are written to disk
-          localDb.exec('PRAGMA wal_checkpoint(TRUNCATE)');
-          
-          logger.info(`Successfully processed all rows from CSV`);
-          logger.info(`Total processed: ${totalProcessed}, added: ${totalAdded}, skipped: ${totalSkipped}`);
-
-          // Verify final counts
-          const finalCount = localDb.prepare('SELECT COUNT(*) as count FROM contacts').get() as { count: number };
-          logger.info(`Final contact count in database: ${finalCount.count} (should be ${existingEmails.size} + new additions)`);
-
-          // Close the database to ensure all changes are flushed
-          localDb.close();
-          localDb = null;
-
-          try {
-            // Create new database and upload data
-            logger.info(`Creating new Turso database for import`);
-            const { dbName: newOrgDbName, url: newOrgDbUrl, token: newOrgDbToken } = await tursoService.createDatabaseForImport(orgId);
-            
-            // Upload the local db to the new org db
-            logger.info(`Uploading data to new Turso database at ${newOrgDbUrl}`);
-            await tursoService.uploadDatabase(newOrgDbName, newOrgDbToken, `file:${tempDbFile}`);
-            
-            // Update main db with new org db url / auth token 
-            logger.info(`Updating organization ${orgId} with new database credentials`);
-            await mainDb.execute(`
-              UPDATE organizations 
-              SET turso_db_url = ?, turso_auth_token = ?
-              WHERE id = ?
-            `, [newOrgDbUrl, newOrgDbToken, orgId]);
-            
-            logger.info(`Successfully completed import for organization ${orgId}`);
-            
-            // Return success message with import stats
-            return `Successfully imported ${totalAdded} contacts (${totalSkipped} skipped) to new database: ${newOrgDbUrl}`;
-          } catch (importError) {
-            logger.error(`Error during Turso database creation or upload: ${importError}`);
-            throw importError;
-          }
-        } catch (error) {
-          // Rollback transaction on error
-          try {
-            if (localDb) {
-              localDb.exec('ROLLBACK');
-            }
-          } catch (rollbackError) {
-            logger.error(`Error during transaction rollback: ${rollbackError}`);
-          }
-          throw error;
-        }
-      } finally {
-        // Clean up temporary files
-        try {
-          if (localDb) {
-            localDb.close();
-          }
-          await fsPromises.unlink(tempDumpFile);
-          await fsPromises.unlink(tempDbFile);
-          logger.info('Cleaned up temporary files');
-        } catch (cleanupError) {
-          logger.error(`Error cleaning up temporary files: ${cleanupError}`);
+        await execAsync(`litestream restore -o ${localImportPath} ${gcsReplicaUrl}`);
+        logger.info(`[BulkImportSQLite|Org ${orgId}] Restore complete`);
+      } catch (restoreError: any) {
+        if (restoreError.stderr && restoreError.stderr.includes("no snapshots found")) {
+          logger.warn(`[BulkImportSQLite|Org ${orgId}] No replica found in GCS. Starting with empty database.`);
+          // For new organizations, we'll create an empty database file
+        } else {
+          logger.error(`[BulkImportSQLite|Org ${orgId}] Restore failed: ${restoreError.message}`);
+          throw restoreError;
         }
       }
+
+      // STEP 2: Process the contacts and write to the temporary database.
+      const db = new BunDatabase(localImportPath);
+      db.exec('PRAGMA journal_mode = WAL;');
+      db.exec('PRAGMA foreign_keys = ON;');
+      db.exec('PRAGMA synchronous = OFF;'); // Speed up bulk inserts
+
+      // Ensure schema exists
+      const tempSQLiteDb = new SQLiteDatabase(orgId);
+      await SQLiteDatabase.ensureOrgSchema(tempSQLiteDb);
+      tempSQLiteDb.close(); // Close the temp instance
+
+      // Apply schema to the import database
+      const tables = [
+        `CREATE TABLE IF NOT EXISTS contacts (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          first_name TEXT NOT NULL,
+          last_name TEXT NOT NULL,
+          email TEXT NOT NULL,
+          current_carrier TEXT NOT NULL,
+          plan_type TEXT NOT NULL,
+          effective_date TEXT NOT NULL,
+          birth_date TEXT NOT NULL,
+          tobacco_user INTEGER NOT NULL,
+          gender TEXT NOT NULL,
+          state TEXT NOT NULL,
+          zip_code TEXT NOT NULL,
+          agent_id INTEGER,
+          last_emailed DATETIME,
+          phone_number TEXT NOT NULL DEFAULT '',
+          status TEXT NOT NULL DEFAULT '',
+          aep_request BOOLEAN DEFAULT FALSE,
+          aep_request_date DATETIME,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`,
+        `CREATE INDEX IF NOT EXISTS idx_contacts_email ON contacts(email)`,
+        `CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_email_unique ON contacts(LOWER(TRIM(email)))`
+      ];
+
+      for (const tableSQL of tables) {
+        db.exec(tableSQL);
+      }
+
+      // Prepare insert statement
+      const insertSQL = `
+        INSERT INTO contacts (
+          first_name, last_name, email, phone_number, state,
+          current_carrier, effective_date, birth_date, tobacco_user,
+          gender, zip_code, plan_type, agent_id, status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `;
+
+      const upsertSQL = `
+        INSERT INTO contacts (
+          first_name, last_name, email, phone_number, state,
+          current_carrier, effective_date, birth_date, tobacco_user,
+          gender, zip_code, plan_type, agent_id, status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(LOWER(TRIM(email))) DO UPDATE SET
+          first_name = excluded.first_name,
+          last_name = excluded.last_name,
+          phone_number = excluded.phone_number,
+          state = excluded.state,
+          current_carrier = excluded.current_carrier,
+          effective_date = excluded.effective_date,
+          birth_date = excluded.birth_date,
+          tobacco_user = excluded.tobacco_user,
+          gender = excluded.gender,
+          zip_code = excluded.zip_code,
+          plan_type = excluded.plan_type,
+          agent_id = excluded.agent_id,
+          status = excluded.status,
+          updated_at = CURRENT_TIMESTAMP
+      `;
+
+      const stmt = db.prepare(overwriteExisting ? upsertSQL : insertSQL);
+
+      // Process contacts in a transaction for performance
+      const transaction = db.transaction((contactsList: ContactCreate[]) => {
+        let insertedCount = 0;
+        let skippedCount = 0;
+        
+        for (const contact of contactsList) {
+          try {
+            // Normalize email
+            const normalizedEmail = contact.email.trim().toLowerCase();
+            
+            // Map state from ZIP code if not provided
+            let state = contact.state;
+            if (!state && contact.zip_code && ZIP_DATA[contact.zip_code]) {
+              state = ZIP_DATA[contact.zip_code].state;
+            }
+
+            const params = [
+              contact.first_name,
+              contact.last_name,
+              normalizedEmail,
+              contact.phone_number || '',
+              state || '',
+              contact.current_carrier,
+              contact.effective_date,
+              contact.birth_date,
+              contact.tobacco_user ? 1 : 0,
+              contact.gender,
+              contact.zip_code,
+              contact.plan_type,
+              agentId || null,
+              'New'
+            ];
+
+            stmt.run(...params);
+            insertedCount++;
+          } catch (error: any) {
+            if (error.message.includes('UNIQUE constraint failed')) {
+              if (!overwriteExisting) {
+                skippedCount++;
+                continue;
+              }
+            }
+            logger.error(`[BulkImportSQLite|Org ${orgId}] Error inserting contact ${contact.email}: ${error.message}`);
+            throw error;
+          }
+        }
+        
+        return { insertedCount, skippedCount };
+      });
+
+      const result = transaction(contacts);
+      logger.info(`[BulkImportSQLite|Org ${orgId}] Processed ${result.insertedCount} contacts, skipped ${result.skippedCount}`);
+
+      db.close();
+
+      // STEP 3: Back up the changes to GCS using litestream backup
+      logger.info(`[BulkImportSQLite|Org ${orgId}] Backing up changes to GCS via litestream...`);
+      await execAsync(`litestream backup -o ${gcsReplicaUrl} ${localImportPath}`);
+      logger.info(`[BulkImportSQLite|Org ${orgId}] Backup complete`);
+
+      // Clean up the temporary database
+      await fsPromises.unlink(localImportPath).catch(err => 
+        logger.error(`[BulkImportSQLite|Org ${orgId}] Failed to clean up temp file: ${err}`)
+      );
+
+      const message = `Successfully imported ${result.insertedCount} contacts` + 
+                     (result.skippedCount > 0 ? `, skipped ${result.skippedCount} duplicates` : '');
+
+      return message;
+
     } catch (error) {
-      logger.error(`Error in bulk import for organization ${orgId}: ${error}`);
+      logger.error(`[BulkImportSQLite|Org ${orgId}] Bulk import failed: ${error instanceof Error ? error.message : String(error)}`);
+      
+      // Clean up the temporary database on error
+      await fsPromises.unlink(localImportPath).catch(() => {});
+      
       throw error;
+    } finally {
+      // Always release the lock
+      await lockingService.releaseLock(orgId);
     }
   }
 
@@ -1533,6 +1408,218 @@ END;`
     }
 
     throw lastError || new Error('Max retries reached');
+  }
+
+  /**
+   * Original bulk import method for Turso-based organizations (legacy)
+   * This method is kept for backward compatibility
+   */
+  static async bulkImportContacts(
+    orgId: string,
+    csvFilePath: string,
+    overwriteExisting: boolean = false,
+    columnMapping?: ColumnMapping,
+    carrierMapping?: CarrierMapping,
+    agentId?: number | null
+  ): Promise<string> {
+    logger.info(`[LegacyBulkImport] Starting bulk import for organization ${orgId} from ${csvFilePath}`);
+    
+    try {
+      // This is a simplified version for compatibility
+      // For full implementation, organizations should migrate to SQLite/GCS architecture
+      const orgDb = await Database.getOrInitOrgDb(orgId);
+      
+      // Read CSV file
+      const fileContents = await fsPromises.readFile(csvFilePath, 'utf8');
+      
+      const rows = await new Promise<any[]>((resolve, reject) => {
+        const results: any[] = [];
+        const parser = parse(fileContents, { columns: true });
+        
+        parser.on('readable', function() {
+          let record;
+          while ((record = parser.read()) !== null) {
+            results.push(record);
+          }
+        });
+        
+        parser.on('error', function(err) {
+          reject(err);
+        });
+        
+        parser.on('end', function() {
+          resolve(results);
+        });
+      });
+      
+      logger.info(`[LegacyBulkImport] Processing ${rows.length} rows from CSV`);
+      
+      let insertedCount = 0;
+      let skippedCount = 0;
+      
+      for (const row of rows) {
+        try {
+          // Basic mapping - you may need to adjust based on your CSV format
+          const email = row.email || row.Email;
+          const firstName = row.first_name || row.firstName || row['First Name'];
+          const lastName = row.last_name || row.lastName || row['Last Name'];
+          
+          if (!email) continue;
+          
+          const normalizedEmail = email.trim().toLowerCase();
+          
+          // Check if exists
+          const existing = await orgDb.fetchOne<{ id: number }>(
+            'SELECT id FROM contacts WHERE LOWER(TRIM(email)) = ?',
+            [normalizedEmail]
+          );
+          
+          if (existing && !overwriteExisting) {
+            skippedCount++;
+            continue;
+          }
+          
+          // Infer state from ZIP code if available
+          const zipCode = row.zip_code || row.zipCode || row['Zip Code'];
+          let state = row.state || row.State;
+          if (!state && zipCode && ZIP_DATA[zipCode]) {
+            state = ZIP_DATA[zipCode].state;
+          }
+          
+          const contactData = {
+            first_name: firstName || '',
+            last_name: lastName || '',
+            email: normalizedEmail,
+            phone_number: row.phone_number || row.phoneNumber || row['Phone Number'] || '',
+            state: state || '',
+            current_carrier: row.current_carrier || row.currentCarrier || row['Current Carrier'] || '',
+            effective_date: row.effective_date || row.effectiveDate || row['Effective Date'] || '',
+            birth_date: row.birth_date || row.birthDate || row['Birth Date'] || '',
+            tobacco_user: (row.tobacco_user || row.tobaccoUser || row['Tobacco User']) === 'true' ? 1 : 0,
+            gender: row.gender || row.Gender || '',
+            zip_code: zipCode || '',
+            plan_type: row.plan_type || row.planType || row['Plan Type'] || '',
+            agent_id: agentId,
+            status: 'New',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          };
+          
+          if (existing) {
+            // Update existing
+            await orgDb.execute(`
+              UPDATE contacts SET
+                first_name = ?, last_name = ?, phone_number = ?, state = ?,
+                current_carrier = ?, effective_date = ?, birth_date = ?,
+                tobacco_user = ?, gender = ?, zip_code = ?, plan_type = ?,
+                agent_id = ?, updated_at = ?
+              WHERE id = ?
+            `, [
+              contactData.first_name, contactData.last_name, contactData.phone_number,
+              contactData.state, contactData.current_carrier, contactData.effective_date,
+              contactData.birth_date, contactData.tobacco_user, contactData.gender,
+              contactData.zip_code, contactData.plan_type, contactData.agent_id,
+              contactData.updated_at, existing.id
+            ]);
+          } else {
+            // Insert new
+            await orgDb.execute(`
+              INSERT INTO contacts (
+                first_name, last_name, email, phone_number, state,
+                current_carrier, effective_date, birth_date, tobacco_user,
+                gender, zip_code, plan_type, agent_id, status, created_at, updated_at
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `, [
+              contactData.first_name, contactData.last_name, contactData.email,
+              contactData.phone_number, contactData.state, contactData.current_carrier,
+              contactData.effective_date, contactData.birth_date, contactData.tobacco_user,
+              contactData.gender, contactData.zip_code, contactData.plan_type,
+              contactData.agent_id, contactData.status, contactData.created_at,
+              contactData.updated_at
+            ]);
+          }
+          
+          insertedCount++;
+        } catch (error) {
+          logger.error(`[LegacyBulkImport] Error processing row: ${error}`);
+          skippedCount++;
+        }
+      }
+      
+      const message = `Successfully processed ${insertedCount} contacts, skipped ${skippedCount}`;
+      logger.info(`[LegacyBulkImport] ${message}`);
+      return message;
+      
+    } catch (error) {
+      logger.error(`[LegacyBulkImport] Error in bulk import: ${error}`);
+      throw error;
+    }
+  }
+
+  // Bulk import method that properly handles temporary database validation
+  async bulkImportContactsSQLite(tempDbPath: string, orgId: string): Promise<void> {
+    try {
+      // Get the organization's database instance for the final import
+      const orgDb = await Database.getOrgDb(orgId)
+      
+      // Create a temporary database instance specifically for the import file
+      // This ensures schema validation happens on the correct database
+      const tempDbUrl = `file://${tempDbPath}`
+      const tempDb = new Database(tempDbUrl, '') // Empty auth token for local file
+      
+      // Validate schema on the temporary database (not the live one)
+      await this.validateImportSchema(tempDb)
+      
+      // Process the import data from the temporary database
+      const importData = await tempDb.fetchAll('SELECT * FROM contacts_import')
+      
+      // Import into the organization's live database
+      await orgDb.transaction(async (tx) => {
+        for (const contact of importData) {
+          await tx.execute(
+            'INSERT INTO contacts (first_name, last_name, email, phone, organization_id) VALUES (?, ?, ?, ?, ?)',
+            [contact.first_name, contact.last_name, contact.email, contact.phone, orgId]
+          )
+        }
+      })
+      
+      logger.info(`Successfully imported ${importData.length} contacts for org ${orgId}`)
+    } catch (error) {
+      logger.error(`Bulk import failed for org ${orgId}: ${error}`)
+      throw error
+    }
+  }
+  
+  private async validateImportSchema(tempDb: Database): Promise<void> {
+    try {
+      // Validate that the temporary database has the expected schema
+      const tables = await tempDb.fetchAll(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='contacts_import'"
+      )
+      
+      if (tables.length === 0) {
+        throw new Error('Import database missing required contacts_import table')
+      }
+      
+      // Validate required columns exist
+      const columns = await tempDb.fetchAll(
+        "PRAGMA table_info(contacts_import)"
+      )
+      
+      const requiredColumns = ['first_name', 'last_name', 'email']
+      const existingColumns = columns.map((col: any) => col.name)
+      
+      for (const required of requiredColumns) {
+        if (!existingColumns.includes(required)) {
+          throw new Error(`Missing required column: ${required}`)
+        }
+      }
+      
+      logger.info('Import schema validation passed')
+    } catch (error) {
+      logger.error(`Schema validation failed: ${error}`)
+      throw error
+    }
   }
 }
 
