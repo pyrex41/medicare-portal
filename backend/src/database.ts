@@ -149,6 +149,72 @@ export class Database {
       throw error
     }
   }
+
+  // Bulk import method that properly handles temporary database validation
+  async bulkImportContactsSQLite(tempDbPath: string, orgId: string): Promise<void> {
+    try {
+      // Get the organization's database instance for the final import
+      const orgDb = await Database.getOrgDb(orgId)
+      
+      // Create a temporary database instance specifically for the import file
+      // This ensures schema validation happens on the correct database
+      const tempDbUrl = `file://${tempDbPath}`
+      const tempDb = new Database(tempDbUrl, '') // Empty auth token for local file
+      
+      // Validate schema on the temporary database (not the live one)
+      await this.validateImportSchema(tempDb)
+      
+      // Process the import data from the temporary database
+      const importData = await tempDb.fetchAll('SELECT * FROM contacts_import')
+      
+      // Import into the organization's live database
+      await orgDb.transaction(async (tx) => {
+        for (const contact of importData) {
+          await tx.execute(
+            'INSERT INTO contacts (first_name, last_name, email, phone, organization_id) VALUES (?, ?, ?, ?, ?)',
+            [contact.first_name, contact.last_name, contact.email, contact.phone, orgId]
+          )
+        }
+      })
+      
+      logger.info(`Successfully imported ${importData.length} contacts for org ${orgId}`)
+    } catch (error) {
+      logger.error(`Bulk import failed for org ${orgId}: ${error}`)
+      throw error
+    }
+  }
+  
+  private async validateImportSchema(tempDb: Database): Promise<void> {
+    try {
+      // Validate that the temporary database has the expected schema
+      const tables = await tempDb.fetchAll(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='contacts_import'"
+      )
+      
+      if (tables.length === 0) {
+        throw new Error('Import database missing required contacts_import table')
+      }
+      
+      // Validate required columns exist
+      const columns = await tempDb.fetchAll(
+        "PRAGMA table_info(contacts_import)"
+      )
+      
+      const requiredColumns = ['first_name', 'last_name', 'email']
+      const existingColumns = columns.map((col: any) => col.name)
+      
+      for (const required of requiredColumns) {
+        if (!existingColumns.includes(required)) {
+          throw new Error(`Missing required column: ${required}`)
+        }
+      }
+      
+      logger.info('Import schema validation passed')
+    } catch (error) {
+      logger.error(`Schema validation failed: ${error}`)
+      throw error
+    }
+  }
 }
 
 export const db = new Database() 
