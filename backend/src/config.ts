@@ -52,6 +52,7 @@ export const config = {
   TURSO_ORG_SLUG: process.env.TURSO_ORG_SLUG || 'pyrex41',
   USE_LOCAL_SQLITE: process.env.USE_LOCAL_SQLITE === 'true',
   LOCAL_DB_PATH: process.env.LOCAL_DB_PATH || './.data',
+  GCS_BUCKET_NAME: process.env.GCS_BUCKET_NAME || 'replit-object-storage',
   quoteApiKey: process.env.QUOTE_API_KEY,
   quoteSecret: process.env.QUOTE_SECRET,
   magicLinkSecret: process.env.MAGIC_LINK_SECRET,

@@ -17,6 +17,7 @@ import {
   getUniqueContactCount,
   resetContactCount
 } from '../services/contactTracking';
+import type { ContactCreate } from '../types';
 
 type User = {
   id: number;
@@ -205,7 +206,16 @@ export const contactsRoutes = new Elysia({ prefix: '/api/contacts' })
       // Get organization database with retry logic
       let orgDb;
       try {
-        orgDb = await Database.getOrInitOrgDb(user.organization_id.toString());
+        // Check if organization uses SQLite/GCS
+        const isUsingSQLite = await Database.isOrgUsingSQLite(user.organization_id.toString());
+        
+        if (isUsingSQLite) {
+          logger.info(`[GetContacts] Organization ${user.organization_id} using SQLite/GCS architecture`);
+          orgDb = await Database.getSQLiteOrgDb(user.organization_id.toString());
+        } else {
+          logger.info(`[GetContacts] Organization ${user.organization_id} using legacy Turso architecture`);
+          orgDb = await Database.getOrInitOrgDb(user.organization_id.toString());
+        }
       } catch (error) {
         // If database not found, check if it exists in the list
         if (error instanceof Error && error.message.includes('database not configured')) {
@@ -462,47 +472,33 @@ export const contactsRoutes = new Elysia({ prefix: '/api/contacts' })
         return { success: false, message: 'No contacts provided', totalRows: 0 };
       }
 
-      // Create temp directory if it doesn't exist
-      const tempDir = path.join(process.cwd(), 'tmp');
-      if (!fs.existsSync(tempDir)) {
-        fs.mkdirSync(tempDir, { recursive: true });
-      }
-
-      // Generate temp file name with random ID to avoid conflicts
-      const tempFile = path.join(tempDir, `contacts-${nanoid()}.csv`);
+      // Check if the organization uses SQLite/GCS
+      const isUsingSQLite = await Database.isOrgUsingSQLite(user.organization_id.toString());
       
-      try {
-        // Convert contacts array to CSV string
-        const csvData = stringify(body.contacts, {
-          header: true,
-          
-          columns: [
-            'first_name', 'last_name', 'email', 'phone_number',
-            'current_carrier', 'effective_date', 'birth_date', 'tobacco_user',
-            'gender', 'zip_code', 'plan_type'
-          ]
-        });
+      if (isUsingSQLite) {
+        // Use the new SQLite bulk import method
+        logger.info(`[BulkImport] Organization ${user.organization_id} using SQLite/GCS architecture`);
         
-        // Write CSV data to temp file
-        fs.writeFileSync(tempFile, csvData);
-        logger.info(`Created temporary CSV file: ${tempFile} with ${body.contacts.length} contacts`);
+        // Map ContactImport to ContactCreate, ensuring state is always provided
+        const mappedContacts: ContactCreate[] = body.contacts.map(contact => ({
+          ...contact,
+          state: contact.state || (contact.zip_code && ZIP_DATA[contact.zip_code]?.state) || '',
+          current_carrier: contact.current_carrier || null,
+          plan_type: contact.plan_type || null
+        }));
         
-        // Use the bulk import function with the temp CSV file
-        const result = await Database.bulkImportContacts(
+        const result = await Database.bulkImportContactsSQLite(
           user.organization_id.toString(),
-          tempFile,
+          mappedContacts,
           overwriteExisting,
-          undefined, // columnMapping
-          undefined, // carrierMapping
-          body.agentId // Pass the agentId
+          body.agentId
         );
         
-        logger.info(`Bulk import completed: ${result}`);
+        logger.info(`[BulkImport] SQLite bulk import completed: ${result}`);
 
-        // After bulk import, handle re-activation from deleted_contacts
-        // This assumes the new org DB is now live and accessible via getOrInitOrgDb
+        // Handle re-activation from deleted_contacts using the new SQLite database
         if (body.contacts && body.contacts.length > 0) {
-          const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString()); // Connects to the NEW live DB
+          const orgDb = await Database.getSQLiteOrgDb(user.organization_id.toString());
           const importedEmails = body.contacts.map(contact => normalizeEmail(contact.email)).filter(Boolean);
 
           if (importedEmails.length > 0) {
@@ -511,24 +507,86 @@ export const contactsRoutes = new Elysia({ prefix: '/api/contacts' })
               `DELETE FROM deleted_contacts WHERE LOWER(TRIM(email)) IN (${placeholders})`,
               importedEmails
             );
-            logger.info(`Cleared ${importedEmails.length} reactivated emails from deleted_contacts for org ${user.organization_id} post-bulk-import.`);
+            logger.info(`[BulkImport] Cleared ${importedEmails.length} reactivated emails from deleted_contacts for org ${user.organization_id} post-bulk-import.`);
           }
         }
         
         return {
           success: true,
-          message: 'Contacts imported successfully',
+          message: result,
           totalRows: body.contacts.length
         };
-      } finally {
-        // Clean up temp file
-        if (fs.existsSync(tempFile)) {
-          fs.unlinkSync(tempFile);
-          logger.info(`Removed temporary CSV file: ${tempFile}`);
+      } else {
+        // Use the legacy Turso bulk import method
+        logger.info(`[BulkImport] Organization ${user.organization_id} using legacy Turso architecture`);
+        
+        // Create temp directory if it doesn't exist
+        const tempDir = path.join(process.cwd(), 'tmp');
+        if (!fs.existsSync(tempDir)) {
+          fs.mkdirSync(tempDir, { recursive: true });
+        }
+
+        // Generate temp file name with random ID to avoid conflicts
+        const tempFile = path.join(tempDir, `contacts-${nanoid()}.csv`);
+        
+        try {
+          // Convert contacts array to CSV string
+          const csvData = stringify(body.contacts, {
+            header: true,
+            
+            columns: [
+              'first_name', 'last_name', 'email', 'phone_number',
+              'current_carrier', 'effective_date', 'birth_date', 'tobacco_user',
+              'gender', 'zip_code', 'plan_type'
+            ]
+          });
+          
+          // Write CSV data to temp file
+          fs.writeFileSync(tempFile, csvData);
+          logger.info(`[BulkImport] Created temporary CSV file: ${tempFile} with ${body.contacts.length} contacts`);
+          
+          // Use the legacy bulk import function with the temp CSV file
+          const result = await Database.bulkImportContacts(
+            user.organization_id.toString(),
+            tempFile,
+            overwriteExisting,
+            undefined, // columnMapping
+            undefined, // carrierMapping
+            body.agentId // Pass the agentId
+          );
+          
+          logger.info(`[BulkImport] Legacy bulk import completed: ${result}`);
+
+          // After bulk import, handle re-activation from deleted_contacts
+          if (body.contacts && body.contacts.length > 0) {
+            const orgDb = await Database.getOrInitOrgDb(user.organization_id.toString());
+            const importedEmails = body.contacts.map(contact => normalizeEmail(contact.email)).filter(Boolean);
+
+            if (importedEmails.length > 0) {
+              const placeholders = importedEmails.map(() => '?').join(',');
+              await orgDb.execute(
+                `DELETE FROM deleted_contacts WHERE LOWER(TRIM(email)) IN (${placeholders})`,
+                importedEmails
+              );
+              logger.info(`[BulkImport] Cleared ${importedEmails.length} reactivated emails from deleted_contacts for org ${user.organization_id} post-bulk-import.`);
+            }
+          }
+          
+          return {
+            success: true,
+            message: 'Contacts imported successfully',
+            totalRows: body.contacts.length
+          };
+        } finally {
+          // Clean up temp file
+          if (fs.existsSync(tempFile)) {
+            fs.unlinkSync(tempFile);
+            logger.info(`[BulkImport] Removed temporary CSV file: ${tempFile}`);
+          }
         }
       }
     } catch (error) {
-      logger.error(`Error in bulk import: ${error}`);
+      logger.error(`[BulkImport] Error in bulk import: ${error}`);
       set.status = 500;
       return { 
         success: false,

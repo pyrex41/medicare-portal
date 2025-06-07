@@ -1,0 +1,18 @@
+# litestream-single-db.yml
+# This is a template configuration for a single database replication.
+# The manager will provide the required environment variables at runtime.
+
+dbs:
+  - path: /tmp/org-${ORG_ID}.db  # The local database file to watch.
+    replicas:
+      - type: gcs
+        bucket: ${GCS_BUCKET_NAME}  # The GCS bucket for storing replicas.
+        path: litestream-replicas/${ORG_ID} # The path within the bucket for this specific DB.
+        
+        # Replication settings
+        sync-interval: 1s     # How often to check for changes (low for real-time).
+        
+        # Backup retention settings
+        retention: 7d         # Keep 7 days of historical changes.
+        retention-check-interval: 1h # Check for old files to delete every hour.
+        snapshot-interval: 24h # Create a full snapshot once every 24 hours.
