@@ -5,6 +5,13 @@ import { config } from '../config'
 import { cookie } from '@elysiajs/cookie'
 import Stripe from 'stripe'
 
+interface StateCarrierSetting {
+  state: string
+  carrier: string
+  active: boolean
+  targetGI: boolean
+}
+
 // Initialize Stripe with secret key from environment variables
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || 'sk_test_51Qyh7RCBUPXAZKNGFySALjap1pDAtEwPtuY5TAzEuKKDq7cfAmHhmQIn8W1UMf2CuOvQ1umjiUrlpPauOc159fpM00nfohCZH3')
 const YOUR_DOMAIN = config.clientUrl || 'http://localhost:3000'
@@ -740,11 +747,30 @@ export function createOnboardingRoutes() {
         const { 
           email,
           selectedCarriers,
-          useSmartSend
+          useSmartSend,
+          stateLicenses,
+          stateCarrierSettings,
+          contactOutreachDelayYears,
+          outreachTypes,
+          failedUnderwritingOutreach
         } = body as { 
           email: string,
           selectedCarriers: string[],
-          useSmartSend?: boolean
+          useSmartSend?: boolean,
+          stateLicenses: string[],
+          stateCarrierSettings: StateCarrierSetting[],
+          contactOutreachDelayYears: number,
+          outreachTypes: {
+            birthday: boolean
+            enrollmentAnniversary: boolean
+            scheduleIncrease: boolean
+            aep: boolean
+          },
+          failedUnderwritingOutreach: {
+            enabled: boolean
+            frequency: string
+            timing: string
+          }
         };
         
         if (!email) {
@@ -811,7 +837,21 @@ export function createOnboardingRoutes() {
         settings = {
           ...settings,
           carrierContracts: selectedCarriers || [],
-          smartSendEnabled: useSmartSend !== undefined ? useSmartSend : ((settings as any)['smartSendEnabled'] || false)
+          smartSendEnabled: useSmartSend !== undefined ? useSmartSend : ((settings as any)['smartSendEnabled'] || false),
+          stateLicenses: stateLicenses || [],
+          stateCarrierSettings: stateCarrierSettings || [],
+          contactOutreachDelayYears: contactOutreachDelayYears || 0,
+          outreachTypes: outreachTypes || {
+            birthday: false,
+            enrollmentAnniversary: false,
+            scheduleIncrease: false,
+            aep: false
+          },
+          failedUnderwritingOutreach: failedUnderwritingOutreach || {
+            enabled: false,
+            frequency: '',
+            timing: ''
+          }
         };
         
         // Convert back to JSON string

@@ -119,6 +119,11 @@ type alias Model =
     , newAgentEmailStatus : EmailStatus -- Added for new agent email check
     , savingAgents : Bool -- Added for saving agents state
     , agentSaveError : Maybe String -- Added for agent save error messages
+
+    -- New outreach settings
+    , contactOutreachDelayYears : Int
+    , outreachTypes : OutreachTypes
+    , failedUnderwritingOutreach : FailedUnderwritingOutreach
     }
 
 
@@ -304,6 +309,11 @@ init key url =
             , newAgentEmailStatus = NotChecked
             , savingAgents = False
             , agentSaveError = Nothing
+
+            -- New outreach settings
+            , contactOutreachDelayYears = 1
+            , outreachTypes = { birthday = True, enrollmentAnniversary = True, scheduleIncrease = True, aep = True }
+            , failedUnderwritingOutreach = { enabled = False, frequency = "annual", timing = "birthday" }
             }
 
         -- Check if this is a direct page load with frame > 1
@@ -373,6 +383,11 @@ type Msg
     | ResponseStripeProduct (Result Http.Error StripeProduct)
     | DebounceNewAgentEmailCheck Int
     | GotNewAgentEmailCheckResponse Int (Result Http.Error EmailCheckResponse)
+      -- New outreach settings messages
+    | UpdateContactOutreachDelayYears Int
+    | ToggleOutreachType String Bool
+    | ToggleFailedUnderwritingOutreach Bool
+    | UpdateFailedUnderwritingTiming String
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -850,6 +865,18 @@ update msg model =
                         -- Optionally handle the error, e.g., set to NotChecked or a specific error state
                         ( { model | newAgentEmailStatus = NotChecked }, Cmd.none )
 
+        UpdateContactOutreachDelayYears years ->
+            ( model, Cmd.none )
+
+        ToggleOutreachType typeName isActive ->
+            ( model, Cmd.none )
+
+        ToggleFailedUnderwritingOutreach isActive ->
+            ( model, Cmd.none )
+
+        UpdateFailedUnderwritingTiming timing ->
+            ( model, Cmd.none )
+
 
 
 -- Calculate the price based on the number of contacts
@@ -1210,6 +1237,105 @@ viewLicensing model =
                             [ text "Use SmartSend for Guaranteed Issue" ]
                         , p [ class "text-gray-600 text-sm mt-1" ]
                             [ text "When enabled, SmartSend will automatically avoid sending quotes to individuals in no-commission windows (for example, right before their birthday in Birthday Rule states)." ]
+                        ]
+                    ]
+                ]
+            , div [ class "space-y-4 mt-6" ]
+                [ h3 [ class "text-xl font-medium text-gray-800" ] [ text "Contact Outreach Settings" ]
+                , div [ class "space-y-4 p-4 bg-gray-50 rounded-md" ]
+                    [ -- Contact Outreach Delay
+                      div [ class "space-y-2" ]
+                        [ label [ class "block text-sm font-medium text-gray-700" ]
+                            [ text "Contact Outreach Delay" ]
+                        , select
+                            [ class "w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                            , onInput (\value -> UpdateContactOutreachDelayYears (String.toInt value |> Maybe.withDefault 1))
+                            ]
+                            [ option [ value "1", selected (model.contactOutreachDelayYears == 1) ] [ text "1 year" ]
+                            , option [ value "2", selected (model.contactOutreachDelayYears == 2) ] [ text "2 years" ]
+                            , option [ value "3", selected (model.contactOutreachDelayYears == 3) ] [ text "3 years" ]
+                            ]
+                        , p [ class "text-sm text-gray-500" ]
+                            [ text "How long to wait before reaching out to contacts" ]
+                        ]
+                    , -- Outreach Types
+                      div [ class "space-y-3" ]
+                        [ label [ class "block text-sm font-medium text-gray-700" ]
+                            [ text "Outreach Types" ]
+                        , div [ class "space-y-2" ]
+                            [ label [ class "flex items-center" ]
+                                [ input
+                                    [ type_ "checkbox"
+                                    , class "h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
+                                    , checked model.outreachTypes.birthday
+                                    , onCheck (\checked -> ToggleOutreachType "birthday" checked)
+                                    ]
+                                    []
+                                , span [ class "ml-2 text-sm text-gray-700" ] [ text "Birthday outreach" ]
+                                ]
+                            , label [ class "flex items-center" ]
+                                [ input
+                                    [ type_ "checkbox"
+                                    , class "h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
+                                    , checked model.outreachTypes.enrollmentAnniversary
+                                    , onCheck (\checked -> ToggleOutreachType "enrollmentAnniversary" checked)
+                                    ]
+                                    []
+                                , span [ class "ml-2 text-sm text-gray-700" ] [ text "Enrollment anniversary outreach" ]
+                                ]
+                            , label [ class "flex items-center" ]
+                                [ input
+                                    [ type_ "checkbox"
+                                    , class "h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
+                                    , checked model.outreachTypes.scheduleIncrease
+                                    , onCheck (\checked -> ToggleOutreachType "scheduleIncrease" checked)
+                                    ]
+                                    []
+                                , span [ class "ml-2 text-sm text-gray-700" ] [ text "Schedule increase outreach" ]
+                                ]
+                            , label [ class "flex items-center" ]
+                                [ input
+                                    [ type_ "checkbox"
+                                    , class "h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
+                                    , checked model.outreachTypes.aep
+                                    , onCheck (\checked -> ToggleOutreachType "aep" checked)
+                                    ]
+                                    []
+                                , span [ class "ml-2 text-sm text-gray-700" ] [ text "Annual enrollment period (AEP) outreach" ]
+                                ]
+                            ]
+                        , p [ class "text-sm text-gray-500" ]
+                            [ text "At least one outreach type must be selected" ]
+                        ]
+                    , -- Failed Underwriting Outreach
+                      div [ class "space-y-3" ]
+                        [ label [ class "flex items-center" ]
+                            [ input
+                                [ type_ "checkbox"
+                                , class "h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
+                                , checked model.failedUnderwritingOutreach.enabled
+                                , onCheck ToggleFailedUnderwritingOutreach
+                                ]
+                                []
+                            , span [ class "ml-2 text-sm text-gray-700" ] [ text "Reduce outreach frequency to once per year for contacts who failed underwriting" ]
+                            ]
+                        , if model.failedUnderwritingOutreach.enabled then
+                            div [ class "ml-6 space-y-2" ]
+                                [ label [ class "block text-sm font-medium text-gray-700" ]
+                                    [ text "When to send annual outreach:" ]
+                                , select
+                                    [ class "w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                                    , onInput UpdateFailedUnderwritingTiming
+                                    ]
+                                    [ option [ value "birthday", selected (model.failedUnderwritingOutreach.timing == "birthday") ] [ text "Birthday" ]
+                                    , option [ value "enrollmentAnniversary", selected (model.failedUnderwritingOutreach.timing == "enrollmentAnniversary") ] [ text "Enrollment Anniversary" ]
+                                    , option [ value "aep", selected (model.failedUnderwritingOutreach.timing == "aep") ] [ text "AEP" ]
+                                    , option [ value "scheduleIncrease", selected (model.failedUnderwritingOutreach.timing == "scheduleIncrease") ] [ text "Schedule Increase" ]
+                                    ]
+                                ]
+
+                          else
+                            text ""
                         ]
                     ]
                 ]
@@ -1700,6 +1826,22 @@ saveLicensingSettings model =
                     [ ( "email", Encode.string model.user.email )
                     , ( "selectedCarriers", Encode.list Encode.string (List.map carrierToString model.selectedCarriers) )
                     , ( "useSmartSend", Encode.bool model.useSmartSend )
+                    , ( "contactOutreachDelayYears", Encode.int model.contactOutreachDelayYears )
+                    , ( "outreachTypes"
+                      , Encode.object
+                            [ ( "birthday", Encode.bool model.outreachTypes.birthday )
+                            , ( "enrollmentAnniversary", Encode.bool model.outreachTypes.enrollmentAnniversary )
+                            , ( "scheduleIncrease", Encode.bool model.outreachTypes.scheduleIncrease )
+                            , ( "aep", Encode.bool model.outreachTypes.aep )
+                            ]
+                      )
+                    , ( "failedUnderwritingOutreach"
+                      , Encode.object
+                            [ ( "enabled", Encode.bool model.failedUnderwritingOutreach.enabled )
+                            , ( "frequency", Encode.string model.failedUnderwritingOutreach.frequency )
+                            , ( "timing", Encode.string model.failedUnderwritingOutreach.timing )
+                            ]
+                      )
                     ]
                 )
         , expect = Http.expectJson LicensingSaved saveResponseDecoder
@@ -2124,3 +2266,18 @@ viewNewAgentEmailStatusMessage status =
 
         InvalidFormat ->
             p [ class "mt-1 text-sm text-red-600" ] [ text "Please enter a valid email address." ]
+
+
+type alias OutreachTypes =
+    { birthday : Bool
+    , enrollmentAnniversary : Bool
+    , scheduleIncrease : Bool
+    , aep : Bool
+    }
+
+
+type alias FailedUnderwritingOutreach =
+    { enabled : Bool
+    , frequency : String -- "annual" for now
+    , timing : String -- "birthday", "enrollmentAnniversary", "aep", "scheduleIncrease"
+    }
