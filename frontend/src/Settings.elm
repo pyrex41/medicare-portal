@@ -1453,9 +1453,9 @@ settingsObjectDecoder =
         |> Pipeline.optional "redirectUrl" Decode.string ""
         |> Pipeline.optional "signature" Decode.string ""
         |> Pipeline.optional "forceOrgSenderDetails" Decode.bool True
-        |> Pipeline.optional "contactOutreachDelayYears" Decode.int 0
-        |> Pipeline.optional "outreachTypes" outreachTypesDecoder (OutreachTypes False False False False)
-        |> Pipeline.optional "failedUnderwritingOutreach" failedUnderwritingOutreachDecoder (FailedUnderwritingOutreach False "" "")
+        |> Pipeline.optional "contactOutreachDelayYears" Decode.int 1
+        |> Pipeline.optional "outreachTypes" outreachTypesDecoder (OutreachTypes True True True True)
+        |> Pipeline.optional "failedUnderwritingOutreach" failedUnderwritingOutreachDecoder (FailedUnderwritingOutreach False "annual" "birthday")
 
 
 outreachTypesDecoder : Decoder OutreachTypes
